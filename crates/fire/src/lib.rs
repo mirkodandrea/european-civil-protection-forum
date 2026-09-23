@@ -1,6 +1,17 @@
-//! The wildfire model: the PROPAGATOR Rust core running in-process, one
-//! stochastic realization (players fight one concrete fire, not a probability
-//! cloud).
+//! The wildfire model: the PROPAGATOR Rust core running in-process as a
+//! **Monte Carlo ensemble** (default 32 realizations), reduced to one fire.
+//!
+//! ## From an ensemble to one fire
+//!
+//! A cell counts as reached when a fraction `cutoff` of the realizations
+//! have reached it (default 0.5 = the median fire; 0.25 = a pessimistic,
+//! planning fire). Its arrival time is the corresponding **quantile of the
+//! realizations' arrival times**: the `ceil(cutoff·R)`-th earliest. Arrival
+//! times never change once set, so a decided cell stays decided, the fire only
+//! grows, and "burning" / "burnt", building exposure and the live animation
+//! all follow from one consistent arrival-time field. The fraction of
+//! realizations that reached each cell is kept as [`FireSim::probability`]
+//! (the uncertainty halo in the UIs).
 //!
 //! Every way the exercise can touch the fire goes through the core's own
 //! boundary conditions, never by editing its state:
@@ -36,6 +47,10 @@ pub const MAX_ADDED_MOISTURE_PTS: f32 = 100.0;
 /// A cell keeps burning this long after ignition, then it is burnt out.
 pub const BURNOUT_S: i32 = 20 * 60;
 const MOISTURE_DECAY_PER_MIN: f32 = 0.01;
+/// The ensemble summary (quantile arrivals, probability) is recomputed at most
+/// this often in simulated seconds. Arrival times are exact whenever computed;
+/// only the moment a cell appears can lag by up to this much.
+pub const REFRESH_S: i64 = 10;
 /// A single-cell ignition fizzles ~20 % of the time; ignitions always light at
 /// least this radius.
 pub const MIN_IGNITION_RADIUS_M: f32 = 40.0;
@@ -48,6 +63,20 @@ pub enum CellFire {
     Burnt = 2,
 }
 
+/// Ensemble size and the probability cutoff that defines the "actual" fire.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct FireOptions {
+    pub realizations: usize,
+    /// Fraction of realizations that must reach a cell, in (0, 1].
+    pub cutoff: f32,
+}
+
+impl Default for FireOptions {
+    fn default() -> Self {
+        FireOptions { realizations: 32, cutoff: 0.5 }
+    }
+}
+
 /// Everything needed to put a [`FireSim`] back to an earlier moment.
 #[derive(Clone)]
 pub struct FireSnapshot {
@@ -56,7 +85,7 @@ pub struct FireSnapshot {
     time_s: i64,
     state: Vec<CellFire>,
     ignited_at: Vec<i32>,
-    intensity: Vec<f32>,
+    probability: Vec<f32>,
     cleared: Vec<bool>,
     extinguished: Vec<bool>,
     added_moisture: Vec<f32>,
@@ -69,10 +98,14 @@ pub struct FireSim {
     weather: WeatherSpec,
     time_s: i64,
     state: Vec<CellFire>,
-    /// Simulated second each cell first burned; `i32::MIN` if never.
+    /// Quantile arrival time of each cell (see module docs); `i32::MIN` if not reached.
     ignited_at: Vec<i32>,
-    /// Fireline intensity, kW/m (Byram), from the core.
-    intensity: Vec<f32>,
+    /// Fraction of realizations that have reached each cell.
+    probability: Vec<f32>,
+    options: FireOptions,
+    /// Scratch buffer for the per-cell arrival quantile.
+    scratch: Vec<i32>,
+    last_refresh_s: i64,
     /// Cells turned into fuel breaks.
     cleared: Vec<bool>,
     /// Cells put out by the Master; drawn as burnt.
@@ -84,17 +117,24 @@ pub struct FireSim {
 }
 
 impl FireSim {
+    /// Default ensemble (32 realizations, cutoff 0.5).
     pub fn new(scn: &Scenario, seed: u64) -> Result<FireSim> {
+        FireSim::with_options(scn, seed, FireOptions::default())
+    }
+
+    pub fn with_options(scn: &Scenario, seed: u64, options: FireOptions) -> Result<FireSim> {
+        anyhow::ensure!(options.realizations >= 1, "need at least one realization");
+        anyhow::ensure!(options.cutoff > 0.0 && options.cutoff <= 1.0, "cutoff must be in (0, 1]");
         let grid = scn.grid;
         let veg = Grid2::from_vec(grid.rows, grid.cols, scn.fuel.clone());
         let dem = Grid2::from_vec(grid.rows, grid.cols, scn.dem.iter().map(|&v| v as f64).collect());
         let mut config = PropagatorConfig::new(veg, dem);
         config.cellsize = grid.cellsize as f64;
-        config.realizations = 1;
+        config.realizations = options.realizations;
         config.do_spotting = false;
         config.seed = Some(seed);
         config.oob_mode = OobMode::Ignore;
-        config.n_threads = Some(1);
+        config.n_threads = None; // realizations run in parallel; results do not depend on thread count
         let core = Propagator::new(config).context("building PROPAGATOR core")?;
         let n = grid.len();
         let mut fire = FireSim {
@@ -105,7 +145,10 @@ impl FireSim {
             time_s: 0,
             state: vec![CellFire::Unburnt; n],
             ignited_at: vec![i32::MIN; n],
-            intensity: vec![0.0; n],
+            probability: vec![0.0; n],
+            options,
+            scratch: Vec::with_capacity(options.realizations),
+            last_refresh_s: -REFRESH_S,
             cleared: vec![false; n],
             extinguished: vec![false; n],
             added_moisture: vec![0.0; n],
@@ -129,8 +172,12 @@ impl FireSim {
     pub fn state(&self) -> &[CellFire] {
         &self.state
     }
-    pub fn intensity(&self) -> &[f32] {
-        &self.intensity
+    /// Fraction of realizations that have reached each cell (0..=1).
+    pub fn probability(&self) -> &[f32] {
+        &self.probability
+    }
+    pub fn options(&self) -> FireOptions {
+        self.options
     }
     pub fn cleared(&self) -> &[bool] {
         &self.cleared
@@ -374,28 +421,36 @@ impl FireSim {
         for v in &mut self.added_moisture {
             *v *= factor;
         }
-        self.refresh()
+        if self.time_s - self.last_refresh_s >= REFRESH_S {
+            self.refresh()?;
+        }
+        Ok(())
     }
 
     fn refresh(&mut self) -> Result<()> {
+        self.last_refresh_s = self.time_s;
         let fire = self.core.get_fire().context("reading fire state")?;
-        let fli = self.core.get_fireline_int().context("reading fireline intensity")?;
         let arrival = self.core.get_arrival_time().context("reading arrival time")?;
-        let (mask, arrival) = (fire[0].as_slice(), arrival[0].as_slice());
-        self.intensity.copy_from_slice(fli[0].as_slice());
+        let masks: Vec<&[u8]> = fire.iter().map(|g| g.as_slice()).collect();
+        let arrivals: Vec<&[i32]> = arrival.iter().map(|g| g.as_slice()).collect();
+        let r = masks.len();
+        let k = ((self.options.cutoff * r as f32).ceil() as usize).clamp(1, r);
         let now = self.time_s as i32;
-        for (i, &lit) in mask.iter().enumerate() {
-            if lit == 0 && self.ignited_at[i] == i32::MIN {
-                continue;
-            }
+        for i in 0..self.state.len() {
+            let reached = masks.iter().filter(|m| m[i] != 0).count();
+            // A cleared cell has no fuel; the core may still light it from an
+            // ignition event scheduled before the clearing. That is not a fire.
+            self.probability[i] = if self.cleared[i] && self.ignited_at[i] == i32::MIN { 0.0 } else { reached as f32 / r as f32 };
             if self.ignited_at[i] == i32::MIN {
-                // A cleared cell has no fuel. The core may still light it from
-                // an ignition event it scheduled before the clearing; that is
-                // not a fire.
-                if self.cleared[i] {
+                if reached < k || self.cleared[i] {
                     continue;
                 }
-                self.ignited_at[i] = arrival[i].min(now);
+                // Quantile arrival: the k-th earliest among the realizations
+                // that reached the cell (later ones cannot move it earlier).
+                self.scratch.clear();
+                self.scratch.extend((0..r).filter(|&j| masks[j][i] != 0).map(|j| arrivals[j][i]));
+                let (_, kth, _) = self.scratch.select_nth_unstable(k - 1);
+                self.ignited_at[i] = (*kth).min(now);
             }
             self.state[i] = if self.extinguished[i] || now - self.ignited_at[i] >= BURNOUT_S {
                 CellFire::Burnt
@@ -413,7 +468,7 @@ impl FireSim {
             time_s: self.time_s,
             state: self.state.clone(),
             ignited_at: self.ignited_at.clone(),
-            intensity: self.intensity.clone(),
+            probability: self.probability.clone(),
             cleared: self.cleared.clone(),
             extinguished: self.extinguished.clone(),
             added_moisture: self.added_moisture.clone(),
@@ -429,12 +484,13 @@ impl FireSim {
         self.time_s = s.time_s;
         self.state = s.state.clone();
         self.ignited_at = s.ignited_at.clone();
-        self.intensity = s.intensity.clone();
+        self.probability = s.probability.clone();
         self.cleared = s.cleared.clone();
         self.extinguished = s.extinguished.clone();
         self.added_moisture = s.added_moisture.clone();
         self.pending_veg = None;
         self.pending_moisture = None;
+        self.last_refresh_s = s.time_s;
         Ok(())
     }
 }

@@ -63,29 +63,43 @@ fn nothing_burns_before_ignition() {
     assert_eq!(f.burned_area_ha(), 0.0);
 }
 
-/// A fire line across the head of the fire must protect what is behind it, and
-/// must not act anywhere else (the NaN-sparse `vegetation_changes` trap).
+/// A fire line across the head of the fire must protect what is behind it
+/// (the Pineta side), and must not act anywhere else (the NaN-sparse
+/// `vegetation_changes` trap: the fire keeps burning on its own side).
 #[test]
 fn fire_line_holds_the_head() {
     let scn = scenario();
+    let (a, b) = ([2650.0f32, 2880.0f32], [3300.0f32, 2230.0f32]);
+    // Signed side of the line; the school is on the negative side.
+    let side = |p: Pos| (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
     let school = scn.resolve_place("Pineta Primary School").unwrap();
-    let (mut free, mut lined) = (0.0, 0.0);
+    assert!(side(school) < 0.0);
+    let behind = |f: &FireSim| {
+        let cols = scn.grid.cols;
+        f.state()
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| **s != CellFire::Unburnt && !f.cleared()[*i])
+            .filter(|(i, _)| side(scn.cell_centre(scenario::Cell { row: i / cols, col: i % cols })) < -30.0 * 920.0)
+            .count()
+    };
+    let (mut free, mut lined) = (0, 0);
     for seed in [1, 2, 3] {
-        let mut a = started(&scn, seed);
-        a.advance(20 * 60).unwrap();
-        let mut b = started(&scn, seed);
-        b.advance(20 * 60).unwrap();
-        // A long, wide line between the fire and the village, perpendicular to the wind.
-        let cut = b.fire_line([2500.0, 2800.0], [3350.0, 1950.0], 60.0);
+        let mut f = started(&scn, seed);
+        f.advance(20 * 60).unwrap();
+        let mut g = started(&scn, seed);
+        g.advance(20 * 60).unwrap();
+        let already = behind(&g);
+        let cut = g.fire_line(a, b, 60.0);
         assert!(cut > 50, "only {cut} cells cut");
-        a.advance(70 * 60).unwrap();
-        b.advance(70 * 60).unwrap();
-        free += nearest_fire_m(&scn, &a, school);
-        lined += nearest_fire_m(&scn, &b, school);
-        // The fire keeps burning on its own side of the line.
-        assert!(b.burning_cells() > 0 || b.burned_area_ha() > 5.0);
+        f.advance(90 * 60).unwrap();
+        g.advance(90 * 60).unwrap();
+        free += behind(&f);
+        lined += behind(&g) - already;
+        assert!(g.burned_area_ha() > 10.0, "the fire must keep burning on its own side");
     }
-    assert!(lined > free + 100.0, "line did not keep the fire away: free {free:.0} m vs lined {lined:.0} m (sum of 3 seeds)");
+    assert!(free > 100, "without the line the fire should cross to the Pineta side ({free} cells)");
+    assert!(lined * 5 < free, "the line should hold: {lined} cells crossed vs {free} without it (3 seeds)");
 }
 
 #[test]
@@ -169,4 +183,62 @@ fn extinguish_a_whole_zone() {
     for c in f.cells_in_rect(b) {
         assert_ne!(f.cell_state(c), CellFire::Burning);
     }
+}
+
+fn started_with(scn: &Scenario, seed: u64, options: fire::FireOptions) -> FireSim {
+    let mut f = FireSim::with_options(scn, seed, options).unwrap();
+    let ign = &scn.initial_ignitions[0];
+    f.ignite(ign.at, ign.radius_m).unwrap();
+    f
+}
+
+/// The "actual" fire is the cutoff quantile of the ensemble: every reached
+/// cell was reached by at least that fraction of the realizations, and a lower
+/// cutoff gives a larger, pessimistic fire.
+#[test]
+fn ensemble_cutoff_defines_the_fire() {
+    let scn = scenario();
+    let median = fire::FireOptions { realizations: 32, cutoff: 0.5 };
+    let pessimistic = fire::FireOptions { realizations: 32, cutoff: 0.25 };
+    let mut m = started_with(&scn, 1, median);
+    let mut p = started_with(&scn, 1, pessimistic);
+    m.advance(60 * 60).unwrap();
+    p.advance(60 * 60).unwrap();
+    assert!(p.burned_area_ha() > m.burned_area_ha(), "0.25 cutoff {} ha should exceed median {} ha", p.burned_area_ha(), m.burned_area_ha());
+    for (i, s) in m.state().iter().enumerate() {
+        let pr = m.probability()[i];
+        assert!((0.0..=1.0).contains(&pr));
+        if *s != CellFire::Unburnt {
+            assert!(pr >= 0.5 - 1e-6, "cell {i} is part of the median fire with probability {pr}");
+        }
+    }
+    // Some cells are reached by a minority of runs: the uncertainty halo.
+    assert!(m.probability().iter().zip(m.state()).any(|(pr, s)| *pr > 0.0 && *s == CellFire::Unburnt));
+}
+
+#[test]
+fn ensemble_fire_only_grows_and_is_reproducible() {
+    let scn = scenario();
+    let mut a = FireSim::new(&scn, 7).unwrap();
+    let mut b = FireSim::new(&scn, 7).unwrap();
+    let ign = &scn.initial_ignitions[0];
+    a.ignite(ign.at, ign.radius_m).unwrap();
+    b.ignite(ign.at, ign.radius_m).unwrap();
+    let mut last = 0.0;
+    for _ in 0..12 {
+        a.advance(300).unwrap();
+        assert!(a.burned_area_ha() >= last);
+        last = a.burned_area_ha();
+    }
+    b.advance(3600).unwrap();
+    assert_eq!(a.arrival_times(), b.arrival_times(), "same seed, same fire, whatever the step size");
+}
+
+#[test]
+fn single_realization_still_works() {
+    let scn = scenario();
+    let mut f = started_with(&scn, 1, fire::FireOptions { realizations: 1, cutoff: 0.5 });
+    f.advance(3600).unwrap();
+    assert!(f.burned_area_ha() > 5.0);
+    assert!(f.probability().iter().all(|p| *p == 0.0 || *p == 1.0));
 }

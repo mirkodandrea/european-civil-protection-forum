@@ -157,8 +157,9 @@ async fn works_without_llm() {
 async fn resolution_runs_live_and_is_observable() {
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
-    let (_, set) = call(&app, "POST", "/api/master/settings", Some(json!({"pace_ms": 20}))).await;
-    assert_eq!(set["pace_ms"], 20);
+    // 60x: one simulated minute per second, a 20-minute turn in ~20 s... too slow for a test: 600x → ~2 s.
+    let (_, set) = call(&app, "POST", "/api/master/settings", Some(json!({"speed": 600.0}))).await;
+    assert_eq!(set["speed"], 600.0);
     let a2 = app.clone();
     let resolver = tokio::spawn(async move { call(&a2, "POST", "/api/master/resolve", Some(json!({"minutes": 20}))).await });
 
@@ -179,8 +180,8 @@ async fn resolution_runs_live_and_is_observable() {
     let (s, rep) = resolver.await.unwrap();
     assert_eq!(s, StatusCode::OK, "{rep}");
     assert_eq!(rep["to_s"], 1200);
-    assert!(seen_times.len() >= 3, "intermediate minutes should be observable, saw {seen_times:?}");
-    assert!(seen_times.iter().all(|t| t % 60 == 0 && *t < 1200), "{seen_times:?}");
+    assert!(seen_times.len() >= 5, "intermediate times should be observable, saw {seen_times:?}");
+    assert!(seen_times.iter().all(|t| *t < 1200), "{seen_times:?}");
     let (_, st) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(st["phase"], "orders");
     assert_eq!(st["turn"], 2);

@@ -180,7 +180,7 @@ fn decision_rechecks_feasibility_after_resources_change() {
 }
 
 #[test]
-fn resolution_steps_minute_by_minute() {
+fn resolution_steps_second_by_second() {
     let mut ex = exercise();
     ex.start().unwrap();
     let pid = ex.player_reply("fire_commander", "line").unwrap();
@@ -198,19 +198,19 @@ fn resolution_steps_minute_by_minute() {
     assert!(ex.rollback(1).is_err());
     assert!(ex.end().is_err());
 
-    let mut minutes = 0;
+    let mut steps = 0;
     let mut generation = ex.generation;
     loop {
         let done = ex.step_resolution(STEP_S).unwrap();
-        minutes += 1;
-        assert_eq!(ex.world.time_s(), minutes * 60, "one simulated minute per step");
+        steps += 1;
+        assert_eq!(ex.world.time_s(), steps * STEP_S, "one step at a time");
         assert!(ex.generation > generation, "every step is published");
         generation = ex.generation;
         if done {
             break;
         }
     }
-    assert_eq!(minutes, 5);
+    assert_eq!(steps * STEP_S, 300);
     let r = ex.finish_resolution().unwrap();
     assert_eq!((r.from_s, r.to_s), (0, 300));
     assert_eq!(ex.phase, Phase::Orders);

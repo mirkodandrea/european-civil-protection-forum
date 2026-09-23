@@ -16,6 +16,8 @@ pub mod cell_code {
     pub const BURNT: u8 = 2;
     pub const FIRE_LINE: u8 = 3;
     pub const WET: u8 = 4;
+    /// Unburnt, but reached by some realizations (below the cutoff): the uncertainty halo.
+    pub const POSSIBLE: u8 = 5;
 }
 
 #[derive(Serialize)]
@@ -90,7 +92,8 @@ impl World {
         json!({
             "clock": s.clock,
             "weather": {"wind_from_deg": w.wind_dir_deg, "wind_kmh": w.wind_speed_kmh, "fuel_moisture_pct": w.moisture_pct},
-            "fire": {"burned_ha": (s.burned_ha * 10.0).round() / 10.0, "burning_zones": self.burning_zones(), "fire_lines_km": s.line_km, "water_drops": s.drops},
+            "fire": {"burned_ha": (s.burned_ha * 10.0).round() / 10.0, "burning_zones": self.burning_zones(), "fire_lines_km": s.line_km, "water_drops": s.drops,
+                     "model": format!("{}-run Monte Carlo ensemble; the fire is the set of cells reached by at least {:.0}% of the runs", self.fire.options().realizations, self.fire.options().cutoff * 100.0)},
             "totals": {"buildings_damaged": s.damaged, "buildings_destroyed": s.destroyed, "buildings_threatened": s.threatened, "people_evacuated": s.evacuated_people, "people_at_risk": s.people_at_risk, "people_sheltered": s.sheltered},
             "facilities": facilities,
             "populated_zones": populated,
@@ -120,6 +123,7 @@ impl World {
     pub fn fire_raster_b64(&self) -> String {
         let cleared = self.fire.cleared();
         let wet = self.fire.added_moisture();
+        let prob = self.fire.probability();
         let bytes: Vec<u8> = self
             .fire
             .state()
@@ -130,6 +134,7 @@ impl World {
                 CellFire::Burnt => cell_code::BURNT,
                 CellFire::Unburnt if cleared[i] => cell_code::FIRE_LINE,
                 CellFire::Unburnt if wet[i] > 10.0 => cell_code::WET,
+                CellFire::Unburnt if prob[i] > 0.0 => cell_code::POSSIBLE,
                 CellFire::Unburnt => cell_code::UNBURNT,
             })
             .collect();
@@ -158,6 +163,7 @@ impl World {
         json!({
             "stats": self.stats(),
             "weather": self.fire.weather(),
+            "ensemble": self.fire.options(),
             "fire": self.fire_raster_b64(),
             "buildings": buildings,
             "roads": self.d.roads,

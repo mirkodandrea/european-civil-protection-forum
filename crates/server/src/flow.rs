@@ -206,24 +206,45 @@ fn fallback_update(digest: &Value, events: &[String]) -> String {
     s
 }
 
-/// Simulate the resolving turn one minute at a time. The lock is taken per
-/// minute, so the renderer redraws after every step and the WebSocket feed
-/// (throttled to 4 Hz) tells browsers to re-fetch. `pace_ms` spaces the steps
-/// in wall-clock time; 0 runs as fast as the model computes (~0.1 ms/minute).
+/// Simulate the resolving turn one simulated second at a time. The lock is
+/// taken per step, so the renderer redraws continuously and the WebSocket feed
+/// (throttled to 4 Hz) tells browsers to re-fetch.
+///
+/// `speed` is simulated seconds per wall-clock second: the loop keeps the
+/// simulation clock on that schedule (re-anchoring if the Director changes
+/// it mid-turn). 0 runs as fast as the model computes (~0.4 s for a
+/// 30-minute turn with the default 32-run ensemble).
 pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {
+    use std::time::{Duration, Instant};
+    let mut anchor: Option<(Instant, i64, f32)> = None;
     loop {
-        let (done, pace) = {
-            let mut ex = state.lock();
-            (ex.step_resolution(exercise::STEP_S)?, ex.pace_ms)
+        let (sim_now, speed) = {
+            let ex = state.lock();
+            (ex.world.time_s(), ex.speed)
         };
+        if speed <= 0.0 {
+            anchor = None;
+            let done = state.lock().step_resolution(exercise::STEP_S)?;
+            if done {
+                break;
+            }
+            tokio::task::yield_now().await;
+            continue;
+        }
+        let (t0, s0, _) = *anchor.get_or_insert((Instant::now(), sim_now, speed));
+        if anchor.map(|a| a.2) != Some(speed) {
+            anchor = Some((Instant::now(), sim_now, speed));
+            continue;
+        }
+        let target = s0 + (t0.elapsed().as_secs_f64() * speed as f64) as i64;
+        let mut done = false;
+        while !done && state.lock().world.time_s() < target {
+            done = state.lock().step_resolution(exercise::STEP_S)?;
+        }
         if done {
             break;
         }
-        if pace > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(pace as u64)).await;
-        } else {
-            tokio::task::yield_now().await;
-        }
+        tokio::time::sleep(Duration::from_millis(15)).await;
     }
     let report = state.lock().finish_resolution()?;
     Ok(report)

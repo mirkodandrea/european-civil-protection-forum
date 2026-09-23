@@ -16,7 +16,7 @@
   <span class="grow"></span>
   <button id="start" class="primary">Start exercise</button>
   <label class="small">Δt <input id="minutes" type="number" min="1" max="1440" value="30" style="width:64px"> min</label>
-  <label class="small" title="Wall-clock milliseconds per simulated minute while a turn is simulated. 0 = maximum speed.">pace <input id="pace" type="number" min="0" max="10000" step="50" value="0" style="width:70px"> ms/min</label>
+  <label class="small" title="Simulated seconds per real second while a turn is simulated (60 = one simulated minute per second). 0 = maximum speed.">speed <input id="speed" type="number" min="0" max="86400" step="30" value="0" style="width:70px">×</label>
   <button id="resolve" class="primary">Resolve turn ▶</button>
   <select id="rbturn" title="Roll back to the start of turn"></select>
   <button id="rollback">Rollback</button>
@@ -34,6 +34,7 @@
       <div class="mapbox"><canvas id="map"></canvas></div>
       <div class="row small legend">
         <span><i style="background:#ff4614"></i>burning</span><span><i style="background:#231e1c"></i>burnt</span>
+        <span><i style="background:#ffa028;opacity:.45"></i>possible (some runs)</span>
         <span><i style="background:#ffe000"></i>fire line</span><span><i style="background:#3c96ff"></i>wetted</span>
         <span><i style="background:#00c8ff"></i>evacuating</span><span><i style="background:#2e6bff"></i>evacuated</span>
         <span><i style="background:#ff7a00"></i>damaged</span><span><i style="background:#000"></i>destroyed</span>
@@ -170,7 +171,7 @@ $('resolve').onclick = async () => {
   try { await api('/api/master/resolve', { minutes: +$('minutes').value }); } catch (e) { alertErr(e); }
   $('resolve').disabled = false;
 };
-$('pace').onchange = () => api('/api/master/settings', { pace_ms: +$('pace').value }).catch(alertErr);
+$('speed').onchange = () => api('/api/master/settings', { speed: +$('speed').value }).catch(alertErr);
 $('rollback').onclick = () => api('/api/master/rollback', { turn: +$('rbturn').value }).catch(alertErr);
 $('end').onclick = () => api('/api/master/end', {}).catch(alertErr);
 function alertErr(e) { $('err').textContent = e.message; }
@@ -229,7 +230,7 @@ async function refresh() {
   $('start').hidden = state.phase !== 'briefing';
   $('resolve').disabled = state.phase !== 'orders';
   $('rollback').disabled = $('end').disabled = state.phase === 'resolving';
-  if (document.activeElement !== $('pace')) $('pace').value = state.pace_ms;
+  if (document.activeElement !== $('speed')) $('speed').value = state.speed;
   if (document.activeElement !== $('minutes')) $('minutes').value = state.turn_minutes;
   $('rbturn').innerHTML = Array.from({ length: Math.max(state.turn, 1) }, (_, i) => `<option value="${i + 1}">turn ${i + 1}</option>`).join('');
   $('rbturn').value = state.turn;

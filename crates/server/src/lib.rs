@@ -133,7 +133,7 @@ async fn get_state(State(s): State<AppState>) -> ApiResult {
         "turn": ex.turn,
         "phase": ex.phase,
         "turn_minutes": ex.turn_minutes,
-        "pace_ms": ex.pace_ms,
+        "speed": ex.speed,
         "resolving": ex.resolving.as_ref().map(|r| json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "minutes": r.minutes})),
         "generation": ex.generation,
         "last_turn": ex.last_turn,
@@ -335,9 +335,9 @@ async fn post_end(State(s): State<AppState>) -> ApiResult {
 struct SettingsBody {
     #[serde(default)]
     turn_minutes: Option<u32>,
-    /// Wall-clock ms per simulated minute during resolution; 0 = maximum speed.
+    /// Simulated seconds per wall-clock second during resolution; 0 = maximum speed.
     #[serde(default)]
-    pace_ms: Option<u32>,
+    speed: Option<f32>,
 }
 
 async fn post_settings(State(s): State<AppState>, Json(b): Json<SettingsBody>) -> ApiResult {
@@ -347,12 +347,12 @@ async fn post_settings(State(s): State<AppState>, Json(b): Json<SettingsBody>) -
         ex.turn_minutes = m;
         ex.record("settings", exercise::MASTER, json!({"turn_minutes": m}));
     }
-    if let Some(p) = b.pace_ms {
-        let p = p.min(10_000);
-        ex.pace_ms = p;
-        ex.record("settings", exercise::MASTER, json!({"pace_ms": p}));
+    if let Some(v) = b.speed {
+        let v = if v.is_finite() { v.clamp(0.0, 86_400.0) } else { 0.0 };
+        ex.speed = v;
+        ex.record("settings", exercise::MASTER, json!({"speed": v}));
     }
-    Ok(Json(json!({"turn_minutes": ex.turn_minutes, "pace_ms": ex.pace_ms})))
+    Ok(Json(json!({"turn_minutes": ex.turn_minutes, "speed": ex.speed})))
 }
 
 // ---------------------------------------------------------------- ws

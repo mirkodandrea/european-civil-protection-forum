@@ -118,7 +118,7 @@ export class MapView {
     const img = g.createImageData(cols, rows);
     for (let i = 0; i < rows * cols; i++) {
       const v = fire[i];
-      const rgba = v === 1 ? [255, 70, 20, 235] : v === 2 ? [35, 30, 28, 215] : v === 3 ? [150, 90, 30, 230] : v === 4 ? [60, 150, 255, 110] : [0, 0, 0, 0];
+      const rgba = v === 1 ? [255, 70, 20, 235] : v === 2 ? [35, 30, 28, 215] : v === 3 ? [150, 90, 30, 230] : v === 4 ? [60, 150, 255, 110] : v === 5 ? [255, 150, 40, 80] : [0, 0, 0, 0];
       img.data.set(rgba, i * 4);
     }
     g.putImageData(img, 0, 0);

@@ -2,7 +2,7 @@
 
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
-- a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread, buildings with occupants, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, minute by minute;
+- a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread as a 32-run Monte Carlo ensemble (the fire is the set of cells reached by at least half of the runs), buildings with occupants, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, second by second;
 - an **Exercise Director (Master)** web console: injects (MSEL), turn control, approval of every player action, god-mode map tools, AI prompts, commands by code, rollback;
 - **player** web pages (tablets): role-specific inbox in the player's own language, free-text replies;
 - an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash`) that translates injects, turns replies into candidate commands, asks for clarification when orders are vague, and writes feedback and situation updates.
@@ -21,7 +21,7 @@ A complete two-turn exercise, played for real: every reply was typed into the UI
 
 ### What you see
 
-> The video was recorded before live turn simulation existed: after each resolution the big screen *replays* the turn over 10 s. Now the turn is simulated live, minute by minute, at the Director's chosen pace (see [Playing a turn](#playing-a-turn)). Everything else is unchanged.
+> The video was recorded with an earlier version: a single fire realization, and a 10 s *replay* after each resolution. Now the fire is a 32-run Monte Carlo ensemble (median fire plus an uncertainty halo), and each turn is simulated live, second by second, at the Director's chosen speed (see [Playing a turn](#playing-a-turn)). The exercise flow is unchanged.
 
 | Left: the phone (480 × 1040) | Right: the big screen (Bevy 3D) |
 |---|---|
@@ -195,14 +195,14 @@ devtunnel host -p 8080            # private: only your account can open the URL
 
 Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the URL could run the Director console and spend your OpenRouter credit.
 
-Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`. The synthetic scenario is (re)generated with `cargo run -p scenario --bin gen-scenario`.
+Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The synthetic scenario is (re)generated with `cargo run -p scenario --bin gen-scenario`.
 
 ## Playing a turn
 
 1. **Director**: *Start exercise*, then send MSEL injects (*Injects* tab) or custom ones. Each player receives them translated.
 2. **Players** reply in their own words ("evacuate the school to the sports centre, close the northern road"). The AI turns this into commands, checked against the role's authority and resources.
 3. **Director** approves, edits (JSON) or rejects each proposal (*Proposals* tab). Players get feedback in their language. The Director can also act directly: map tools (ignite, fire line, drop, extinguish zone, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
-4. **Resolve turn ▶** (Δt, default 30 min): approved actions are executed, then the turn is **simulated live, one simulated minute at a time**. The 3D view redraws after every minute, the browsers refresh up to 4 times a second, and when the turn ends every player receives a situation update. **pace** (ms per simulated minute, next to Δt) sets how fast the turn plays out: 0 = maximum speed (a 30-minute turn computes in about 20 ms, so it looks instant); 100–300 ms/min lets the audience watch the fire spread (3–9 s for a 30-minute turn).
+4. **Resolve turn ▶** (Δt, default 30 min): approved actions are executed, then the turn is **simulated live, one simulated second at a time**. The 3D view redraws continuously, the browsers refresh up to 4 times a second, and when the turn ends every player receives a situation update. **speed** (next to Δt) is simulated seconds per real second: 0 = maximum speed (a 30-minute turn in about 0.45 s), 60× = one simulated minute per second (30 s per turn), 120× = 15 s per turn.
 5. Repeat. Use *Rollback* to return to the start of an earlier turn and *End* to finish. *Debrief JSON* gives the full timeline.
 
 Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone codes** from the map grid (`F4`), as zone edges for fire lines (`F4:N`), or as coordinates.
@@ -240,7 +240,7 @@ runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
 ## Tests
 
 ```bash
-cargo test --release --workspace                 # 94 tests, headless, mock LLM
+cargo test --release --workspace                 # 100 tests, headless, mock LLM
 TTX_LIVE_LLM=1 cargo test -p llm --test live -- --nocapture   # real OpenRouter call
 ```
 

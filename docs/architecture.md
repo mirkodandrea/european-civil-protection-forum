@@ -88,9 +88,9 @@ sequenceDiagram
 
 ## Turn model
 
-`Briefing → start → Orders → Resolving (minute by minute) → Orders … → end → Debrief`.
+`Briefing → start → Orders → Resolving (second by second) → Orders … → end → Debrief`.
 
-- Player actions approved during a turn are **applied together at resolution**. The turn is then **simulated live**: the phase becomes `resolving`, and a server task (`flow::run_resolution`) calls `Exercise::step_resolution(60 s)` until Δt (default 30 min) has elapsed. It takes the lock once per simulated minute and waits `pace_ms` between steps (0 = maximum speed; one step costs about 0.1 ms). Every step bumps `generation`, so the renderer redraws each minute and the WebSocket feed (throttled to 4 Hz) makes browsers re-fetch at a coarser rate. `finish_resolution` then logs the turn, snapshots it and opens the next one. Player replies, rollback and End are refused while a turn is resolving. Director commands and injects still work.
+- Player actions approved during a turn are **applied together at resolution**. The turn is then **simulated live**: the phase becomes `resolving`, and a server task (`flow::run_resolution`) calls `Exercise::step_resolution(1 s)` until Δt (default 30 min) has elapsed. It takes the lock once per simulated second and keeps the simulation clock at `speed` simulated seconds per real second (0 = as fast as possible, ~0.45 s for a 30-minute turn). Every step bumps `generation`, so the renderer redraws continuously and the WebSocket feed (throttled to 4 Hz) makes browsers re-fetch at a coarser rate. `finish_resolution` then logs the turn, snapshots it and opens the next one. Player replies, rollback and End are refused while a turn is resolving. Director commands and injects still work.
 - Master actions (map tools, commands by code, approved AI prompts) **apply immediately**.
 - Resources are per turn: usage resets when a turn opens. Approved but not yet applied actions already hold resources, so a second drop by the only air tanker is rejected.
 - A snapshot is taken at the start of every turn. **Rollback** restores the world and marks later proposals as `rolled_back`; messages stay as history.

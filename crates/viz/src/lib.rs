@@ -67,6 +67,7 @@ pub struct Snapshot {
     pub resolving: Option<(u32, i64, i64)>,
     pub feed: Vec<String>,
     pub llm_model: String,
+    pub ensemble: Option<fire::FireOptions>,
 }
 
 /// The scenario, shared by all systems.
@@ -129,9 +130,11 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
     snap.time_s = w.time_s();
     snap.clock = w.clock();
     snap.weather = Some(w.fire.weather());
+    snap.ensemble = Some(w.fire.options());
     snap.stats = Some(w.stats());
     let cleared = w.fire.cleared();
     let wet = w.fire.added_moisture();
+    let prob = w.fire.probability();
     snap.cells = w
         .fire
         .state()
@@ -142,6 +145,7 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
             fire::CellFire::Burnt => 2,
             fire::CellFire::Unburnt if cleared[i] => 3,
             fire::CellFire::Unburnt if wet[i] > 10.0 => 4,
+            fire::CellFire::Unburnt if prob[i] > 0.0 => 5,
             fire::CellFire::Unburnt => 0,
         })
         .collect();

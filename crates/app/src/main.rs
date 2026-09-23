@@ -3,6 +3,7 @@
 //! ```text
 //! ttx [--scenario data/scenarios/synthetic_valley.json] [--seed 1]
 //!     [--port 8080] [--web web] [--headless]
+//!     [--realizations 32] [--cutoff 0.5]
 //! ```
 //!
 //! Loads `.env` (OPENROUTER_API_KEY, optional OPENROUTER_MODEL), builds the
@@ -21,6 +22,8 @@ struct Args {
     port: u16,
     web: PathBuf,
     headless: bool,
+    realizations: usize,
+    cutoff: f32,
 }
 
 fn args() -> Result<Args> {
@@ -30,6 +33,8 @@ fn args() -> Result<Args> {
         port: 8080,
         web: PathBuf::from("web"),
         headless: false,
+        realizations: 32,
+        cutoff: 0.5,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -40,8 +45,10 @@ fn args() -> Result<Args> {
             "--port" => a.port = val()?.parse()?,
             "--web" => a.web = PathBuf::from(val()?),
             "--headless" => a.headless = true,
+            "--realizations" => a.realizations = val()?.parse()?,
+            "--cutoff" => a.cutoff = val()?.parse()?,
             "-h" | "--help" => {
-                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless]");
+                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5]");
                 std::process::exit(0);
             }
             other => anyhow::bail!("unknown argument {other}"),
@@ -65,7 +72,8 @@ fn main() -> Result<()> {
         s.save(&a.scenario)?;
         s
     };
-    let world = sim::World::new(Arc::new(scn), a.seed)?;
+    let world = sim::World::with_options(Arc::new(scn), a.seed, sim::FireOptions { realizations: a.realizations, cutoff: a.cutoff })?;
+    tracing::info!("fire: {}-run Monte Carlo ensemble, cutoff {}", a.realizations, a.cutoff);
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
     let log = PathBuf::from("runs").join(format!("run-{stamp}.jsonl"));
     tracing::info!("event log: {}", log.display());

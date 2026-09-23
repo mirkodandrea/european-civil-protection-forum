@@ -30,8 +30,8 @@ use serde_json::{json, Value};
 use sim::{Actor, Command, SimEvent, Verdict, World, WorldSnapshot};
 
 pub const DEFAULT_TURN_MINUTES: u32 = 30;
-/// Resolution granularity: the world is published after every simulated minute.
-pub const STEP_S: i64 = 60;
+/// Resolution granularity: the world is published after every simulated second.
+pub const STEP_S: i64 = 1;
 pub const MASTER: &str = "master";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -238,8 +238,9 @@ pub struct Exercise {
     pub sent_injects: Vec<String>,
     /// The turn currently being simulated, if any.
     pub resolving: Option<Resolution>,
-    /// Wall-clock milliseconds per simulated minute while resolving; 0 = as fast as possible.
-    pub pace_ms: u32,
+    /// Simulated seconds per wall-clock second while resolving (60 = one
+    /// simulated minute per second); 0 = as fast as possible.
+    pub speed: f32,
     snapshots: Vec<(u32, WorldSnapshot)>,
     log_file: Option<PathBuf>,
     next_id: u64,
@@ -266,7 +267,7 @@ impl Exercise {
             last_turn: None,
             sent_injects: Vec::new(),
             resolving: None,
-            pace_ms: 0,
+            speed: 0.0,
             snapshots: Vec::new(),
             log_file: None,
             next_id: 1,
@@ -371,9 +372,9 @@ impl Exercise {
         Ok(())
     }
 
-    /// Resolve a whole turn at once: [`Self::begin_resolution`], one-minute
+    /// Resolve a whole turn at once: [`Self::begin_resolution`], one-second
     /// [`Self::step_resolution`]s, [`Self::finish_resolution`]. The server runs
-    /// the same three steps with the lock released between minutes, so the
+    /// the same three steps with the lock released between steps, so the
     /// renderer and the browsers see the turn unfold.
     pub fn resolve_turn(&mut self, minutes: Option<u32>) -> Result<TurnReport> {
         self.begin_resolution(minutes)?;

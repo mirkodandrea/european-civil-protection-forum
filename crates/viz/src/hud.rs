@@ -52,6 +52,9 @@ pub fn draw(
                 let a = arrows[(((w.wind_dir_deg + 22.5).rem_euclid(360.0)) / 45.0) as usize % 8];
                 ui.label(RichText::new(format!("wind {a} from {:.0}° {:.0} km/h · fuel moisture {:.0}%", w.wind_dir_deg, w.wind_speed_kmh, w.moisture_pct)).color(Color32::LIGHT_GRAY).size(15.0));
             }
+            if let Some(e) = snap.ensemble {
+                ui.label(RichText::new(format!("fire = cells reached by ≥{:.0}% of {} runs · halo = fewer", e.cutoff * 100.0, e.realizations)).color(Color32::GRAY).size(13.0));
+            }
             if let Some(st) = &snap.stats {
                 ui.add_space(4.0);
                 for (k, v) in [

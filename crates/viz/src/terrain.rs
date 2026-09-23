@@ -51,6 +51,8 @@ fn cell_colour(base: [f32; 4], code: u8) -> [f32; 4] {
         2 => [0.10, 0.09, 0.08, 1.0],
         3 => [0.52, 0.40, 0.24, 1.0],
         4 => [base[0] * 0.7, base[1] * 0.8, (base[2] + 0.35).min(1.0), 1.0],
+        // Uncertainty halo: reached by some runs, below the cutoff.
+        5 => [base[0] * 0.6 + 0.4, base[1] * 0.75 + 0.1, base[2] * 0.6, 1.0],
         _ => base,
     }
 }

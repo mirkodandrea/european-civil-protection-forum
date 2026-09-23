@@ -23,9 +23,12 @@ pub mod command;
 pub mod digest;
 
 pub use command::{catalogue, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
+pub use fire::FireOptions;
 
-/// Sub-step of [`World::advance`], seconds.
-pub const SUBSTEP_S: i64 = 60;
+/// Sub-step of [`World::advance`], seconds. Buildings, evacuations, roads and
+/// arrivals update every simulated second; the fire core is event-driven, so
+/// its result does not depend on this.
+pub const SUBSTEP_S: i64 = 1;
 /// Metres of fire line one ground crew cuts per turn.
 pub const LINE_M_PER_CREW: f32 = 600.0;
 pub const DEFAULT_LINE_WIDTH_M: f32 = 40.0;
@@ -179,9 +182,13 @@ pub struct World {
 }
 
 impl World {
-    /// A world at t = 0, with the scenario's opening fire lit.
+    /// A world at t = 0, with the scenario's opening fire lit (default ensemble).
     pub fn new(scn: Arc<Scenario>, seed: u64) -> Result<World> {
-        let mut fire = FireSim::new(&scn, seed)?;
+        World::with_options(scn, seed, fire::FireOptions::default())
+    }
+
+    pub fn with_options(scn: Arc<Scenario>, seed: u64, options: fire::FireOptions) -> Result<World> {
+        let mut fire = FireSim::with_options(&scn, seed, options)?;
         for ign in &scn.initial_ignitions {
             fire.ignite(ign.at, ign.radius_m)?;
         }
