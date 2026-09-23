@@ -13,17 +13,17 @@ Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agenti
 
 ## Demo
 
-[![Demo: one phone plays every role next to the 3D simulator (4.5 min)](docs/media/ttx_demo_poster.jpg)](docs/media/ttx_demo.mp4)
+[![Demo: one phone plays every role next to the 3D simulator, narrated (4 min)](docs/media/ttx_demo_poster.jpg)](docs/media/ttx_demo.mp4)
 
-**[▶ Watch the demo: docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4)** (4 min 32 s, 1920×1080, 24 MB, no audio)
+**[▶ Watch the demo: docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4)** (4 min 12 s, 1920×1080, 23 MB, **narrated** by Google Gemini TTS, voice "Charon", with burned-in subtitles plus a subtitle track; separate [`.srt`](docs/media/ttx_demo.srt) and [`.vtt`](docs/media/ttx_demo.vtt))
 
-A complete two-turn exercise, played for real: every reply was typed into the UI, every translation, interpretation, feedback and situation update was produced live by `deepseek/deepseek-v4.1-flash`, and every consequence was computed by the simulator (32-run Monte Carlo fire, turns simulated live at 120×). Nothing is mocked or pre-scripted except the players' words.
+A complete two-turn exercise, played for real: every reply was typed into the UI; every translation, interpretation, feedback and situation update came from `deepseek/deepseek-v4.1-flash` (recorded once, replayed from [`scripts/record/llm_cassette.jsonl`](scripts/record/llm_cassette.jsonl) so re-recordings are identical); every consequence was computed by the simulator (32-run Monte Carlo fire, turns simulated live at 120×). Nothing is mocked or pre-scripted except the players' words.
 
 ### What you see
 
 | Left: the phone (480 × 1040) | Right: the big screen (Bevy 3D) |
 |---|---|
-| `play.html`: the Director and the three players as tabs in one window. A yellow dot marks a tab with new messages or open proposals. The red bar at the bottom is the caption explaining each step (added for the video only) | The simulator in slow auto-orbit. Top left: turn, clock, weather, the fire model, key numbers, and a progress bar while a turn is simulated. Top right: the exercise feed (injects, orders, approvals). During each resolution the turn is **simulated live**: flame tongues sized by fireline intensity and by the share of runs that burn each cell, leaning with the wind; a faint glow ahead where only some runs reach; smoke drifting downwind; the ground cooling from glowing to charcoal |
+| `play.html`: the Director and the three players as tabs in one window. A yellow dot marks a tab with new messages or open proposals | The simulator with the **cinematic camera**: it cuts to the place each inject, proposal and order refers to (a slow push-in), follows the fire while a turn is simulated, and holds a wide establishing orbit in between. Warm low sun with shadows, fog, bloom, and fire light on the terrain. Top left: turn, clock, weather, the fire model, key numbers, a progress bar while a turn is simulated. Top right: the exercise feed. During each resolution the turn is **simulated live**: flame tongues sized by fireline intensity and by the share of runs that burn each cell, leaning with the wind; a faint glow ahead where only some runs reach; smoke drifting downwind; the ground cooling from glowing to charcoal. Under it: the subtitles |
 
 ### The situation
 
@@ -38,32 +38,38 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 
 ### Timeline
 
-| Video | Who | What happens | What it shows |
+Generated from the recording by `scripts/record/readme_demo.py`: each row is a narration line, at the moment it starts in the video.
+
+<!-- demo:timeline -->
+| Video | Who | What happens (narration) | What it shows |
 |---|---|---|---|
-| 0:00 | — | The all-roles page opens | One device can run the whole exercise |
-| 0:06 | Regional | Switches its language to Armenian | Language is per player and can change at any time |
-| 0:09 | Director | *Start exercise*: turn 1, Day 1 13:00; sets the turn speed to 120× | Turn-based control |
-| 0:13 | Director | Sends MSEL injects I-01 (fire reported), I-02 (school in session), I-03 (fire behaviour estimate) | MSEL continuity with PPRD East 3. Each inject is translated for its recipients (Italian for the Mayor, Armenian for Regional) |
-| 0:51 | Mayor | Reads the injects in Italian | Role-specific information |
-| 0:56 | Mayor | Replies in Italian, in free text | No command language to learn |
-| 1:03 | Fire | Orders fire lines by zone code and an air-tanker drop | Zone-code addressing (`F4:N`), named places |
-| 1:13 | Director | Sees both replies as proposals: original text, English translation, AI summary, commands, and a ✓/✗ verdict per command | AI interprets, rules decide |
-| 1:21 | Director | The Mayor's school evacuation is flagged ✗: *"moving 120 people without cars needs 3 buses, only 2 available this turn"* | Deterministic resource checks the AI cannot bypass |
-| 1:26 | Director | AI prompt: one extra bus for the Mayor, confirmed by an inject | Master omnipotence in natural language |
-| 1:35 | Director | Reviews and approves the AI's proposal: `AdjustResource +1 bus` plus an inject draft from the "Regional transport company" | AI proposes, Master approves; nothing is applied silently |
-| 1:40 | Director | Approves the Fire Commander's orders with a note | Master feedback to players |
-| 1:44 | Director | Approves the Mayor's orders; feasibility is re-checked, now ✓ with 3 buses | Validation at decision time |
-| 1:48 | Director | *Resolve turn* (30 min): the turn is simulated live on the big screen, 30 simulated minutes in 15 s | Approved actions apply at resolution; live simulation |
-| 1:51 | — | Flames along the front, the uncertainty glow ahead, fire lines cut, the school evacuating | Intensity and probability drive the flames |
-| 2:06 | Fire | Receives an AI-written situation update for its role | Per-role SITREPs in each player's language |
-| 2:47 | Director | Turn 2: sends I-04 (wind strengthening), then by code `SetWeather 55 km/h` and `Ignite G5` | Escalation, commands by code |
-| 3:07 | Regional | Reads the wind warning in Armenian; requests 2 air tankers (UCPM) and 2 ground crews, in Armenian | International assistance pressure point |
-| 3:15 | Fire | Sends a vague order: *"Send the remaining crews over there to hold it."* | — |
-| 3:24 | Fire | Receives a clarification question instead of a guess | The AI never invents places |
-| 3:29 | Fire | Answers precisely: F4 east edge, G4 north edge, drop on G4 | — |
-| 3:34 | Director | Rejects the vague order (with a note), approves the UCPM request and the precise fire lines | Master control over every action |
-| 3:52 | Director | *Resolve turn* (60 min), live: the lines hold above Pineta while the new fire in G5 runs through the farmland | — |
-| 4:25 | — | Final state; everything is in the debrief log | Traceability |
+| 0:02 | — | PPRD East table-top exercise, with AI support. One phone plays every role: the Director, the Mayor, the Fire Commander and Regional Civil Protection. | One device can run the whole exercise |
+| 0:13 | Regional | Each player picks a language. Regional Civil Protection will play in Armenian. | Language is per player and can change at any time |
+| 0:19 | Director | The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill. | Turn-based control; turn speed set to 120× |
+| 0:28 | Director | The Director sends the first injects from the exercise script. The AI translates each one for its recipient. | MSEL continuity with PPRD East 3; injects translated per recipient |
+| 0:35 | Mayor | The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School. | Role-specific information in the player's language |
+| 0:46 | Mayor | The Mayor answers in Italian, in their own words. | No command language to learn |
+| 0:53 | Fire | The Fire Commander orders fire lines using zone codes from the map grid, and an air-tanker drop. | Zone-code addressing (F4:N), named places |
+| 1:02 | Director | The AI turns each reply into commands, and the simulator checks every command against the role's authority and resources. | AI interprets, rules decide |
+| 1:11 | Director | It flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2. | Deterministic resource checks the AI cannot bypass |
+| 1:20 | Director | The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject. | Master omnipotence in natural language |
+| 1:26 | Director | The Director reviews the AI's proposal, a resource change plus an inject draft, and approves it. | AI proposes, Master approves; nothing is applied silently |
+| 1:34 | Director | The Fire Commander's orders are approved, with a note to the player. | Master feedback to players |
+| 1:39 | Director | And the Mayor's orders now pass: 3 buses for 120 pupils. | Feasibility re-checked at decision time |
+| 1:45 | Mayor | The Mayor gets exercise control's feedback in Italian. | Multilingual feedback loop |
+| 1:54 | Director | The Director resolves turn 1: thirty simulated minutes, played live on the big screen at 120 times speed. | Approved actions apply at resolution; live simulation |
+| 2:03 | — | Flame length follows the fire's intensity and the share of Monte Carlo runs that burn each cell. The glow ahead is where only some runs reach. | Intensity and probability drive the flames |
+| 2:13 | — | The fire lines are cut, the air tanker drops, and the school is evacuated to the sports centre. | Operational consequences of decisions |
+| 2:21 | Fire | Every player gets an AI-written situation update for their role. | Per-role situation reports in each player's language |
+| 2:28 | Director | Turn 2. The Director escalates: a wind warning, then commands by code, raising the wind to 55 km/h and starting a new fire in zone G5. | Escalation, commands by code |
+| 2:41 | Regional | Regional Civil Protection reads the wind warning in Armenian, and asks for international assistance through the EU Civil Protection Mechanism. | International assistance pressure point (UCPM) |
+| 2:51 | Fire | A vague order from the Fire Commander… | — |
+| 2:55 | Fire | …gets a clarification question from the AI instead of a guess. | The AI never invents places |
+| 3:00 | Fire | The Fire Commander answers precisely. | — |
+| 3:05 | Director | The Director rejects the vague order, and approves the assistance request and the precise fire lines. | Master control over every action |
+| 3:20 | Director | Turn 2 resolves live: sixty minutes. Reinforcements arrive, the lines protect Pineta, and the new fire spreads through the farmland. | Live simulation of the escalation |
+| 3:53 | — | Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide; the AI mediates. | Traceability |
+<!-- /demo:timeline -->
 
 ### What the players wrote and what the AI made of it
 
@@ -75,7 +81,7 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 - **AI translation**: "Warn zone F4 and evacuate the Pineta Primary School towards the Valverde Sports Centre, which is to be opened as a reception area. Close the Northern Road to civilian traffic. Notify the fire brigade."
 - **Commands**: `IssueWarning F4` ✓ · `EvacuateBuilding Pineta Primary School → Valverde Sports Centre` ✗ *needs 3 buses, only 2 available* · `OpenShelter Valverde Sports Centre` ✓ · `CloseRoad north_road` ✓
 - **"Notify the fire brigade"** became a message to the Fire Commander (delivered at once), not a command.
-- **Feedback after approval** (Italian): *"Signor Sindaco, le sue disposizioni sono state approvate: avviso alla zona F4; evacuazione della Scuola Primaria Pineta verso il Centro Sportivo Valverde (3 bus per 120 persone); apertura del centro…"*
+- **Feedback after approval** (Italian): *"Signor Sindaco, gli ordini sono approvati: avviso alla zona F4; evacuazione della Scuola Primaria Pineta verso il Centro Sportivo Valverde con 3 bus per 120 persone; apertura del rifugio…"*
 </details>
 
 <details>
@@ -92,7 +98,7 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 
 > *The regional transport company gives the mayor one extra bus right now. Send the mayor a short inject from the Regional transport company confirming it.*
 
-- **Proposal**: `AdjustResource mayor.buses +1` plus the inject draft *"One additional bus available immediately"*. After approval the bus was added and the inject was translated and sent to the Mayor in Italian.
+- **Proposal**: `AdjustResource mayor.buses +1` plus the inject draft *"Additional bus allocated"*. After approval the bus was added and the inject was translated and sent to the Mayor in Italian.
 </details>
 
 <details>
@@ -100,7 +106,7 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 
 > *Խնդրում ենք միջազգային օգնությամբ (UCPM) 2 օդային տանկեր և տարածաշրջանային հրշեջ ծառայությունից 2 վերգետնյա թիմ հրշեջ հրամանատարի համար։ Տեղեկացրեք քաղաքապետին, որ Valverde Sports Centre-ը բաց է։*
 
-- **AI translation**: "Please request, with international assistance (UCPM), 2 air tankers, and from the regional fire service 2 ground crews for the fire commander. Inform the mayor that the Valverde Sports Centre is open."
+- **AI translation**: "Please request, with international assistance (UCPM), 2 air tankers and 2 ground crews from the regional fire service for the fire commander. Inform the mayor that the Valverde Sports Centre is open."
 - **Commands**: `RequestReinforcement air_tankers ×2` ✓ *arrive in 120 min from International assistance (UCPM / rescEU)* · `RequestReinforcement ground_crews ×2` ✓ *arrive in 60 min from the Regional fire service*
 - **Message**: the Mayor was told, in Italian, that the shelter is open.
 </details>
@@ -110,8 +116,8 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 
 > *Send the remaining crews over there to hold it.*
 
-- **No command.** AI summary: *"ordered the remaining ground crews to reinforce the line, but did not specify a location, so no action was recorded and a clarification was requested."*
-- **Clarification sent to the player**: *"Where exactly should the remaining ground crews deploy to hold the line — for example along F4:N, F4:E, or another zone edge?"*
+- **No command.** AI summary: *"wants the remaining ground crews sent to hold an existing fire line, but did not say which one, so no action was recorded pending clarification."*
+- **Clarification sent to the player**: *"Which location should the remaining ground crews hold: the fire line along F4:N, or the line from Pineta east edge to Forest edge east?"*
 - The Director rejected it with the note *"Please specify the zone edge."*
 
 > *One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4.*
@@ -121,6 +127,7 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 
 ### Outcome
 
+<!-- demo:outcome -->
 | | After turn 1 (13:30) | After turn 2 (14:30) |
 |---|---|---|
 | Burned area | 7.8 ha | 39.1 ha |
@@ -130,7 +137,8 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 | Buildings damaged / destroyed | 0 / 0 | 2 / 7 |
 | People at risk | 0 | 30 |
 | Roads cut by fire | Northern Road | Northern Road, SP1 Main Road |
-| Reinforcements | — | 2 ground crews arrived (air tankers due 15:30) |
+| Reinforcements arrived | — | 2 ground_crews from Regional fire service arrived for fire_commander |
+<!-- /demo:outcome -->
 
 **Debrief reading.** The fire lines on the F4 north and east edges and the G4 north edge held the head of the fire above Pineta. Not a single Pineta building was damaged, and the school was empty 20 minutes after the order. All 9 damaged or destroyed buildings were **farmhouses in G5, G6, F5 and F6**, around the second fire the Director started in turn 2. Nobody warned or evacuated those zones, so their 30 occupants count as *people at risk*. That is exactly the kind of gap a debrief should surface: the log shows when the ignition happened, what each role knew, and that no warning followed. The UCPM air tankers, requested at 13:30 with a 120-minute delay, were still en route when the turn ended. The full event log of this run is in [`docs/media/ttx_demo_log.jsonl`](docs/media/ttx_demo_log.jsonl).
 
@@ -153,9 +161,9 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 | **Play it** (any device) | `cargo run --release -p app`, then open `http://<host>:8080/play.html` | Follow the timeline above; the MSEL has the same injects |
 | **Play it from a phone** | Add `devtunnel host -p 8080` | See [Playing from a phone](#playing-from-a-phone) |
 | **Scripted, API only** | `./scripts/demo_session.sh` against a running `ttx` | The same session through HTTP calls, plus simulator screenshots in `docs/screenshots/` |
-| **Scripted and recorded** | `./scripts/record/record.sh` | Re-records `docs/media/ttx_demo.mp4` (plus captions and the run's event log): its own `ttx` on :8090, Playwright plays `play.html`, ffmpeg composes. Details in [scripts/record/README.md](scripts/record/README.md) |
+| **Scripted and recorded** | `./scripts/record/record.sh` | Re-records the narrated `docs/media/ttx_demo.mp4` (plus subtitles, captions and the run's event log) in about the video's own length plus ~40 s (LLM answers and narration replayed from caches), then `python3 scripts/record/readme_demo.py` refreshes the timeline and outcome tables above. Details in [scripts/record/README.md](scripts/record/README.md) |
 
-The simulator is deterministic for a given seed, but **the LLM is not**. Wording, summaries and even the split into commands differ from run to run, so the scripted session waits on game state (for example "no proposal still parsing") instead of fixed delays, and approves whatever the model proposed. Timestamped captions for the published video are in [`docs/media/ttx_demo_captions.json`](docs/media/ttx_demo_captions.json).
+The simulator is deterministic for a given seed, but **the LLM is not**: wording, summaries and even the split into commands differ from run to run. The recording therefore replays the model's answers from a cassette (use `TTX_REC_FRESH=1` to ask the model again), and the scripted session waits on game state (for example "no proposal still parsing") instead of fixed delays. Timestamped captions for the published video are in [`docs/media/ttx_demo_captions.json`](docs/media/ttx_demo_captions.json).
 
 ## Quick start
 

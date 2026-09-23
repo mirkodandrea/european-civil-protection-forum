@@ -34,6 +34,10 @@ Grounding comes from `World::gazetteer()` (map and zone grid description, places
 - Do not judge feasibility (the simulator does).
 - Feedback and SITREPs: facts from the data only, no advice.
 
+## Record / replay (cassette)
+
+`TTX_LLM_CASSETTE=<file>` makes every request go through a JSONL cassette keyed by (model, task, system prompt, user prompt, JSON mode) (`llm::cassette`). In `auto` mode hits are replayed and misses recorded; `replay` refuses misses; `record` always asks the model. The demo recording uses it: the simulator is seeded, so replayed answers make every later prompt identical, and the whole session replays exactly, with no model latency.
+
 ## Fallback
 
 `Llm::off()` (no key) or any error:

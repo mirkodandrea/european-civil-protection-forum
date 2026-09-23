@@ -1,23 +1,49 @@
-# Recording a demo session
+# Recording the narrated demo
 
-`record.sh` produces `docs/media/ttx_demo.mp4` (plus `ttx_demo_captions.json` and the run's event log `ttx_demo_log.jsonl`): a scripted two-turn session in which every role is played in the phone-sized all-roles page (`play.html`, left) next to the 3D simulator (right), with captions explaining each step.
+`record.sh` produces `docs/media/ttx_demo.mp4`: a scripted two-turn session in which every role is played in the phone-sized all-roles page (`play.html`, left) next to the 3D simulator with its cinematic camera (right), narrated by Google Gemini TTS through OpenRouter, with subtitles.
 
 ```bash
 cargo build --release -p app
-./scripts/record/record.sh                 # → docs/media/ttx_demo.mp4 (+ _captions.json)
+./scripts/record/record.sh              # → docs/media/ttx_demo.mp4, .srt, .vtt, _captions.json, _log.jsonl
+python3 scripts/record/readme_demo.py   # refresh the README's timeline and outcome tables
 ```
 
-Requirements: `.env` with `OPENROUTER_API_KEY` (the session uses the real LLM), Google Chrome, Node, ffmpeg. The script runs its own `ttx` on port 8090 (`TTX_REC_PORT`) in a temporary directory, so a game on :8080 is untouched. A second simulator window opens; keep it on screen while recording.
+Options (environment):
 
-## How it works
-
-| Piece | What it does |
+| Variable | Effect |
 |---|---|
-| `session.js` | Playwright drives Chrome at 480×1040 (1:1 pixels) through `play.html`: switches role tabs, types replies (Italian, English, Armenian), clicks approvals, and waits for the LLM through the API. It records the page to WebM and writes `video_start_ms.txt` plus caption timestamps (`marks.json`) |
-| Turn speed | The session sets the Director's speed to 120×, so each turn plays out live on the big screen (30 min in 15 s), and waits for the phase to return to `orders` |
-| Simulator instrumentation | While `runs/rec/ON` exists, the Bevy app saves a frame every 100 ms as `runs/rec/<unix-ms>.png` (`viz::record`). `TTX_ORBIT=1` starts the camera in slow auto-orbit; `TTX_CAM` (default for recordings: `TTX_REC_CAM`, `2800,2450,1700,0.7,0.52`) sets the view. `session.js` creates and removes the flag file |
-| `compose.py` | Lays the timestamped simulator frames on the browser video's timeline (ffmpeg concat demuxer with per-frame durations, so the halves stay in sync) and composes 1920×1080 H.264 |
+| `TTX_REC_FAST=1` | Hardware H.264 for the final pass (about 3× faster, bigger file) |
+| `TTX_REC_FRESH=1` | Ask the LLM again instead of replaying `llm_cassette.jsonl` (and re-record it) |
+| `TTX_TTS_VOICE` | Gemini voice (default `Charon`, set in `narration.json`) |
+| `TTX_REC_PORT` | Port of the recording `ttx` (default 8090; a game on :8080 is untouched) |
 
-The LLM answers differently on each run, so the session waits on API state rather than fixed delays (e.g. "no proposal still parsing"), and approvals target whatever the model produced. Tune the pacing with the `sleep`/hold values in `session.js`; tune the size/quality with `TTX_REC_CRF` (default 33 ≈ 22 MB for 4.5 min).
+Requirements: `.env` with `OPENROUTER_API_KEY` (only needed for new narration lines or fresh LLM answers), Google Chrome, Node, ffmpeg. A second simulator window opens; keep it on screen while recording.
 
-Separately, a single screenshot of the simulator window can be taken at any time by pressing `P` or by writing a target path into `runs/shot.req`.
+## Pipeline
+
+| Step | Tool | What it does |
+|---|---|---|
+| 1. Narration | `tts.js` | Reads `narration.json` and synthesises one WAV per line with `POST /api/v1/audio/speech` (`google/gemini-3.1-flash-tts-preview`, raw 24 kHz PCM → WAV). Cached in `.cache/tts/` by (model, voice, text), so only new or changed lines are paid for |
+| 2. Subtitles | `render_subs.js` | Renders one transparent PNG per line plus the title bar with Chrome (this ffmpeg build has no text rendering) |
+| 3. Simulator | `ttx` with `TTX_CINEMATIC=1` | Cinematic camera. While `runs/rec/ON` exists, the window is **piped straight into ffmpeg** at 20 fps and encoded while recording (hardware H.264, wall-clock timestamps) into `runs/rec/sim.mkv` (`viz::record`). The LLM runs through `TTX_LLM_CASSETTE` = `llm_cassette.jsonl`: answers are replayed, misses recorded |
+| 4. Session | `session.js` | Playwright drives Chrome at 480×1040 through `play.html` and records the page (encoded while recording). Each `caption(id)` marks where a narration line starts and **waits until the previous line has been spoken**, so the voice paces the session. Waits on API state, never on fixed LLM delays |
+| 5. Compose | `compose.py` | One ffmpeg pass: phone + simulator (synced by their start times) + title + burned-in subtitles under the simulator + narration mixed on the marks (stereo AAC) + a soft subtitle track; writes `.srt` and `.vtt` |
+
+## Speed
+
+| Run | Time for a ~4 min video |
+|---|---|
+| Before (PNG frames, live LLM, no narration) | ~6.5 min |
+| First narrated run (live LLM, TTS synthesis) | ~6 min |
+| Re-recording (cassette + TTS cache), x264 | ~4 min 50 s |
+| Re-recording with `TTX_REC_FAST=1` | ~4 min 25 s |
+
+Recording is real time by nature (the browser and the window are captured live), so the floor is the video's own length. Everything around it is gone: no LLM waits, no TTS calls, no frame files, and both streams are already encoded when the session ends.
+
+## Files
+
+- `narration.json`: the script (`text` = subtitle, `say` = what the voice reads when it differs, `who` / `shows` for the README timeline)
+- `llm_cassette.jsonl`: recorded model answers (committed, so anyone can re-record the same video without calling the model)
+- `session.js`, `tts.js`, `render_subs.js`, `compose.py`, `record.sh`, `readme_demo.py`
+
+A single screenshot of the simulator window: press `P`, or write a target path into `runs/shot.req`.

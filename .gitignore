@@ -1,5 +1,6 @@
-/target
+.DS_Store
 .env
 /runs
-.DS_Store
+/target
 node_modules/
+scripts/record/.cache/

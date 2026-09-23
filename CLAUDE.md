@@ -15,6 +15,8 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | Scenario | Synthetic "Valverde valley" for now |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
 | Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the Director sets a factor (e.g. 60× = 1 simulated min/s) |
+| Demo video | Narrated with OpenRouter TTS `google/gemini-3.1-flash-tts-preview` (voice Charon), subtitles burned in + track + .srt/.vtt; LLM answers replayed from `scripts/record/llm_cassette.jsonl`; simulator streamed into ffmpeg while recording |
+| Camera | Cinematic director follows injects, proposals, orders and the fire during turns; sun, shadows, fog, bloom, fire lights |
 | Flame rendering | Byram flame length from ensemble-mean intensity, scaled by probability; halo tongues below the cutoff; Froude wind tilt; age-based ground glow; smoke/sparks. Build on `propagator_abm` ideas but keep ensemble-aware |
 | Fire ensemble | 32-run Monte Carlo; the "actual" fire is cells reached by ≥ `cutoff` of runs (default 0.5, 0.25 = pessimistic), with quantile arrival times; lower-probability cells shown as a halo |
 
@@ -36,6 +38,7 @@ cargo run --release -p app [-- --headless] # :8080, master.html / player.html
 cargo run -p scenario --bin gen-scenario
 ./scripts/demo_session.sh                  # scripted 2-turn session against a running ttx
 echo "$PWD/runs/x.png" > runs/shot.req     # simulator window screenshot (or press P)
-./scripts/record/record.sh                 # re-record docs/media/ttx_demo.mp4 (own ttx on :8090)
+./scripts/record/record.sh                 # re-record the narrated demo (own ttx on :8090, LLM cassette, TTS cache)
+python3 scripts/record/readme_demo.py      # refresh README timeline/outcome from the recording
 devtunnel host -p 8080                     # private tunnel for phone play (play.html)
 ```

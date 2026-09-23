@@ -8,6 +8,8 @@ const path = require('path');
 const BASE = process.argv[2] || 'http://localhost:8090';
 const OUT = process.argv[3] || './out';
 const REC_FLAG = process.argv[4];
+// Narration with durations, written by tts.js.
+const NARRATION = new Map(JSON.parse(require('fs').readFileSync(process.argv[5] || path.join(OUT, 'narration.json'), 'utf8')).lines.map(l => [l.id, l]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
@@ -39,17 +41,20 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await page.waitForSelector('#bar button');
   await sleep(1500);
 
-  // Caption bar at the bottom of the phone screen.
-  await page.evaluate(() => {
-    const d = document.createElement('div');
-    d.id = 'cap';
-    d.style.cssText = 'flex:none;min-height:96px;display:flex;align-items:center;background:#b3261e;color:#fff;font:600 17px/1.35 system-ui;padding:10px 14px;pointer-events:none';
-    document.body.appendChild(d);
-  });
-  const caption = async (t, hold = 0) => {
-    log('CAPTION', t);
-    marks.push({ t: Date.now() - videoStart, caption: t });
-    await page.evaluate(t => { document.getElementById('cap').textContent = t; }, t);
+  // Narration: each line is a WAV of known length (tts.js). A caption marks
+  // the moment its line starts; the next one waits until the previous has been
+  // spoken, so the voice paces the session. compose.py lays the audio and the
+  // subtitles on these marks.
+  let speechEnds = 0;
+  const caption = async (id, hold = 0) => {
+    const line = NARRATION.get(id);
+    if (!line) throw new Error('no narration line ' + id);
+    const wait = speechEnds - Date.now();
+    if (wait > 0) await sleep(wait);
+    const t = Date.now() - videoStart;
+    log('SAY', id, line.duration_s.toFixed(1) + 's');
+    marks.push({ id, t, duration_s: line.duration_s, text: line.text, caption: line.text });
+    speechEnds = Date.now() + line.duration_s * 1000 + 350;
     if (hold) await sleep(hold);
   };
   const tab = async name => {
@@ -69,20 +74,20 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   const lastPid = async () => (await getJSON('/api/master')).proposals.at(-1).id;
 
   // ---------------------------------------------------------------- turn 1
-  await caption('PPRD East TTX — one phone plays every role: Director, Mayor, Fire Commander, Regional Civil Protection.', 3500);
+  await caption('intro', 1500);
   await tab('Regional');
-  await caption('Each player picks a language. Regional Civil Protection will play in Armenian.', 1000);
+  await caption('language', 1000);
   await F('Regional').locator('#lang').selectOption('hy');
   await sleep(1800);
 
   await tab('Director');
-  await caption('The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill.', 1200);
+  await caption('start', 1200);
   await F('Director').locator('#start').click();
   // Turns are simulated live on the big screen: 120× = one simulated minute every half second.
   await F('Director').locator('#speed').fill('120');
   await F('Director').locator('#speed').dispatchEvent('change');
   await sleep(2000);
-  await caption('The Director sends the first injects from the MSEL. The AI translates each one for its recipient.', 500);
+  await caption('injects', 500);
   await F('Director').locator('#tb-injects').click();
   await sleep(800);
   for (const id of ['I-01', 'I-02', 'I-03']) {
@@ -93,17 +98,17 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   }
 
   await tab('Mayor');
-  await caption('The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School.', 500);
+  await caption('mayor_reads', 500);
   await scrollInbox('Mayor', 'top');
   await sleep(3500);
-  await caption('The Mayor answers in Italian, in their own words.', 300);
+  await caption('mayor_replies', 300);
   await scrollTo('Mayor', '#reply');
   await type(F('Mayor').locator('#reply'), "Allertate la zona F4 ed evacuate la scuola primaria di Pineta verso il centro sportivo di Valverde, da aprire come area di accoglienza. Chiudete la Northern Road al traffico civile. Avvisate i vigili del fuoco.");
   await F('Mayor').locator('#send').click();
   await sleep(1200);
 
   await tab('Fire');
-  await caption('The Fire Commander orders fire lines using zone codes from the map grid, plus an air-tanker drop.', 300);
+  await caption('fire_orders', 300);
   await scrollInbox('Fire', 'bottom');
   await sleep(1500);
   await scrollTo('Fire', '#reply');
@@ -112,7 +117,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(1000);
 
   await tab('Director');
-  await caption('The AI turns each reply into commands. The simulator checks each one against the role’s authority and resources…', 300);
+  await caption('proposals', 300);
   await F('Director').locator('#tb-proposals').click();
   await waitFor(noneParsing, 'turn-1 parsing');
   await sleep(1500);
@@ -120,9 +125,9 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   const mayorP = m1.proposals.find(p => p.source.role === 'mayor').id;
   const fireP = m1.proposals.find(p => p.source.role === 'fire_commander').id;
   await scrollTo('Director', `[data-approve="${mayorP}"]`);
-  await caption('…and flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2.', 5000);
+  await caption('buses', 1500);
 
-  await caption('The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject.', 300);
+  await caption('prompt', 300);
   await F('Director').locator('#tb-prompt').click();
   await sleep(600);
   await type(F('Director').locator('#ptext'), 'The regional transport company gives the mayor one extra bus right now. Send the mayor a short inject from the Regional transport company confirming it.', 12);
@@ -132,39 +137,39 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   const dirP = await lastPid();
   await sleep(1000);
   await scrollTo('Director', `[data-approve="${dirP}"]`);
-  await caption('The Director reviews the AI’s proposal (a resource change plus an inject draft) and approves it.', 3000);
+  await caption('prompt_approve', 1500);
   await F('Director').locator(`[data-approve="${dirP}"]`).click();
   await sleep(2500);
   await scrollTo('Director', `[data-approve="${fireP}"]`);
-  await caption('Now the Fire Commander’s orders are approved, with a note to the player…', 300);
+  await caption('fire_approve', 300);
   await type(F('Director').locator(`#note-${fireP}`), 'Approved. F4 north edge first.', 25);
   await F('Director').locator(`[data-approve="${fireP}"]`).click();
   await sleep(2000);
   await scrollTo('Director', `[data-approve="${mayorP}"]`);
-  await caption('…and the Mayor’s orders pass this time: 3 buses for 120 pupils.', 2500);
+  await caption('mayor_approve', 1500);
   await F('Director').locator(`[data-approve="${mayorP}"]`).click();
   await sleep(1500);
 
   await tab('Mayor');
-  await caption('The Mayor gets exercise control’s feedback in Italian.', 300);
+  await caption('mayor_feedback', 300);
   await waitFor(async () => (await getJSON('/api/player/mayor')).inbox.some(m => m.kind === 'feedback'), 'mayor feedback');
   await sleep(1200);
   await scrollInbox('Mayor', 'bottom');
   await sleep(4000);
 
   await tab('Director');
-  await caption('The Director resolves turn 1: 30 simulated minutes, simulated live on the big screen at 120×.', 300);
+  await caption('resolve1', 300);
   await F('Director').locator('#resolve').scrollIntoViewIfNeeded();
   await F('Director').locator('#resolve').click();
   await sleep(3000);
-  await caption('Flame length follows fireline intensity and the share of Monte Carlo runs that burn each cell; the glow ahead is where only some runs reach.', 300);
+  await caption('flames', 300);
   await sleep(6000);
-  await caption('Fire lines cut, the drop made, the school evacuated to the sports centre.', 300);
+  await caption('turn1_result', 300);
   await waitFor(async () => (await getJSON('/api/state')).phase === 'orders', 'turn 1 resolved', 120000);
   await sleep(1500);
 
   await tab('Fire');
-  await caption('Every player gets an AI-written situation update for their role.', 300);
+  await caption('sitrep', 300);
   await waitFor(async () => (await getJSON('/api/player/fire_commander')).inbox.some(m => m.kind === 'situation'), 'sitrep');
   await sleep(800);
   await scrollInbox('Fire', 'bottom');
@@ -172,7 +177,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
 
   // ---------------------------------------------------------------- turn 2
   await tab('Director');
-  await caption('Turn 2. The Director escalates: a wind warning, then commands by code (wind 55 km/h, a new fire in zone G5).', 300);
+  await caption('turn2', 300);
   await F('Director').locator('#tb-injects').click();
   await sleep(500);
   await scrollTo('Director', '[data-msel="I-04"]');
@@ -187,7 +192,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(3000);
 
   await tab('Regional');
-  await caption('Regional Civil Protection reads the wind warning in Armenian and asks for international assistance (UCPM).', 300);
+  await caption('ucpm', 300);
   await scrollInbox('Regional', 'bottom');
   await sleep(2000);
   await scrollTo('Regional', '#reply');
@@ -196,22 +201,22 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(1000);
 
   await tab('Fire');
-  await caption('A vague order from the Fire Commander…', 300);
+  await caption('vague', 300);
   await scrollTo('Fire', '#reply');
   await type(F('Fire').locator('#reply'), 'Send the remaining crews over there to hold it.', 30);
   await F('Fire').locator('#send').click();
   await waitFor(async () => (await getJSON('/api/player/fire_commander')).inbox.some(m => m.kind === 'clarification'), 'clarification');
   await sleep(800);
   await scrollInbox('Fire', 'bottom');
-  await caption('…gets a clarification question from the AI instead of a guess.', 4500);
-  await caption('The Fire Commander answers precisely.', 300);
+  await caption('clarify', 1500);
+  await caption('precise', 300);
   await scrollTo('Fire', '#reply');
   await type(F('Fire').locator('#reply'), 'One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4.', 22);
   await F('Fire').locator('#send').click();
   await sleep(800);
 
   await tab('Director');
-  await caption('The Director rejects the vague order and approves the UCPM request and the precise fire lines.', 300);
+  await caption('decide2', 300);
   await F('Director').locator('#tb-proposals').click();
   await waitFor(noneParsing, 'turn-2 parsing');
   await sleep(1500);
@@ -230,7 +235,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
     await sleep(1800);
   }
 
-  await caption('Resolve turn 2: 60 minutes, live. Reinforcements arrive; the lines protect Pineta; the new fire in G5 spreads through the farmland.', 300);
+  await caption('resolve2', 300);
   await F('Director').locator('#minutes').fill('60');
   await F('Director').locator('#resolve').scrollIntoViewIfNeeded();
   await F('Director').locator('#resolve').click();
@@ -239,8 +244,10 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(2500);
 
   await F('Director').locator('#stats').scrollIntoViewIfNeeded();
-  await caption('Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide, the AI mediates.', 6000);
+  await caption('outro', 1500);
 
+  const tail = speechEnds - Date.now();
+  if (tail > 0) await sleep(tail + 1200);
   if (REC_FLAG) fs.rmSync(REC_FLAG, { force: true });
   fs.writeFileSync(path.join(OUT, 'marks.json'), JSON.stringify(marks, null, 1));
   const video = page.video();

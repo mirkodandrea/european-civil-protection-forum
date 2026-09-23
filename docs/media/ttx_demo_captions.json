@@ -1,106 +1,184 @@
 [
  {
-  "t": 1577,
-  "caption": "PPRD East TTX — one phone plays every role: Director, Mayor, Fire Commander, Regional Civil Protection."
+  "id": "intro",
+  "t": 1581,
+  "duration_s": 11.52,
+  "text": "PPRD East table-top exercise, with AI support. One phone plays every role: the Director, the Mayor, the Fire Commander and Regional Civil Protection.",
+  "caption": "PPRD East table-top exercise, with AI support. One phone plays every role: the Director, the Mayor, the Fire Commander and Regional Civil Protection."
  },
  {
-  "t": 5798,
+  "id": "language",
+  "t": 13453,
+  "duration_s": 5.68,
+  "text": "Each player picks a language. Regional Civil Protection will play in Armenian.",
   "caption": "Each player picks a language. Regional Civil Protection will play in Armenian."
  },
  {
-  "t": 9346,
+  "id": "start",
+  "t": 19486,
+  "duration_s": 7.96,
+  "text": "The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill.",
   "caption": "The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill."
  },
  {
-  "t": 12596,
-  "caption": "The Director sends the first injects from the MSEL. The AI translates each one for its recipient."
+  "id": "injects",
+  "t": 27797,
+  "duration_s": 7.32,
+  "text": "The Director sends the first injects from the exercise script. The AI translates each one for its recipient.",
+  "caption": "The Director sends the first injects from the exercise script. The AI translates each one for its recipient."
  },
  {
-  "t": 36945,
+  "id": "mayor_reads",
+  "t": 35470,
+  "duration_s": 9.76,
+  "text": "The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School.",
   "caption": "The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School."
  },
  {
-  "t": 41875,
+  "id": "mayor_replies",
+  "t": 45583,
+  "duration_s": 3.88,
+  "text": "The Mayor answers in Italian, in their own words.",
   "caption": "The Mayor answers in Italian, in their own words."
  },
  {
-  "t": 49026,
-  "caption": "The Fire Commander orders fire lines using zone codes from the map grid, plus an air-tanker drop."
+  "id": "fire_orders",
+  "t": 52713,
+  "duration_s": 6.32,
+  "text": "The Fire Commander orders fire lines using zone codes from the map grid, and an air-tanker drop.",
+  "caption": "The Fire Commander orders fire lines using zone codes from the map grid, and an air-tanker drop."
  },
  {
-  "t": 58592,
-  "caption": "The AI turns each reply into commands. The simulator checks each one against the role’s authority and resources…"
+  "id": "proposals",
+  "t": 62312,
+  "duration_s": 8.64,
+  "text": "The AI turns each reply into commands, and the simulator checks every command against the role's authority and resources.",
+  "caption": "The AI turns each reply into commands, and the simulator checks every command against the role's authority and resources."
  },
  {
-  "t": 62041,
-  "caption": "…and flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2."
+  "id": "buses",
+  "t": 71304,
+  "duration_s": 7.92,
+  "text": "It flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2.",
+  "caption": "It flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2."
  },
  {
-  "t": 67045,
+  "id": "prompt",
+  "t": 79576,
+  "duration_s": 6.56,
+  "text": "The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject.",
   "caption": "The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject."
  },
  {
-  "t": 79273,
-  "caption": "The Director reviews the AI’s proposal (a resource change plus an inject draft) and approves it."
+  "id": "prompt_approve",
+  "t": 86488,
+  "duration_s": 7.2,
+  "text": "The Director reviews the AI's proposal, a resource change plus an inject draft, and approves it.",
+  "caption": "The Director reviews the AI's proposal, a resource change plus an inject draft, and approves it."
  },
  {
-  "t": 85404,
-  "caption": "Now the Fire Commander’s orders are approved, with a note to the player…"
+  "id": "fire_approve",
+  "t": 94040,
+  "duration_s": 4.36,
+  "text": "The Fire Commander's orders are approved, with a note to the player.",
+  "caption": "The Fire Commander's orders are approved, with a note to the player."
  },
  {
-  "t": 89188,
-  "caption": "…and the Mayor’s orders pass this time: 3 buses for 120 pupils."
+  "id": "mayor_approve",
+  "t": 98752,
+  "duration_s": 6.16,
+  "text": "And the Mayor's orders now pass: 3 buses for 120 pupils.",
+  "caption": "And the Mayor's orders now pass: 3 buses for 120 pupils."
  },
  {
-  "t": 93924,
-  "caption": "The Mayor gets exercise control’s feedback in Italian."
+  "id": "mayor_feedback",
+  "t": 105262,
+  "duration_s": 8.4,
+  "text": "The Mayor gets exercise control's feedback in Italian.",
+  "caption": "The Mayor gets exercise control's feedback in Italian."
  },
  {
-  "t": 108076,
-  "caption": "The Director resolves turn 1: 30 simulated minutes, simulated live on the big screen at 120×."
+  "id": "resolve1",
+  "t": 114013,
+  "duration_s": 8.32,
+  "text": "The Director resolves turn 1: thirty simulated minutes, played live on the big screen at 120 times speed.",
+  "caption": "The Director resolves turn 1: thirty simulated minutes, played live on the big screen at 120 times speed."
  },
  {
-  "t": 111427,
-  "caption": "Flame length follows fireline intensity and the share of Monte Carlo runs that burn each cell; the glow ahead is where only some runs reach."
+  "id": "flames",
+  "t": 122685,
+  "duration_s": 10.44,
+  "text": "Flame length follows the fire's intensity and the share of Monte Carlo runs that burn each cell. The glow ahead is where only some runs reach.",
+  "caption": "Flame length follows the fire's intensity and the share of Monte Carlo runs that burn each cell. The glow ahead is where only some runs reach."
  },
  {
-  "t": 117732,
-  "caption": "Fire lines cut, the drop made, the school evacuated to the sports centre."
+  "id": "turn1_result",
+  "t": 133477,
+  "duration_s": 6.68,
+  "text": "The fire lines are cut, the air tanker drops, and the school is evacuated to the sports centre.",
+  "caption": "The fire lines are cut, the air tanker drops, and the school is evacuated to the sports centre."
  },
  {
-  "t": 125775,
+  "id": "sitrep",
+  "t": 140509,
+  "duration_s": 4.52,
+  "text": "Every player gets an AI-written situation update for their role.",
   "caption": "Every player gets an AI-written situation update for their role."
  },
  {
-  "t": 167124,
-  "caption": "Turn 2. The Director escalates: a wind warning, then commands by code (wind 55 km/h, a new fire in zone G5)."
+  "id": "turn2",
+  "t": 147744,
+  "duration_s": 12.68,
+  "text": "Turn 2. The Director escalates: a wind warning, then commands by code, raising the wind to 55 km/h and starting a new fire in zone G5.",
+  "caption": "Turn 2. The Director escalates: a wind warning, then commands by code, raising the wind to 55 km/h and starting a new fire in zone G5."
  },
  {
-  "t": 186922,
-  "caption": "Regional Civil Protection reads the wind warning in Armenian and asks for international assistance (UCPM)."
+  "id": "ucpm",
+  "t": 160776,
+  "duration_s": 9.76,
+  "text": "Regional Civil Protection reads the wind warning in Armenian, and asks for international assistance through the EU Civil Protection Mechanism.",
+  "caption": "Regional Civil Protection reads the wind warning in Armenian, and asks for international assistance through the EU Civil Protection Mechanism."
  },
  {
-  "t": 194869,
+  "id": "vague",
+  "t": 170886,
+  "duration_s": 3.08,
+  "text": "A vague order from the Fire Commander…",
   "caption": "A vague order from the Fire Commander…"
  },
  {
-  "t": 204073,
+  "id": "clarify",
+  "t": 175103,
+  "duration_s": 4.44,
+  "text": "…gets a clarification question from the AI instead of a guess.",
   "caption": "…gets a clarification question from the AI instead of a guess."
  },
  {
-  "t": 208576,
+  "id": "precise",
+  "t": 179895,
+  "duration_s": 3.24,
+  "text": "The Fire Commander answers precisely.",
   "caption": "The Fire Commander answers precisely."
  },
  {
-  "t": 213520,
-  "caption": "The Director rejects the vague order and approves the UCPM request and the precise fire lines."
+  "id": "decide2",
+  "t": 184838,
+  "duration_s": 6.64,
+  "text": "The Director rejects the vague order, and approves the assistance request and the precise fire lines.",
+  "caption": "The Director rejects the vague order, and approves the assistance request and the precise fire lines."
  },
  {
-  "t": 231902,
-  "caption": "Resolve turn 2: 60 minutes, live. Reinforcements arrive; the lines protect Pineta; the new fire in G5 spreads through the farmland."
+  "id": "resolve2",
+  "t": 200210,
+  "duration_s": 9.96,
+  "text": "Turn 2 resolves live: sixty minutes. Reinforcements arrive, the lines protect Pineta, and the new fire spreads through the farmland.",
+  "caption": "Turn 2 resolves live: sixty minutes. Reinforcements arrive, the lines protect Pineta, and the new fire spreads through the farmland."
  },
  {
-  "t": 264879,
-  "caption": "Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide, the AI mediates."
+  "id": "outro",
+  "t": 233185,
+  "duration_s": 11.4,
+  "text": "Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide; the AI mediates.",
+  "caption": "Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide; the AI mediates."
  }
 ]

@@ -188,11 +188,11 @@ pub fn tilt_angle(wind_ms: f32, flame_m: f32) -> f32 {
     (wind_ms / (G * flame_m).sqrt()).atan().min(65f32.to_radians())
 }
 
-/// The tilt as drawn: 70 % of the physical angle, at most 50°. A 60°-tilted
+/// The tilt as drawn: 50 % of the physical angle, at most 35°. A 60°-tilted
 /// tongue seen from above is a streak on the ground; this keeps the lean
 /// readable while strong winds still visibly lay the head fire over.
 pub fn drawn_tilt(wind_ms: f32, flame_m: f32) -> f32 {
-    (tilt_angle(wind_ms, flame_m) * 0.7).min(50f32.to_radians())
+    (tilt_angle(wind_ms, flame_m) * 0.5).min(35f32.to_radians())
 }
 
 /// One tongue's geometry and colour (pure, so it can be tested).
@@ -448,7 +448,7 @@ mod tests {
         let strong = tilt_angle(12.5, 4.0);
         assert!(strong > calm);
         assert!(strong <= 65f32.to_radians() + 1e-6);
-        assert!(drawn_tilt(12.5, 4.0) < strong && drawn_tilt(40.0, 1.0) <= 50f32.to_radians() + 1e-6);
+        assert!(drawn_tilt(12.5, 4.0) < strong && drawn_tilt(40.0, 1.0) <= 35f32.to_radians() + 1e-6);
         // Taller flames tilt less at the same wind.
         assert!(tilt_angle(12.5, 10.0) < strong);
     }

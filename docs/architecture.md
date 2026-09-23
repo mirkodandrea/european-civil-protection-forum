@@ -111,7 +111,7 @@ sequenceDiagram
 
 | Layer | Driven by |
 |---|---|
-| **Flame tongues** (`flames.rs`, `shaders/flame.wgsl`) | Byram flame length `L = 0.0775·I^0.46` of the ensemble-mean fireline intensity, × 9 visual exaggeration (real flames here are 3–5 m). Height and tongue count also scale with the fraction of runs that burned the cell, and flames only stand in the first 7 min after the (quantile) arrival time. Tongues lean downwind by the Froude tilt `atan(U/√(gL))`, drawn at 70 %, max 50°. The shader domain-warps a procedural tongue texture for roiling edges and flicker |
+| **Flame tongues** (`flames.rs`, `shaders/flame.wgsl`) | Byram flame length `L = 0.0775·I^0.46` of the ensemble-mean fireline intensity, × 9 visual exaggeration (real flames here are 3–5 m). Height and tongue count also scale with the fraction of runs that burned the cell, and flames only stand in the first 7 min after the (quantile) arrival time. Tongues lean downwind by the Froude tilt `atan(U/√(gL))`, drawn at 50 %, max 35°. The shader domain-warps a procedural tongue texture for roiling edges and flicker |
 | **Uncertainty halo** | Cells reached by some runs but fewer than the cutoff: short, dim, redder tongues whose brightness follows the probability, plus a faint orange tint on the ground |
 | **Ground** (`terrain.rs`) | Burning cells cool with age: flame-front orange → glowing ember bed → dark red → charcoal. The scar is mottled charcoal/ash per cell |
 | **Smoke and sparks** | Particles emitted from the flaming band (by intensity) and from smouldering ground; they rise buoyantly and drift with the wind. Camera-facing billboards |
@@ -124,8 +124,15 @@ Geometry is rebuilt every frame from the latest snapshot, so the fire stays aliv
 | Hook | Purpose |
 |---|---|
 | `P` key / `runs/shot.req` | One screenshot of the simulator window (`viz::screenshot`) |
-| `runs/rec/ON` flag file | While it exists, a frame every 100 ms to `runs/rec/<unix-ms>.png` (`viz::record`); used by `scripts/record` to make the demo video |
-| `TTX_ORBIT=1` | Start the camera in slow auto-orbit (presentations, recordings) |
+| `runs/rec/ON` flag file | While it exists, the window is piped into ffmpeg at 20 fps and encoded while recording (`runs/rec/sim.mkv`, wall-clock timestamps; `viz::record`); used by `scripts/record` |
+| `TTX_CINEMATIC=1` (or `TTX_ORBIT=1`, key `A`) | Cinematic camera director (below) |
+| `TTX_CAM="x,y,distance,yaw,pitch"` | Starting view |
+| `TTX_LLM_CASSETTE=<file>` (+ `TTX_LLM_CASSETTE_MODE=auto\|replay\|record`) | Record/replay LLM answers (`llm::cassette`), for reproducible, fast recordings |
 | `runs/run-*.jsonl` | Full event log of every run |
 
-The demo video ([`docs/media/ttx_demo.mp4`](media/ttx_demo.mp4)) is produced by [`scripts/record`](../scripts/record/README.md): Playwright plays every role in `play.html` while the simulator saves timestamped frames, and `compose.py` puts the two side by side, in sync.
+The demo video ([`docs/media/ttx_demo.mp4`](media/ttx_demo.mp4)) is produced by [`scripts/record`](../scripts/record/README.md): Gemini TTS narration, Playwright playing every role in `play.html`, the simulator streamed into ffmpeg, and one compose pass with subtitles.
+
+## Camera and lighting (`crates/viz/src/camera.rs`)
+
+- **Director.** `sync` turns new log entries into camera cues (`Snapshot::cues`): an inject naming a facility, place or zone; a parsed proposal; an approved proposal; a Director command. Each cue becomes a shot of that location sized to what it covers (a fire line, a zone, a building), with a slow push-in, held for 5–6 s. While a turn is simulated the camera follows the burning front (smoothed centroid, distance growing with the fire's extent, slow orbit). Otherwise it holds a wide establishing orbit. All parameters are eased; the camera rises if terrain would block the view; manual input takes over for 15 s.
+- **Lighting.** A warm low sun with cascaded shadows, sky-tinted ambient light, distance fog with sun scattering, HDR + bloom (the additive flames glow), and 8 flickering point lights on the hottest 200 m bins of the fire.

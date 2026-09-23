@@ -17,7 +17,6 @@ pub fn to_bevy(scn: &Scenario, p: Pos, lift: f32) -> Vec3 {
     Vec3::new(p[0] - scn.grid.width_m() * 0.5, h, -(p[1] - scn.grid.height_m() * 0.5))
 }
 
-#[cfg(test)]
 pub fn to_world(scn: &Scenario, v: Vec3) -> Pos {
     [v.x + scn.grid.width_m() * 0.5, -v.z + scn.grid.height_m() * 0.5]
 }

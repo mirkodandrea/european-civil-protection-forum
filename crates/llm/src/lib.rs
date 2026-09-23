@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
+pub mod cassette;
 pub mod tasks;
 
 pub use tasks::{InjectDraft, ParsedReply, RoleMessage};
@@ -36,6 +37,7 @@ pub enum Backend {
 #[derive(Clone)]
 pub struct Llm {
     backend: Backend,
+    cassette: Option<Arc<cassette::Cassette>>,
 }
 
 impl Llm {
@@ -49,23 +51,37 @@ impl Llm {
             }
             _ => Llm::off(),
         }
+        .with_cassette_from_env()
+    }
+
+    /// Record/replay answers through the cassette named by `TTX_LLM_CASSETTE`.
+    pub fn with_cassette_from_env(self) -> Llm {
+        match cassette::Cassette::from_env() {
+            Some(c) => self.with_cassette(c),
+            None => self,
+        }
+    }
+
+    pub fn with_cassette(mut self, c: cassette::Cassette) -> Llm {
+        self.cassette = Some(Arc::new(c));
+        self
     }
 
     pub fn openrouter(api_key: String, model: String, base_url: String) -> Llm {
         let client = reqwest::Client::builder().timeout(Duration::from_secs(90)).build().expect("http client");
-        Llm { backend: Backend::OpenRouter { client, api_key, model, base_url } }
+        Llm { backend: Backend::OpenRouter { client, api_key, model, base_url }, cassette: None }
     }
 
     pub fn mock(f: impl Fn(&str, &str, &str) -> Result<String> + Send + Sync + 'static) -> Llm {
-        Llm { backend: Backend::Mock(Arc::new(f)) }
+        Llm { backend: Backend::Mock(Arc::new(f)), cassette: None }
     }
 
     pub fn off() -> Llm {
-        Llm { backend: Backend::Off }
+        Llm { backend: Backend::Off, cassette: None }
     }
 
     pub fn is_available(&self) -> bool {
-        !matches!(self.backend, Backend::Off)
+        !matches!(self.backend, Backend::Off) || self.cassette.as_ref().is_some_and(|c| !c.is_empty())
     }
 
     pub fn model(&self) -> String {
@@ -78,6 +94,23 @@ impl Llm {
 
     /// One chat completion. `json` asks the model for a JSON object.
     pub async fn complete(&self, task: &str, system: &str, user: &str, json_mode: bool) -> Result<String> {
+        let Some(tape) = self.cassette.clone() else {
+            return self.complete_live(task, system, user, json_mode).await;
+        };
+        let key = cassette::key(&[&self.model(), task, system, user, if json_mode { "json" } else { "text" }]);
+        if let Some(answer) = tape.get(&key) {
+            tracing::info!(task, "llm replayed from cassette");
+            return Ok(answer);
+        }
+        if tape.mode() == cassette::Mode::Replay {
+            anyhow::bail!("LLM cassette miss for task {task} (replay mode)");
+        }
+        let answer = self.complete_live(task, system, user, json_mode).await?;
+        tape.put(&key, task, &answer);
+        Ok(answer)
+    }
+
+    async fn complete_live(&self, task: &str, system: &str, user: &str, json_mode: bool) -> Result<String> {
         let started = Instant::now();
         let out = match &self.backend {
             Backend::Off => anyhow::bail!("LLM is not configured (set OPENROUTER_API_KEY)"),
@@ -164,6 +197,42 @@ mod tests {
         assert!(Llm::off().complete("t", "s", "u", false).await.is_err());
         let m = Llm::mock(|task, _, _| Ok(format!("hello from {task}")));
         assert_eq!(m.complete("x", "", "", false).await.unwrap(), "hello from x");
+    }
+
+    #[tokio::test]
+    async fn cassette_records_then_replays() {
+        let path = std::env::temp_dir().join(format!("ttx-cassette-{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = calls.clone();
+        let mk = move || {
+            let c = c.clone();
+            Llm::mock(move |_, _, u| {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(format!("answer to {u}"))
+            })
+        };
+        let a = mk().with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Auto).unwrap());
+        assert_eq!(a.complete("t", "s", "hello", false).await.unwrap(), "answer to hello");
+        assert_eq!(a.complete("t", "s", "hello", false).await.unwrap(), "answer to hello");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "second call replayed");
+        // A new process (fresh Llm) replays from the file; replay mode refuses misses.
+        let b = Llm::off().with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Replay).unwrap());
+        assert!(b.is_available());
+        let b_answer = b.complete("t", "s", "hello", false).await;
+        // The key includes the model name, which differs ("off" vs "mock"): a miss.
+        assert!(b_answer.is_err());
+        let m = mk().with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Replay).unwrap());
+        assert_eq!(m.complete("t", "s", "hello", false).await.unwrap(), "answer to hello");
+        assert!(m.complete("t", "s", "other", false).await.is_err(), "replay mode: misses are errors");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cassette_key_is_stable_and_separates_parts() {
+        assert_eq!(cassette::key(&["a", "b"]), cassette::key(&["a", "b"]));
+        assert_ne!(cassette::key(&["ab", ""]), cassette::key(&["a", "b"]));
     }
 
     #[tokio::test]
