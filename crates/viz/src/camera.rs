@@ -20,6 +20,11 @@ pub struct Orbit {
 fn home(scn: &scenario::Scenario) -> Orbit {
     // TTX_ORBIT=1 starts in auto-orbit (presentation / recordings).
     let auto = std::env::var("TTX_ORBIT").is_ok_and(|v| v == "1");
+    // TTX_CAM="x,y,distance,yaw,pitch" (world metres, radians) sets the start view.
+    let v: Vec<f32> = std::env::var("TTX_CAM").ok().map(|s| s.split(',').filter_map(|t| t.trim().parse().ok()).collect()).unwrap_or_default();
+    if v.len() == 5 {
+        return Orbit { focus: to_bevy(scn, [v[0], v[1]], 0.0), dist: v[2], yaw: v[3], pitch: v[4], auto };
+    }
     Orbit { focus: to_bevy(scn, [2600.0, 2250.0], 0.0), yaw: 0.6, pitch: 0.62, dist: 2600.0, auto }
 }
 

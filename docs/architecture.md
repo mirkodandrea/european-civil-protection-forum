@@ -107,6 +107,18 @@ sequenceDiagram
 | Graceful degradation | `Llm::off()`: English injects, `parse_failed` leaves the proposal for manual entry; tested in `server/tests/http_flow.rs::works_without_llm` |
 | Traceability | Every inject, message, proposal, decision, command and turn is in the log with wall clock, sim clock and turn |
 
+## Rendering the fire (`crates/viz`)
+
+| Layer | Driven by |
+|---|---|
+| **Flame tongues** (`flames.rs`, `shaders/flame.wgsl`) | Byram flame length `L = 0.0775·I^0.46` of the ensemble-mean fireline intensity, × 9 visual exaggeration (real flames here are 3–5 m). Height and tongue count also scale with the fraction of runs that burned the cell, and flames only stand in the first 7 min after the (quantile) arrival time. Tongues lean downwind by the Froude tilt `atan(U/√(gL))`, drawn at 70 %, max 50°. The shader domain-warps a procedural tongue texture for roiling edges and flicker |
+| **Uncertainty halo** | Cells reached by some runs but fewer than the cutoff: short, dim, redder tongues whose brightness follows the probability, plus a faint orange tint on the ground |
+| **Ground** (`terrain.rs`) | Burning cells cool with age: flame-front orange → glowing ember bed → dark red → charcoal. The scar is mottled charcoal/ash per cell |
+| **Smoke and sparks** | Particles emitted from the flaming band (by intensity) and from smouldering ground; they rise buoyantly and drift with the wind. Camera-facing billboards |
+| **Vegetation** | Blender pines, oaks and bushes from `propagator_abm`, charred as cells burn |
+
+Geometry is rebuilt every frame from the latest snapshot, so the fire stays alive between simulation updates and at any speed. `TTX_CAM="x,y,distance,yaw,pitch"` sets the starting view.
+
 ## Instrumentation
 
 | Hook | Purpose |

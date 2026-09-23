@@ -15,6 +15,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | Scenario | Synthetic "Valverde valley" for now |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
 | Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the Director sets a factor (e.g. 60× = 1 simulated min/s) |
+| Flame rendering | Byram flame length from ensemble-mean intensity, scaled by probability; halo tongues below the cutoff; Froude wind tilt; age-based ground glow; smoke/sparks. Build on `propagator_abm` ideas but keep ensemble-aware |
 | Fire ensemble | 32-run Monte Carlo; the "actual" fire is cells reached by ≥ `cutoff` of runs (default 0.5, 0.25 = pessimistic), with quantile arrival times; lower-probability cells shown as a halo |
 
 ## Working agreements

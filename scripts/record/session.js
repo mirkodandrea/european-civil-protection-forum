@@ -78,6 +78,9 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await tab('Director');
   await caption('The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill.', 1200);
   await F('Director').locator('#start').click();
+  // Turns are simulated live on the big screen: 120× = one simulated minute every half second.
+  await F('Director').locator('#speed').fill('120');
+  await F('Director').locator('#speed').dispatchEvent('change');
   await sleep(2000);
   await caption('The Director sends the first injects from the MSEL. The AI translates each one for its recipient.', 500);
   await F('Director').locator('#tb-injects').click();
@@ -150,11 +153,15 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(4000);
 
   await tab('Director');
-  await caption('The Director resolves turn 1: 30 simulated minutes. The big screen replays them.', 300);
+  await caption('The Director resolves turn 1: 30 simulated minutes, simulated live on the big screen at 120×.', 300);
   await F('Director').locator('#resolve').scrollIntoViewIfNeeded();
   await F('Director').locator('#resolve').click();
-  await sleep(2500);
-  await caption('Fire lines cut, the drop made, the school evacuated to the sports centre, the Northern Road cut by the fire.', 9000);
+  await sleep(3000);
+  await caption('Flame length follows fireline intensity and the share of Monte Carlo runs that burn each cell; the glow ahead is where only some runs reach.', 300);
+  await sleep(6000);
+  await caption('Fire lines cut, the drop made, the school evacuated to the sports centre.', 300);
+  await waitFor(async () => (await getJSON('/api/state')).phase === 'orders', 'turn 1 resolved', 120000);
+  await sleep(1500);
 
   await tab('Fire');
   await caption('Every player gets an AI-written situation update for their role.', 300);
@@ -223,11 +230,13 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
     await sleep(1800);
   }
 
-  await caption('Resolve turn 2: 60 minutes. Reinforcements arrive; the lines hold above Pineta; the new fire in G5 burns farmhouses.', 300);
+  await caption('Resolve turn 2: 60 minutes, live. Reinforcements arrive; the lines protect Pineta; the new fire in G5 spreads through the farmland.', 300);
   await F('Director').locator('#minutes').fill('60');
   await F('Director').locator('#resolve').scrollIntoViewIfNeeded();
   await F('Director').locator('#resolve').click();
-  await sleep(11000);
+  await sleep(2000);
+  await waitFor(async () => (await getJSON('/api/state')).phase === 'orders', 'turn 2 resolved', 180000);
+  await sleep(2500);
 
   await F('Director').locator('#stats').scrollIntoViewIfNeeded();
   await caption('Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide, the AI mediates.', 6000);

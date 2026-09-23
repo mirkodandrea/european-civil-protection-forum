@@ -63,6 +63,15 @@ pub enum CellFire {
     Burnt = 2,
 }
 
+/// Byram flame length (m) from fireline intensity (kW/m): `L = 0.0775 · I^0.46`.
+pub fn flame_length_m(fli_kw_m: f32) -> f32 {
+    if fli_kw_m <= 0.0 {
+        0.0
+    } else {
+        0.0775 * fli_kw_m.powf(0.46)
+    }
+}
+
 /// Ensemble size and the probability cutoff that defines the "actual" fire.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct FireOptions {
@@ -86,6 +95,7 @@ pub struct FireSnapshot {
     state: Vec<CellFire>,
     ignited_at: Vec<i32>,
     probability: Vec<f32>,
+    intensity: Vec<f32>,
     cleared: Vec<bool>,
     extinguished: Vec<bool>,
     added_moisture: Vec<f32>,
@@ -102,6 +112,8 @@ pub struct FireSim {
     ignited_at: Vec<i32>,
     /// Fraction of realizations that have reached each cell.
     probability: Vec<f32>,
+    /// Mean fireline intensity (kW/m) over the realizations that reached each cell.
+    intensity: Vec<f32>,
     options: FireOptions,
     /// Scratch buffer for the per-cell arrival quantile.
     scratch: Vec<i32>,
@@ -146,6 +158,7 @@ impl FireSim {
             state: vec![CellFire::Unburnt; n],
             ignited_at: vec![i32::MIN; n],
             probability: vec![0.0; n],
+            intensity: vec![0.0; n],
             options,
             scratch: Vec::with_capacity(options.realizations),
             last_refresh_s: -REFRESH_S,
@@ -175,6 +188,10 @@ impl FireSim {
     /// Fraction of realizations that have reached each cell (0..=1).
     pub fn probability(&self) -> &[f32] {
         &self.probability
+    }
+    /// Mean fireline intensity (kW/m, Byram) over the realizations that reached each cell.
+    pub fn intensity(&self) -> &[f32] {
+        &self.intensity
     }
     pub fn options(&self) -> FireOptions {
         self.options
@@ -431,13 +448,19 @@ impl FireSim {
         self.last_refresh_s = self.time_s;
         let fire = self.core.get_fire().context("reading fire state")?;
         let arrival = self.core.get_arrival_time().context("reading arrival time")?;
+        let fli = self.core.get_fireline_int().context("reading fireline intensity")?;
         let masks: Vec<&[u8]> = fire.iter().map(|g| g.as_slice()).collect();
         let arrivals: Vec<&[i32]> = arrival.iter().map(|g| g.as_slice()).collect();
+        let flis: Vec<&[f32]> = fli.iter().map(|g| g.as_slice()).collect();
         let r = masks.len();
         let k = ((self.options.cutoff * r as f32).ceil() as usize).clamp(1, r);
         let now = self.time_s as i32;
         for i in 0..self.state.len() {
             let reached = masks.iter().filter(|m| m[i] != 0).count();
+            if reached > 0 {
+                let sum: f32 = (0..r).filter(|&j| masks[j][i] != 0).map(|j| flis[j][i]).sum();
+                self.intensity[i] = sum / reached as f32;
+            }
             // A cleared cell has no fuel; the core may still light it from an
             // ignition event scheduled before the clearing. That is not a fire.
             self.probability[i] = if self.cleared[i] && self.ignited_at[i] == i32::MIN { 0.0 } else { reached as f32 / r as f32 };
@@ -469,6 +492,7 @@ impl FireSim {
             state: self.state.clone(),
             ignited_at: self.ignited_at.clone(),
             probability: self.probability.clone(),
+            intensity: self.intensity.clone(),
             cleared: self.cleared.clone(),
             extinguished: self.extinguished.clone(),
             added_moisture: self.added_moisture.clone(),
@@ -485,6 +509,7 @@ impl FireSim {
         self.state = s.state.clone();
         self.ignited_at = s.ignited_at.clone();
         self.probability = s.probability.clone();
+        self.intensity = s.intensity.clone();
         self.cleared = s.cleared.clone();
         self.extinguished = s.extinguished.clone();
         self.added_moisture = s.added_moisture.clone();

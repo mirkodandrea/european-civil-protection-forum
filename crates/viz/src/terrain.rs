@@ -9,7 +9,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use scenario::{fuel, Cell, Scenario};
 
-use crate::frame::{to_bevy, Frame, EXAGGERATION};
+use crate::frame::{to_bevy, Frame};
 use crate::models::model;
 use crate::Scn;
 
@@ -19,8 +19,6 @@ const CHUNK: usize = 25;
 pub struct TerrainHandles {
     terrain: Handle<Mesh>,
     base: Vec<[f32; 4]>,
-    fire_mesh: Handle<Mesh>,
-    fire_mat: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -44,11 +42,23 @@ fn fuel_rgb(code: i32) -> [f32; 3] {
     }
 }
 
+/// Burnt ground: charcoal to grey ash, varying per cell so a scar is not a flat slab.
+pub fn scar_colour(i: usize) -> [f32; 4] {
+    // splitmix64: neighbouring cells get unrelated values (no row stripes).
+    let mut z = (i as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    let h = ((z ^ (z >> 31)) >> 40) as f32 / (1u64 << 24) as f32;
+    // Linear colour: 0.01-0.05 is charcoal to dark ash once displayed.
+    let k = h * h;
+    [0.012 + 0.04 * k, 0.011 + 0.036 * k, 0.010 + 0.032 * k, 1.0]
+}
+
 /// Terrain colour for a cell given its display code.
-fn cell_colour(base: [f32; 4], code: u8) -> [f32; 4] {
+fn cell_colour(i: usize, base: [f32; 4], code: u8) -> [f32; 4] {
     match code {
         1 => [1.0, 0.32, 0.05, 1.0],
-        2 => [0.10, 0.09, 0.08, 1.0],
+        2 => scar_colour(i),
         3 => [0.52, 0.40, 0.24, 1.0],
         4 => [base[0] * 0.7, base[1] * 0.8, (base[2] + 0.35).min(1.0), 1.0],
         // Uncertainty halo: reached by some runs, below the cutoff.
@@ -155,19 +165,7 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
         }
     }
 
-    // Fire overlay: unlit, additive quads over burning cells, rebuilt on change.
-    let fire_mesh = meshes.add(empty_mesh());
-    let fire_mat = mats.add(StandardMaterial { base_color: Color::srgb(1.0, 0.55, 0.15), unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, ..default() });
-    commands.spawn(PbrBundle { mesh: fire_mesh.clone(), material: fire_mat.clone(), ..default() });
-    commands.insert_resource(TerrainHandles { terrain, base, fire_mesh, fire_mat });
-}
-
-fn empty_mesh() -> Mesh {
-    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
-    m.insert_indices(Indices::U32(Vec::new()));
-    m
+    commands.insert_resource(TerrainHandles { terrain, base });
 }
 
 fn chunk_of(s: &Scenario, i: usize) -> usize {
@@ -175,33 +173,62 @@ fn chunk_of(s: &Scenario, i: usize) -> usize {
     (i / g.cols / CHUNK) * g.cols.div_ceil(CHUNK) + (i % g.cols) / CHUNK
 }
 
+/// Ground colour of a burning cell by time since the front arrived: bright
+/// flame-front orange, then a glowing ember bed, then dark red cooling to the
+/// scar colour at burn-out.
+pub fn burning_colour(age_s: f32) -> [f32; 4] {
+    let stops: [(f32, [f32; 3]); 4] = [(0.0, [1.0, 0.45, 0.08]), (240.0, [0.85, 0.18, 0.03]), (720.0, [0.35, 0.07, 0.02]), (fire::BURNOUT_S as f32, [0.02, 0.018, 0.016])];
+    let a = age_s.max(0.0);
+    for w in stops.windows(2) {
+        if a <= w[1].0 {
+            let t = (a - w[0].0) / (w[1].0 - w[0].0);
+            let c: Vec<f32> = (0..3).map(|k| w[0].1[k] + (w[1].1[k] - w[0].1[k]) * t).collect();
+            return [c[0], c[1], c[2], 1.0];
+        }
+    }
+    [0.02, 0.018, 0.016, 1.0]
+}
+
 pub fn update(
     frame: Res<Frame>,
+    snap: Res<crate::Snapshot>,
     scn: Res<Scn>,
     h: Option<Res<TerrainHandles>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
     chunks: Query<&VegChunk>,
     time: Res<Time>,
+    mut last_glow: Local<f32>,
 ) {
     let Some(h) = h else { return };
     let s = &scn.0;
     if frame.cells.is_empty() {
         return;
     }
-    // Flicker the fire glow every frame.
-    if let Some(m) = mats.get_mut(&h.fire_mat) {
-        let t = time.elapsed_seconds();
-        let f = 0.8 + 0.2 * (t * 9.0).sin() * (t * 5.3).cos();
-        m.base_color = Color::srgb(1.0 * f, 0.5 * f, 0.12 * f);
+    // Burning ground changes colour with age even without new cells: refresh ~5x/s.
+    let glow_due = time.elapsed_seconds() - *last_glow > 0.2 && frame.cells.contains(&1);
+    if !frame.all_changed && frame.changed.is_empty() && !glow_due {
+        return;
+    }
+    *last_glow = time.elapsed_seconds();
+    let now = frame.display_s as f32;
+    if let Some(mesh) = meshes.get_mut(&h.terrain) {
+        let colours: Vec<[f32; 4]> = h
+            .base
+            .iter()
+            .zip(&frame.cells)
+            .enumerate()
+            .map(|(i, (b, c))| {
+                if *c == 1 && snap.arrival.get(i).is_some_and(|a| *a != i32::MIN) {
+                    burning_colour(now - snap.arrival[i] as f32)
+                } else {
+                    cell_colour(i, *b, *c)
+                }
+            })
+            .collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
     }
     if !frame.all_changed && frame.changed.is_empty() {
         return;
-    }
-    // Terrain colours.
-    if let Some(mesh) = meshes.get_mut(&h.terrain) {
-        let colours: Vec<[f32; 4]> = h.base.iter().zip(&frame.cells).map(|(b, c)| cell_colour(*b, *c)).collect();
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
     }
     // Vegetation: only chunks with changed cells.
     let dirty: std::collections::HashSet<usize> = if frame.all_changed { chunks.iter().map(|c| c.chunk).collect() } else { frame.changed.iter().map(|&i| chunk_of(s, i)).collect() };
@@ -211,35 +238,16 @@ pub fn update(
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
         }
     }
-    // Fire overlay quads.
-    let (mut p, mut col, mut ix) = (Vec::new(), Vec::new(), Vec::new());
-    let half = s.grid.cellsize * 0.6;
-    for (i, &c) in frame.cells.iter().enumerate() {
-        if c != 1 {
-            continue;
-        }
-        let cell = Cell { row: i / s.grid.cols, col: i % s.grid.cols };
-        let ctr = s.cell_centre(cell);
-        let lift = 3.0 + 4.0 * ((i as f32 * 12.9898).sin() * 0.5 + 0.5);
-        let off = p.len() as u32;
-        for (dx, dy) in [(-half, -half), (half, -half), (half, half), (-half, half)] {
-            p.push(to_bevy(s, [ctr[0] + dx, ctr[1] + dy], lift).to_array());
-            col.push([1.0, 0.7, 0.3, 1.0]);
-        }
-        // A vertical flame card too, so the fire reads from a low camera.
-        let base = to_bevy(s, ctr, 0.0);
-        let top = base + Vec3::Y * (10.0 + 10.0 * ((i as f32 * 78.233).sin() * 0.5 + 0.5)) * EXAGGERATION;
-        for v in [base - Vec3::X * half, base + Vec3::X * half, top + Vec3::X * half * 0.3, top - Vec3::X * half * 0.3] {
-            p.push(v.to_array());
-        }
-        col.extend_from_slice(&[[1.0, 0.6, 0.2, 1.0], [1.0, 0.6, 0.2, 1.0], [0.6, 0.15, 0.02, 1.0], [0.6, 0.15, 0.02, 1.0]]);
-        for q in [off, off + 4] {
-            ix.extend_from_slice(&[q, q + 1, q + 2, q, q + 2, q + 3]);
-        }
-    }
-    if let Some(mesh) = meshes.get_mut(&h.fire_mesh) {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, p);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
-        mesh.insert_indices(Indices::U32(ix));
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn burning_ground_cools_with_age() {
+        let fresh = super::burning_colour(0.0);
+        let old = super::burning_colour(1000.0);
+        assert!(fresh[0] + fresh[1] > old[0] + old[1]);
+        assert_eq!(super::burning_colour(99_999.0)[0], 0.02);
+        assert_ne!(super::scar_colour(1), super::scar_colour(2));
     }
 }

@@ -242,3 +242,19 @@ fn single_realization_still_works() {
     assert!(f.burned_area_ha() > 5.0);
     assert!(f.probability().iter().all(|p| *p == 0.0 || *p == 1.0));
 }
+
+#[test]
+fn intensity_and_flame_length_are_physical() {
+    let scn = scenario();
+    let mut f = started(&scn, 1);
+    f.advance(45 * 60).unwrap();
+    let mut burned: Vec<f32> = f.state().iter().zip(f.intensity()).filter(|(s, _)| **s != CellFire::Unburnt).map(|(_, i)| *i).collect();
+    assert!(!burned.is_empty());
+    burned.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = burned[burned.len() / 2];
+    let max = *burned.last().unwrap();
+    println!("fireline intensity kW/m: median {median:.0}, max {max:.0}; flame length median {:.1} m, max {:.1} m", fire::flame_length_m(median), fire::flame_length_m(max));
+    assert!(median > 50.0 && max < 200_000.0, "median {median}, max {max}");
+    assert_eq!(fire::flame_length_m(0.0), 0.0);
+    assert!((fire::flame_length_m(10_000.0) - 5.4).abs() < 0.2);
+}

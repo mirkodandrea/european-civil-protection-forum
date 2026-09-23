@@ -53,9 +53,9 @@ canvas { display: block; border-radius: 6px; border: 1px solid var(--line); curs
 .msg.k-reply { border-color: #888; opacity: .85; }
 .msg .meta { font-size: 12px; color: var(--muted); }
 .msg .text { white-space: pre-wrap; }
-pre { white-space: pre-wrap; font-size: 12px; background: rgba(127,127,127,.1); padding: 8px; border-radius: 6px; max-height: 260px; overflow: auto; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; font-size: 12px; background: rgba(127,127,127,.1); padding: 8px; border-radius: 6px; max-height: 260px; overflow: auto; }
 .log { max-height: 420px; overflow: auto; font-size: 12px; }
-.log div { border-bottom: 1px solid var(--line); padding: 3px 0; }
+.log div { border-bottom: 1px solid var(--line); padding: 3px 0; overflow-wrap: anywhere; }
 .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; }
 .legend i { width: 12px; height: 12px; display: inline-block; border-radius: 2px; }
 .inbox { max-height: 60vh; overflow: auto; }
@@ -67,4 +67,5 @@ pre { white-space: pre-wrap; font-size: 12px; background: rgba(127,127,127,.1); 
   header h1 { font-size: 15px; }
   main { padding: 8px; }
   .panel { padding: 10px; }
+  html, body { overflow-x: hidden; }
 }

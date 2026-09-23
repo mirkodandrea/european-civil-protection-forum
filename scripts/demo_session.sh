@@ -36,7 +36,7 @@ done
 sleep 5
 echo "== resolve turn 1 (30 min)"
 post /master/resolve '{"minutes":30}' > /dev/null
-sleep 4; shot sim_turn1_replay.png; sleep 7; shot sim_turn1_end.png
+sleep 3; shot sim_turn1_end.png
 
 echo "== turn 2: escalation"
 post /master/msel/I-04/send
@@ -53,5 +53,5 @@ done
 sleep 5
 echo "== resolve turn 2 (60 min)"
 post /master/resolve '{"minutes":60}' > /dev/null
-sleep 12; shot sim_turn2_end.png
+sleep 3; shot sim_turn2_end.png
 curl -sf "$B/state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["world"]["stats"])'

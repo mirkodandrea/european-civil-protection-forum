@@ -20,7 +20,7 @@ cp "$ROOT/.env" "$WORK/run/.env"
 
 ( cd "$ROOT/scripts/record" && [ -d node_modules ] || npm install --silent )
 
-( cd "$WORK/run" && TTX_ORBIT=1 exec "$ROOT/target/release/ttx" --port "$PORT" \
+( cd "$WORK/run" && TTX_ORBIT=1 TTX_CAM="${TTX_REC_CAM:-2800,2450,1700,0.7,0.52}" exec "$ROOT/target/release/ttx" --port "$PORT" \
     --web "$ROOT/web" --scenario "$ROOT/data/scenarios/synthetic_valley.json" > ttx.log 2>&1 ) &
 TTX_PID=$!
 trap 'kill $TTX_PID 2>/dev/null || true' EXIT
@@ -31,4 +31,5 @@ sleep 3 # let the window come up
 mkdir -p "$(dirname "$OUT_MP4")"
 python3 "$ROOT/scripts/record/compose.py" "$WORK/out" "$WORK/run/runs/rec" "$OUT_MP4" --crf "${TTX_REC_CRF:-33}"
 cp "$WORK/out/marks.json" "${OUT_MP4%.mp4}_captions.json"
+cp "$WORK"/run/runs/run-*.jsonl "${OUT_MP4%.mp4}_log.jsonl"
 echo "done: $OUT_MP4"

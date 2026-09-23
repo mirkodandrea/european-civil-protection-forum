@@ -21,6 +21,7 @@ use bevy_egui::EguiPlugin;
 use exercise::Exercise;
 
 mod camera;
+mod flames;
 mod frame;
 mod hud;
 mod models;
@@ -57,6 +58,9 @@ pub struct Snapshot {
     /// Final per-cell code (see `sim::digest::cell_code`).
     pub cells: Vec<u8>,
     pub arrival: Vec<i32>,
+    /// Ensemble-mean fireline intensity (kW/m) and fraction of runs reached, per cell.
+    pub intensity: Vec<f32>,
+    pub probability: Vec<f32>,
     pub buildings: Vec<BuildingDraw>,
     pub roads: Vec<(bool, bool)>,
     pub lines: Vec<(scenario::Pos, scenario::Pos, f32)>,
@@ -92,6 +96,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
                 .disable::<bevy::log::LogPlugin>(),
         )
         .add_plugins(EguiPlugin)
+        .add_plugins(flames::FlamesPlugin)
         .insert_resource(ClearColor(Color::srgb(0.62, 0.74, 0.86)))
         .insert_resource(AmbientLight { color: Color::WHITE, brightness: 350.0 })
         .insert_resource(Shared(ex))
@@ -150,6 +155,8 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
         })
         .collect();
     snap.arrival = w.fire.arrival_times().to_vec();
+    snap.intensity = w.fire.intensity().to_vec();
+    snap.probability = w.fire.probability().to_vec();
     snap.buildings = w
         .d
         .buildings
