@@ -11,7 +11,17 @@ A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
 Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md) (methodology) and [`TTX_Software_Spec.md`](TTX_Software_Spec.md) (target spec, with an as-built section).
 
-![3D simulator after turn 2](docs/screenshots/sim_turn2_end.png)
+## Demo video
+
+[![Demo: one phone plays every role next to the 3D simulator (4.5 min)](docs/media/ttx_demo_poster.jpg)](docs/media/ttx_demo.mp4)
+
+**[▶ docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4)** (4.5 min, 1080p): a real two-turn session with the live LLM. Left: the all-roles phone page (`play.html`). Right: the 3D simulator replaying each turn. In it:
+- the Mayor plays in Italian and Regional Civil Protection in Armenian;
+- the rules flag a bus shortage and the Director fixes it with an AI prompt;
+- a vague order gets a clarification question;
+- a UCPM reinforcement request arrives in time.
+
+The captions are also in [`docs/media/ttx_demo_captions.json`](docs/media/ttx_demo_captions.json). How it was recorded, and how to re-record it: [`scripts/record/README.md`](scripts/record/README.md).
 
 ## Quick start
 
@@ -28,11 +38,25 @@ Then open:
 
 | Who | URL |
 |---|---|
+| **All roles in one window** (Director + every player as tabs; good on a phone) | `http://<host>:8080/play.html` |
 | Exercise Director | `http://<host>:8080/master.html` |
 | Players (tablets) | `http://<host>:8080/player.html` → choose a role |
 | Landing page | `http://<host>:8080/` |
 
 The simulator window shows the join URL with the machine's LAN address. Without an API key the exercise still runs in **manual mode**: injects are sent in English and the Master types the commands for each proposal.
+
+### Playing from a phone
+
+`play.html` puts the Director and every player in tabs of one page (a dot marks new messages or open proposals), laid out for phones. To reach it from outside the LAN, use a [Microsoft dev tunnel](https://aka.ms/devtunnels/docs):
+
+```bash
+brew install --cask devtunnel
+devtunnel user login -g -d        # GitHub device-code login
+devtunnel host -p 8080            # private: only your account can open the URL
+# open https://<id>-8080.<region>.devtunnels.ms/play.html on the phone (GitHub login once)
+```
+
+Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the URL could run the Director console and spend your OpenRouter credit.
 
 Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`. The synthetic scenario is (re)generated with `cargo run -p scenario --bin gen-scenario`.
 
@@ -46,7 +70,7 @@ Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`. The synth
 
 Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone codes** from the map grid (`F4`), as zone edges for fire lines (`F4:N`), or as coordinates.
 
-`scripts/demo_session.sh` plays a full two-turn session through the API (Italian, English and Armenian players; an AI prompt; a clarification; reinforcements).
+`scripts/demo_session.sh` plays a full two-turn session through the API; `scripts/record/record.sh` plays one in the browser and records the demo video (Italian, English and Armenian players; an AI prompt; a clarification; reinforcements).
 
 ## Screenshots
 
@@ -68,10 +92,11 @@ crates/exercise         turn engine: injects, inboxes, proposals, approval, roll
 crates/server           axum HTTP/WebSocket API + LLM orchestration
 crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, replay, HUD)
 crates/app              the `ttx` binary
-web/                    Master, player and landing pages (plain HTML/JS, no build step)
+web/                    Master, player, all-roles (play.html) and landing pages (plain HTML/JS, no build step)
+scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)
 assets/models           Blender vegetation meshes (from propagator_abm)
 data/scenarios          generated scenario JSON
-docs/                   architecture, API, commands, simulation, LLM, scenario docs
+docs/                   architecture, API, commands, simulation, LLM, scenario docs; media/ demo video
 runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
 ```
 
@@ -93,3 +118,4 @@ The server tests play the whole Master ↔ player ↔ LLM loop over HTTP with a 
 - [docs/llm.md](docs/llm.md): LLM workflows, prompts, guardrails, fallback
 - [docs/scenario.md](docs/scenario.md): the synthetic scenario, roles, MSEL, how to make another
 - [docs/screenshots](docs/screenshots): captures from a live session
+- [docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4): the demo video; [scripts/record/README.md](scripts/record/README.md) explains how it is recorded

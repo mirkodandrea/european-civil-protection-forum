@@ -1,6 +1,6 @@
 # HTTP / WebSocket API
 
-Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`). JSON in, JSON out. Errors are `400 {"error": "..."}`. No authentication: run it on a dedicated LAN.
+Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`, and `scripts/record/session.js`, which drives the UIs themselves in a browser). JSON in, JSON out. Errors are `400 {"error": "..."}`. No authentication: run it on a dedicated LAN.
 
 ## Reads
 

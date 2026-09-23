@@ -106,3 +106,14 @@ sequenceDiagram
 | Master authority | Every player proposal needs approval; Master prompts are proposals too |
 | Graceful degradation | `Llm::off()`: English injects, `parse_failed` leaves the proposal for manual entry; tested in `server/tests/http_flow.rs::works_without_llm` |
 | Traceability | Every inject, message, proposal, decision, command and turn is in the log with wall clock, sim clock and turn |
+
+## Instrumentation
+
+| Hook | Purpose |
+|---|---|
+| `P` key / `runs/shot.req` | One screenshot of the simulator window (`viz::screenshot`) |
+| `runs/rec/ON` flag file | While it exists, a frame every 100 ms to `runs/rec/<unix-ms>.png` (`viz::record`); used by `scripts/record` to make the demo video |
+| `TTX_ORBIT=1` | Start the camera in slow auto-orbit (presentations, recordings) |
+| `runs/run-*.jsonl` | Full event log of every run |
+
+The demo video ([`docs/media/ttx_demo.mp4`](media/ttx_demo.mp4)) is produced by [`scripts/record`](../scripts/record/README.md): Playwright plays every role in `play.html` while the simulator saves timestamped frames, and `compose.py` puts the two side by side, in sync.

@@ -18,7 +18,9 @@ pub struct Orbit {
 }
 
 fn home(scn: &scenario::Scenario) -> Orbit {
-    Orbit { focus: to_bevy(scn, [2600.0, 2250.0], 0.0), yaw: 0.6, pitch: 0.62, dist: 2600.0, auto: false }
+    // TTX_ORBIT=1 starts in auto-orbit (presentation / recordings).
+    let auto = std::env::var("TTX_ORBIT").is_ok_and(|v| v == "1");
+    Orbit { focus: to_bevy(scn, [2600.0, 2250.0], 0.0), yaw: 0.6, pitch: 0.62, dist: 2600.0, auto }
 }
 
 pub fn setup(mut commands: Commands, scn: Res<Scn>) {
@@ -92,7 +94,7 @@ pub fn control(
         }
     }
     if o.auto {
-        o.yaw += time.delta_seconds() * 0.05;
+        o.yaw += time.delta_seconds() * 0.025;
     }
     if let Ok(mut t) = cam.get_single_mut() {
         *t = place(&o);

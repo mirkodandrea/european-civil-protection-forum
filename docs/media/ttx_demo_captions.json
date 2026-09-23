@@ -1,0 +1,102 @@
+[
+ {
+  "t": 1578,
+  "caption": "PPRD East TTX — one phone plays every role: Director, Mayor, Fire Commander, Regional Civil Protection."
+ },
+ {
+  "t": 5796,
+  "caption": "Each player picks a language. Regional Civil Protection will play in Armenian."
+ },
+ {
+  "t": 9328,
+  "caption": "The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill."
+ },
+ {
+  "t": 12565,
+  "caption": "The Director sends the first injects from the MSEL. The AI translates each one for its recipient."
+ },
+ {
+  "t": 50960,
+  "caption": "The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School."
+ },
+ {
+  "t": 55889,
+  "caption": "The Mayor answers in Italian, in their own words."
+ },
+ {
+  "t": 63076,
+  "caption": "The Fire Commander orders fire lines using zone codes from the map grid, plus an air-tanker drop."
+ },
+ {
+  "t": 72709,
+  "caption": "The AI turns each reply into commands. The simulator checks each one against the role’s authority and resources…"
+ },
+ {
+  "t": 79157,
+  "caption": "…and flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2."
+ },
+ {
+  "t": 84160,
+  "caption": "The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject."
+ },
+ {
+  "t": 92891,
+  "caption": "The Director reviews the AI’s proposal (a resource change plus an inject draft) and approves it."
+ },
+ {
+  "t": 99022,
+  "caption": "Now the Fire Commander’s orders are approved, with a note to the player…"
+ },
+ {
+  "t": 102805,
+  "caption": "…and the Mayor’s orders pass this time: 3 buses for 120 pupils."
+ },
+ {
+  "t": 107539,
+  "caption": "The Mayor gets exercise control’s feedback in Italian."
+ },
+ {
+  "t": 122191,
+  "caption": "The Director resolves turn 1: 30 simulated minutes. The big screen replays them."
+ },
+ {
+  "t": 125042,
+  "caption": "Fire lines cut, the drop made, the school evacuated to the sports centre, the Northern Road cut by the fire."
+ },
+ {
+  "t": 134757,
+  "caption": "Every player gets an AI-written situation update for their role."
+ },
+ {
+  "t": 184104,
+  "caption": "Turn 2. The Director escalates: a wind warning, then commands by code (wind 55 km/h, a new fire in zone G5)."
+ },
+ {
+  "t": 199387,
+  "caption": "Regional Civil Protection reads the wind warning in Armenian and asks for international assistance (UCPM)."
+ },
+ {
+  "t": 207355,
+  "caption": "A vague order from the Fire Commander…"
+ },
+ {
+  "t": 216061,
+  "caption": "…gets a clarification question from the AI instead of a guess."
+ },
+ {
+  "t": 220565,
+  "caption": "The Fire Commander answers precisely."
+ },
+ {
+  "t": 225503,
+  "caption": "The Director rejects the vague order and approves the UCPM request and the precise fire lines."
+ },
+ {
+  "t": 244406,
+  "caption": "Resolve turn 2: 60 minutes. Reinforcements arrive; the lines hold above Pineta; the new fire in G5 burns farmhouses."
+ },
+ {
+  "t": 255798,
+  "caption": "Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide, the AI mediates."
+ }
+]

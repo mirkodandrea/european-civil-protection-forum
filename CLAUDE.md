@@ -33,4 +33,6 @@ cargo run --release -p app [-- --headless] # :8080, master.html / player.html
 cargo run -p scenario --bin gen-scenario
 ./scripts/demo_session.sh                  # scripted 2-turn session against a running ttx
 echo "$PWD/runs/x.png" > runs/shot.req     # simulator window screenshot (or press P)
+./scripts/record/record.sh                 # re-record docs/media/ttx_demo.mp4 (own ttx on :8090)
+devtunnel host -p 8080                     # private tunnel for phone play (play.html)
 ```

@@ -60,3 +60,11 @@ pre { white-space: pre-wrap; font-size: 12px; background: rgba(127,127,127,.1); 
 .legend i { width: 12px; height: 12px; display: inline-block; border-radius: 2px; }
 .inbox { max-height: 60vh; overflow: auto; }
 .error { color: var(--accent); }
+
+/* Phones: don't pin the (tall, wrapped) header; tighter padding. */
+@media (max-width: 700px) {
+  header { position: static; padding: 8px 10px; gap: 6px; }
+  header h1 { font-size: 15px; }
+  main { padding: 8px; }
+  .panel { padding: 10px; }
+}

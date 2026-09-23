@@ -133,6 +133,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
                 camera::control,
                 hud::draw.after(frame::update),
                 screenshot,
+                record,
             ),
         )
         .run();
@@ -256,4 +257,28 @@ fn screenshot(
     if let Err(e) = shots.save_screenshot_to_disk(window, &path) {
         eprintln!("screenshot failed: {e}");
     }
+}
+
+/// While `runs/rec/ON` exists, save a frame every 100 ms as
+/// `runs/rec/<unix-ms>.png` (timestamped, so a variable-rate video can be
+/// assembled and synchronised with other recordings).
+fn record(
+    windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
+    mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
+    time: Res<Time>,
+    mut state: Local<(f32, bool, f32)>,
+) {
+    let (next, on, check) = &mut *state;
+    let t = time.elapsed_seconds();
+    if t >= *check {
+        *on = std::path::Path::new("runs/rec/ON").exists();
+        *check = t + 0.5;
+    }
+    if !*on || t < *next {
+        return;
+    }
+    *next = t + 0.1;
+    let Ok(window) = windows.get_single() else { return };
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let _ = shots.save_screenshot_to_disk(window, format!("runs/rec/{ms}.png"));
 }
