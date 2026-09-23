@@ -16,7 +16,7 @@ flowchart LR
         end
         EX[(Arc&lt;Mutex&lt;Exercise&gt;&gt;<br/>turns · injects · proposals · log<br/>World: fire + buildings + resources)]
         subgraph main["main thread (Bevy)"]
-            VIZ[viz: 3D view, replay, HUD]
+            VIZ[viz: 3D view, live turns, HUD]
         end
         LOG[(runs/run-*.jsonl)]
     end
@@ -31,7 +31,7 @@ flowchart LR
 
 - **One shared state**: `Arc<Mutex<Exercise>>`. The server mutates it; the renderer only reads it, with `try_lock` once per frame and only when `generation` has changed. A long operation, such as resolving a turn, never freezes the screen. It just delays the next copy.
 - **The lock is never held across an `await`.** LLM workflows copy what the prompt needs, release the lock, call the model, then lock again to store the result (`crates/server/src/flow.rs`).
-- **Live updates**: a watcher task polls `generation` every 250 ms and pushes it on `/ws`. Clients re-fetch when it changes, and also poll every 10 s as a fallback.
+- **Live updates**: a watcher task polls `generation` every 250 ms and pushes it on `/ws`. Clients re-fetch when it changes (at most 4 Hz, including during live turn simulation), and also poll every 10 s as a fallback. The renderer reads the state directly, every frame.
 
 The target spec (§2) separated the simulation from the server with command channels. The draft uses a shared mutex instead: simpler, and enough for one process with ~10 clients. Only `sim::World` changes the world, and only through `Command`s, so moving to channels later touches just the server and viz glue.
 
@@ -88,9 +88,9 @@ sequenceDiagram
 
 ## Turn model
 
-`Briefing → start → Orders ⟲ (resolve) … → end → Debrief`.
+`Briefing → start → Orders → Resolving (minute by minute) → Orders … → end → Debrief`.
 
-- Player actions approved during a turn are **applied together at resolution**, then simulated time advances by Δt (default 30 min, set per resolution).
+- Player actions approved during a turn are **applied together at resolution**. The turn is then **simulated live**: the phase becomes `resolving`, and a server task (`flow::run_resolution`) calls `Exercise::step_resolution(60 s)` until Δt (default 30 min) has elapsed. It takes the lock once per simulated minute and waits `pace_ms` between steps (0 = maximum speed; one step costs about 0.1 ms). Every step bumps `generation`, so the renderer redraws each minute and the WebSocket feed (throttled to 4 Hz) makes browsers re-fetch at a coarser rate. `finish_resolution` then logs the turn, snapshots it and opens the next one. Player replies, rollback and End are refused while a turn is resolving. Director commands and injects still work.
 - Master actions (map tools, commands by code, approved AI prompts) **apply immediately**.
 - Resources are per turn: usage resets when a turn opens. Approved but not yet applied actions already hold resources, so a second drop by the only air tanker is rejected.
 - A snapshot is taken at the start of every turn. **Rollback** restores the world and marks later proposals as `rolled_back`; messages stay as history.

@@ -150,3 +150,38 @@ async fn works_without_llm() {
     assert_eq!(rep["applied"][0]["ok"], true);
     eventually(&app, "/api/player/fire_commander", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "situation")).await;
 }
+
+/// With a pace set, a resolving turn is visible from outside: phase
+/// `resolving`, simulated time advancing minute by minute, replies refused.
+#[tokio::test]
+async fn resolution_runs_live_and_is_observable() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, set) = call(&app, "POST", "/api/master/settings", Some(json!({"pace_ms": 20}))).await;
+    assert_eq!(set["pace_ms"], 20);
+    let a2 = app.clone();
+    let resolver = tokio::spawn(async move { call(&a2, "POST", "/api/master/resolve", Some(json!({"minutes": 20}))).await });
+
+    let mut seen_times = std::collections::BTreeSet::new();
+    for _ in 0..200 {
+        let (_, st) = call(&app, "GET", "/api/state", None).await;
+        if st["phase"] == "resolving" {
+            assert_eq!(st["resolving"]["to_s"], 1200);
+            seen_times.insert(st["world"]["stats"]["time_s"].as_i64().unwrap());
+            let (s, _) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "hi"}))).await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "replies are refused while resolving");
+        }
+        if resolver.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(15)).await;
+    }
+    let (s, rep) = resolver.await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{rep}");
+    assert_eq!(rep["to_s"], 1200);
+    assert!(seen_times.len() >= 3, "intermediate minutes should be observable, saw {seen_times:?}");
+    assert!(seen_times.iter().all(|t| t % 60 == 0 && *t < 1200), "{seen_times:?}");
+    let (_, st) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(st["phase"], "orders");
+    assert_eq!(st["turn"], 2);
+}

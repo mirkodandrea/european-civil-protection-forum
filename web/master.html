@@ -16,6 +16,7 @@
   <span class="grow"></span>
   <button id="start" class="primary">Start exercise</button>
   <label class="small">Δt <input id="minutes" type="number" min="1" max="1440" value="30" style="width:64px"> min</label>
+  <label class="small" title="Wall-clock milliseconds per simulated minute while a turn is simulated. 0 = maximum speed.">pace <input id="pace" type="number" min="0" max="10000" step="50" value="0" style="width:70px"> ms/min</label>
   <button id="resolve" class="primary">Resolve turn ▶</button>
   <select id="rbturn" title="Roll back to the start of turn"></select>
   <button id="rollback">Rollback</button>
@@ -169,6 +170,7 @@ $('resolve').onclick = async () => {
   try { await api('/api/master/resolve', { minutes: +$('minutes').value }); } catch (e) { alertErr(e); }
   $('resolve').disabled = false;
 };
+$('pace').onchange = () => api('/api/master/settings', { pace_ms: +$('pace').value }).catch(alertErr);
 $('rollback').onclick = () => api('/api/master/rollback', { turn: +$('rbturn').value }).catch(alertErr);
 $('end').onclick = () => api('/api/master/end', {}).catch(alertErr);
 function alertErr(e) { $('err').textContent = e.message; }
@@ -215,12 +217,19 @@ function renderProposals() {
 async function refresh() {
   [state, master] = await Promise.all([api('/api/state'), api('/api/master')]);
   const w = state.world, st = w.stats;
-  $('turn').textContent = `Turn ${state.turn} · ${state.phase}`;
+  if (state.resolving) {
+    const r = state.resolving, pct = Math.round(100 * (st.time_s - r.from_s) / Math.max(1, r.to_s - r.from_s));
+    $('turn').textContent = `Turn ${state.turn} · simulating ${pct}%`;
+  } else {
+    $('turn').textContent = `Turn ${state.turn} · ${state.phase}`;
+  }
   $('clock').textContent = st.clock;
   $('weather').textContent = `wind ${w.weather.wind_dir_deg.toFixed(0)}° ${w.weather.wind_speed_kmh.toFixed(0)} km/h · moisture ${w.weather.moisture_pct.toFixed(0)}%`;
   $('llm').textContent = state.llm.available ? `AI: ${state.llm.model}` : 'AI: off';
   $('start').hidden = state.phase !== 'briefing';
   $('resolve').disabled = state.phase !== 'orders';
+  $('rollback').disabled = $('end').disabled = state.phase === 'resolving';
+  if (document.activeElement !== $('pace')) $('pace').value = state.pace_ms;
   if (document.activeElement !== $('minutes')) $('minutes').value = state.turn_minutes;
   $('rbturn').innerHTML = Array.from({ length: Math.max(state.turn, 1) }, (_, i) => `<option value="${i + 1}">turn ${i + 1}</option>`).join('');
   $('rbturn').value = state.turn;

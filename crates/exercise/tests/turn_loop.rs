@@ -149,7 +149,7 @@ fn direct_commands_by_code_and_log_file() {
     ex.start().unwrap();
     ex.direct_command(&Command::Extinguish { area: sim::Area::Named("G3".into()) }).unwrap();
     assert!(ex.direct_command(&Command::WaterDrop { at: Loc::Named("Atlantis".into()) }).is_err());
-    ex.end();
+    ex.end().unwrap();
     assert_eq!(ex.phase, Phase::Debrief);
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.lines().count() >= 4);
@@ -177,4 +177,57 @@ fn decision_rechecks_feasibility_after_resources_change() {
     ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }).unwrap();
     let out = ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
     assert!(out.facts_en.starts_with("APPROVED: Evacuate"), "{}", out.facts_en);
+}
+
+#[test]
+fn resolution_steps_minute_by_minute() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = ex.player_reply("fire_commander", "line").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"CutFireLine","along":"F4:N"}]))).unwrap();
+    ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
+
+    ex.begin_resolution(Some(5)).unwrap();
+    assert_eq!(ex.phase, Phase::Resolving);
+    // Approved actions are applied at the start of the resolution.
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Applied);
+    assert!(ex.world.stats().line_km > 0.4);
+    // Nothing else may happen while the turn is being simulated.
+    assert!(ex.player_reply("mayor", "evacuate").is_err());
+    assert!(ex.begin_resolution(None).is_err());
+    assert!(ex.rollback(1).is_err());
+    assert!(ex.end().is_err());
+
+    let mut minutes = 0;
+    let mut generation = ex.generation;
+    loop {
+        let done = ex.step_resolution(STEP_S).unwrap();
+        minutes += 1;
+        assert_eq!(ex.world.time_s(), minutes * 60, "one simulated minute per step");
+        assert!(ex.generation > generation, "every step is published");
+        generation = ex.generation;
+        if done {
+            break;
+        }
+    }
+    assert_eq!(minutes, 5);
+    let r = ex.finish_resolution().unwrap();
+    assert_eq!((r.from_s, r.to_s), (0, 300));
+    assert_eq!(ex.phase, Phase::Orders);
+    assert_eq!(ex.turn, 2);
+    assert!(ex.resolving.is_none());
+}
+
+#[test]
+fn stepped_and_one_shot_resolution_agree() {
+    let mut a = exercise();
+    let mut b = exercise();
+    a.start().unwrap();
+    b.start().unwrap();
+    a.resolve_turn(Some(30)).unwrap();
+    b.begin_resolution(Some(30)).unwrap();
+    while !b.step_resolution(STEP_S).unwrap() {}
+    b.finish_resolution().unwrap();
+    assert_eq!(a.world.stats().burned_ha, b.world.stats().burned_ha);
+    assert_eq!(a.world.time_s(), b.world.time_s());
 }

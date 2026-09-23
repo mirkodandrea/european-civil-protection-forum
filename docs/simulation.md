@@ -49,6 +49,10 @@ Tuned with `crates/fire/tests/synthetic_spread.rs`: 45 km/h NE wind, 4 % moistur
 
 This gives one turn of 30 min to act before contact.
 
+## Turn resolution
+
+A turn advances in **1-minute steps** (`exercise::STEP_S`). Each step runs the fire core for 60 s, then updates building exposure, evacuations, roads and arrivals. One step costs about 0.1 ms on the synthetic scenario, so pacing (`pace_ms`) is purely for display. The results are identical to advancing the whole turn at once (`stepped_and_one_shot_resolution_agree`).
+
 ## Known simplifications
 
 - Single realization: outcomes vary by seed (`--seed`).

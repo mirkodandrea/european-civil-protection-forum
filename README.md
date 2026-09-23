@@ -2,7 +2,7 @@
 
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
-- a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread, buildings with occupants, fire lines and water drops, a 3D big-screen view that replays each turn;
+- a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread, buildings with occupants, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, minute by minute;
 - an **Exercise Director (Master)** web console: injects (MSEL), turn control, approval of every player action, god-mode map tools, AI prompts, commands by code, rollback;
 - **player** web pages (tablets): role-specific inbox in the player's own language, free-text replies;
 - an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash`) that translates injects, turns replies into candidate commands, asks for clarification when orders are vague, and writes feedback and situation updates.
@@ -21,9 +21,11 @@ A complete two-turn exercise, played for real: every reply was typed into the UI
 
 ### What you see
 
+> The video was recorded before live turn simulation existed: after each resolution the big screen *replays* the turn over 10 s. Now the turn is simulated live, minute by minute, at the Director's chosen pace (see [Playing a turn](#playing-a-turn)). Everything else is unchanged.
+
 | Left: the phone (480 × 1040) | Right: the big screen (Bevy 3D) |
 |---|---|
-| `play.html`: the Director and the three players as tabs in one window. A yellow dot marks a tab with new messages or open proposals. The red bar at the bottom is the caption explaining each step (added for the video only) | The simulator in slow auto-orbit. Top left: turn, clock, weather, key numbers. Top right: the exercise feed (injects, orders, approvals). After each resolution the screen replays the simulated minutes, so the fire spreads in front of the audience |
+| `play.html`: the Director and the three players as tabs in one window. A yellow dot marks a tab with new messages or open proposals. The red bar at the bottom is the caption explaining each step (added for the video only) | The simulator in slow auto-orbit. Top left: turn, clock, weather, key numbers. Top right: the exercise feed (injects, orders, approvals). After each resolution the screen replays the simulated minutes (in the current version the turn is simulated live instead) |
 
 ### The situation
 
@@ -200,7 +202,7 @@ Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`. The synth
 1. **Director**: *Start exercise*, then send MSEL injects (*Injects* tab) or custom ones. Each player receives them translated.
 2. **Players** reply in their own words ("evacuate the school to the sports centre, close the northern road"). The AI turns this into commands, checked against the role's authority and resources.
 3. **Director** approves, edits (JSON) or rejects each proposal (*Proposals* tab). Players get feedback in their language. The Director can also act directly: map tools (ignite, fire line, drop, extinguish zone, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
-4. **Resolve turn ▶** (Δt, default 30 min): approved actions are executed, the fire and the buildings advance, the big screen replays the turn, and every player receives a situation update.
+4. **Resolve turn ▶** (Δt, default 30 min): approved actions are executed, then the turn is **simulated live, one simulated minute at a time**. The 3D view redraws after every minute, the browsers refresh up to 4 times a second, and when the turn ends every player receives a situation update. **pace** (ms per simulated minute, next to Δt) sets how fast the turn plays out: 0 = maximum speed (a 30-minute turn computes in about 20 ms, so it looks instant); 100–300 ms/min lets the audience watch the fire spread (3–9 s for a 30-minute turn).
 5. Repeat. Use *Rollback* to return to the start of an earlier turn and *End* to finish. *Debrief JSON* gives the full timeline.
 
 Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone codes** from the map grid (`F4`), as zone edges for fire lines (`F4:N`), or as coordinates.
@@ -225,7 +227,7 @@ crates/sim              world state, Command catalogue, validation, buildings, r
 crates/llm              OpenRouter gateway + prompt workflows (mockable)
 crates/exercise         turn engine: injects, inboxes, proposals, approval, rollback, event log
 crates/server           axum HTTP/WebSocket API + LLM orchestration
-crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, replay, HUD)
+crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, live turn view, HUD)
 crates/app              the `ttx` binary
 web/                    Master, player, all-roles (play.html) and landing pages (plain HTML/JS, no build step)
 scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)

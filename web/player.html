@@ -71,7 +71,7 @@ async function refresh() {
   const [p, st] = await Promise.all([api(`/api/player/${role}`), api('/api/state')]);
   document.title = p.player.name;
   $('rolename').textContent = p.player.name;
-  $('turn').textContent = p.phase === 'orders' ? `Turn ${p.turn}` : p.phase;
+  $('turn').textContent = p.phase === 'orders' ? `Turn ${p.turn}` : p.phase === 'resolving' ? `Turn ${p.turn} · simulating…` : p.phase;
   $('clock').textContent = p.clock;
   if (document.activeElement !== $('lang')) $('lang').value = p.player.language;
   $('roledesc').textContent = p.role.description;

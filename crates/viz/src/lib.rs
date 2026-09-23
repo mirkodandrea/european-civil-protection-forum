@@ -6,10 +6,10 @@
 //! therefore never stalls a frame, and the renderer can never change the
 //! exercise.
 //!
-//! When a turn is resolved the renderer **replays** it: a display clock runs
-//! from the turn's start to its end over [`REPLAY_SECONDS`], revealing fire
-//! cells by their arrival time, so the audience watches the half hour that
-//! just passed.
+//! Turns are simulated live: while the Director resolves a turn the server
+//! advances the world one simulated minute at a time (optionally paced), and
+//! every step bumps `generation`, so this renderer shows the fire, the
+//! buildings and the counters as they change.
 //!
 //! Vegetation meshes (pine, oak, bush) are the Blender bakes from
 //! `propagator_abm` (`assets/models/meshes.json`).
@@ -28,9 +28,6 @@ mod objects;
 mod terrain;
 
 pub use frame::Frame;
-
-/// Wall-clock seconds a resolved turn takes to replay on screen.
-pub const REPLAY_SECONDS: f32 = 10.0;
 
 #[derive(Resource, Clone)]
 pub struct Shared(pub Arc<Mutex<Exercise>>);
@@ -66,30 +63,10 @@ pub struct Snapshot {
     pub drops: Vec<(scenario::Pos, f32)>,
     pub warned: Vec<String>,
     pub last_turn: Option<exercise::TurnWindow>,
+    /// `(turn, from_s, to_s)` while a turn is being simulated.
+    pub resolving: Option<(u32, i64, i64)>,
     pub feed: Vec<String>,
     pub llm_model: String,
-}
-
-/// The turn replay: which simulated second the screen currently shows.
-#[derive(Resource, Default)]
-pub struct Replay {
-    pub turn: Option<u32>,
-    pub from_s: i64,
-    pub to_s: i64,
-    pub elapsed: f32,
-}
-
-impl Replay {
-    pub fn display_time(&self, now_s: i64) -> i64 {
-        if self.turn.is_none() || self.elapsed >= REPLAY_SECONDS {
-            return now_s;
-        }
-        let f = (self.elapsed / REPLAY_SECONDS).clamp(0.0, 1.0) as f64;
-        self.from_s + ((self.to_s - self.from_s) as f64 * f) as i64
-    }
-    pub fn active(&self) -> bool {
-        self.turn.is_some() && self.elapsed < REPLAY_SECONDS
-    }
 }
 
 /// The scenario, shared by all systems.
@@ -120,7 +97,6 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .insert_resource(ServerPort(port))
         .insert_resource(Scn(scn))
         .insert_resource(Snapshot { llm_model, ..default() })
-        .init_resource::<Replay>()
         .init_resource::<Frame>()
         .add_systems(Startup, (camera::setup, terrain::setup, objects::setup))
         .add_systems(
@@ -139,10 +115,9 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .run();
 }
 
-/// Copy the exercise into the [`Snapshot`] when it changed; start a replay
-/// when a new turn has been resolved.
-fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>, mut replay: ResMut<Replay>, time: Res<Time>) {
-    replay.elapsed += time.delta_seconds();
+/// Copy the exercise into the [`Snapshot`] whenever it changed (during a
+/// resolution: after every simulated minute).
+fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
     let Ok(ex) = shared.0.try_lock() else { return };
     if ex.generation == snap.generation {
         return;
@@ -200,12 +175,8 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>, mut replay: ResMut<Repl
         .into_iter()
         .rev()
         .collect();
-    if ex.last_turn.map(|t| t.turn) != snap.last_turn.map(|t| t.turn) {
-        if let Some(t) = ex.last_turn {
-            *replay = Replay { turn: Some(t.turn), from_s: t.from_s, to_s: t.to_s, elapsed: 0.0 };
-        }
-    }
     snap.last_turn = ex.last_turn;
+    snap.resolving = ex.resolving.as_ref().map(|r| (r.turn, r.from_s, r.to_s));
 }
 
 /// What the audience sees in the HUD feed.
@@ -216,6 +187,7 @@ fn feed_line(e: &exercise::LogEntry) -> Option<String> {
         "proposal_decided" if d["approve"].as_bool()? => format!("APPROVED  {}", d["facts"].as_str()?.lines().next()?.trim_start_matches("APPROVED: ")),
         "proposal_decided" => "REJECTED  a proposal".to_string(),
         "master_command" => format!("DIRECTOR  {}", serde_json::from_value::<sim::Command>(d["command"].clone()).ok()?.describe()),
+        "turn_resolving" => format!("TURN {} SIMULATING  ({} min)", d["turn"], d["minutes"]),
         "turn_resolved" => format!("TURN {} RESOLVED  ({} min)", d["turn"], d["minutes"]),
         // The English summary, not the raw reply: the HUD font has no Armenian, Georgian… glyphs.
         "proposal_parsed" if e.actor != exercise::MASTER => format!("ORDERS  {}: {}", e.actor, truncate(d["summary"].as_str().filter(|s| !s.is_empty())?, 90)),

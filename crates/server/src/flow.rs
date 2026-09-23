@@ -205,3 +205,26 @@ fn fallback_update(digest: &Value, events: &[String]) -> String {
     }
     s
 }
+
+/// Simulate the resolving turn one minute at a time. The lock is taken per
+/// minute, so the renderer redraws after every step and the WebSocket feed
+/// (throttled to 4 Hz) tells browsers to re-fetch. `pace_ms` spaces the steps
+/// in wall-clock time; 0 runs as fast as the model computes (~0.1 ms/minute).
+pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {
+    loop {
+        let (done, pace) = {
+            let mut ex = state.lock();
+            (ex.step_resolution(exercise::STEP_S)?, ex.pace_ms)
+        };
+        if done {
+            break;
+        }
+        if pace > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(pace as u64)).await;
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
+    let report = state.lock().finish_resolution()?;
+    Ok(report)
+}

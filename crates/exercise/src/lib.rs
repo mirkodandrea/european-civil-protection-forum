@@ -30,6 +30,8 @@ use serde_json::{json, Value};
 use sim::{Actor, Command, SimEvent, Verdict, World, WorldSnapshot};
 
 pub const DEFAULT_TURN_MINUTES: u32 = 30;
+/// Resolution granularity: the world is published after every simulated minute.
+pub const STEP_S: i64 = 60;
 pub const MASTER: &str = "master";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -37,6 +39,8 @@ pub const MASTER: &str = "master";
 pub enum Phase {
     Briefing,
     Orders,
+    /// A turn is being simulated, minute by minute (see [`Exercise::begin_resolution`]).
+    Resolving,
     Debrief,
 }
 
@@ -199,6 +203,17 @@ pub struct LogEntry {
     pub data: Value,
 }
 
+/// A turn being resolved: where it started, where it stops, what happened so far.
+#[derive(Debug, Clone, Serialize)]
+pub struct Resolution {
+    pub turn: u32,
+    pub minutes: u32,
+    pub from_s: i64,
+    pub to_s: i64,
+    pub applied: Vec<AppliedAction>,
+    pub events: Vec<SimEvent>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct TurnWindow {
     pub turn: u32,
@@ -221,6 +236,10 @@ pub struct Exercise {
     pub last_turn: Option<TurnWindow>,
     /// Injects of the MSEL already sent.
     pub sent_injects: Vec<String>,
+    /// The turn currently being simulated, if any.
+    pub resolving: Option<Resolution>,
+    /// Wall-clock milliseconds per simulated minute while resolving; 0 = as fast as possible.
+    pub pace_ms: u32,
     snapshots: Vec<(u32, WorldSnapshot)>,
     log_file: Option<PathBuf>,
     next_id: u64,
@@ -246,6 +265,8 @@ impl Exercise {
             generation: 1,
             last_turn: None,
             sent_injects: Vec::new(),
+            resolving: None,
+            pace_ms: 0,
             snapshots: Vec::new(),
             log_file: None,
             next_id: 1,
@@ -350,8 +371,19 @@ impl Exercise {
         Ok(())
     }
 
-    /// Apply approved player actions, advance simulated time, open the next turn.
+    /// Resolve a whole turn at once: [`Self::begin_resolution`], one-minute
+    /// [`Self::step_resolution`]s, [`Self::finish_resolution`]. The server runs
+    /// the same three steps with the lock released between minutes, so the
+    /// renderer and the browsers see the turn unfold.
     pub fn resolve_turn(&mut self, minutes: Option<u32>) -> Result<TurnReport> {
+        self.begin_resolution(minutes)?;
+        while !self.step_resolution(STEP_S)? {}
+        self.finish_resolution()
+    }
+
+    /// Start resolving the open turn: approved player actions are applied now,
+    /// then the phase is `Resolving` until simulated time reaches the end.
+    pub fn begin_resolution(&mut self, minutes: Option<u32>) -> Result<()> {
         if self.phase != Phase::Orders {
             bail!("no turn is open");
         }
@@ -380,12 +412,41 @@ impl Exercise {
             p.status = if all_ok { ProposalStatus::Applied } else { ProposalStatus::Failed };
             p.results = results;
         }
-        let events = self.world.advance(minutes as i64 * 60)?;
-        let to_s = self.world.time_s();
-        let report = TurnReport { turn: self.turn, from_s, to_s, applied, events };
-        self.record("turn_resolved", MASTER, json!({"turn": self.turn, "minutes": minutes, "applied": report.applied, "events": report.events, "stats": self.world.stats()}));
-        self.last_turn = Some(TurnWindow { turn: self.turn, from_s, to_s });
+        let to_s = from_s + minutes as i64 * 60;
+        self.resolving = Some(Resolution { turn: self.turn, minutes, from_s, to_s, applied, events: Vec::new() });
+        self.phase = Phase::Resolving;
+        self.record("turn_resolving", MASTER, json!({"turn": self.turn, "minutes": minutes, "to_s": to_s}));
+        Ok(())
+    }
+
+    /// Advance the resolving turn by up to `step_s` simulated seconds.
+    /// Returns `true` once the end of the turn has been reached.
+    pub fn step_resolution(&mut self, step_s: i64) -> Result<bool> {
+        let Some(to_s) = self.resolving.as_ref().map(|r| r.to_s) else { bail!("no turn is being resolved") };
+        let dt = (to_s - self.world.time_s()).min(step_s);
+        if dt > 0 {
+            let events = self.world.advance(dt)?;
+            if let Some(r) = self.resolving.as_mut() {
+                r.events.extend(events);
+            }
+            self.touch();
+        }
+        Ok(self.world.time_s() >= to_s)
+    }
+
+    /// Close the resolved turn: log it, snapshot, open the next turn.
+    pub fn finish_resolution(&mut self) -> Result<TurnReport> {
+        let Some(r) = self.resolving.take() else { bail!("no turn is being resolved") };
+        while self.world.time_s() < r.to_s {
+            // Finishing early (e.g. a caller that did not step to the end) still completes the turn.
+            let dt = (r.to_s - self.world.time_s()).min(STEP_S);
+            self.world.advance(dt)?;
+        }
+        let report = TurnReport { turn: r.turn, from_s: r.from_s, to_s: r.to_s, applied: r.applied, events: r.events };
+        self.record("turn_resolved", MASTER, json!({"turn": r.turn, "minutes": r.minutes, "applied": report.applied, "events": report.events, "stats": self.world.stats()}));
+        self.last_turn = Some(TurnWindow { turn: r.turn, from_s: r.from_s, to_s: r.to_s });
         self.turn += 1;
+        self.phase = Phase::Orders;
         self.world.new_turn();
         self.snapshots.push((self.turn, self.world.snapshot()));
         self.record("turn_opened", MASTER, json!({"turn": self.turn}));
@@ -395,6 +456,9 @@ impl Exercise {
     /// Put the world back to the start of `turn`. Proposals of that turn and
     /// later are marked rolled back; messages stay as history.
     pub fn rollback(&mut self, turn: u32) -> Result<()> {
+        if self.phase == Phase::Resolving {
+            bail!("a turn is being resolved; wait for it to finish");
+        }
         let Some((_, snap)) = self.snapshots.iter().find(|(t, _)| *t == turn).cloned() else {
             bail!("no snapshot for turn {turn}");
         };
@@ -416,9 +480,13 @@ impl Exercise {
         Ok(())
     }
 
-    pub fn end(&mut self) {
+    pub fn end(&mut self) -> Result<()> {
+        if self.phase == Phase::Resolving {
+            bail!("a turn is being resolved; wait for it to finish");
+        }
         self.phase = Phase::Debrief;
         self.record("exercise_ended", MASTER, json!({"stats": self.world.stats()}));
+        Ok(())
     }
 
     // --------------------------------------------------------------- messages

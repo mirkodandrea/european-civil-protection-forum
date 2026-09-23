@@ -1,4 +1,4 @@
-//! The on-screen HUD: turn and clock (with the replay clock), weather, key
+//! The on-screen HUD: turn and clock (with live resolution progress), weather, key
 //! numbers, the decision feed, how to join, and map labels (facilities and
 //! zone codes projected from 3D).
 
@@ -8,7 +8,7 @@ use bevy_egui::EguiContexts;
 
 use crate::frame::{to_bevy, Frame};
 use crate::objects::ShowGrid;
-use crate::{Replay, Scn, ServerPort, Snapshot};
+use crate::{Scn, ServerPort, Snapshot};
 
 fn local_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
@@ -24,7 +24,6 @@ fn local_ip() -> String {
 pub fn draw(
     mut ctx: EguiContexts,
     snap: Res<Snapshot>,
-    replay: Res<Replay>,
     frame: Res<Frame>,
     scn: Res<Scn>,
     port: Res<ServerPort>,
@@ -41,10 +40,12 @@ pub fn draw(
         panel.show(ui, |ui| {
             ui.label(RichText::new(&s.name).color(Color32::WHITE).size(20.0).strong());
             let clock = scenario::format_clock(s.start_clock_s + frame.display_s);
-            let phase = if snap.phase == "orders" { format!("Turn {}", snap.turn) } else { snap.phase.clone() };
+            let phase = if matches!(snap.phase.as_str(), "orders" | "resolving") { format!("Turn {}", snap.turn) } else { snap.phase.clone() };
             ui.label(RichText::new(format!("{phase}   ·   {clock}")).color(Color32::from_rgb(255, 210, 120)).size(26.0).strong());
-            if replay.active() {
-                ui.label(RichText::new(format!("▶ replaying turn {}", replay.turn.unwrap_or(0))).color(Color32::from_rgb(255, 120, 80)).size(16.0));
+            if let Some((turn, from_s, to_s)) = snap.resolving {
+                let done = (frame.display_s - from_s) as f32 / (to_s - from_s).max(1) as f32;
+                ui.label(RichText::new(format!("▶ simulating turn {turn}   → {}", scenario::format_clock(s.start_clock_s + to_s))).color(Color32::from_rgb(255, 120, 80)).size(16.0));
+                ui.add(egui::ProgressBar::new(done.clamp(0.0, 1.0)).desired_width(300.0));
             }
             if let Some(w) = snap.weather {
                 let arrows = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"];

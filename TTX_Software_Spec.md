@@ -234,7 +234,7 @@ The draft follows this spec with these decisions and deviations. The details are
 | Channels between sim and server (§2) | One `Arc<Mutex<Exercise>>`: the server mutates it, the Bevy renderer `try_lock`s and reads. The lock is never held across LLM calls |
 | Crates (§3) | As listed; `telemetry` is a JSONL event log inside `exercise` (`runs/run-*.jsonl`) instead of SQLite |
 | Command catalogue (§4) | Implemented, plus zone-grid addressing: `EvacuateZone`, `Extinguish` a zone, fire lines `along` a zone edge. The full catalogue is in `docs/commands.md` |
-| Turn loop (§5) | `Briefing → Orders ⟲ resolve(Δt) → Debrief`. Player actions apply at resolution, Master actions immediately. Snapshots per turn with rollback |
+| Turn loop (§5) | `Briefing → Orders → Resolving → Orders … → Debrief`. Player actions apply at resolution, Master actions immediately. The turn is simulated live in 1-minute steps (pace set by the Director; 0 = maximum speed): the 3D view redraws every minute and browsers refresh at up to 4 Hz. Snapshots per turn with rollback |
 | LLM workflows (§6) | L1–L5 implemented (translate, parse reply with clarification and role messages, Master prompt with inject drafts, feedback, situation update). L6/L7 (suggestions, debrief narrative) not yet |
 | Scenario package (§7) | One JSON file; synthetic generator; zone grid; multilingual gazetteer; MSEL of 8 injects |
 | Interfaces (§8) | Master and player pages in plain HTML/JS with a canvas map; big screen in Bevy with turn replay and HUD. No evaluator UI yet (the debrief JSON covers the log) |

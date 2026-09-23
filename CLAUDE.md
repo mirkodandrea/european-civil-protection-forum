@@ -14,6 +14,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash`, key in `.env`; must degrade gracefully |
 | Scenario | Synthetic "Valverde valley" for now |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
+| Turn resolution | Simulated live between turns in 1-minute steps. The 3D view updates every step; browsers are coarser (≤ 4 Hz). Default pace = maximum speed (`pace_ms` 0), adjustable by the Director |
 
 ## Working agreements
 

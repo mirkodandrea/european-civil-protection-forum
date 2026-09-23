@@ -133,6 +133,8 @@ async fn get_state(State(s): State<AppState>) -> ApiResult {
         "turn": ex.turn,
         "phase": ex.phase,
         "turn_minutes": ex.turn_minutes,
+        "pace_ms": ex.pace_ms,
+        "resolving": ex.resolving.as_ref().map(|r| json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "minutes": r.minutes})),
         "generation": ex.generation,
         "last_turn": ex.last_turn,
         "players": ex.players,
@@ -304,10 +306,10 @@ struct ResolveBody {
 
 async fn post_resolve(State(s): State<AppState>, body: Option<Json<ResolveBody>>) -> ApiResult {
     let minutes = body.map(|b| b.0.minutes).unwrap_or_default();
-    let ex = s.ex.clone();
-    let report = tokio::task::spawn_blocking(move || ex.lock().unwrap_or_else(|p| p.into_inner()).resolve_turn(minutes))
-        .await
-        .map_err(|e| bad(e.to_string()))??;
+    s.lock().begin_resolution(minutes)?;
+    // Spawned, so the turn completes even if the client goes away; the
+    // response still waits for the report.
+    let report = tokio::spawn(flow::run_resolution(s.clone())).await.map_err(|e| bad(e.to_string()))??;
     let mut events: Vec<String> = report.applied.iter().map(|a| format!("{} ({}): {}", a.action, a.by, if a.ok { "done" } else { &a.detail })).collect();
     events.extend(report.events.iter().map(|e| e.text.clone()));
     tokio::spawn(flow::situation_updates(s.clone(), events));
@@ -325,7 +327,7 @@ async fn post_rollback(State(s): State<AppState>, Json(b): Json<RollbackBody>) -
 }
 
 async fn post_end(State(s): State<AppState>) -> ApiResult {
-    s.lock().end();
+    s.lock().end()?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -333,6 +335,9 @@ async fn post_end(State(s): State<AppState>) -> ApiResult {
 struct SettingsBody {
     #[serde(default)]
     turn_minutes: Option<u32>,
+    /// Wall-clock ms per simulated minute during resolution; 0 = maximum speed.
+    #[serde(default)]
+    pace_ms: Option<u32>,
 }
 
 async fn post_settings(State(s): State<AppState>, Json(b): Json<SettingsBody>) -> ApiResult {
@@ -342,7 +347,12 @@ async fn post_settings(State(s): State<AppState>, Json(b): Json<SettingsBody>) -
         ex.turn_minutes = m;
         ex.record("settings", exercise::MASTER, json!({"turn_minutes": m}));
     }
-    Ok(Json(json!({"turn_minutes": ex.turn_minutes})))
+    if let Some(p) = b.pace_ms {
+        let p = p.min(10_000);
+        ex.pace_ms = p;
+        ex.record("settings", exercise::MASTER, json!({"pace_ms": p}));
+    }
+    Ok(Json(json!({"turn_minutes": ex.turn_minutes, "pace_ms": ex.pace_ms})))
 }
 
 // ---------------------------------------------------------------- ws

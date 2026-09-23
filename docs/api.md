@@ -7,7 +7,7 @@ Everything the UIs do goes through this API, so the whole exercise can be driven
 | Method | Path | Returns |
 |---|---|---|
 | GET | `/api/static` | Scenario: grid, zones, base64 fuel raster, buildings, roads, places, roles, resource types, reinforcement offers, `msel` |
-| GET | `/api/state` | `turn`, `phase`, `turn_minutes`, `generation`, `last_turn`, `players`, `sent_injects`, `llm`, and `world` (stats, weather, base64 fire raster, building states, roads, fire lines, drops, warned zones, shelters, resource pools, arrivals, burning zones) |
+| GET | `/api/state` | `turn`, `phase` (`briefing` / `orders` / `resolving` / `debrief`), `turn_minutes`, `pace_ms`, `resolving` (`{turn, from_s, to_s, minutes}` while a turn is being simulated), `generation`, `last_turn`, `players`, `sent_injects`, `llm`, and `world` (stats, weather, base64 fire raster, building states, roads, fire lines, drops, warned zones, shelters, resource pools, arrivals, burning zones) |
 | GET | `/api/master` | All proposals, all messages, last 300 log entries, full digest |
 | GET | `/api/player/{role}` | The player, role, turn, phase, clock, inbox, own resources, own proposals |
 | GET | `/api/catalogue` | Command kinds, the Master-only list, catalogue documentation, roles |
@@ -33,10 +33,10 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 | POST | `/api/master/prompt` | `{"text": "..."}` → proposal with commands and/or inject drafts (AI) |
 | POST | `/api/master/proposals/{id}/decide` | `{"approve": bool, "commands"?: [...], "note"?: "..."}`; `commands` replaces the proposal's actions (edit); feasibility is re-checked |
 | POST | `/api/master/command` | One command or a list, applied immediately as the Master → per-command results |
-| POST | `/api/master/resolve` | `{"minutes"?: 30}` → turn report (applied actions, events) |
+| POST | `/api/master/resolve` | `{"minutes"?: 30}` → applies approved actions, then simulates the turn live in 1-minute steps (phase `resolving`, observable through `/api/state` and `/ws`). The response comes when the turn ends: turn report (applied actions, events) |
 | POST | `/api/master/rollback` | `{"turn": n}` |
 | POST | `/api/master/end` | Debrief phase |
-| POST | `/api/master/settings` | `{"turn_minutes": 30}` |
+| POST | `/api/master/settings` | `{"turn_minutes": 30, "pace_ms": 150}`: default Δt, and wall-clock ms per simulated minute during resolution (0 = maximum speed) |
 
 ## Examples
 

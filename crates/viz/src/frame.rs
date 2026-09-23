@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use scenario::{Pos, Scenario};
 
-use crate::{Replay, Scn, Snapshot};
+use crate::{Scn, Snapshot};
 
 /// Vertical exaggeration of the terrain.
 pub const EXAGGERATION: f32 = 1.3;
@@ -45,32 +45,19 @@ pub struct Frame {
     pub all_changed: bool,
 }
 
-pub fn update(snap: Res<Snapshot>, replay: Res<Replay>, scn: Res<Scn>, mut frame: ResMut<Frame>) {
+/// The screen shows the live world: during a resolution the snapshot moves
+/// forward one simulated minute at a time.
+pub fn update(snap: Res<Snapshot>, scn: Res<Scn>, mut frame: ResMut<Frame>) {
     let n = scn.0.grid.len();
-    if snap.cells.len() != n {
+    if snap.cells.len() != n || (!snap.is_changed() && frame.cells.len() == n) {
+        frame.changed.clear();
+        frame.all_changed = false;
         return;
     }
-    let td = replay.display_time(snap.time_s);
-    let burnout = fire::BURNOUT_S as i64;
-    let mut cells = Vec::with_capacity(n);
-    for i in 0..n {
-        let c = snap.cells[i];
-        let a = snap.arrival[i];
-        let shown = if a == i32::MIN || !replay.active() {
-            c
-        } else if a as i64 > td {
-            0
-        } else if c == 1 || td - (a as i64) < burnout {
-            1
-        } else {
-            2
-        };
-        cells.push(shown);
-    }
     frame.all_changed = frame.cells.len() != n;
-    frame.changed = if frame.all_changed { Vec::new() } else { (0..n).filter(|&i| frame.cells[i] != cells[i]).collect() };
-    frame.cells = cells;
-    frame.display_s = td;
+    frame.changed = if frame.all_changed { Vec::new() } else { (0..n).filter(|&i| frame.cells[i] != snap.cells[i]).collect() };
+    frame.cells = snap.cells.clone();
+    frame.display_s = snap.time_s;
 }
 
 #[cfg(test)]
