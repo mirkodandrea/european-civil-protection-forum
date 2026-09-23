@@ -1,0 +1,17 @@
+[package]
+name = "scenario"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Scenario package: terrain, fuel, buildings, roads, sectors, roles, resources, MSEL — plus the synthetic scenario generator"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+
+[[bin]]
+name = "gen-scenario"
+path = "src/bin/gen_scenario.rs"

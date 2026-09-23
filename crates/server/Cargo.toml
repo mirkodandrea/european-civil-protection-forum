@@ -1,0 +1,24 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTP + WebSocket server for the Master and player UIs, and the LLM orchestration of the turn loop"
+
+[dependencies]
+scenario.workspace = true
+sim.workspace = true
+exercise.workspace = true
+llm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+futures = "0.3"
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

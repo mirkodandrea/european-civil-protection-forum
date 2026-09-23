@@ -1,0 +1,15 @@
+[package]
+name = "llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLM gateway (OpenRouter, mock for tests) and the TTX prompt workflows: translation, reply parsing, Master prompts, feedback, situation updates"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures = "0.3"

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPRD East TTX</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>PPRD East 4 – AI-supported Table-Top Exercise</h1></header>
+<main>
+  <div class="panel">
+    <h2 id="scn">Scenario</h2>
+    <p id="desc" class="small"></p>
+    <p><a href="master.html"><b>Exercise Director (Master)</b></a></p>
+    <h2 style="margin-top:14px">Players</h2>
+    <div id="roles"></div>
+    <p class="small muted">Open a player link on each tablet. The big screen runs the 3D simulator window.</p>
+  </div>
+</main>
+<script type="module">
+import { api, esc } from './common.js';
+const s = await api('/api/static');
+document.getElementById('scn').textContent = s.name;
+document.getElementById('desc').textContent = s.description;
+document.getElementById('roles').innerHTML = s.roles.map(r => `<p><a href="player.html?role=${r.id}">${esc(r.name)}</a> <span class="muted small">(${esc(r.language)}) ${esc(r.description)}</span></p>`).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,485 @@
+//! The scenario package: everything the exercise needs to know about a place
+//! before the first turn — terrain and fuel for the fire model, buildings,
+//! roads, sectors, a multilingual gazetteer, the player roles with their
+//! resources, reinforcement offers and the MSEL.
+//!
+//! ## Coordinate frame
+//!
+//! One metric **world frame**: origin at the south-west corner of the grid,
+//! `+x` east, `+y` north, metres. Rasters are stored row-major with **row 0 at
+//! the north edge** (the fire core's convention: a north wind, `wind_dir = 0`,
+//! drives fire toward increasing rows). [`Scenario::cell_of`] and
+//! [`Scenario::cell_centre`] are the only conversions; nothing else should
+//! need to know the raster spacing.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+pub mod synthetic;
+
+/// Fuel codes of the fire core's legacy 7-class table.
+pub mod fuel {
+    pub const BROADLEAVES: i32 = 1;
+    pub const SHRUBS: i32 = 2;
+    /// Non-burnable: settlements, water, bare rock, cleared fire lines.
+    pub const NON_VEGETATED: i32 = 3;
+    pub const GRASSLAND: i32 = 4;
+    pub const CONIFERS: i32 = 5;
+    pub const AGRO_FORESTRY: i32 = 6;
+    pub const NON_FIRE_PRONE_FOREST: i32 = 7;
+
+    pub fn name(code: i32) -> &'static str {
+        match code {
+            BROADLEAVES => "broadleaves",
+            SHRUBS => "shrubs",
+            NON_VEGETATED => "non-vegetated",
+            GRASSLAND => "grassland",
+            CONIFERS => "conifers",
+            AGRO_FORESTRY => "agro-forestry",
+            NON_FIRE_PRONE_FOREST => "non-fire-prone forest",
+            _ => "unknown",
+        }
+    }
+}
+
+/// A position in the world frame, metres.
+pub type Pos = [f32; 2];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Cell {
+    pub row: usize,
+    pub col: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct GridSpec {
+    pub rows: usize,
+    pub cols: usize,
+    /// Cell edge, metres.
+    pub cellsize: f32,
+}
+
+impl GridSpec {
+    pub fn width_m(&self) -> f32 {
+        self.cols as f32 * self.cellsize
+    }
+    pub fn height_m(&self) -> f32 {
+        self.rows as f32 * self.cellsize
+    }
+    pub fn len(&self) -> usize {
+        self.rows * self.cols
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn index(&self, c: Cell) -> usize {
+        c.row * self.cols + c.col
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct WeatherSpec {
+    /// Degrees clockwise from north the wind blows **from** (meteorological).
+    pub wind_dir_deg: f64,
+    pub wind_speed_kmh: f64,
+    /// Dead fine fuel moisture, percent.
+    pub moisture_pct: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IgnitionSpec {
+    pub at: Pos,
+    pub radius_m: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildingKind {
+    House,
+    School,
+    Hospital,
+    FuelStation,
+    SportsCentre,
+    TownHall,
+    Industrial,
+}
+
+impl BuildingKind {
+    /// Buildings whose occupants cannot self-evacuate by car and need buses.
+    pub fn needs_transport(self) -> bool {
+        matches!(self, BuildingKind::School | BuildingKind::Hospital)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Building {
+    pub id: u32,
+    pub kind: BuildingKind,
+    /// Named facilities carry a name and are addressable from the gazetteer.
+    #[serde(default)]
+    pub name: Option<String>,
+    pub pos: Pos,
+    /// Footprint, metres (x, y).
+    pub size: [f32; 2],
+    /// People normally inside during the exercise window (no individual agents).
+    pub occupants: u32,
+    pub sector: String,
+    /// Can host evacuees (shelter / assembly area) once opened.
+    #[serde(default)]
+    pub shelter_capacity: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Road {
+    pub id: String,
+    pub name: String,
+    pub points: Vec<Pos>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sector {
+    pub id: String,
+    pub name: String,
+    /// Axis-aligned bounds `[x0, y0, x1, y1]`, metres.
+    pub bounds: [f32; 4],
+}
+
+impl Sector {
+    pub fn contains(&self, p: Pos) -> bool {
+        p[0] >= self.bounds[0] && p[0] < self.bounds[2] && p[1] >= self.bounds[1] && p[1] < self.bounds[3]
+    }
+    pub fn centre(&self) -> Pos {
+        [(self.bounds[0] + self.bounds[2]) * 0.5, (self.bounds[1] + self.bounds[3]) * 0.5]
+    }
+}
+
+/// The evacuation-zone grid: a plain map grid laid over the window, so an
+/// order can say "evacuate C3". Columns are letters west → east, rows are
+/// numbers north → south, like a printed operational map.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ZoneGrid {
+    pub cols: usize,
+    pub rows: usize,
+    /// Zone edge, metres.
+    pub size_m: f32,
+}
+
+impl ZoneGrid {
+    pub fn name(&self, col: usize, row: usize) -> String {
+        format!("{}{}", (b'A' + col as u8) as char, row + 1)
+    }
+
+    /// All zone names, row by row from the north-west corner.
+    pub fn names(&self) -> Vec<String> {
+        (0..self.rows).flat_map(|r| (0..self.cols).map(move |c| (c, r))).map(|(c, r)| self.name(c, r)).collect()
+    }
+
+    /// The zone containing `p`, if inside the grid.
+    pub fn zone_of(&self, p: Pos, height_m: f32) -> Option<String> {
+        if p[0] < 0.0 || p[1] < 0.0 {
+            return None;
+        }
+        let col = (p[0] / self.size_m) as usize;
+        let row = ((height_m - p[1]) / self.size_m) as usize;
+        (col < self.cols && row < self.rows).then(|| self.name(col, row))
+    }
+
+    /// `(col, row)` of a zone name such as `"c3"` or `"C 3"`.
+    pub fn parse(&self, name: &str) -> Option<(usize, usize)> {
+        let key: String = name.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
+        let mut chars = key.chars();
+        let letter = chars.next()?;
+        if !letter.is_ascii_uppercase() {
+            return None;
+        }
+        let col = (letter as u8 - b'A') as usize;
+        let row: usize = chars.as_str().parse().ok()?;
+        (col < self.cols && row >= 1 && row <= self.rows).then_some((col, row - 1))
+    }
+
+    /// A zone edge as a segment: `"F4:N"` is the north edge of F4 (also `S`,
+    /// `E`, `W`), west→east or north→south. Used for fire lines "by code".
+    pub fn edge(&self, code: &str, height_m: f32) -> Option<(Pos, Pos)> {
+        let (zone, side) = code.split_once(':')?;
+        let b = self.bounds(zone, height_m)?;
+        match side.trim().to_uppercase().as_str() {
+            "N" => Some(([b[0], b[3]], [b[2], b[3]])),
+            "S" => Some(([b[0], b[1]], [b[2], b[1]])),
+            "W" => Some(([b[0], b[3]], [b[0], b[1]])),
+            "E" => Some(([b[2], b[3]], [b[2], b[1]])),
+            _ => None,
+        }
+    }
+
+    /// `[x0, y0, x1, y1]` of a zone, metres.
+    pub fn bounds(&self, name: &str, height_m: f32) -> Option<[f32; 4]> {
+        let (c, r) = self.parse(name)?;
+        let x0 = c as f32 * self.size_m;
+        let y1 = height_m - r as f32 * self.size_m;
+        Some([x0, y1 - self.size_m, x0 + self.size_m, y1])
+    }
+}
+
+/// A named point, for the LLM to resolve "the ridge" or "la scuola" to a place.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Place {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    pub pos: Pos,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceType {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Role {
+    pub id: String,
+    pub name: String,
+    /// national / regional / local
+    pub level: String,
+    /// ISO 639-1 code of the player's default language.
+    pub language: String,
+    pub description: String,
+    /// Command type names (see `sim::Command`) this role may propose.
+    pub allowed_actions: Vec<String>,
+    /// Resource id -> units available per turn.
+    pub resources: BTreeMap<String, u32>,
+}
+
+/// External capacity a role can request; arrives after a delay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReinforcementOffer {
+    pub resource: String,
+    pub max_qty: u32,
+    pub delay_min: u32,
+    pub source: String,
+    /// Role that receives the units on arrival.
+    pub assigned_to: String,
+}
+
+/// One prepared inject of the Master Scenario Events List.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InjectTemplate {
+    pub id: String,
+    /// Suggested turn (the Master decides when to send).
+    pub turn: u32,
+    pub title: String,
+    /// The simulated sender (e.g. "112 Dispatch", "ERCC").
+    pub sender: String,
+    /// Role ids, or `"all"`.
+    pub recipients: Vec<String>,
+    /// Text in the working language (English).
+    pub text: String,
+    pub objective: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Scenario {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub grid: GridSpec,
+    /// Row-major fuel codes (see [`fuel`]).
+    pub fuel: Vec<i32>,
+    /// Row-major elevation, metres.
+    pub dem: Vec<f32>,
+    /// Exercise clock at t = 0, seconds since Day 1 00:00.
+    pub start_clock_s: i64,
+    pub weather: WeatherSpec,
+    pub initial_ignitions: Vec<IgnitionSpec>,
+    pub buildings: Vec<Building>,
+    pub roads: Vec<Road>,
+    pub sectors: Vec<Sector>,
+    pub zones: ZoneGrid,
+    pub places: Vec<Place>,
+    pub resource_types: Vec<ResourceType>,
+    pub roles: Vec<Role>,
+    pub reinforcements: Vec<ReinforcementOffer>,
+    pub msel: Vec<InjectTemplate>,
+}
+
+impl Scenario {
+    pub fn load(path: impl AsRef<Path>) -> Result<Scenario> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let scn: Scenario = serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        scn.check()?;
+        Ok(scn)
+    }
+
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, serde_json::to_string(self)?).with_context(|| format!("writing {}", path.display()))
+    }
+
+    /// Internal consistency: raster sizes, unique ids, references.
+    pub fn check(&self) -> Result<()> {
+        let n = self.grid.len();
+        anyhow::ensure!(self.fuel.len() == n, "fuel raster has {} cells, grid needs {n}", self.fuel.len());
+        anyhow::ensure!(self.dem.len() == n, "dem raster has {} cells, grid needs {n}", self.dem.len());
+        for b in &self.buildings {
+            anyhow::ensure!(self.sector(&b.sector).is_some(), "building {} in unknown sector {}", b.id, b.sector);
+        }
+        for r in &self.reinforcements {
+            anyhow::ensure!(self.role(&r.assigned_to).is_some(), "reinforcement assigned to unknown role {}", r.assigned_to);
+        }
+        for i in &self.msel {
+            for rcp in &i.recipients {
+                anyhow::ensure!(rcp == "all" || self.role(rcp).is_some(), "inject {} to unknown role {rcp}", i.id);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn role(&self, id: &str) -> Option<&Role> {
+        self.roles.iter().find(|r| r.id == id)
+    }
+
+    pub fn sector(&self, id: &str) -> Option<&Sector> {
+        self.sectors.iter().find(|s| s.id == id)
+    }
+
+    pub fn road(&self, id: &str) -> Option<&Road> {
+        self.roads.iter().find(|r| r.id == id)
+    }
+
+    pub fn sector_at(&self, p: Pos) -> Option<&Sector> {
+        self.sectors.iter().find(|s| s.contains(p))
+    }
+
+    /// Evacuation zone (e.g. `"F4"`) containing `p`.
+    pub fn zone_of(&self, p: Pos) -> Option<String> {
+        self.zones.zone_of(p, self.grid.height_m())
+    }
+
+    pub fn zone_bounds(&self, name: &str) -> Option<[f32; 4]> {
+        self.zones.bounds(name, self.grid.height_m())
+    }
+
+    pub fn zone_edge(&self, code: &str) -> Option<(Pos, Pos)> {
+        self.zones.edge(code, self.grid.height_m())
+    }
+
+    pub fn zone_centre(&self, name: &str) -> Option<Pos> {
+        self.zone_bounds(name).map(|b| [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5])
+    }
+
+    pub fn cell_of(&self, p: Pos) -> Option<Cell> {
+        let cs = self.grid.cellsize;
+        if p[0] < 0.0 || p[1] < 0.0 {
+            return None;
+        }
+        let col = (p[0] / cs) as usize;
+        let from_south = (p[1] / cs) as usize;
+        if col >= self.grid.cols || from_south >= self.grid.rows {
+            return None;
+        }
+        Some(Cell { row: self.grid.rows - 1 - from_south, col })
+    }
+
+    pub fn cell_centre(&self, c: Cell) -> Pos {
+        let cs = self.grid.cellsize;
+        [(c.col as f32 + 0.5) * cs, ((self.grid.rows - 1 - c.row) as f32 + 0.5) * cs]
+    }
+
+    pub fn fuel_at(&self, c: Cell) -> i32 {
+        self.fuel[self.grid.index(c)]
+    }
+
+    pub fn elevation_at(&self, c: Cell) -> f32 {
+        self.dem[self.grid.index(c)]
+    }
+
+    pub fn is_burnable(&self, c: Cell) -> bool {
+        self.fuel_at(c) != fuel::NON_VEGETATED
+    }
+
+    /// Resolve a free-form name against named places, facilities, sectors and
+    /// roads — case-insensitive, aliases included. Returns the world position.
+    pub fn resolve_place(&self, name: &str) -> Option<Pos> {
+        let key = normalise(name);
+        if key.is_empty() {
+            return None;
+        }
+        for p in &self.places {
+            if normalise(&p.name) == key || p.aliases.iter().any(|a| normalise(a) == key) {
+                return Some(p.pos);
+            }
+        }
+        for b in &self.buildings {
+            if b.name.as_deref().map(normalise).as_deref() == Some(key.as_str()) {
+                return Some(b.pos);
+            }
+        }
+        for s in &self.sectors {
+            if normalise(&s.id) == key || normalise(&s.name) == key {
+                return Some(s.centre());
+            }
+        }
+        if let Some(p) = self.zone_centre(name) {
+            return Some(p);
+        }
+        for r in &self.roads {
+            if normalise(&r.id) == key || normalise(&r.name) == key {
+                return r.points.get(r.points.len() / 2).copied();
+            }
+        }
+        None
+    }
+}
+
+/// Lower-case, alphanumerics only — so "Pineta Primary School", "pineta
+/// primary-school" and "PINETA  PRIMARY SCHOOL" all match.
+pub fn normalise(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+}
+
+/// Format an exercise clock value (`start_clock_s + t`) as `Day N HH:MM`.
+pub fn format_clock(clock_s: i64) -> String {
+    let day = clock_s.div_euclid(86_400) + 1;
+    let rem = clock_s.rem_euclid(86_400);
+    format!("Day {day} {:02}:{:02}", rem / 3600, (rem % 3600) / 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clock_format() {
+        assert_eq!(format_clock(13 * 3600 + 5 * 60), "Day 1 13:05");
+        assert_eq!(format_clock(86_400 * 9 + 60), "Day 10 00:01");
+    }
+
+    #[test]
+    fn zone_grid_names_and_bounds() {
+        let z = ZoneGrid { cols: 8, rows: 8, size_m: 500.0 };
+        assert_eq!(z.name(0, 0), "A1");
+        assert_eq!(z.parse("c 3"), Some((2, 2)));
+        assert_eq!(z.parse("I1"), None);
+        assert_eq!(z.parse("A9"), None);
+        // A1 is the north-west corner.
+        assert_eq!(z.zone_of([10.0, 3990.0], 4000.0).as_deref(), Some("A1"));
+        assert_eq!(z.zone_of([3990.0, 10.0], 4000.0).as_deref(), Some("H8"));
+        assert_eq!(z.bounds("A1", 4000.0), Some([0.0, 3500.0, 500.0, 4000.0]));
+        assert_eq!(z.names().len(), 64);
+        assert_eq!(z.edge("A1:S", 4000.0), Some(([0.0, 3500.0], [500.0, 3500.0])));
+        assert_eq!(z.edge("A1:X", 4000.0), None);
+    }
+
+    #[test]
+    fn normalise_ignores_case_and_punctuation() {
+        assert_eq!(normalise("Pineta Primary-School"), normalise("pineta primary school"));
+    }
+}

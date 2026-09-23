@@ -1,0 +1,17 @@
+[package]
+name = "viz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bevy big-screen renderer: 3D terrain, vegetation, fire, buildings, actions, turn replay and HUD"
+
+[dependencies]
+scenario.workspace = true
+sim.workspace = true
+fire.workspace = true
+exercise.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+bevy = { version = "0.14", default-features = true }
+bevy_egui = { version = "0.28", default-features = false, features = ["open_url", "default_fonts", "render"] }

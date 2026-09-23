@@ -1,0 +1,27 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The ttx binary: simulator + web server + (optionally) the Bevy big-screen renderer"
+
+[[bin]]
+name = "ttx"
+path = "src/main.rs"
+
+[features]
+default = ["viz"]
+viz = ["dep:viz"]
+
+[dependencies]
+scenario.workspace = true
+sim.workspace = true
+exercise.workspace = true
+llm.workspace = true
+server.workspace = true
+viz = { workspace = true, optional = true }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dotenvy = "0.15"

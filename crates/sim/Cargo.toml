@@ -1,0 +1,17 @@
+[package]
+name = "sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "World state (fire + buildings + resources), the Command catalogue, validation, turns of simulated time, snapshots, digests"
+
+[dependencies]
+scenario.workspace = true
+fire.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+base64 = "0.22"
+
+[dev-dependencies]
+base64 = "0.22"

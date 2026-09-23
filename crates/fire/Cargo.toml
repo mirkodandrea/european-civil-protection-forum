@@ -1,0 +1,12 @@
+[package]
+name = "fire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wildfire model: PROPAGATOR core stepping, ignitions, fire lines, water drops, extinguishing, checkpoints"
+
+[dependencies]
+propagator-core.workspace = true
+scenario.workspace = true
+anyhow.workspace = true
+serde.workspace = true

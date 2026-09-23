@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTX Player</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1 id="rolename">Player</h1>
+  <span class="pill" id="turn">–</span>
+  <span class="pill" id="clock">–</span>
+  <span class="grow"></span>
+  <select id="lang" title="Language"></select>
+</header>
+<main class="cols" id="main">
+  <section>
+    <div class="panel">
+      <h2>Inbox</h2>
+      <div id="inbox" class="inbox"></div>
+    </div>
+    <div class="panel">
+      <h2 id="replyh">Your decision</h2>
+      <textarea id="reply" placeholder="Write your orders, requests or information in your own words…"></textarea>
+      <div class="row"><button id="send" class="primary">Send</button><span id="status" class="small muted"></span></div>
+    </div>
+  </section>
+  <section>
+    <div class="panel">
+      <h2>Your role</h2>
+      <div id="roledesc" class="small"></div>
+      <h2 style="margin-top:10px">Resources this turn</h2>
+      <div id="res" class="small"></div>
+      <h2 style="margin-top:10px">Your orders</h2>
+      <div id="props" class="small"></div>
+    </div>
+    <div class="panel">
+      <h2>Situation map</h2>
+      <div class="mapbox"><canvas id="map"></canvas></div>
+      <div class="small" id="stats"></div>
+    </div>
+  </section>
+</main>
+<script type="module">
+import { api, live, esc, MapView, statsLine, kindBadge, LANGS } from './common.js';
+
+const $ = id => document.getElementById(id);
+const role = new URLSearchParams(location.search).get('role');
+const stat = await api('/api/static');
+if (!role || !stat.roles.find(r => r.id === role)) {
+  $('main').innerHTML = `<div class="panel"><h2>Choose your role</h2>${stat.roles.map(r => `<p><a href="?role=${r.id}">${esc(r.name)}</a> <span class="muted small">${esc(r.description)}</span></p>`).join('')}</div>`;
+  throw new Error('no role');
+}
+$('lang').innerHTML = Object.entries(LANGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+$('lang').onchange = () => api(`/api/player/${role}/language`, { language: $('lang').value });
+const map = new MapView($('map'), stat, {});
+const STATUS = { parsing: 'being read…', pending: 'awaiting exercise control', needs_clarification: 'question asked', approved: 'approved – executes at end of turn', rejected: 'not approved', applied: 'executed', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
+let lastCount = 0;
+
+$('send').onclick = async () => {
+  const text = $('reply').value.trim();
+  if (!text) return;
+  $('send').disabled = true;
+  try { await api(`/api/player/${role}/reply`, { text }); $('reply').value = ''; $('status').textContent = 'sent'; }
+  catch (e) { $('status').textContent = e.message; }
+  $('send').disabled = false;
+};
+
+async function refresh() {
+  const [p, st] = await Promise.all([api(`/api/player/${role}`), api('/api/state')]);
+  document.title = p.player.name;
+  $('rolename').textContent = p.player.name;
+  $('turn').textContent = p.phase === 'orders' ? `Turn ${p.turn}` : p.phase;
+  $('clock').textContent = p.clock;
+  if (document.activeElement !== $('lang')) $('lang').value = p.player.language;
+  $('roledesc').textContent = p.role.description;
+  $('res').innerHTML = p.resources && Object.keys(p.resources).length
+    ? Object.entries(p.resources).map(([k, v]) => `${esc(stat.resource_types.find(r => r.id === k)?.name || k)}: <b>${v.total - v.used}</b> / ${v.total}`).join('<br>')
+    : '<span class="muted">No own resources — coordinate and request.</span>';
+  $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span></div>`).join('') || '<span class="muted">none yet</span>';
+  $('inbox').innerHTML = p.inbox.map(m => m.kind === 'reply'
+    ? `<div class="msg k-reply"><div class="meta">${kindBadge('reply')} you · ${esc(m.clock)}</div><div class="text">${esc(m.text)}</div></div>`
+    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || '<p class="muted">Waiting for the exercise to start…</p>';
+  if (p.inbox.length !== lastCount) { $('inbox').scrollTop = $('inbox').scrollHeight; lastCount = p.inbox.length; }
+  $('send').disabled = p.phase !== 'orders';
+  map.setView(st.world);
+  $('stats').textContent = statsLine(st.world.stats);
+}
+live(() => refresh().catch(e => { $('status').textContent = e.message; }));
+</script>
+</body>
+</html>

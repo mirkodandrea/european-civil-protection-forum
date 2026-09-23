@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Drive a two-turn demo session through the HTTP API (the same calls the web
+# UIs make). Requires a running `ttx` (default http://localhost:8080) with the
+# LLM configured. Screenshots of the simulator window go to docs/screenshots/.
+#
+#   ./scripts/demo_session.sh [base_url]
+set -euo pipefail
+B="${1:-http://localhost:8080}/api"
+H='content-type: application/json'
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+post() { curl -sf -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
+wait_parsed() { # wait until no proposal is still being parsed
+  for _ in $(seq 60); do
+    curl -sf "$B/master" | grep -q '"status":"parsing"' || return 0; sleep 1
+  done
+}
+last_pid() { curl -sf "$B/master" | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposals"][-1]["id"])'; }
+shot() { echo "$ROOT/docs/screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
+
+echo "== setup: regional player plays in Armenian"
+post /player/regional_cp/language '{"language":"hy"}'
+post /master/start
+for i in I-01 I-02 I-03; do post /master/msel/$i/send; done
+
+echo "== turn 1: players reply in their own words"
+post /player/mayor/reply "{\"text\":\"Diramate subito l'allerta alla popolazione della zona F4 ed evacuate la scuola primaria di Pineta verso il centro sportivo di Valverde, che va aperto come area di accoglienza. Chiudete la Northern Road al traffico civile. Informate il comandante dei vigili del fuoco che la scuola sarà evacuata con i nostri autobus.\"}"
+post /player/fire_commander/reply '{"text":"Two crews cut a fire line along the northern edge of zone F4 to protect Pineta; the third crew cuts from Pineta east edge to Forest edge east. Air tanker: one drop on Pineta north edge. Tell regional civil protection we may need reinforcements soon."}'
+wait_parsed
+
+echo "== Director prompt: one more bus for the mayor"
+post /master/prompt '{"text":"The regional transport company makes one extra bus available to the mayor right now. Send the mayor a short inject from the Regional transport company confirming it."}'
+wait_parsed
+for id in $(curl -sf "$B/master" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(str(p["id"]) for p in sorted(d["proposals"], key=lambda p: p["source"]["kind"]!="master") if p["status"]=="pending"))'); do
+  post /master/proposals/$id/decide '{"approve":true}'
+done
+sleep 5
+echo "== resolve turn 1 (30 min)"
+post /master/resolve '{"minutes":30}' > /dev/null
+sleep 4; shot sim_turn1_replay.png; sleep 7; shot sim_turn1_end.png
+
+echo "== turn 2: escalation"
+post /master/msel/I-04/send
+post /master/command '[{"type":"SetWeather","wind_speed_kmh":55},{"type":"Ignite","at":"G5","radius_m":60}]'
+post /player/regional_cp/reply '{"text":"Խնդրում ենք միջազգային օգնությամբ (UCPM) 2 լրացուցիչ օդային տանկեր և տարածաշրջանային հրշեջ ծառայությունից 2 վերգետնյա թիմ՝ հրշեջ հրամանատարի համար։ Տեղեկացրեք քաղաքապետին, որ Valverde Sports Centre-ը պատրաստ է ընդունել տարհանվածներին։"}'
+post /player/fire_commander/reply '{"text":"Send the remaining crews over there to hold it."}'
+wait_parsed
+post /master/proposals/$(last_pid)/decide '{"approve":false,"note":"Please specify the zone edge."}'
+post /player/fire_commander/reply '{"text":"One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4."}'
+wait_parsed
+for id in $(curl -sf "$B/master" | python3 -c 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin)["proposals"] if p["status"]=="pending"))'); do
+  post /master/proposals/$id/decide '{"approve":true}'
+done
+sleep 5
+echo "== resolve turn 2 (60 min)"
+post /master/resolve '{"minutes":60}' > /dev/null
+sleep 12; shot sim_turn2_end.png
+curl -sf "$B/state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["world"]["stats"])'

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTX Master</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Exercise Director</h1>
+  <span class="pill" id="turn">–</span>
+  <span class="pill" id="clock">–</span>
+  <span class="pill" id="weather">–</span>
+  <span class="pill" id="llm">–</span>
+  <span class="grow"></span>
+  <button id="start" class="primary">Start exercise</button>
+  <label class="small">Δt <input id="minutes" type="number" min="1" max="1440" value="30" style="width:64px"> min</label>
+  <button id="resolve" class="primary">Resolve turn ▶</button>
+  <select id="rbturn" title="Roll back to the start of turn"></select>
+  <button id="rollback">Rollback</button>
+  <button id="end">End</button>
+  <a href="/api/debrief" target="_blank" style="color:#fff">Debrief JSON</a>
+</header>
+<main class="cols">
+  <section>
+    <div class="panel">
+      <div class="row" id="tools"></div>
+      <div class="row small">
+        <span id="toolhelp" class="muted"></span>
+        <select id="dmg"><option value="destroyed">destroyed</option><option value="damaged">damaged</option><option value="intact">intact</option></select>
+      </div>
+      <div class="mapbox"><canvas id="map"></canvas></div>
+      <div class="row small legend">
+        <span><i style="background:#ff4614"></i>burning</span><span><i style="background:#231e1c"></i>burnt</span>
+        <span><i style="background:#ffe000"></i>fire line</span><span><i style="background:#3c96ff"></i>wetted</span>
+        <span><i style="background:#00c8ff"></i>evacuating</span><span><i style="background:#2e6bff"></i>evacuated</span>
+        <span><i style="background:#ff7a00"></i>damaged</span><span><i style="background:#000"></i>destroyed</span>
+      </div>
+      <div class="small" id="stats"></div>
+      <div class="small error" id="err"></div>
+    </div>
+    <div class="panel">
+      <h2>Resources this turn</h2>
+      <div id="pools" class="small"></div>
+    </div>
+  </section>
+  <section>
+    <div class="tabs" id="tabs"></div>
+    <div id="tab-proposals" class="panel"></div>
+    <div id="tab-injects" class="panel" hidden>
+      <h2>MSEL</h2>
+      <div id="msel"></div>
+      <h2 style="margin-top:14px">Custom inject</h2>
+      <div class="row"><input id="ititle" placeholder="Title" style="flex:1"><input id="isender" placeholder="Sender (e.g. 112 Dispatch)" value="EXCON"></div>
+      <div class="row" id="irecip"></div>
+      <textarea id="itext" placeholder="Inject text in English — translated for each player"></textarea>
+      <div class="row"><button id="isend" class="primary">Send inject</button></div>
+    </div>
+    <div id="tab-prompt" class="panel" hidden>
+      <h2>Director prompt (AI)</h2>
+      <p class="small muted">Describe what should happen — e.g. "the wind turns to the north and strengthens to 60 km/h; tell everyone" or "the fuel station explodes, destroy it and warn the mayor". The AI proposes commands and injects; you confirm them in the Proposals tab.</p>
+      <textarea id="ptext"></textarea>
+      <div class="row"><button id="psend" class="primary">Propose</button></div>
+    </div>
+    <div id="tab-commands" class="panel" hidden>
+      <h2>Commands by code</h2>
+      <p class="small muted">JSON command or list, applied immediately as the Director. Same format as <code>POST /api/master/command</code>.</p>
+      <textarea id="ctext" style="min-height:120px">[{"type":"Extinguish","area":"G2"}, {"type":"EvacuateZone","zone":"F4"}]</textarea>
+      <div class="row"><button id="csend" class="primary">Apply</button></div>
+      <pre id="cres"></pre>
+      <pre id="cdoc" class="small"></pre>
+    </div>
+    <div id="tab-log" class="panel" hidden>
+      <h2>Messages</h2>
+      <div id="messages" class="log"></div>
+      <h2 style="margin-top:12px">Event log</h2>
+      <div id="log" class="log"></div>
+    </div>
+  </section>
+</main>
+<script type="module">
+import { api, live, esc, MapView, statsLine, kindBadge } from './common.js';
+
+const $ = id => document.getElementById(id);
+const stat = await api('/api/static');
+let state = null, master = null, tool = 'none';
+
+const TOOLS = [
+  ['none', 'Inspect', 'Hover to read zone and coordinates.'],
+  ['ignite', 'Ignite', 'Click to start a fire.'],
+  ['line', 'Fire line', 'Click start and end of a fuel break.'],
+  ['drop', 'Water drop', 'Click the drop centre.'],
+  ['extzone', 'Extinguish zone', 'Click a zone to put out all fire in it.'],
+  ['ext', 'Extinguish 150 m', 'Click to put out fire within 150 m.'],
+  ['evac', 'Evacuate zone', 'Click a zone to evacuate it.'],
+  ['warn', 'Warn zone', 'Click a zone to warn its population.'],
+  ['bstatus', 'Building status', 'Click a building; applies the damage selected on the right.'],
+];
+for (const [id, label, help] of TOOLS) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.onclick = () => { tool = id; map.pending = null; $('toolhelp').textContent = help; document.querySelectorAll('#tools button').forEach(x => x.classList.toggle('sel', x === b)); };
+  $('tools').appendChild(b);
+}
+$('tools').firstChild.classList.add('sel');
+
+async function command(cmd) {
+  $('err').textContent = '';
+  try {
+    const r = await api('/api/master/command', cmd);
+    const bad = r.results.filter(x => !x.ok);
+    if (bad.length) $('err').textContent = bad.map(x => `${x.command}: ${x.error}`).join('; ');
+  } catch (e) { $('err').textContent = e.message; }
+}
+
+const map = new MapView($('map'), stat, {
+  onClick: async (p, m) => {
+    const at = { x: p.x, y: p.y };
+    switch (tool) {
+      case 'ignite': return command({ type: 'Ignite', at, radius_m: 80 });
+      case 'drop': return command({ type: 'WaterDrop', at });
+      case 'ext': return command({ type: 'Extinguish', area: { at, radius_m: 150 } });
+      case 'extzone': return p.zone && command({ type: 'Extinguish', area: p.zone });
+      case 'evac': return p.zone && command({ type: 'EvacuateZone', zone: p.zone });
+      case 'warn': return p.zone && command({ type: 'IssueWarning', zone: p.zone });
+      case 'line':
+        if (!m.pending) { m.pending = p; m.draw(); return; }
+        const from = { x: m.pending.x, y: m.pending.y }; m.pending = null;
+        return command({ type: 'CutFireLine', from, to: at });
+      case 'bstatus': {
+        const b = m.nearestBuilding(p);
+        if (b) return command({ type: 'SetBuildingStatus', building: '#' + b.id, damage: $('dmg').value });
+      }
+    }
+  },
+});
+
+// Tabs.
+const TABS = [['proposals', 'Proposals'], ['injects', 'Injects'], ['prompt', 'AI prompt'], ['commands', 'Commands'], ['log', 'Log']];
+for (const [id, label] of TABS) {
+  const b = document.createElement('button');
+  b.textContent = label; b.id = 'tb-' + id;
+  b.onclick = () => { TABS.forEach(([t]) => { $('tab-' + t).hidden = t !== id; $('tb-' + t).classList.toggle('active', t === id); }); };
+  $('tabs').appendChild(b);
+}
+$('tb-proposals').classList.add('active');
+
+// Inject form.
+$('irecip').innerHTML = `<label><input type="checkbox" value="all" checked> all</label>` +
+  stat.roles.map(r => `<label><input type="checkbox" value="${r.id}"> ${esc(r.name)}</label>`).join(' ');
+$('isend').onclick = async () => {
+  const recipients = [...$('irecip').querySelectorAll('input:checked')].map(i => i.value);
+  try {
+    await api('/api/master/inject', { title: $('ititle').value || 'Inject', sender: $('isender').value || 'EXCON', recipients, text: $('itext').value });
+    $('itext').value = '';
+  } catch (e) { alertErr(e); }
+};
+$('psend').onclick = async () => { try { await api('/api/master/prompt', { text: $('ptext').value }); $('ptext').value = ''; $('tb-proposals').click(); } catch (e) { alertErr(e); } };
+$('csend').onclick = async () => {
+  try { $('cres').textContent = JSON.stringify(await api('/api/master/command', JSON.parse($('ctext').value)), null, 2); }
+  catch (e) { $('cres').textContent = e.message; }
+};
+api('/api/catalogue').then(c => { $('cdoc').textContent = c.doc; });
+
+$('start').onclick = () => api('/api/master/start', {}).catch(alertErr);
+$('resolve').onclick = async () => {
+  $('resolve').disabled = true;
+  try { await api('/api/master/resolve', { minutes: +$('minutes').value }); } catch (e) { alertErr(e); }
+  $('resolve').disabled = false;
+};
+$('rollback').onclick = () => api('/api/master/rollback', { turn: +$('rbturn').value }).catch(alertErr);
+$('end').onclick = () => api('/api/master/end', {}).catch(alertErr);
+function alertErr(e) { $('err').textContent = e.message; }
+
+function renderProposals() {
+  const open = ['parsing', 'pending', 'needs_clarification'];
+  const list = [...master.proposals].sort((a, b) => (open.includes(b.status) - open.includes(a.status)) || b.id - a.id);
+  $('tab-proposals').innerHTML = `<h2>Proposals (${list.filter(p => open.includes(p.status)).length} open)</h2>` + (list.length ? '' : '<p class="muted">Player replies and AI prompts appear here for your decision.</p>') +
+    list.map(p => {
+      const who = p.source.kind === 'master' ? 'Director prompt' : (state.players[p.source.role]?.name || p.source.role);
+      const cmds = p.commands.map((c, i) => {
+        const v = p.verdicts[i] || {};
+        return `<li>${esc(p.descriptions[i])} <span class="verdict-${v.verdict}">${v.verdict === 'ok' ? '✓ ' + esc((v.notes || []).join('; ')) : '✗ ' + esc(v.reason || '')}</span></li>`;
+      }).join('');
+      const drafts = (p.inject_drafts || []).map(d => `<li>Inject “${esc(d.title)}” → ${esc((d.recipients || []).join(', '))}: ${esc(d.text)}</li>`).join('');
+      const editable = open.includes(p.status);
+      return `<div class="card">
+        <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> <span class="muted small">turn ${p.turn} · #${p.id}</span></div></div>
+        <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>
+        ${p.translation_en && p.translation_en !== p.original ? `<div class="small muted">EN: ${esc(p.translation_en)}</div>` : ''}
+        ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
+        ${cmds ? `<ul class="small">${cmds}</ul>` : ''}${drafts ? `<ul class="small">${drafts}</ul>` : ''}
+        ${p.invalid.length ? `<div class="small error">Not understood: ${esc(p.invalid.join('; '))}</div>` : ''}
+        ${p.clarification ? `<div class="small" style="color:var(--warn)">Asked the player: ${esc(p.clarification)}</div>` : ''}
+        ${p.results.length ? `<div class="small">${p.results.map(esc).join('<br>')}</div>` : ''}
+        ${p.master_note ? `<div class="small muted">Note: ${esc(p.master_note)}</div>` : ''}
+        ${editable ? `<details class="small"><summary>Edit actions (JSON)</summary><textarea id="edit-${p.id}">${esc(JSON.stringify(p.commands, null, 1))}</textarea></details>
+          <div class="row"><input id="note-${p.id}" placeholder="Note to the player (optional)" style="flex:1">
+          <button class="ok" data-approve="${p.id}">Approve</button><button data-reject="${p.id}">Reject</button></div>` : ''}
+      </div>`;
+    }).join('');
+  $('tab-proposals').querySelectorAll('[data-approve],[data-reject]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.approve || b.dataset.reject;
+    const body = { approve: !!b.dataset.approve, note: $('note-' + id).value || null };
+    const ed = $('edit-' + id);
+    const orig = JSON.stringify(master.proposals.find(p => p.id == id).commands, null, 1);
+    try {
+      if (ed && ed.value.trim() !== orig) body.commands = JSON.parse(ed.value);
+      await api(`/api/master/proposals/${id}/decide`, body);
+    } catch (e) { alertErr(e); }
+  });
+}
+
+async function refresh() {
+  [state, master] = await Promise.all([api('/api/state'), api('/api/master')]);
+  const w = state.world, st = w.stats;
+  $('turn').textContent = `Turn ${state.turn} · ${state.phase}`;
+  $('clock').textContent = st.clock;
+  $('weather').textContent = `wind ${w.weather.wind_dir_deg.toFixed(0)}° ${w.weather.wind_speed_kmh.toFixed(0)} km/h · moisture ${w.weather.moisture_pct.toFixed(0)}%`;
+  $('llm').textContent = state.llm.available ? `AI: ${state.llm.model}` : 'AI: off';
+  $('start').hidden = state.phase !== 'briefing';
+  $('resolve').disabled = state.phase !== 'orders';
+  if (document.activeElement !== $('minutes')) $('minutes').value = state.turn_minutes;
+  $('rbturn').innerHTML = Array.from({ length: Math.max(state.turn, 1) }, (_, i) => `<option value="${i + 1}">turn ${i + 1}</option>`).join('');
+  $('rbturn').value = state.turn;
+  $('stats').textContent = statsLine(st);
+  $('pools').innerHTML = Object.entries(w.pools).map(([r, p]) => `<div><b>${esc(state.players[r]?.name || r)}</b>: ${Object.entries(p).map(([k, v]) => `${k} ${v.total - v.used}/${v.total}`).join(', ') || '—'}</div>`).join('') +
+    (w.arrivals.filter(a => a.at_s > st.time_s).map(a => `<div class="muted">en route: ${a.qty} ${a.resource} for ${a.role}</div>`).join(''));
+  map.setView(w);
+  // Don't wipe what the Director is typing in a proposal card.
+  const busy = $('tab-proposals').contains(document.activeElement) && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName);
+  if (!busy) {
+    const openEdits = [...$('tab-proposals').querySelectorAll('details[open] textarea')].map(t => t.id);
+    renderProposals();
+    openEdits.forEach(id => { const t = $(id); if (t) t.parentElement.open = true; });
+  }
+  $('msel').innerHTML = stat.msel.map(i => `<div class="card small"><div class="head"><b>${esc(i.id)} · ${esc(i.title)}</b><span class="muted">turn ${i.turn} · ${esc(i.sender)} → ${esc(i.recipients.join(', '))}</span></div>
+    <div>${esc(i.text)}</div><div class="muted">Objective: ${esc(i.objective)}</div>
+    <div class="row"><button data-msel="${i.id}" ${state.phase !== 'orders' ? 'disabled' : ''}>${state.sent_injects.includes(i.id) ? 'Send again' : 'Send'}</button></div></div>`).join('');
+  $('msel').querySelectorAll('[data-msel]').forEach(b => b.onclick = () => api(`/api/master/msel/${b.dataset.msel}/send`, {}).catch(alertErr));
+  $('messages').innerHTML = [...master.messages].reverse().map(m => `<div>${kindBadge(m.kind)}<b>${esc(m.from)} → ${esc(m.to)}</b> <span class="muted">${esc(m.clock)}</span> ${m.title ? '<b>' + esc(m.title) + '</b>: ' : ''}${esc(m.text_en)}</div>`).join('');
+  $('log').innerHTML = [...master.log].reverse().map(e => `<div><span class="muted">${esc(e.clock)} · t${e.turn}</span> <b>${esc(e.kind)}</b> ${esc(e.actor)} <span class="muted">${esc(JSON.stringify(e.data).slice(0, 220))}</span></div>`).join('');
+}
+
+live(() => refresh().catch(e => { $('err').textContent = e.message; }));
+</script>
+</body>
+</html>
