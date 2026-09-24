@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerate the README's demo timeline and outcome tables from a recording.
+"""Regenerate the demo page's timeline and outcome tables from a recording.
 
 Reads docs/media/ttx_demo_captions.json (narration marks), scripts/record/
 narration.json (who / what it shows) and docs/media/ttx_demo_log.jsonl (the
 run's event log), and rewrites the blocks between
 <!-- demo:timeline --> … <!-- /demo:timeline --> and
-<!-- demo:outcome --> … <!-- /demo:outcome --> in README.md.
+<!-- demo:outcome --> … <!-- /demo:outcome --> in docs/demo.md.
 
   python3 scripts/record/readme_demo.py
 """
@@ -58,12 +58,12 @@ lines = [
 ]
 outcome = "\n".join(lines)
 
-path = os.path.join(ROOT, "README.md")
+path = os.path.join(ROOT, "docs", "demo.md")
 text = open(path).read()
 for name, body in (("timeline", timeline), ("outcome", outcome)):
     pat = re.compile(rf"<!-- demo:{name} -->.*?<!-- /demo:{name} -->", re.S)
     if not pat.search(text):
-        raise SystemExit(f"README.md has no <!-- demo:{name} --> block")
+        raise SystemExit(f"docs/demo.md has no <!-- demo:{name} --> block")
     text = pat.sub(f"<!-- demo:{name} -->\n{body}\n<!-- /demo:{name} -->", text)
 open(path, "w").write(text)
-print(f"README demo: {len(marks)} timeline rows, {len(turns)} turns")
+print(f"docs/demo.md: {len(marks)} timeline rows, {len(turns)} turns")

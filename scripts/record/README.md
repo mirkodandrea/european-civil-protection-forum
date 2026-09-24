@@ -5,7 +5,7 @@
 ```bash
 cargo build --release -p app
 ./scripts/record/record.sh              # → docs/media/ttx_demo.mp4, .srt, .vtt, _captions.json, _log.jsonl
-python3 scripts/record/readme_demo.py   # refresh the README's timeline and outcome tables
+python3 scripts/record/readme_demo.py   # refresh the timeline and outcome tables in docs/demo.md
 ```
 
 Options (environment):
@@ -42,7 +42,7 @@ Recording is real time by nature (the browser and the window are captured live),
 
 ## Files
 
-- `narration.json`: the script (`text` = subtitle, `say` = what the voice reads when it differs, `who` / `shows` for the README timeline)
+- `narration.json`: the script (`text` = subtitle, `say` = what the voice reads when it differs, `who` / `shows` for the timeline in docs/demo.md)
 - `llm_cassette.jsonl`: recorded model answers (committed, so anyone can re-record the same video without calling the model)
 - `session.js`, `tts.js`, `render_subs.js`, `compose.py`, `record.sh`, `readme_demo.py`
 
