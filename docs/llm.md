@@ -10,7 +10,10 @@
 OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   # default if unset
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  # default
+OPENROUTER_PROVIDERS=Together,CoreWeave,Modal      # default; `auto` = OpenRouter's choice
 ```
+
+Requests carry `provider: {order, allow_fallbacks: true, require_parameters: true, data_collection: "deny"}`. The default order is the fastest hosts of the default model by OpenRouter's P50 latency (Together 0.41 s, CoreWeave 0.58 s, Modal 1.01 s; Sep 2026). The turn loop waits for whole replies, so latency shows directly. `require_parameters` skips hosts that ignore `response_format`; `data_collection: "deny"` skips hosts that keep prompts (if no host qualifies the call fails and the exercise falls back to manual flow). Re-check the order when changing the model.
 
 JSON workflows use `response_format: json_object`, temperature 0.2, a 90 s timeout, and one retry on unparseable output. Answers are extracted tolerantly: code fences and surrounding prose are stripped. Each call is logged with `tracing` (task, latency, size).
 

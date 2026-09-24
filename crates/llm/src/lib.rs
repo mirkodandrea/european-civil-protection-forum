@@ -6,7 +6,8 @@
 //!
 //! Backends:
 //! - **OpenRouter** (`OPENROUTER_API_KEY`, optional `OPENROUTER_MODEL`,
-//!   default [`DEFAULT_MODEL`]),
+//!   default [`DEFAULT_MODEL`], optional `OPENROUTER_PROVIDERS`, a comma list
+//!   in preference order; default [`DEFAULT_PROVIDERS`], `auto` = OpenRouter's choice),
 //! - **Mock**, a closure answering by task name — used by the tests,
 //! - **Off**, every call fails fast so callers fall back to manual flow.
 
@@ -54,6 +55,9 @@ pub fn merge_consecutive(messages: &[ChatMessage]) -> Vec<ChatMessage> {
 }
 
 pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash";
+/// Preferred hosts for [`DEFAULT_MODEL`], fastest first (OpenRouter P50 latency, Sep 2026:
+/// Together 0.4 s, CoreWeave 0.6 s, Modal 1.0 s). Others remain as fallbacks.
+pub const DEFAULT_PROVIDERS: &[&str] = &["Together", "CoreWeave", "Modal"];
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// A mock answers `(task, system, user)` with the raw model text.
@@ -61,7 +65,7 @@ pub type MockFn = dyn Fn(&str, &str, &str) -> Result<String> + Send + Sync;
 
 #[derive(Clone)]
 pub enum Backend {
-    OpenRouter { client: reqwest::Client, api_key: String, model: String, base_url: String },
+    OpenRouter { client: reqwest::Client, api_key: String, model: String, base_url: String, providers: Vec<String> },
     Mock(Arc<MockFn>),
     Off,
 }
@@ -79,7 +83,11 @@ impl Llm {
             Ok(key) if !key.trim().is_empty() => {
                 let model = std::env::var("OPENROUTER_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.into());
                 let base_url = std::env::var("OPENROUTER_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.into());
-                Llm::openrouter(key.trim().to_string(), model, base_url)
+                let llm = Llm::openrouter(key.trim().to_string(), model, base_url);
+                match std::env::var("OPENROUTER_PROVIDERS") {
+                    Ok(list) => llm.with_providers(list.split(',').map(str::trim).filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("auto")).map(String::from).collect()),
+                    Err(_) => llm,
+                }
             }
             _ => Llm::off(),
         }
@@ -101,7 +109,16 @@ impl Llm {
 
     pub fn openrouter(api_key: String, model: String, base_url: String) -> Llm {
         let client = reqwest::Client::builder().timeout(Duration::from_secs(90)).build().expect("http client");
-        Llm { backend: Backend::OpenRouter { client, api_key, model, base_url }, cassette: None }
+        let providers = DEFAULT_PROVIDERS.iter().map(|p| p.to_string()).collect();
+        Llm { backend: Backend::OpenRouter { client, api_key, model, base_url, providers }, cassette: None }
+    }
+
+    /// Preferred OpenRouter hosts in order (empty = let OpenRouter choose). No effect on other backends.
+    pub fn with_providers(mut self, list: Vec<String>) -> Llm {
+        if let Backend::OpenRouter { providers, .. } = &mut self.backend {
+            *providers = list;
+        }
+        self
     }
 
     pub fn mock(f: impl Fn(&str, &str, &str) -> Result<String> + Send + Sync + 'static) -> Llm {
@@ -159,7 +176,7 @@ impl Llm {
                 [only] if only.role == "user" => f(task, system, &only.content),
                 _ => f(task, system, &messages.iter().map(|m| format!("[{}] {}", m.role, m.content)).collect::<Vec<_>>().join("\n")),
             },
-            Backend::OpenRouter { client, api_key, model, base_url } => {
+            Backend::OpenRouter { client, api_key, model, base_url, providers } => {
                 let mut all = vec![json!({"role": "system", "content": system})];
                 all.extend(messages.iter().map(|m| json!({"role": m.role, "content": m.content})));
                 let mut body = json!({
@@ -167,6 +184,13 @@ impl Llm {
                     "temperature": 0.2,
                     "messages": all,
                 });
+                // Preferred hosts first, but any other may serve if they fail; every
+                // host must honour `response_format`; no prompt retention.
+                body["provider"] = if providers.is_empty() {
+                    json!({"require_parameters": true, "data_collection": "deny"})
+                } else {
+                    json!({"order": providers, "allow_fallbacks": true, "require_parameters": true, "data_collection": "deny"})
+                };
                 if json_mode {
                     body["response_format"] = json!({"type": "json_object"});
                 }
