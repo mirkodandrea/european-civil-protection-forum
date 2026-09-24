@@ -223,19 +223,52 @@ One directory per scenario, baked offline (Python scripts as in the reference re
 
 ---
 
-## 12. As built — working draft v0.1 (2026-09-23)
+## 12. As built — working draft v0.2 (2026-09-24)
 
-The draft follows this spec with these decisions and deviations. The details are in `README.md` and `docs/`.
+The implementation follows this spec with the decisions and deviations below. The details are in `README.md` and `docs/`; the demo video is `docs/media/ttx_demo.mp4`.
 
-| Spec item | Draft |
+### 12.1 Spec items
+
+| Spec item | As built |
 |---|---|
-| Fire model (§1) | PROPAGATOR Rust core vendored in-process (`crates/propagator-core`), legacy 7 fuels, 32-run Monte Carlo ensemble. The fire is the set of cells reached by ≥ 50 % of runs (cutoff configurable, e.g. 0.25), with quantile arrival times and an uncertainty halo |
-| ABM | Not yet. Buildings carry occupant counts; suppression = fire lines and water drops applied directly (no teams) |
-| Channels between sim and server (§2) | One `Arc<Mutex<Exercise>>`: the server mutates it, the Bevy renderer `try_lock`s and reads. The lock is never held across LLM calls |
-| Crates (§3) | As listed; `telemetry` is a JSONL event log inside `exercise` (`runs/run-*.jsonl`) instead of SQLite |
-| Command catalogue (§4) | Implemented, plus zone-grid addressing: `EvacuateZone`, `Extinguish` a zone, fire lines `along` a zone edge. The full catalogue is in `docs/commands.md` |
-| Turn loop (§5) | `Briefing → Orders → Resolving → Orders … → Debrief`. Player actions apply at resolution, Master actions immediately. The turn is simulated live in 1-second steps (speed factor set by the Director; 0 = maximum speed): the 3D view redraws continuously and browsers refresh at up to 4 Hz. Snapshots per turn with rollback |
-| LLM workflows (§6) | L1–L5 implemented (translate, parse reply with clarification and role messages, Master prompt with inject drafts, feedback, situation update). L6/L7 (suggestions, debrief narrative) not yet |
-| Scenario package (§7) | One JSON file; synthetic generator; zone grid; multilingual gazetteer; MSEL of 8 injects |
-| Interfaces (§8) | Master and player pages in plain HTML/JS with a canvas map; big screen in Bevy with turn replay and HUD. No evaluator UI yet (the debrief JSON covers the log) |
-| Degradation (§9) | Works with no LLM: English injects, manual command entry per proposal |
+| Fire model (§1) | PROPAGATOR Rust core vendored in-process (`crates/propagator-core`), legacy 7 fuels, 20 m cells, **32-run Monte Carlo ensemble**. The fire is the set of cells reached by ≥ `cutoff` of the runs (default 0.5 = median fire; `--cutoff 0.25` for a pessimistic fire), with quantile arrival times; cells reached by fewer runs form an uncertainty halo. Ensemble-mean fireline intensity per cell. Spotting off |
+| ABM (§1, §3) | Not yet. Buildings carry occupant counts (damage by exposure, evacuation with delays and buses, people-at-risk indicator); suppression = fire lines and water drops applied directly (no teams) |
+| Master (§1) | Omnipotent: map tools, commands by code (JSON), AI prompts (proposals with commands and inject drafts, confirmed before applying), turn length and turn **speed**, rollback |
+| Players (§1) | Injects translated per player; free-text replies turned into commands by the LLM within the role's permitted actions; every player action needs Master approval; feedback and situation updates in the player's language |
+| Architecture (§2) | One process: the server (axum, tokio) and the Bevy renderer share one `Arc<Mutex<Exercise>>`. The server mutates it; the renderer only `try_lock`s and reads. The lock is never held across LLM calls. Channels were not needed |
+| Crates (§3) | `propagator-core`, `scenario`, `fire`, `sim`, `llm`, `exercise`, `server`, `viz`, `app` (binary `ttx`); `web/` is plain HTML/JS. `telemetry` is a JSONL event log inside `exercise` (`runs/run-*.jsonl`) |
+| Command catalogue (§4) | 15 commands (9 player, 6 Master-only), with deterministic validation (authority, resources including already-approved actions, places, capacities). Locations by zone code of an 8×8 grid (`F4`), zone edge (`F4:N`), named place/facility, or coordinates. See `docs/commands.md` |
+| Turn loop (§5) | `Briefing → Orders → Resolving → Orders … → Debrief`. Player actions apply at resolution, Master actions immediately. The turn is **simulated live in 1-second steps** at the Director's speed factor (0 = maximum, ~0.45 s for 30 min; 120× = 15 s). The 3D view redraws continuously; browsers refresh at up to 4 Hz. Snapshots per turn with rollback |
+| LLM workflows (§6) | OpenRouter, `deepseek/deepseek-v4.1-flash`. L1–L5 implemented (translate, parse reply with clarification and role messages, Master prompt with inject drafts, feedback, situation update). **Each player and the Director has one continuous conversation** with the AI (what they received, what they wrote, the AI's interpretations), sent as chat history, so follow-ups keep their context. Record/replay cassette (`TTX_LLM_CASSETTE`) for reproducible sessions. L6/L7 (suggestions, debrief narrative) not yet |
+| Scenario package (§7) | One JSON file from a deterministic synthetic generator (Valverde valley, 4 × 4 km): terrain, fuel, 266 buildings, roads, sectors, zone grid, multilingual gazetteer, 3 roles, reinforcement offers, MSEL of 8 injects |
+| Interfaces (§8) | Director console and player pages (plain HTML/JS, canvas map); **`play.html`** puts every role in tabs of one window, laid out for phones (map first on player tabs). Big screen in Bevy (below). No evaluator UI yet (the debrief JSON covers the log) |
+| Non-functional (§9) | Deterministic seeded model; fire result independent of step size; 111 headless tests with a mock LLM plus a live OpenRouter test; works with no LLM (English injects, manual command entry) |
+
+### 12.2 Beyond the original spec
+
+| Area | As built |
+|---|---|
+| 3D rendering (`viz`) | Terrain with Blender vegetation (from `propagator_abm`); flame tongues sized by Byram flame length of the ensemble-mean intensity and scaled by run probability, dim halo tongues below the cutoff, wind tilt; ground cooling from flame-front orange to charcoal; wind-driven smoke plume (wind increasing with height, gusts); sparks |
+| Camera | Cinematic director: shots of the place each inject, proposal, order or Director command refers to; follows the fire while a turn is simulated; wide establishing orbit in between; spring-smoothed, terrain-aware; manual override |
+| Lighting | Low warm late-afternoon sun with cascaded shadows, fog, ACES tone mapping, HDR bloom, flickering fire point lights; smoke and flames cast no shadows |
+| Remote play | Private Microsoft dev tunnel (`devtunnel host -p 8080`) to play `play.html` from a phone |
+| Demo recording (`scripts/record`) | Scripted session in Chrome (Playwright) with every role, next to the simulator window streamed into ffmpeg while recording; Gemini TTS narration (`google/gemini-3.1-flash-tts-preview` via OpenRouter, every clip checked by transcription); burned-in subtitles plus `.srt`/`.vtt`; LLM answers replayed from a committed cassette; about 5 min to re-record a 4 min video. README demo tables generated from the recording |
+| Instrumentation | Screenshots (`P`, `runs/shot.req`), stream recording (`runs/rec/ON`), `TTX_CINEMATIC`, `TTX_CAM`, `--realizations`, `--cutoff` |
+
+### 12.3 Open questions (§11): status
+
+| Question | Status |
+|---|---|
+| Forum scenario location | Open: the synthetic Valverde valley stands in; real places can be baked with the `propagator_abm` pipeline |
+| Bevy version | Resolved: stayed on 0.14 (+ bevy_egui 0.28) to reuse `propagator_abm` code and assets |
+| Working and player languages | Resolved: English working language; each player picks any language at runtime (the demo uses Italian, English and Armenian) |
+| Default Δt and time jumps | Resolved: 30-minute turns by default, set per resolution; time jumps run the model forward (`AdvanceTime`) |
+| Do players see a map? | Resolved: yes, first on the player page |
+| LLM provider | Resolved for the draft: OpenRouter (cloud), with a cassette for offline replay; a local model is not wired in yet |
+
+### 12.4 Next steps
+
+- Agents: civilians, ground crews and vehicles (ABM from `propagator_abm`), traffic on the road network
+- Evaluator/observer UI; L6/L7 AI workflows (inject suggestions, debrief narrative)
+- A real scenario for the Forum; role/permission editing in the UI
+- Authentication for the web UIs before any non-private deployment
