@@ -171,7 +171,7 @@ One directory per scenario, baked offline (Python scripts as in the reference re
 - **Resources:** units and assets per owner role, base location, mobilisation delay, external assets with arrival delay
 - **Roles:** `roles.yaml` defining name, level (national/regional/local), language, allowed commands, controlled resources, visibility filter, permitted message links
 - **Gazetteer:** multilingual names/aliases → entity ids
-- **MSEL:** `msel.xlsx|yaml` using the Armenian MSEL fields (event id, inject id, time, sender, recipient, text, objective, expected response)
+- **MSEL:** using the Armenian MSEL fields (event id, inject id, time, sender, recipient, text, objective, expected response)
 - **Initial state + optional checkpoints** (e.g. Day 3, Day 10)
 
 ---

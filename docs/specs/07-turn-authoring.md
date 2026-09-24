@@ -30,7 +30,7 @@ InjectPlan { id, sender, to: [role]|"all", title, text (source language),
 
 ## Requirements
 1. **Runtime.** Opening a turn applies `at_start` commands, queues the injects, and sends those with `release: auto` (translated per recipient as now). `manual` injects wait in a "planned" list for one click. `offset_s` releases at a simulated offset during the turn. The Master can skip, edit, reorder or add injects at any time. Improvised injects are logged as `planned: false`.
-2. **Editor** (`author.html`, Master only): turn list with drag-and-drop order; inject composer; role and language pickers; timing controls of spec 04; objectives list; import/export of JSON/YAML and of the Armenian MSEL spreadsheet.
+2. **Editor** (`author.html`, Master only): turn list with drag-and-drop order; inject composer; role and language pickers; timing controls of spec 04; objectives list; import/export of JSON/YAML.
 3. **Validation** before saving and before starting: roles exist; gazetteer names and zone codes in commands resolve; `at_start` commands pass `validate()` against a scratch world; injects have text; the total of the jumps is sane.
 4. **Preview.** Per language: the inject as each recipient would read it (translation by spec 01). **Dry-run**: simulate the plan forward on a copy of the world at maximum speed, and show the fire and stats at the end of each turn, without touching the live world.
 5. **AI generation** (workflow L8): the Master gives a brief (theme, objectives, roles, number of turns, difficulty); the model proposes a draft game as JSON, validated against the schema and the gazetteer, and opened in the editor as a draft. Nothing is used without the Master saving it. Invalid drafts are shown with the errors, not silently repaired. Fallback: the editor works with no AI.
@@ -51,5 +51,4 @@ Depends on 04 (timing fields). Used by 08 (objectives, expected responses) and 0
 
 ## Open questions
 - Conditional turns (branching on what the players did)? Out of scope now: a linear list plus Master improvisation.
-- Spreadsheet round-trip: is Excel the real authoring tool for the partners, so the editor's job is to import it, not replace it?
 - Who authors for the pilot? If the Master edits the JSON by hand, the editor can wait.

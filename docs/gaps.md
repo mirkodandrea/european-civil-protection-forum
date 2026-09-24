@@ -45,7 +45,7 @@ Checked against the code on 2026-09-24 (commit `2255bcd`). Each row says what ex
 ### 07 Turn authoring
 | Have | Gap | Where |
 |---|---|---|
-| `Scenario.msel: Vec<InjectTemplate>` (id, turn, title, sender, recipients, text, objective) inside the scenario JSON; injects are sent by hand | No `Game` / `TurnPlan` types, no file per game, no `at_start` commands, `release` modes, `forwardable`, `expected_response`, timing per turn; no runtime cursor; no editor page; no validation or dry-run; no import/export of the Armenian MSEL spreadsheet; no L8 generation prompt; no scenario-parameter forms; roles can't be edited in the UI | `scenario/src/lib.rs`, new `exercise::game`, new `web/author.html` |
+| `Scenario.msel: Vec<InjectTemplate>` (id, turn, title, sender, recipients, text, objective) inside the scenario JSON; injects are sent by hand | No `Game` / `TurnPlan` types, no file per game, no `at_start` commands, `release` modes, `forwardable`, `expected_response`, timing per turn; no runtime cursor; no editor page; no validation or dry-run; no L8 generation prompt; no scenario-parameter forms; roles can't be edited in the UI | `scenario/src/lib.rs`, new `exercise::game`, new `web/author.html` |
 
 ### 08 Evaluator dashboard
 | Have | Gap | Where |
@@ -76,5 +76,4 @@ Checked against the code on 2026-09-24 (commit `2255bcd`). Each row says what ex
 | Exact resume (store RNG state) or "equivalent" resume? | 06 |
 | Consent and retention wording for recording chats | 03, 05, 08 |
 | Are bots disclosed to players? Is the AI assessment observations only? | 09 |
-| Is Excel the partners' authoring format? | 07 |
 | Pilot date, roles and languages; are evaluators present? | priorities of all |
