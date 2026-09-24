@@ -1,6 +1,6 @@
 # To do
 
-What is not built yet. The v0.3 items have their own draft specs in [`specs/`](specs/README.md), with priorities and dependencies.
+What is not built yet. The difference between the code and the specs, item by item, is in [`gaps.md`](gaps.md). The v0.3 items have their own draft specs in [`specs/`](specs/README.md), with priorities and dependencies.
 
 ## Planned for v0.3 (pilot session and after)
 
