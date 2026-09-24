@@ -268,7 +268,4 @@ The implementation follows this spec with the decisions and deviations below. Th
 
 ### 12.4 Next steps
 
-- Agents: civilians, ground crews and vehicles (ABM from `propagator_abm`), traffic on the road network
-- Evaluator/observer UI; L6/L7 AI workflows (inject suggestions, debrief narrative)
-- A real scenario for the Forum; role/permission editing in the UI
-- Authentication for the web UIs before any non-private deployment
+The list of open work, including the v0.3 draft specs (one file per item, with proposed priorities in [`docs/specs/`](docs/specs/README.md)), is in [`docs/todo.md`](docs/todo.md).
