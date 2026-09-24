@@ -1,174 +1,33 @@
 {
- "_doc": "Narration of the recorded demo. `text` is the subtitle and the phone caption; `say` (optional) is what the voice reads when it should differ (numbers, symbols). `who` and `shows` feed the README timeline (timeline.py). session.js refers to lines by `id` and waits for each line to finish before the next.",
- "voice": {
-  "model": "google/gemini-3.1-flash-tts-preview",
-  "voice": "Charon"
- },
+ "_doc": "Narration of the recorded demo, told as the story of the incident. `text` is the subtitle; `say` (optional) is what the voice reads when it should differ (numbers, times, acronyms). Avoid phrases like 'in Italian': the TTS model may take them as an instruction and switch language (tts.js verifies every line with a transcription and regenerates on mismatch). `who` and `shows` feed the README timeline (readme_demo.py). session.js refers to lines by `id` and waits for each line to finish before the next.",
+ "voice": { "model": "google/gemini-3.1-flash-tts-preview", "voice": "Charon" },
+ "qa": { "model": "openai/gpt-4o-mini-transcribe" },
  "lines": [
-  {
-   "id": "intro",
-   "who": "—",
-   "text": "PPRD East table-top exercise, with AI support. One phone plays every role: the Director, the Mayor, the Fire Commander and Regional Civil Protection.",
-   "say": "P P R D East table-top exercise, with A I support. One phone plays every role: the Director, the Mayor, the Fire Commander and Regional Civil Protection.",
-   "shows": "One device can run the whole exercise"
-  },
-  {
-   "id": "language",
-   "who": "Regional",
-   "text": "Each player picks a language. Regional Civil Protection will play in Armenian.",
-   "shows": "Language is per player and can change at any time"
-  },
-  {
-   "id": "start",
-   "who": "Director",
-   "text": "The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill.",
-   "say": "The Director starts the exercise. Day one, one p.m.: a wildfire is burning on Pine Hill.",
-   "shows": "Turn-based control; turn speed set to 120×"
-  },
-  {
-   "id": "injects",
-   "who": "Director",
-   "text": "The Director sends the first injects from the exercise script. The AI translates each one for its recipient.",
-   "shows": "MSEL continuity with PPRD East 3; injects translated per recipient"
-  },
-  {
-   "id": "mayor_reads",
-   "who": "Mayor",
-   "text": "The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School.",
-   "shows": "Role-specific information in the player's language"
-  },
-  {
-   "id": "mayor_replies",
-   "who": "Mayor",
-   "text": "The Mayor answers in Italian, in their own words.",
-   "shows": "No command language to learn"
-  },
-  {
-   "id": "fire_orders",
-   "who": "Fire",
-   "text": "The Fire Commander orders fire lines using zone codes from the map grid, and an air-tanker drop.",
-   "shows": "Zone-code addressing (F4:N), named places"
-  },
-  {
-   "id": "proposals",
-   "who": "Director",
-   "text": "The AI turns each reply into commands, and the simulator checks every command against the role's authority and resources.",
-   "say": "The A I turns each reply into commands, and the simulator checks every command against the role's authority and resources.",
-   "shows": "AI interprets, rules decide"
-  },
-  {
-   "id": "buses",
-   "who": "Director",
-   "text": "It flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2.",
-   "shows": "Deterministic resource checks the AI cannot bypass"
-  },
-  {
-   "id": "prompt",
-   "who": "Director",
-   "text": "The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject.",
-   "say": "The Director writes an A I prompt: one extra bus for the Mayor, confirmed by an inject.",
-   "shows": "Master omnipotence in natural language"
-  },
-  {
-   "id": "prompt_approve",
-   "who": "Director",
-   "text": "The Director reviews the AI's proposal, a resource change plus an inject draft, and approves it.",
-   "say": "The Director reviews the A I's proposal, a resource change plus an inject draft, and approves it.",
-   "shows": "AI proposes, Master approves; nothing is applied silently"
-  },
-  {
-   "id": "fire_approve",
-   "who": "Director",
-   "text": "The Fire Commander's orders are approved, with a note to the player.",
-   "shows": "Master feedback to players"
-  },
-  {
-   "id": "mayor_approve",
-   "who": "Director",
-   "text": "And the Mayor's orders now pass: 3 buses for 120 pupils.",
-   "shows": "Feasibility re-checked at decision time"
-  },
-  {
-   "id": "mayor_feedback",
-   "who": "Mayor",
-   "text": "The Mayor gets exercise control's feedback in Italian.",
-   "shows": "Multilingual feedback loop"
-  },
-  {
-   "id": "resolve1",
-   "who": "Director",
-   "text": "The Director resolves turn 1: thirty simulated minutes, played live on the big screen at 120 times speed.",
-   "shows": "Approved actions apply at resolution; live simulation"
-  },
-  {
-   "id": "flames",
-   "who": "—",
-   "text": "Flame length follows the fire's intensity and the share of Monte Carlo runs that burn each cell. The glow ahead is where only some runs reach.",
-   "shows": "Intensity and probability drive the flames"
-  },
-  {
-   "id": "turn1_result",
-   "who": "—",
-   "text": "The fire lines are cut, the air tanker drops, and the school is evacuated to the sports centre.",
-   "shows": "Operational consequences of decisions"
-  },
-  {
-   "id": "sitrep",
-   "who": "Fire",
-   "text": "Every player gets an AI-written situation update for their role.",
-   "say": "Every player gets an A I written situation update for their role.",
-   "shows": "Per-role situation reports in each player's language"
-  },
-  {
-   "id": "turn2",
-   "who": "Director",
-   "text": "Turn 2. The Director escalates: a wind warning, then commands by code, raising the wind to 55 km/h and starting a new fire in zone G5.",
-   "say": "Turn two. The Director escalates: a wind warning, then commands by code, raising the wind to fifty-five kilometres per hour and starting a new fire in zone G 5.",
-   "shows": "Escalation, commands by code"
-  },
-  {
-   "id": "ucpm",
-   "who": "Regional",
-   "text": "Regional Civil Protection reads the wind warning in Armenian, and asks for international assistance through the EU Civil Protection Mechanism.",
-   "shows": "International assistance pressure point (UCPM)"
-  },
-  {
-   "id": "vague",
-   "who": "Fire",
-   "text": "A vague order from the Fire Commander…",
-   "shows": "—"
-  },
-  {
-   "id": "clarify",
-   "who": "Fire",
-   "text": "…gets a clarification question from the AI instead of a guess.",
-   "say": "gets a clarification question from the A I, instead of a guess.",
-   "shows": "The AI never invents places"
-  },
-  {
-   "id": "precise",
-   "who": "Fire",
-   "text": "The Fire Commander answers precisely.",
-   "shows": "—"
-  },
-  {
-   "id": "decide2",
-   "who": "Director",
-   "text": "The Director rejects the vague order, and approves the assistance request and the precise fire lines.",
-   "shows": "Master control over every action"
-  },
-  {
-   "id": "resolve2",
-   "who": "Director",
-   "text": "Turn 2 resolves live: sixty minutes. Reinforcements arrive, the lines protect Pineta, and the new fire spreads through the farmland.",
-   "shows": "Live simulation of the escalation"
-  },
-  {
-   "id": "outro",
-   "who": "—",
-   "text": "Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide; the AI mediates.",
-   "say": "Every inject, reply, A I interpretation, decision and consequence is logged for the debrief. Humans decide; the A I mediates.",
-   "shows": "Traceability"
-  }
+  { "id": "intro", "who": "—", "text": "Valverde valley, one in the afternoon. A wildfire has broken out on Pine Hill, and a strong north-east wind is pushing it towards the village of Pineta.", "shows": "The situation: one device plays every role" },
+  { "id": "language", "who": "Regional", "text": "Four people run the response: the exercise director, the mayor of Valverde, the fire commander, and a regional civil protection officer who works in Armenian.", "shows": "Each player works in their own language" },
+  { "id": "start", "who": "Director", "text": "The exercise begins. The fire already covers five hectares and is spreading south-west through dry pine forest.", "shows": "Turn-based control; turn speed set to 120×" },
+  { "id": "injects", "who": "Director", "text": "The first reports come in: emergency calls about the fire, a warning that the primary school is in session, and a fire-behaviour estimate for the commander.", "shows": "Injects from the exercise script, translated for each player" },
+  { "id": "mayor_reads", "who": "Mayor", "text": "In Pineta, 120 pupils and staff are still inside the primary school, and the school has no transport of its own.", "say": "In Pineta, one hundred and twenty pupils and staff are still inside the primary school, and the school has no transport of its own.", "shows": "Role-specific information" },
+  { "id": "mayor_replies", "who": "Mayor", "text": "The mayor acts at once: warn the village, evacuate the school to the sports centre in Valverde, and close the northern road.", "shows": "Free-text orders, no command language" },
+  { "id": "fire_orders", "who": "Fire", "text": "The fire commander sends ground crews to cut fire breaks north and east of the village, and an air tanker to wet the forest above it.", "shows": "Orders by map zone and place name" },
+  { "id": "proposals", "who": "Director", "text": "Before anything happens on the ground, every order is checked against the people, vehicles and authority actually available.", "shows": "The AI interprets; the rules decide what is possible" },
+  { "id": "buses", "who": "Director", "text": "A problem emerges: evacuating the school needs 3 buses, and the town has only 2.", "say": "A problem emerges: evacuating the school needs three buses, and the town has only two.", "shows": "A real constraint the AI cannot wave away" },
+  { "id": "prompt", "who": "Director", "text": "Exercise control steps in: the regional transport company can release one more bus.", "shows": "The Director steers the scenario in plain language" },
+  { "id": "prompt_approve", "who": "Director", "text": "The extra bus is confirmed, and the mayor is told it is on its way.", "shows": "Nothing changes until the Director approves" },
+  { "id": "fire_approve", "who": "Director", "text": "The fire commander's plan goes ahead: two fire breaks and a water drop.", "shows": "Approval, with a note to the player" },
+  { "id": "mayor_approve", "who": "Director", "text": "With three buses available, the school evacuation can start, together with a warning to the whole village.", "shows": "Feasibility re-checked at the moment of decision" },
+  { "id": "mayor_feedback", "who": "Mayor", "text": "The mayor receives the confirmation, and the buses head for the school.", "shows": "Feedback in the player's language" },
+  { "id": "resolve1", "who": "Director", "text": "The next thirty minutes unfold. The fire runs downhill towards Pineta while the crews race to finish the breaks.", "shows": "The turn is simulated live" },
+  { "id": "flames", "who": "—", "text": "The tallest flames mark where the fire burns hottest and where most simulated runs agree. The faint glow ahead shows where it could spread next.", "shows": "Flames from fire intensity and the Monte Carlo probability" },
+  { "id": "turn1_result", "who": "—", "text": "The fire breaks hold at the edge of the village, and the children reach the sports centre safely. The northern road is lost to the flames.", "shows": "Consequences of the decisions" },
+  { "id": "sitrep", "who": "Fire", "text": "Each responder receives a report on what has changed on the ground.", "shows": "Situation updates for every role" },
+  { "id": "turn2", "who": "Director", "text": "Half past one. The wind strengthens to 55 kilometres per hour, and a second fire starts in the farmland south-east of Pineta.", "say": "Half past one. The wind strengthens to fifty-five kilometres per hour, and a second fire starts in the farmland south-east of Pineta.", "shows": "Escalation by the Director" },
+  { "id": "ucpm", "who": "Regional", "text": "Local resources are stretched. Regional civil protection asks for international help: two water-bombing aircraft through the EU Civil Protection Mechanism, and two more ground crews.", "say": "Local resources are stretched. Regional civil protection asks for international help: two water-bombing aircraft through the European Union Civil Protection Mechanism, and two more ground crews.", "shows": "International assistance (UCPM)" },
+  { "id": "vague", "who": "Fire", "text": "Under pressure, the fire commander sends an unclear order…", "shows": "—" },
+  { "id": "clarify", "who": "Fire", "text": "…and is asked exactly where the crews should go, instead of anyone guessing.", "say": "and is asked exactly where the crews should go, instead of anyone guessing.", "shows": "Ambiguity is clarified, never guessed" },
+  { "id": "precise", "who": "Fire", "text": "The answer comes back: the eastern edge of the village, and the slope above it.", "shows": "The follow-up is read in context" },
+  { "id": "decide2", "who": "Director", "text": "The request for aircraft and the new fire breaks are approved; the unclear order is sent back.", "shows": "Every action passes through the Director" },
+  { "id": "resolve2", "who": "Director", "text": "The next hour. Reinforcements arrive and the breaks keep the fire out of Pineta, but the second fire races through the farmland, where nobody was warned.", "shows": "The escalation, simulated live" },
+  { "id": "outro", "who": "—", "text": "By half past two, Pineta is safe and every child is accounted for, but farmhouses have burned and the aircraft are still on their way. Every decision and its consequences are recorded for the debrief.", "shows": "Outcome and debrief" }
  ]
 }

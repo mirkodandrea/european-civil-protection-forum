@@ -14,8 +14,18 @@
   <span class="grow"></span>
   <select id="lang" title="Language"></select>
 </header>
-<main class="cols" id="main">
-  <section>
+<main class="pgrid" id="main">
+  <div class="panel a-map">
+    <h2>Situation map</h2>
+    <div class="mapbox"><canvas id="map"></canvas></div>
+    <div class="row small legend">
+      <span><i style="background:#ff4614"></i>burning</span><span><i style="background:#231e1c"></i>burnt</span>
+      <span><i style="background:#ffa028;opacity:.45"></i>possible</span><span><i style="background:#ffe000"></i>fire line</span>
+      <span><i style="background:#2e6bff"></i>evacuated</span><span><i style="background:#000"></i>destroyed</span>
+    </div>
+    <div class="small" id="stats"></div>
+  </div>
+  <div class="a-inbox">
     <div class="panel">
       <h2>Inbox</h2>
       <div id="inbox" class="inbox"></div>
@@ -25,22 +35,15 @@
       <textarea id="reply" placeholder="Write your orders, requests or information in your own words…"></textarea>
       <div class="row"><button id="send" class="primary">Send</button><span id="status" class="small muted"></span></div>
     </div>
-  </section>
-  <section>
-    <div class="panel">
-      <h2>Your role</h2>
-      <div id="roledesc" class="small"></div>
-      <h2 style="margin-top:10px">Resources this turn</h2>
-      <div id="res" class="small"></div>
-      <h2 style="margin-top:10px">Your orders</h2>
-      <div id="props" class="small"></div>
-    </div>
-    <div class="panel">
-      <h2>Situation map</h2>
-      <div class="mapbox"><canvas id="map"></canvas></div>
-      <div class="small" id="stats"></div>
-    </div>
-  </section>
+  </div>
+  <div class="panel a-role">
+    <h2>Your role</h2>
+    <div id="roledesc" class="small"></div>
+    <h2 style="margin-top:10px">Resources this turn</h2>
+    <div id="res" class="small"></div>
+    <h2 style="margin-top:10px">Your orders</h2>
+    <div id="props" class="small"></div>
+  </div>
 </main>
 <script type="module">
 import { api, live, esc, MapView, statsLine, kindBadge, LANGS } from './common.js';
@@ -54,7 +57,8 @@ if (!role || !stat.roles.find(r => r.id === role)) {
 }
 $('lang').innerHTML = Object.entries(LANGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 $('lang').onchange = () => api(`/api/player/${role}/language`, { language: $('lang').value });
-const map = new MapView($('map'), stat, {});
+// On a phone the map sits on top: keep it to ~40% of the screen height.
+const map = new MapView($('map'), stat, { maxHeight: Math.round(window.innerHeight * 0.42) });
 const STATUS = { parsing: 'being read…', pending: 'awaiting exercise control', needs_clarification: 'question asked', approved: 'approved – executes at end of turn', rejected: 'not approved', applied: 'executed', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
 let lastCount = 0;
 

@@ -186,3 +186,38 @@ async fn resolution_runs_live_and_is_observable() {
     assert_eq!(st["phase"], "orders");
     assert_eq!(st["turn"], 2);
 }
+
+/// The AI sees each player's conversation: what they received, their earlier
+/// replies and its own earlier interpretations (a clarification is answered
+/// in context).
+#[tokio::test]
+async fn player_conversation_keeps_context() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    let llm = llm::Llm::mock(move |task, _s, user| {
+        if task == "parse_reply" {
+            log.lock().unwrap().push(user.to_string());
+            return Ok(if user.contains("over there") && !user.contains("east edge") {
+                r#"{"actions":[],"clarification":"Which zone edge?","summary":"unclear"}"#.into()
+            } else {
+                r#"{"actions":[{"type":"CutFireLine","along":"F4:E"}],"summary":"line"}"#.into()
+            });
+        }
+        Ok(format!("ok {task}"))
+    });
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let app = server::router(Arc::new(Mutex::new(ex)), llm, None).0;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-03/send", None).await;
+    call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "send the crews over there"}))).await;
+    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["status"] == "needs_clarification")).await;
+    call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "the east edge of F4"}))).await;
+    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().filter(|p| p["status"] == "pending").count() == 1).await;
+    let calls = seen.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].contains("INJECT") && calls[0].contains("Fire behaviour estimate"), "the inject is context: {}", calls[0]);
+    assert!(calls[1].contains("send the crews over there"), "earlier reply in history");
+    assert!(calls[1].contains("Which zone edge?"), "earlier clarification in history");
+    assert!(calls[1].contains("the east edge of F4"));
+}

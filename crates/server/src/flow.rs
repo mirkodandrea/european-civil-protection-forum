@@ -17,6 +17,16 @@ use serde_json::Value;
 
 use crate::AppState;
 
+/// A role's conversation, in the LLM's message format.
+fn history(ex: &exercise::Exercise, key: &str) -> Vec<llm::ChatMessage> {
+    ex.conversation(key).into_iter().map(|t| llm::ChatMessage { role: t.role, content: t.content }).collect()
+}
+
+/// What goes back into the conversation as the AI's turn: its interpretation, compactly.
+fn assistant_turn(p: &llm::ParsedReply) -> String {
+    serde_json::json!({"actions": p.actions, "messages": p.messages, "injects": p.injects, "clarification": p.clarification, "summary": p.summary}).to_string()
+}
+
 /// Translate `text_en` for each recipient; English on failure.
 pub async fn translations(state: &AppState, recipients: &[String], text_en: &str) -> BTreeMap<String, String> {
     let langs: Vec<(String, String)> = {
@@ -57,11 +67,11 @@ pub async fn process_reply(state: AppState, pid: u64) {
             others,
             ex.world.gazetteer(),
             ex.world.digest(Some(&role_id)),
-            ex.recent_received_en(&role_id, 4),
+            history(&ex, &role_id),
             p.original.clone(),
         )
     };
-    let (role, lang, catalogue, others, gazetteer, digest, recent, reply) = prep;
+    let (role, lang, catalogue, others, gazetteer, digest, history, reply) = prep;
     let result = state
         .llm
         .parse_reply(llm::tasks::ReplyInput {
@@ -73,10 +83,19 @@ pub async fn process_reply(state: AppState, pid: u64) {
             other_roles: &others,
             gazetteer: &gazetteer,
             digest: &digest,
-            recent_injects: &recent,
+            history: &history,
             reply: &reply,
         })
         .await;
+    {
+        // The reply joins the conversation whatever happened to the parse.
+        let mut ex = state.lock();
+        let clock = ex.world.clock();
+        ex.converse(&role.id, "user", format!("[{clock}] PLAYER REPLY:\n{reply}"));
+        if let Ok(parsed) = &result {
+            ex.converse(&role.id, "assistant", assistant_turn(parsed));
+        }
+    }
     match result {
         Ok(parsed) => {
             let messages = parsed.messages.clone();
@@ -111,7 +130,7 @@ pub async fn process_reply(state: AppState, pid: u64) {
 
 /// Interpret a Master prompt (runs the LLM; call it spawned).
 pub async fn process_master_prompt(state: AppState, pid: u64) {
-    let (catalogue, roles, gazetteer, digest, prompt) = {
+    let (catalogue, roles, gazetteer, digest, history, prompt) = {
         let ex = state.lock();
         let all: Vec<String> = sim::ALL_KINDS.iter().map(|s| s.to_string()).collect();
         (
@@ -119,11 +138,17 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
             ex.world.scn.roles.iter().map(|r| (r.id.clone(), r.name.clone())).collect::<Vec<_>>(),
             ex.world.gazetteer(),
             ex.world.digest(None),
+            history(&ex, exercise::MASTER),
             ex.proposal(pid).map(|p| p.original.clone()).unwrap_or_default(),
         )
     };
-    let r = state.llm.master_prompt(llm::tasks::MasterInput { catalogue: &catalogue, roles: &roles, gazetteer: &gazetteer, digest: &digest, prompt: &prompt }).await;
+    let r = state.llm.master_prompt(llm::tasks::MasterInput { catalogue: &catalogue, roles: &roles, gazetteer: &gazetteer, digest: &digest, history: &history, prompt: &prompt }).await;
     let mut ex = state.lock();
+    let clock = ex.world.clock();
+    ex.converse(exercise::MASTER, "user", format!("[{clock}] DIRECTOR:\n{prompt}"));
+    if let Ok(p) = &r {
+        ex.converse(exercise::MASTER, "assistant", assistant_turn(p));
+    }
     match r {
         Ok(p) => {
             let drafts = p.injects.iter().filter_map(|d| serde_json::to_value(d).ok()).collect();

@@ -45,7 +45,7 @@ async fn translate_and_parse_live() {
             other_roles: &[("fire_commander".into(), "Fire Commander".into())],
             gazetteer: &g,
             digest: &serde_json::json!({"clock": "Day 1 13:30"}),
-            recent_injects: &[],
+            history: &[],
             reply: "Evacuate zone F4 toward the Valverde sports centre and warn F3 too. Tell the fire commander the school is empty.",
         })
         .await

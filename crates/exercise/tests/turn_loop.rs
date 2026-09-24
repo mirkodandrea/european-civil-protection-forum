@@ -231,3 +231,22 @@ fn stepped_and_one_shot_resolution_agree() {
     assert_eq!(a.world.stats().burned_ha, b.world.stats().burned_ha);
     assert_eq!(a.world.time_s(), b.world.time_s());
 }
+
+#[test]
+fn conversations_collect_what_each_player_received() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    ex.send_inject(None, "School in session", "Pineta Primary School", &["mayor".into()], "120 pupils on site", &BTreeMap::new()).unwrap();
+    ex.add_message(MASTER, "mayor", MsgKind::Feedback, Some("Orders reviewed"), "approvato", "approved", None);
+    ex.add_message(MASTER, "mayor", MsgKind::Clarification, None, "quale zona?", "which zone?", None);
+    let c = ex.conversation("mayor");
+    assert_eq!(c.len(), 2, "clarifications are the AI's own words, not context: {c:?}");
+    assert!(c[0].content.contains("INJECT") && c[0].content.contains("120 pupils"));
+    assert!(c[1].content.contains("approved"));
+    assert!(ex.conversation("fire_commander").is_empty());
+    ex.converse("mayor", "assistant", "{}");
+    for i in 0..(CONVERSATION_MAX + 5) {
+        ex.converse("mayor", "user", format!("note {i}"));
+    }
+    assert_eq!(ex.conversation("mayor").len(), CONVERSATION_MAX);
+}

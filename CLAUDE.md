@@ -15,7 +15,9 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | Scenario | Synthetic "Valverde valley" for now |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
 | Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the Director sets a factor (e.g. 60× = 1 simulated min/s) |
-| Demo video | Narrated with OpenRouter TTS `google/gemini-3.1-flash-tts-preview` (voice Charon), subtitles burned in + track + .srt/.vtt; LLM answers replayed from `scripts/record/llm_cassette.jsonl`; simulator streamed into ffmpeg while recording |
+| Demo video | Narrated with OpenRouter TTS `google/gemini-3.1-flash-tts-preview` (voice Charon), telling the story of the incident (not game mechanics); every clip checked by transcription; subtitles burned in + track + .srt/.vtt; LLM answers replayed from `scripts/record/llm_cassette.jsonl`; simulator streamed into ffmpeg while recording |
+| AI context | One continuous conversation per player and for the Director (received messages, replies, interpretations) |
+| Player UI | Situation map first on the player's page (phones) |
 | Camera | Cinematic director follows injects, proposals, orders and the fire during turns; sun, shadows, fog, bloom, fire lights |
 | Flame rendering | Byram flame length from ensemble-mean intensity, scaled by probability; halo tongues below the cutoff; Froude wind tilt; age-based ground glow; smoke/sparks. Build on `propagator_abm` ideas but keep ensemble-aware |
 | Fire ensemble | 32-run Monte Carlo; the "actual" fire is cells reached by ≥ `cutoff` of runs (default 0.5, 0.25 = pessimistic), with quantile arrival times; lower-probability cells shown as a halo |

@@ -21,6 +21,38 @@ pub mod tasks;
 
 pub use tasks::{InjectDraft, ParsedReply, RoleMessage};
 
+/// One message of a conversation (`role` is "user" or "assistant").
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+impl ChatMessage {
+    pub fn user(content: impl Into<String>) -> Self {
+        ChatMessage { role: "user".into(), content: content.into() }
+    }
+    pub fn assistant(content: impl Into<String>) -> Self {
+        ChatMessage { role: "assistant".into(), content: content.into() }
+    }
+}
+
+/// Join consecutive messages of the same role (context notes pile up as
+/// several "user" entries between two model answers).
+pub fn merge_consecutive(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = Vec::new();
+    for m in messages {
+        match out.last_mut() {
+            Some(last) if last.role == m.role => {
+                last.content.push_str("\n\n");
+                last.content.push_str(&m.content);
+            }
+            _ => out.push(m.clone()),
+        }
+    }
+    out
+}
+
 pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash";
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
@@ -92,12 +124,20 @@ impl Llm {
         }
     }
 
-    /// One chat completion. `json` asks the model for a JSON object.
+    /// One chat completion with a single user message. `json` asks the model for a JSON object.
     pub async fn complete(&self, task: &str, system: &str, user: &str, json_mode: bool) -> Result<String> {
+        self.complete_chat(task, system, &[ChatMessage::user(user)], json_mode).await
+    }
+
+    /// A completion over a whole conversation (`messages` after the system prompt).
+    pub async fn complete_chat(&self, task: &str, system: &str, messages: &[ChatMessage], json_mode: bool) -> Result<String> {
+        let messages = merge_consecutive(messages);
         let Some(tape) = self.cassette.clone() else {
-            return self.complete_live(task, system, user, json_mode).await;
+            return self.complete_live(task, system, &messages, json_mode).await;
         };
-        let key = cassette::key(&[&self.model(), task, system, user, if json_mode { "json" } else { "text" }]);
+        // Single-message requests keep the key format of earlier cassettes.
+        let flat = if messages.len() == 1 && messages[0].role == "user" { messages[0].content.clone() } else { serde_json::to_string(&messages)? };
+        let key = cassette::key(&[&self.model(), task, system, &flat, if json_mode { "json" } else { "text" }]);
         if let Some(answer) = tape.get(&key) {
             tracing::info!(task, "llm replayed from cassette");
             return Ok(answer);
@@ -105,24 +145,27 @@ impl Llm {
         if tape.mode() == cassette::Mode::Replay {
             anyhow::bail!("LLM cassette miss for task {task} (replay mode)");
         }
-        let answer = self.complete_live(task, system, user, json_mode).await?;
+        let answer = self.complete_live(task, system, &messages, json_mode).await?;
         tape.put(&key, task, &answer);
         Ok(answer)
     }
 
-    async fn complete_live(&self, task: &str, system: &str, user: &str, json_mode: bool) -> Result<String> {
+    async fn complete_live(&self, task: &str, system: &str, messages: &[ChatMessage], json_mode: bool) -> Result<String> {
         let started = Instant::now();
         let out = match &self.backend {
             Backend::Off => anyhow::bail!("LLM is not configured (set OPENROUTER_API_KEY)"),
-            Backend::Mock(f) => f(task, system, user),
+            // The mock sees the conversation flattened, oldest first.
+            Backend::Mock(f) => match messages {
+                [only] if only.role == "user" => f(task, system, &only.content),
+                _ => f(task, system, &messages.iter().map(|m| format!("[{}] {}", m.role, m.content)).collect::<Vec<_>>().join("\n")),
+            },
             Backend::OpenRouter { client, api_key, model, base_url } => {
+                let mut all = vec![json!({"role": "system", "content": system})];
+                all.extend(messages.iter().map(|m| json!({"role": m.role, "content": m.content})));
                 let mut body = json!({
                     "model": model,
                     "temperature": 0.2,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
+                    "messages": all,
                 });
                 if json_mode {
                     body["response_format"] = json!({"type": "json_object"});
@@ -155,12 +198,19 @@ impl Llm {
 
     /// A completion parsed as a JSON object, retried once on unparseable output.
     pub async fn complete_json(&self, task: &str, system: &str, user: &str) -> Result<Value> {
-        let text = self.complete(task, system, user, true).await?;
+        self.chat_json(task, system, &[ChatMessage::user(user)]).await
+    }
+
+    /// A conversation completion parsed as a JSON object, retried once on unparseable output.
+    pub async fn chat_json(&self, task: &str, system: &str, messages: &[ChatMessage]) -> Result<Value> {
+        let text = self.complete_chat(task, system, messages, true).await?;
         match extract_json(&text) {
             Ok(v) => Ok(v),
             Err(_) => {
-                let retry = format!("{user}\n\nYour previous answer was not valid JSON. Answer with ONE JSON object only.");
-                let text = self.complete(task, system, &retry, true).await?;
+                let mut retry = messages.to_vec();
+                retry.push(ChatMessage::assistant(text));
+                retry.push(ChatMessage::user("Your previous answer was not valid JSON. Answer with ONE JSON object only."));
+                let text = self.complete_chat(task, system, &retry, true).await?;
                 extract_json(&text)
             }
         }
@@ -233,6 +283,13 @@ mod tests {
     fn cassette_key_is_stable_and_separates_parts() {
         assert_eq!(cassette::key(&["a", "b"]), cassette::key(&["a", "b"]));
         assert_ne!(cassette::key(&["ab", ""]), cassette::key(&["a", "b"]));
+    }
+
+    #[test]
+    fn consecutive_messages_are_merged() {
+        let m = merge_consecutive(&[ChatMessage::user("a"), ChatMessage::user("b"), ChatMessage::assistant("c"), ChatMessage::user("d")]);
+        assert_eq!(m.len(), 3);
+        assert_eq!(m[0].content, "a\n\nb");
     }
 
     #[tokio::test]

@@ -45,7 +45,7 @@ pub const FLAMING_S: f32 = 420.0;
 /// Seconds a burnt-out cell keeps smoking.
 const SMOKING_S: f32 = 1800.0;
 const MAX_TONGUES: usize = 4000;
-const MAX_SMOKE: usize = 900;
+const MAX_SMOKE: usize = 1600;
 const MAX_SPARKS: usize = 500;
 const G: f32 = 9.81;
 
@@ -87,6 +87,9 @@ struct Puff {
     life: f32,
     size: f32,
     shade: f32,
+    /// Height of the ground where it was emitted (Bevy units), for wind shear.
+    base_y: f32,
+    phase: f32,
 }
 
 struct Spark {
@@ -104,6 +107,8 @@ pub struct FlameView {
     puffs: Vec<Puff>,
     embers: Vec<Spark>,
     rng: u64,
+    /// Fractional puffs owed by the emission-rate accumulator.
+    emit_acc: f32,
 }
 
 impl FlameView {
@@ -122,18 +127,27 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: R
     let sparks = meshes.add(empty_mesh());
     let tongue = images.add(tongue_texture());
     let puff = images.add(puff_texture());
-    commands.spawn(MaterialMeshBundle { mesh: flames.clone(), material: flame_mats.add(FlameMaterial { texture: tongue }), ..default() });
-    commands.spawn(PbrBundle {
-        mesh: smoke.clone(),
-        material: mats.add(StandardMaterial { base_color_texture: Some(puff.clone()), alpha_mode: AlphaMode::Blend, unlit: true, cull_mode: None, double_sided: true, ..default() }),
-        ..default()
-    });
-    commands.spawn(PbrBundle {
-        mesh: sparks.clone(),
-        material: mats.add(StandardMaterial { base_color_texture: Some(puff), alpha_mode: AlphaMode::Add, unlit: true, cull_mode: None, ..default() }),
-        ..default()
-    });
-    commands.insert_resource(FlameView { flames, smoke, sparks, puffs: Vec::new(), embers: Vec::new(), rng: 0x9E37_79B9_7F4A_7C15 });
+    // Light and smoke are not solid: none of them casts a shadow (Bevy would
+    // otherwise shadow the ground with every puff of smoke).
+    use bevy::pbr::NotShadowCaster;
+    commands.spawn((MaterialMeshBundle { mesh: flames.clone(), material: flame_mats.add(FlameMaterial { texture: tongue }), ..default() }, NotShadowCaster));
+    commands.spawn((
+        PbrBundle {
+            mesh: smoke.clone(),
+            material: mats.add(StandardMaterial { base_color_texture: Some(puff.clone()), alpha_mode: AlphaMode::Blend, unlit: true, cull_mode: None, double_sided: true, ..default() }),
+            ..default()
+        },
+        NotShadowCaster,
+    ));
+    commands.spawn((
+        PbrBundle {
+            mesh: sparks.clone(),
+            material: mats.add(StandardMaterial { base_color_texture: Some(puff), alpha_mode: AlphaMode::Add, unlit: true, cull_mode: None, ..default() }),
+            ..default()
+        },
+        NotShadowCaster,
+    ));
+    commands.insert_resource(FlameView { flames, smoke, sparks, puffs: Vec::new(), embers: Vec::new(), rng: 0x9E37_79B9_7F4A_7C15, emit_acc: 0.0 });
 }
 
 fn empty_mesh() -> Mesh {
@@ -315,27 +329,58 @@ fn update(
     meshes.insert(&view.flames, flames.finish());
 
     // ---- smoke and sparks ----
-    let drift = down * wind_ms * 0.9;
-    for (src, strength) in &sources {
-        if view.puffs.len() < MAX_SMOKE && view.rand() < 0.035 * strength {
-            let jitter = Vec3::new(view.rand() - 0.5, 0.0, view.rand() - 0.5) * 12.0;
-            let life = 22.0 + 20.0 * view.rand();
-            let size = 14.0 + 10.0 * strength + 8.0 * view.rand();
-            let shade = (0.42 - 0.12 * strength.min(1.5)).max(0.18);
-            view.puffs.push(Puff { pos: *src + jitter + Vec3::Y * 10.0, vel: Vec3::Y * (5.0 + 3.0 * strength) + drift * 0.3, age: 0.0, life, size, shade });
+    // The plume: puffs rise buoyantly off the fire, cool and slow, and are
+    // carried downwind. The wind speeds up with height (a log-like profile),
+    // so the column bends over and trails away from the fire; gusts and a
+    // little turbulence keep it from looking like a conveyor belt.
+    let gust = 1.0 + 0.25 * (t * 0.37).sin() + 0.12 * (t * 1.13).sin();
+    let wind_at = |height: f32| down * wind_ms * gust * (0.55 + 0.45 * (height / 200.0).clamp(0.0, 2.0));
+    // Emit at a steady rate matched to the particle budget (so the plume stays
+    // attached to the fire), choosing sources in proportion to their strength.
+    const PUFF_LIFE: f32 = 38.0;
+    let max_strength = sources.iter().map(|(_, k)| *k).fold(0.0f32, f32::max);
+    if max_strength > 0.0 {
+        view.emit_acc += (MAX_SMOKE as f32 / PUFF_LIFE) * dt;
+        let mut tries = 0;
+        while view.emit_acc >= 1.0 && tries < 200 {
+            tries += 1;
+            let (src, strength) = sources[((view.rand() * sources.len() as f32) as usize).min(sources.len() - 1)];
+            if view.rand() * max_strength > strength {
+                continue;
+            }
+            view.emit_acc -= 1.0;
+            if view.puffs.len() >= MAX_SMOKE {
+                continue;
+            }
+            let jitter = Vec3::new(view.rand() - 0.5, 0.0, view.rand() - 0.5) * 14.0;
+            let life = PUFF_LIFE * (0.8 + 0.4 * view.rand());
+            let size = 10.0 + 8.0 * strength.min(2.0) + 6.0 * view.rand();
+            // Hot, intense fire: darker, denser smoke.
+            let shade = (0.40 - 0.10 * strength.min(1.8)).max(0.16);
+            let phase = view.rand() * 100.0;
+            let rise = 3.5 + 2.5 * strength.min(2.0) + 1.5 * view.rand();
+            view.puffs.push(Puff { pos: src + jitter + Vec3::Y * 6.0, vel: Vec3::Y * rise + wind_at(0.0) * 0.5, age: 0.0, life, size, shade, base_y: src.y, phase });
         }
+        view.emit_acc = view.emit_acc.min(5.0);
+    }
+    for (src, strength) in &sources {
         if view.embers.len() < MAX_SPARKS && view.rand() < 0.03 * strength {
             let v = Vec3::new(view.rand() - 0.5, 0.0, view.rand() - 0.5) * 4.0 + Vec3::Y * (6.0 + 6.0 * view.rand());
             let life = 1.5 + 2.0 * view.rand();
             view.embers.push(Spark { pos: *src, vel: v + down * wind_ms * 0.5, age: 0.0, life });
         }
     }
+    let drift = wind_at(120.0);
     for p in &mut view.puffs {
         p.age += dt;
-        let k = p.age / p.life;
-        // Buoyant rise slows as the plume cools; the wind takes over.
-        p.vel = p.vel.lerp(drift + Vec3::Y * 1.2, (dt * 0.25).min(1.0));
-        p.pos += p.vel * dt * (1.0 + 0.3 * k);
+        let h = p.pos.y - p.base_y;
+        // Buoyancy decays as the smoke cools; horizontal speed relaxes to the wind at this height.
+        let buoy = (p.vel.y * (1.0 - dt * 0.08)).max(0.8);
+        let horiz = Vec3::new(p.vel.x, 0.0, p.vel.z).lerp(wind_at(h), (dt * 0.6).min(1.0));
+        let across = Vec3::new(-down.z, 0.0, down.x);
+        let turb = across * ((t * 0.5 + p.phase).sin() * 1.5) + Vec3::Y * ((t * 0.7 + p.phase * 1.3).cos() * 0.6);
+        p.vel = Vec3::new(horiz.x, buoy, horiz.z);
+        p.pos += (p.vel + turb) * dt;
     }
     view.puffs.retain(|p| p.age < p.life);
     for e in &mut view.embers {
@@ -350,12 +395,14 @@ fn update(
     let mut smoke = QuadBuilder::default();
     for p in &view.puffs {
         let k = (p.age / p.life).clamp(0.0, 1.0);
-        let size = p.size * (0.6 + 2.2 * k);
-        let alpha = (k * 5.0).min(1.0) * (1.0 - k).powf(1.3) * 0.22;
-        let sh = p.shade + 0.35 * k;
+        // Spreads as it disperses; dense and brownish near the fire, thin and
+        // bluish-grey downwind.
+        let size = p.size * (0.7 + 3.2 * k.sqrt());
+        let alpha = (k * 12.0).min(1.0) * (1.0 - k).powf(1.5) * 0.22;
+        let sh = p.shade + 0.4 * k;
         let r = cam_right * size;
         let u = cam_up * size;
-        let c = [sh, sh * 0.96, sh * 0.92, alpha];
+        let c = [sh * (1.02 - 0.08 * k), sh * 0.97, sh * (0.9 + 0.12 * k), alpha];
         smoke.quad([p.pos - r - u, p.pos + r - u, p.pos + r + u, p.pos - r + u], c, c);
     }
     meshes.insert(&view.smoke, smoke.finish());

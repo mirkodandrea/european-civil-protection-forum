@@ -113,7 +113,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .add_plugins(flames::FlamesPlugin)
         .insert_resource(ClearColor(camera::SKY))
         // Sky-tinted fill light; the sun does the modelling.
-        .insert_resource(AmbientLight { color: Color::srgb(0.75, 0.82, 0.95), brightness: 260.0 })
+        .insert_resource(AmbientLight { color: Color::srgb(0.70, 0.78, 0.95), brightness: 140.0 })
         .insert_resource(Shared(ex))
         .insert_resource(ServerPort(port))
         .insert_resource(Scn(scn))
@@ -359,8 +359,9 @@ fn screenshot(
     }
 }
 
-/// Frames per second of the recording stream.
-pub const RECORD_FPS: f32 = 20.0;
+/// The recording captures every `RECORD_EVERY`-th rendered frame (about
+/// 25 fps with shadows on): a fixed cadence, so frames are evenly spaced.
+pub const RECORD_EVERY: u32 = 2;
 
 /// The recording stream: raw frames piped into an ffmpeg child that encodes
 /// on the fly (hardware H.264), so there is no pile of PNGs to encode later.
@@ -420,7 +421,7 @@ impl Drop for Recorder {
 /// recorder (which would truncate the finished file).
 type RecSlot = std::sync::Arc<std::sync::Mutex<(bool, Option<Recorder>)>>;
 
-/// While `runs/rec/ON` exists, stream the window at [`RECORD_FPS`] into
+/// While `runs/rec/ON` exists, stream every [`RECORD_EVERY`]-th frame into
 /// `runs/rec/sim.mkv` (encoded while recording) and write the wall-clock time
 /// of the first frame to `runs/rec/sim_start_ms.txt`. Removing the flag
 /// closes the stream.
@@ -428,10 +429,10 @@ fn record(
     windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
     mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
     time: Res<Time>,
-    mut state: Local<(f32, bool, f32)>,
+    mut state: Local<(u32, bool, f32)>,
     slot: Local<RecSlot>,
 ) {
-    let (next, on, check) = &mut *state;
+    let (frame_no, on, check) = &mut *state;
     let t = time.elapsed_seconds();
     if t >= *check {
         let now_on = std::path::Path::new("runs/rec/ON").exists();
@@ -451,10 +452,10 @@ fn record(
         *on = now_on;
         *check = t + 0.25;
     }
-    if !*on || t < *next {
+    *frame_no = frame_no.wrapping_add(1);
+    if !*on || !(*frame_no).is_multiple_of(RECORD_EVERY) {
         return;
     }
-    *next = t + 1.0 / RECORD_FPS;
     let Ok(window) = windows.get_single() else { return };
     let slot = slot.clone();
     let _ = shots.take_screenshot(window, move |img| {

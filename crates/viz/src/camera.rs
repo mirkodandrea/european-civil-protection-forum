@@ -58,6 +58,35 @@ pub struct Director {
     seen_cues: usize,
     fire_focus: Option<Vec3>,
     fire_dist: f32,
+    /// Spring velocities of focus, distance and pitch (critically damped smoothing).
+    v_focus: Vec3,
+    v_dist: f32,
+    v_pitch: f32,
+    /// Extra pitch when terrain would block the view (raised quickly, released slowly).
+    pitch_boost: f32,
+}
+
+/// Critically damped spring towards `target` (Unity-style SmoothDamp):
+/// continuous velocity, no overshoot, so a jumping target never jerks the camera.
+fn smooth_damp(current: f32, target: f32, vel: &mut f32, smooth_time: f32, dt: f32) -> f32 {
+    let omega = 2.0 / smooth_time.max(1e-3);
+    let x = omega * dt;
+    let exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
+    let change = current - target;
+    let temp = (*vel + omega * change) * dt;
+    *vel = (*vel - omega * temp) * exp;
+    target + (change + temp) * exp
+}
+
+fn smooth_damp3(current: Vec3, target: Vec3, vel: &mut Vec3, smooth_time: f32, dt: f32) -> Vec3 {
+    let (mut vx, mut vy, mut vz) = (vel.x, vel.y, vel.z);
+    let out = Vec3::new(
+        smooth_damp(current.x, target.x, &mut vx, smooth_time, dt),
+        smooth_damp(current.y, target.y, &mut vy, smooth_time, dt),
+        smooth_damp(current.z, target.z, &mut vz, smooth_time, dt),
+    );
+    *vel = Vec3::new(vx, vy, vz);
+    out
 }
 
 #[derive(Component)]
@@ -78,7 +107,7 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>) {
     commands.spawn((
         Camera3dBundle {
             camera: Camera { hdr: true, ..default() },
-            tonemapping: Tonemapping::TonyMcMapface,
+            tonemapping: Tonemapping::AcesFitted,
             transform: place(&o),
             ..default()
         },
@@ -88,20 +117,21 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>) {
             // Warm light scattering towards the sun.
             directional_light_color: Color::srgba(1.0, 0.86, 0.66, 0.35),
             directional_light_exponent: 24.0,
-            falloff: FogFalloff::from_visibility_colors(26000.0, Color::srgb(0.62, 0.70, 0.80), Color::srgb(0.78, 0.82, 0.88)),
+            falloff: FogFalloff::from_visibility_colors(22000.0, Color::srgb(0.62, 0.68, 0.78), Color::srgb(0.95, 0.80, 0.62)),
         },
     ));
-    // A low afternoon sun from the south-west, warm, with cascaded shadows.
+    // A low, warm late-afternoon sun from the west-south-west (~20° up) with
+    // cascaded shadows: long shading on the ridges gives the valley relief.
     commands.spawn(DirectionalLightBundle {
-        directional_light: DirectionalLight { illuminance: 11_000.0, color: Color::srgb(1.0, 0.93, 0.82), shadows_enabled: true, ..default() },
-        transform: Transform::from_xyz(-0.8, 0.9, 1.3).looking_at(Vec3::ZERO, Vec3::Y),
+        directional_light: DirectionalLight { illuminance: 12_000.0, color: Color::srgb(1.0, 0.9, 0.76), shadows_enabled: true, ..default() },
+        transform: Transform::from_xyz(-1.4, 0.55, 0.5).looking_at(Vec3::ZERO, Vec3::Y),
         cascade_shadow_config: CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: 50.0, maximum_distance: 6000.0, first_cascade_far_bound: 900.0, overlap_proportion: 0.2 }.into(),
         ..default()
     });
     for k in 0..FIRE_LIGHTS {
         commands.spawn((
             PointLightBundle {
-                point_light: PointLight { color: Color::srgb(1.0, 0.55, 0.2), intensity: 0.0, range: 700.0, radius: 20.0, shadows_enabled: false, ..default() },
+                point_light: PointLight { color: Color::srgb(1.0, 0.5, 0.16), intensity: 0.0, range: 1000.0, radius: 30.0, shadows_enabled: false, ..default() },
                 transform: Transform::from_xyz(0.0, -1000.0, 0.0),
                 ..default()
             },
@@ -117,10 +147,12 @@ fn place(o: &Orbit) -> Transform {
     Transform::from_translation(o.focus + dir * o.dist).looking_at(o.focus, Vec3::Y)
 }
 
-/// Centroid and radius (m) of the burning cells, if any.
+/// Centroid and radius (m) of the fire area (burning and burnt cells), if
+/// any. The whole scar grows steadily, so it is a calm camera target; the
+/// flickering front alone would make the camera twitch.
 pub fn fire_extent(scn: &scenario::Scenario, cells: &[u8]) -> Option<(scenario::Pos, f32)> {
     let cols = scn.grid.cols;
-    let pts: Vec<scenario::Pos> = cells.iter().enumerate().filter(|(_, c)| **c == 1).map(|(i, _)| scn.cell_centre(scenario::Cell { row: i / cols, col: i % cols })).collect();
+    let pts: Vec<scenario::Pos> = cells.iter().enumerate().filter(|(_, c)| **c == 1 || **c == 2).map(|(i, _)| scn.cell_centre(scenario::Cell { row: i / cols, col: i % cols })).collect();
     if pts.is_empty() {
         return None;
     }
@@ -214,8 +246,8 @@ pub fn control(
         // Fire tracking target, smoothed so a flickering front does not shake the camera.
         if let Some((c, r)) = fire {
             let target = to_bevy(s, c, 0.0);
-            dir.fire_focus = Some(dir.fire_focus.map_or(target, |f| f.lerp(target, (dt / 2.5).min(1.0))));
-            dir.fire_dist = ease(dir.fire_dist.max(1100.0), (r * 3.4).clamp(1100.0, 3800.0), dt, 3.0);
+            dir.fire_focus = Some(dir.fire_focus.map_or(target, |f| f.lerp(target, (dt / 4.0).min(1.0))));
+            dir.fire_dist = ease(dir.fire_dist.max(1100.0), (r * 3.0).clamp(1100.0, 3800.0), dt, 5.0);
         }
         // Pick the shot.
         let shot_done = dir.current.is_none_or(|(_, t0, d)| now - t0 > d);
@@ -249,10 +281,12 @@ pub fn control(
                 },
             }
         };
-        let tau = if resolving { 1.6 } else { 1.1 };
-        o.focus = o.focus.lerp(shot.focus, 1.0 - (-dt / tau).exp());
-        o.dist = ease(o.dist, shot.dist, dt, tau * 1.2);
-        o.pitch = ease(o.pitch, shot.pitch, dt, tau * 1.5);
+        let smooth = if resolving { 2.4 } else { 1.6 };
+        let (mut vf, mut vd, mut vp) = (dir.v_focus, dir.v_dist, dir.v_pitch);
+        o.focus = smooth_damp3(o.focus, shot.focus, &mut vf, smooth, dt);
+        o.dist = smooth_damp(o.dist, shot.dist, &mut vd, smooth * 1.3, dt);
+        o.pitch = smooth_damp(o.pitch, (shot.pitch + dir.pitch_boost).min(1.3), &mut vp, smooth * 1.6, dt);
+        (dir.v_focus, dir.v_dist, dir.v_pitch) = (vf, vd, vp);
         o.yaw += shot.drift * dt;
     }
     // Never let a hill come between the camera and what it looks at: sample
@@ -266,8 +300,11 @@ pub fn control(
                 p.y - ground
             })
             .fold(f32::MAX, f32::min);
-        if clearance < 180.0 {
-            o.pitch = (o.pitch + dt * 0.6).min(1.3);
+        // Hysteresis: raise when too close, release only once well clear.
+        if clearance < 160.0 {
+            dir.pitch_boost = (dir.pitch_boost + dt * 0.25).min(0.6);
+        } else if clearance > 400.0 {
+            dir.pitch_boost = (dir.pitch_boost - dt * 0.04).max(0.0);
         }
     }
     if let Ok(mut t) = cam.get_single_mut() {
@@ -306,7 +343,8 @@ pub fn fire_lights(scn: Res<Scn>, snap: Res<Snapshot>, frame: Res<Frame>, time: 
                 let p = [sum[b][0] / heat[b], sum[b][1] / heat[b]];
                 tf.translation = to_bevy(s, p, 25.0);
                 let flicker = 0.8 + 0.2 * (t * 7.0 + light.0 as f32 * 1.7).sin() * (t * 3.1 + light.0 as f32).cos();
-                pl.intensity = (heat[b] * 900.0).clamp(2.0e6, 6.0e7) * flicker;
+                // Bright enough to read against daylight on the ground around the fire.
+                pl.intensity = (heat[b] * 9000.0).clamp(2.0e7, 6.0e8) * flicker;
             }
             None => pl.intensity = 0.0,
         }
@@ -316,6 +354,17 @@ pub fn fire_lights(scn: Res<Scn>, snap: Res<Snapshot>, frame: Res<Frame>, time: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smooth_damp_converges_without_overshoot() {
+        let (mut x, mut v) = (0.0f32, 0.0f32);
+        let mut max = 0.0f32;
+        for _ in 0..600 {
+            x = smooth_damp(x, 10.0, &mut v, 1.0, 1.0 / 60.0);
+            max = max.max(x);
+        }
+        assert!((x - 10.0).abs() < 0.01 && max <= 10.0 + 1e-3, "{x} {max}");
+    }
 
     #[test]
     fn fire_extent_centroid_and_radius() {

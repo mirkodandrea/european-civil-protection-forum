@@ -1,80 +1,80 @@
 WEBVTT
 
-00:00:01.581 --> 00:00:13.401
-PPRD East table-top exercise, with AI support. One phone plays every role: the Director, the Mayor, the Fire Commander and Regional Civil Protection.
+00:00:01.578 --> 00:00:12.118
+Valverde valley, one in the afternoon. A wildfire has broken out on Pine Hill, and a strong north-east wind is pushing it towards the village of Pineta.
 
-00:00:13.453 --> 00:00:19.433
-Each player picks a language. Regional Civil Protection will play in Armenian.
+00:00:12.169 --> 00:00:22.629
+Four people run the response: the exercise director, the mayor of Valverde, the fire commander, and a regional civil protection officer who works in Armenian.
 
-00:00:19.486 --> 00:00:27.746
-The Director starts the exercise. Day 1, 13:00: a wildfire is burning on Pine Hill.
+00:00:22.682 --> 00:00:31.622
+The exercise begins. The fire already covers five hectares and is spreading south-west through dry pine forest.
 
-00:00:27.797 --> 00:00:35.417
-The Director sends the first injects from the exercise script. The AI translates each one for its recipient.
+00:00:31.675 --> 00:00:41.815
+The first reports come in: emergency calls about the fire, a warning that the primary school is in session, and a fire-behaviour estimate for the commander.
 
-00:00:35.470 --> 00:00:45.530
-The Mayor receives the injects in Italian: the fire, and 120 pupils at Pineta Primary School.
+00:00:41.866 --> 00:00:50.766
+In Pineta, 120 pupils and staff are still inside the primary school, and the school has no transport of its own.
 
-00:00:45.583 --> 00:00:49.763
-The Mayor answers in Italian, in their own words.
+00:00:50.818 --> 00:00:59.958
+The mayor acts at once: warn the village, evacuate the school to the sports centre in Valverde, and close the northern road.
 
-00:00:52.713 --> 00:00:59.333
-The Fire Commander orders fire lines using zone codes from the map grid, and an air-tanker drop.
+00:01:00.010 --> 00:01:09.030
+The fire commander sends ground crews to cut fire breaks north and east of the village, and an air tanker to wet the forest above it.
 
-00:01:02.312 --> 00:01:11.252
-The AI turns each reply into commands, and the simulator checks every command against the role's authority and resources.
+00:01:09.641 --> 00:01:18.021
+Before anything happens on the ground, every order is checked against the people, vehicles and authority actually available.
 
-00:01:11.304 --> 00:01:19.524
-It flags a real constraint: evacuating 120 pupils needs 3 buses, but the Mayor has only 2.
+00:01:18.073 --> 00:01:24.933
+A problem emerges: evacuating the school needs 3 buses, and the town has only 2.
 
-00:01:19.576 --> 00:01:26.436
-The Director writes an AI prompt: one extra bus for the Mayor, confirmed by an inject.
+00:01:24.984 --> 00:01:31.164
+Exercise control steps in: the regional transport company can release one more bus.
 
-00:01:26.488 --> 00:01:33.988
-The Director reviews the AI's proposal, a resource change plus an inject draft, and approves it.
+00:01:31.241 --> 00:01:36.501
+The extra bus is confirmed, and the mayor is told it is on its way.
 
-00:01:34.040 --> 00:01:38.700
-The Fire Commander's orders are approved, with a note to the player.
+00:01:36.552 --> 00:01:41.932
+The fire commander's plan goes ahead: two fire breaks and a water drop.
 
-00:01:38.752 --> 00:01:45.212
-And the Mayor's orders now pass: 3 buses for 120 pupils.
+00:01:41.983 --> 00:01:49.043
+With three buses available, the school evacuation can start, together with a warning to the whole village.
 
-00:01:45.262 --> 00:01:53.962
-The Mayor gets exercise control's feedback in Italian.
+00:01:49.094 --> 00:01:53.714
+The mayor receives the confirmation, and the buses head for the school.
 
-00:01:54.013 --> 00:02:02.633
-The Director resolves turn 1: thirty simulated minutes, played live on the big screen at 120 times speed.
+00:01:56.225 --> 00:02:04.205
+The next thirty minutes unfold. The fire runs downhill towards Pineta while the crews race to finish the breaks.
 
-00:02:02.685 --> 00:02:13.425
-Flame length follows the fire's intensity and the share of Monte Carlo runs that burn each cell. The glow ahead is where only some runs reach.
+00:02:04.257 --> 00:02:15.477
+The tallest flames mark where the fire burns hottest and where most simulated runs agree. The faint glow ahead shows where it could spread next.
 
-00:02:13.477 --> 00:02:20.457
-The fire lines are cut, the air tanker drops, and the school is evacuated to the sports centre.
+00:02:15.530 --> 00:02:24.790
+The fire breaks hold at the edge of the village, and the children reach the sports centre safely. The northern road is lost to the flames.
 
-00:02:20.509 --> 00:02:25.329
-Every player gets an AI-written situation update for their role.
+00:02:24.842 --> 00:02:29.542
+Each responder receives a report on what has changed on the ground.
 
-00:02:27.744 --> 00:02:40.724
-Turn 2. The Director escalates: a wind warning, then commands by code, raising the wind to 55 km/h and starting a new fire in zone G5.
+00:02:32.072 --> 00:02:41.532
+Half past one. The wind strengthens to 55 kilometres per hour, and a second fire starts in the farmland south-east of Pineta.
 
-00:02:40.776 --> 00:02:50.836
-Regional Civil Protection reads the wind warning in Armenian, and asks for international assistance through the EU Civil Protection Mechanism.
+00:02:41.584 --> 00:02:55.044
+Local resources are stretched. Regional civil protection asks for international help: two water-bombing aircraft through the EU Civil Protection Mechanism, and two more ground crews.
 
-00:02:50.886 --> 00:02:54.266
-A vague order from the Fire Commander…
+00:02:55.096 --> 00:02:59.556
+Under pressure, the fire commander sends an unclear order…
 
-00:02:55.103 --> 00:02:59.843
-…gets a clarification question from the AI instead of a guess.
+00:02:59.609 --> 00:03:04.909
+…and is asked exactly where the crews should go, instead of anyone guessing.
 
-00:02:59.895 --> 00:03:03.435
-The Fire Commander answers precisely.
+00:03:04.961 --> 00:03:10.541
+The answer comes back: the eastern edge of the village, and the slope above it.
 
-00:03:04.838 --> 00:03:11.778
-The Director rejects the vague order, and approves the assistance request and the precise fire lines.
+00:03:10.593 --> 00:03:17.413
+The request for aircraft and the new fire breaks are approved; the unclear order is sent back.
 
-00:03:20.210 --> 00:03:30.470
-Turn 2 resolves live: sixty minutes. Reinforcements arrive, the lines protect Pineta, and the new fire spreads through the farmland.
+00:03:25.957 --> 00:03:37.457
+The next hour. Reinforcements arrive and the breaks keep the fire out of Pineta, but the second fire races through the farmland, where nobody was warned.
 
-00:03:53.185 --> 00:04:04.885
-Every inject, reply, AI interpretation, decision and consequence is logged for the debrief. Humans decide; the AI mediates.
+00:03:58.931 --> 00:04:13.191
+By half past two, Pineta is safe and every child is accounted for, but farmhouses have burned and the aircraft are still on their way. Every decision and its consequences are recorded for the debrief.
 

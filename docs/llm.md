@@ -19,8 +19,8 @@ JSON workflows use `response_format: json_object`, temperature 0.2, a 90 s timeo
 | Task | When | Input | Output |
 |---|---|---|---|
 | `translate` | Each inject and role message, per recipient | English text, target language | Translation; names, zone codes and numbers kept. English targets skip the call |
-| `parse_reply` | Each player reply | Role, language, allowed-action catalogue, other roles, gazetteer, role digest, recent injects, reply | `detected_language`, `translation_en`, `actions[]`, `messages[]` (to other roles), `clarification`, `summary` |
-| `master_prompt` | Director's AI prompt | Full catalogue, roles, gazetteer, full digest, prompt | `actions[]`, `injects[]` (drafts), `clarification`, `summary` |
+| `parse_reply` | Each player reply | System: role, language, allowed-action catalogue, other roles, gazetteer. Messages: **the player's conversation so far**, then the current digest + the new reply | `detected_language`, `translation_en`, `actions[]`, `messages[]` (to other roles), `clarification`, `summary` |
+| `master_prompt` | Director's AI prompt | System: full catalogue, roles, gazetteer. Messages: **the Director's conversation so far**, then the full digest + the instruction | `actions[]`, `injects[]` (drafts), `clarification`, `summary` |
 | `feedback` | After each decision on a player proposal | Decision facts (English) | 2–4 sentence EXCON reply in the player's language |
 | `situation_update` | After each turn, per player | Role digest + turn events | ≤ 120-word SITREP in the player's language |
 
@@ -33,6 +33,16 @@ Grounding comes from `World::gazetteer()` (map and zone grid description, places
 - Ambiguous → no action + one clarification question in the player's language.
 - Do not judge feasibility (the simulator does).
 - Feedback and SITREPs: facts from the data only, no advice.
+
+## Conversations
+
+Each player, and the Director, has one ongoing conversation with the AI (`Exercise::conversations`, last 60 entries). It collects, in order:
+
+- everything the player received: injects, messages from other roles, exercise-control feedback, situation updates (added automatically when delivered, as "user" context entries);
+- each reply the player wrote;
+- the AI's interpretation of it (actions, messages, clarification, summary) as the "assistant" turn.
+
+`parse_reply` sends that conversation (consecutive context entries merged) plus the current situation and the new reply. Follow-ups keep their meaning: an answer to a clarification, "send them there", or a reference to an earlier order. The AI is told not to repeat actions from earlier replies. The Director's prompts work the same way. `GET /api/master` exposes the conversations for inspection.
 
 ## Record / replay (cassette)
 

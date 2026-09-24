@@ -30,6 +30,8 @@ use serde_json::{json, Value};
 use sim::{Actor, Command, SimEvent, Verdict, World, WorldSnapshot};
 
 pub const DEFAULT_TURN_MINUTES: u32 = 30;
+/// Conversation turns kept per role (oldest dropped first).
+pub const CONVERSATION_MAX: usize = 60;
 /// Resolution granularity: the world is published after every simulated second.
 pub const STEP_S: i64 = 1;
 pub const MASTER: &str = "master";
@@ -214,6 +216,14 @@ pub struct Resolution {
     pub events: Vec<SimEvent>,
 }
 
+/// One entry of a role's conversation with the AI ("user" = what the player
+/// received or wrote, "assistant" = the AI's interpretation).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChatTurn {
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct TurnWindow {
     pub turn: u32,
@@ -238,6 +248,9 @@ pub struct Exercise {
     pub sent_injects: Vec<String>,
     /// The turn currently being simulated, if any.
     pub resolving: Option<Resolution>,
+    /// Each role's ongoing conversation with the AI (key: role id, or `"master"`):
+    /// everything the player received, what they wrote, and how it was read.
+    pub conversations: BTreeMap<String, Vec<ChatTurn>>,
     /// Simulated seconds per wall-clock second while resolving (60 = one
     /// simulated minute per second); 0 = as fast as possible.
     pub speed: f32,
@@ -267,6 +280,7 @@ impl Exercise {
             last_turn: None,
             sent_injects: Vec::new(),
             resolving: None,
+            conversations: BTreeMap::new(),
             speed: 0.0,
             snapshots: Vec::new(),
             log_file: None,
@@ -492,6 +506,21 @@ impl Exercise {
 
     // --------------------------------------------------------------- messages
 
+    /// Append to a role's conversation with the AI.
+    pub fn converse(&mut self, key: &str, role: &str, content: impl Into<String>) {
+        let c = self.conversations.entry(key.to_string()).or_default();
+        c.push(ChatTurn { role: role.into(), content: content.into() });
+        if c.len() > CONVERSATION_MAX {
+            let n = c.len() - CONVERSATION_MAX;
+            c.drain(0..n);
+        }
+    }
+
+    /// A role's conversation so far, oldest first.
+    pub fn conversation(&self, key: &str) -> Vec<ChatTurn> {
+        self.conversations.get(key).cloned().unwrap_or_default()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn add_message(&mut self, from: &str, to: &str, kind: MsgKind, title: Option<&str>, text: &str, text_en: &str, proposal: Option<u64>) -> u64 {
         let id = self.id();
@@ -509,6 +538,19 @@ impl Exercise {
             proposal,
         };
         self.record("message", from, json!({"to": to, "kind": kind, "title": title, "text_en": text_en, "text": text}));
+        // What a player receives becomes context of their conversation with the AI.
+        // (Clarifications are the AI's own words: they are already in it.)
+        if self.players.contains_key(to) && kind != MsgKind::Clarification && kind != MsgKind::Reply {
+            let what = match kind {
+                MsgKind::Inject => "INJECT",
+                MsgKind::Feedback => "EXERCISE CONTROL FEEDBACK",
+                MsgKind::Situation => "SITUATION UPDATE",
+                MsgKind::RoleMessage => "MESSAGE",
+                _ => "NOTICE",
+            };
+            let head = format!("[{}] {what} from {}{}", self.world.clock(), from, title.map(|t| format!(" — {t}")).unwrap_or_default());
+            self.converse(to, "user", format!("{head}:\n{text_en}"));
+        }
         self.messages.push(m);
         id
     }
@@ -534,17 +576,6 @@ impl Exercise {
 
     pub fn inbox(&self, role: &str) -> Vec<&Message> {
         self.messages.iter().filter(|m| m.to == role || (m.from == role && m.kind == MsgKind::Reply)).collect()
-    }
-
-    /// The last `n` injects/messages a role received, in English (LLM context).
-    pub fn recent_received_en(&self, role: &str, n: usize) -> Vec<String> {
-        let v: Vec<String> = self
-            .messages
-            .iter()
-            .filter(|m| m.to == role && matches!(m.kind, MsgKind::Inject | MsgKind::RoleMessage | MsgKind::Situation))
-            .map(|m| format!("[{}] {}: {}", m.clock, m.title.clone().unwrap_or_else(|| m.from.clone()), m.text_en))
-            .collect();
-        v[v.len().saturating_sub(n)..].to_vec()
     }
 
     // -------------------------------------------------------------- proposals

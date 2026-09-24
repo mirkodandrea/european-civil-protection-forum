@@ -152,6 +152,7 @@ async fn get_master(State(s): State<AppState>) -> ApiResult {
         "messages": ex.messages,
         "log": &ex.log[tail..],
         "digest": ex.world.digest(None),
+        "conversations": ex.conversations,
     })))
 }
 

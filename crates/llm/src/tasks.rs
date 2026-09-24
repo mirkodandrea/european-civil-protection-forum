@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::Llm;
+use crate::{ChatMessage, Llm};
 
 /// Human-readable names for the language codes the UI offers.
 pub fn language_name(code: &str) -> &str {
@@ -91,8 +91,10 @@ pub struct ReplyInput<'a> {
     pub other_roles: &'a [(String, String)],
     pub gazetteer: &'a Value,
     pub digest: &'a Value,
-    /// Recent messages the player received, in English.
-    pub recent_injects: &'a [String],
+    /// The conversation so far with this player: what they received
+    /// (injects, messages, feedback, situation updates), what they wrote and
+    /// how it was interpreted. Oldest first.
+    pub history: &'a [ChatMessage],
     pub reply: &'a str,
 }
 
@@ -101,6 +103,8 @@ pub struct MasterInput<'a> {
     pub roles: &'a [(String, String)],
     pub gazetteer: &'a Value,
     pub digest: &'a Value,
+    /// The conversation so far with the Director, oldest first.
+    pub history: &'a [ChatMessage],
     pub prompt: &'a str,
 }
 
@@ -127,49 +131,54 @@ impl Llm {
         Ok(self.complete("translate", &system, text, false).await?.trim().to_string())
     }
 
-    /// Player free text → candidate actions, messages, or a clarification question.
+    /// Player free text → candidate actions, messages, or a clarification
+    /// question. The request is the ongoing conversation with this player
+    /// (`history`) plus the new reply and the current situation, so follow-ups
+    /// ("send them there", answers to a clarification) keep their context.
     pub async fn parse_reply(&self, i: ReplyInput<'_>) -> Result<ParsedReply> {
         let system = format!(
-            "You are the exercise assistant of a Civil Protection table-top exercise (TTX). \
-You turn a player's free-text reply into structured actions for the simulator. Rules:\n\
+            "You are the exercise assistant of a Civil Protection table-top exercise (TTX), in an ongoing conversation with one player: \
+the {} ({}) — {}. The player writes in {}. \
+The conversation contains what the player received (injects, messages, feedback, situation updates), what the player wrote, and your earlier interpretations. \
+You turn each new reply into structured actions for the simulator. Rules:\n\
 - Use ONLY the action types documented below, with exactly the documented JSON shape.\n\
 - Use ONLY place names, facility names, road ids and zone codes from the gazetteer, or zone codes like F4. Never invent places, resources or facts.\n\
-- The player decides: add an action only if the player clearly ordered it. Do not add your own ideas.\n\
-- If an order is ambiguous or misses essential information (which zone/place, which road), do NOT guess: leave it out and ask one short clarification question in the player's language.\n\
+- The player decides: add an action only if the player clearly ordered it in the NEW reply. Do not repeat actions from earlier replies. Do not add your own ideas.\n\
+- Use the conversation to resolve references (\"there\", \"them\", an answer to your earlier question). If an order is still ambiguous or misses essential information, do NOT guess: leave it out and ask one short clarification question in the player's language.\n\
 - Information shared or requested with other roles goes into \"messages\" (role ids: {}).\n\
 - Do not check resource availability yourself; the simulator validates.\n\
-Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:\n{}",
-            i.other_roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", "),
-            i.catalogue
-        );
-        let user = format!(
-            "PLAYER ROLE: {} ({}) — {}\nPLAYER LANGUAGE: {}\n\nGAZETTEER:\n{}\n\nCURRENT SITUATION:\n{}\n\nRECENT INJECTS RECEIVED BY THE PLAYER:\n{}\n\nPLAYER REPLY:\n\"\"\"{}\"\"\"",
+Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:\n{}\n\nGAZETTEER:\n{}",
             i.role_name,
             i.role_id,
             i.role_description,
             language_name(i.language),
-            i.gazetteer,
-            i.digest,
-            if i.recent_injects.is_empty() { "(none)".to_string() } else { i.recent_injects.join("\n---\n") },
-            i.reply
+            i.other_roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", "),
+            i.catalogue,
+            i.gazetteer
         );
-        ParsedReply::from_value(self.complete_json("parse_reply", &system, &user).await?)
+        let mut messages = i.history.to_vec();
+        messages.push(ChatMessage::user(format!("CURRENT SITUATION:\n{}\n\nNEW PLAYER REPLY:\n\"\"\"{}\"\"\"", i.digest, i.reply)));
+        ParsedReply::from_value(self.chat_json("parse_reply", &system, &messages).await?)
     }
 
-    /// Master natural-language instruction → commands and/or inject drafts.
+    /// Master natural-language instruction → commands and/or inject drafts,
+    /// in the ongoing conversation with the Director.
     pub async fn master_prompt(&self, i: MasterInput<'_>) -> Result<ParsedReply> {
         let system = format!(
-            "You assist the Exercise Director (Game Master) of a Civil Protection table-top exercise. \
-The Director is omnipotent within the simulator: every action below is allowed. Convert the instruction into simulator actions \
+            "You assist the Exercise Director (Game Master) of a Civil Protection table-top exercise, in an ongoing conversation. \
+The Director is omnipotent within the simulator: every action below is allowed. Convert each new instruction into simulator actions \
 and/or draft injects (messages to players, in English, from a simulated sender such as \"112 Dispatch\" or \"ERCC\"). \
-Use only names from the gazetteer or zone codes. If the instruction is unclear, return no actions and a clarification question.\n\
+Use the conversation for context (earlier instructions and what you proposed). Use only names from the gazetteer or zone codes. \
+If the instruction is unclear, return no actions and a clarification question.\n\
 Answer with ONE JSON object:\n{{\"actions\": [...], \"injects\": [{{\"recipients\": [\"role_id\" or \"all\"], \"title\": \"...\", \"sender\": \"...\", \"text\": \"...\"}}], \"clarification\": null, \"summary\": \"one sentence\", \"translation_en\": \"the instruction in English\"}}\n\n\
-Actions:\n{}\nRoles: {}",
+Actions:\n{}\nRoles: {}\n\nGAZETTEER:\n{}",
             i.catalogue,
-            i.roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", ")
+            i.roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", "),
+            i.gazetteer
         );
-        let user = format!("GAZETTEER:\n{}\n\nCURRENT SITUATION:\n{}\n\nDIRECTOR INSTRUCTION:\n\"\"\"{}\"\"\"", i.gazetteer, i.digest, i.prompt);
-        ParsedReply::from_value(self.complete_json("master_prompt", &system, &user).await?)
+        let mut messages = i.history.to_vec();
+        messages.push(ChatMessage::user(format!("CURRENT SITUATION:\n{}\n\nNEW DIRECTOR INSTRUCTION:\n\"\"\"{}\"\"\"", i.digest, i.prompt)));
+        ParsedReply::from_value(self.chat_json("master_prompt", &system, &messages).await?)
     }
 
     /// EXCON's answer to a player once the Master has decided on a proposal.
@@ -210,7 +219,7 @@ mod tests {
             other_roles: &[],
             gazetteer: g,
             digest: g,
-            recent_injects: &[],
+            history: &[],
             reply,
         }
     }
@@ -221,10 +230,12 @@ mod tests {
             assert_eq!(task, "parse_reply");
             assert!(system.contains("EvacuateZone"));
             assert!(user.contains("evacuate F4"));
+            assert!(user.contains("earlier context"), "history must be sent: {user}");
             Ok(r#"{"detected_language":"it","translation_en":"evacuate F4","actions":[{"type":"EvacuateZone","zone":"F4"}],"messages":[],"clarification":"","summary":"Evacuate F4"}"#.into())
         });
         let g = json!({});
-        let p = llm.parse_reply(input("evacuate F4", &g)).await.unwrap();
+        let history = [ChatMessage::user("earlier context"), ChatMessage::assistant("{}")];
+        let p = llm.parse_reply(ReplyInput { history: &history, ..input("evacuate F4", &g) }).await.unwrap();
         assert_eq!(p.actions.len(), 1);
         assert_eq!(p.actions[0]["zone"], "F4");
         assert!(p.clarification.is_none(), "empty clarification must become None");
