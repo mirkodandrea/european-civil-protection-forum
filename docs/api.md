@@ -1,18 +1,18 @@
 # HTTP / WebSocket API
 
-Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`, and `scripts/record/session.js`, which drives the UIs themselves in a browser). JSON in, JSON out. Errors are `400 {"error": "..."}`. No authentication: run it on a dedicated LAN.
+Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`, and `scripts/record/session.js`, which drives the UIs themselves in a browser). JSON in, JSON out. Errors are `400 {"error": "..."}`. Requests require a per-run access key (`Authorization: Bearer KEY`). Missing/invalid keys return 401; keys for a different role or a Master-only endpoint return 403. `/api/health` is the public readiness endpoint.
 
 ## Reads
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/static` | Scenario: grid, zones, base64 fuel raster, buildings, roads, places, roles, resource types, reinforcement offers, `msel` |
+| GET | `/api/static` | Master scenario: grid, zones, base64 fuel raster, buildings, roads, places, roles, resource types, reinforcement offers, `msel`; player keys receive only base geography and their own role |
 | GET | `/api/state` | `turn`, `phase` (`briefing` / `orders` / `resolving` / `debrief`), `turn_minutes`, `speed`, `resolving` (`{turn, from_s, to_s, minutes}` while a turn is being simulated), `generation`, `last_turn`, `players`, `sent_injects`, `llm`, and `world` (stats, weather, `ensemble` `{realizations, cutoff}`, base64 fire raster, building states, roads, fire lines, drops, warned zones, shelters, resource pools, arrivals, burning zones) |
 | GET | `/api/master` | All proposals, all messages, last 300 log entries, full digest |
-| GET | `/api/player/{role}` | The player, role, turn, phase, clock, inbox, own resources, own proposals |
+| GET | `/api/player/{role}` | The player, role, turn, phase, clock, inbox, own resources, own proposals, reported `map`, linked `knowledge_events` |
 | GET | `/api/catalogue` | Command kinds, the Master-only list, catalogue documentation, roles |
 | GET | `/api/debrief` | Stats, proposals, messages, full log |
-| GET | `/ws` | WebSocket; pushes `{"generation": n}` whenever anything changes |
+| GET | `/ws` | WebSocket (key in `?token=KEY`); pushes `{"generation": n}` whenever anything changes |
 
 Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` burning, `2` burnt, `3` fire line, `4` wetted, `5` possible (reached by some Monte Carlo runs, below the cutoff).
 
@@ -42,6 +42,8 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 
 ```bash
 B=http://localhost:8080/api; H='content-type: application/json'
+# Set TTX_MASTER_KEY from the startup link. This wrapper adds the key to every call.
+curl() { command curl -H "Authorization: Bearer $TTX_MASTER_KEY" "$@"; }
 
 curl -XPOST $B/player/mayor/language -H "$H" -d '{"language":"it"}'
 curl -XPOST $B/master/start
@@ -148,3 +150,40 @@ are rejected before recording a declaration. Evidence stays attached to proposal
 approval/execution history and debrief records; the Master interface displays the
 basis and supporting links. Maximums: 2000 characters of basis, 20 links, 200
 characters per title and 4000 characters per URL.
+
+## Role access and map information
+
+At startup the server prints a fresh Master link containing a random access key.
+The Master console exposes individual player links (`GET /api/master/access`).
+Distribute each role's link to its participant. The all-roles console is a
+privileged Director/demo interface. Keys change on restart. Browser pages remove
+the key from the address bar after storing it in session storage; scripts use the
+Bearer header. Player keys cannot read `/api/state`, Master records, the command
+catalogue, debriefs, other inboxes, or mutate Master state. `/api/access` identifies
+the current key. WebSocket query parameters such as `role` do not change identity.
+
+Base geography (fuel, grid, named places, building footprints and roads) is
+pre-exercise information shared with roles. Player static responses exclude
+scenario description/initial conditions, MSEL, population counts, reinforcement
+offers and other roles. Player maps contain only explicitly delivered reports;
+there is no live raster, weather, casualty total, authoritative building state or
+other role's resource ledger. AI reply interpretation uses this same knowledge.
+Automatic turn notifications do not disclose the global situation.
+
+`POST /api/master/inject` accepts optional `observation`:
+`{"locations":[[2500,2500]],"cells":[{"row":3,"col":4,"state":1}]}`.
+Only actual message recipients acquire it. No information is inferred from prose.
+Locations are metres; cells use north-first raster row/column and the state codes
+above. Out-of-map locations/cells and invalid codes fail before sending anything.
+Each delivery/acquisition event records role, message, turn, simulation time and
+original observation. Latest reports overwrite the same reported cell; other
+cells/locations remain as previously reported. Unmarked areas are unknown, not
+confirmed safe. Simulation changes and snapshot rollback do not silently update
+or erase a player's acquired information; EXCON sends correction reports.
+
+`POST /api/master/knowledge` records acquired information:
+`{"role":"mayor","source":"Field team report","observation":{...}}`.
+Alternatively, `{"role":"mayor","source":"Reviewed aerial survey","current_perimeter":true}`
+explicitly discloses a full current raster snapshot. This Master-only choice is
+also available beside the custom inject form. Subsequent simulation changes stay
+undisclosed until another report. Debriefs retain the linked acquisition evidence.

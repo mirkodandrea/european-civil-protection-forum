@@ -5,6 +5,8 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
+const KEY = process.env.TTX_MASTER_KEY;
+if (!KEY) throw new Error('TTX_MASTER_KEY is required');
 const BASE = process.argv[2] || 'http://localhost:8090';
 const OUT = process.argv[3] || './out';
 const REC_FLAG = process.argv[4];
@@ -13,7 +15,7 @@ const NARRATION = new Map(JSON.parse(require('fs').readFileSync(process.argv[5] 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
-async function getJSON(p) { return (await fetch(BASE + p)).json(); }
+async function getJSON(p) { return (await fetch(BASE + p, {headers:{Authorization:`Bearer ${KEY}`}})).json(); }
 async function waitFor(pred, label, timeout = 90000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeout) {
@@ -37,7 +39,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   fs.writeFileSync(path.join(OUT, 'video_start_ms.txt'), String(videoStart));
   const marks = [];
 
-  await page.goto(BASE + '/play.html');
+  await page.goto(BASE + '/play.html?token=' + encodeURIComponent(KEY));
   await page.waitForSelector('#bar button');
   await sleep(1500);
 

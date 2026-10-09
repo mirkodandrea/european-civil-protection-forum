@@ -23,10 +23,14 @@ fn mock_llm() -> llm::Llm {
     })
 }
 
+fn access() -> server::access::Access {
+    server::access::Access { master:"test-master".into(), players: std::collections::BTreeMap::from([("mayor".into(), "test-mayor".into()), ("fire_commander".into(), "test-fire".into())]) }
+}
+
 async fn app() -> Router {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    server::router(Arc::new(Mutex::new(ex)), mock_llm(), None).0
+    server::router_with_access(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).0
 }
 
 async fn call(app: &Router, method: &str, uri: &str, mut body: Option<Value>) -> (StatusCode, Value) {
@@ -35,7 +39,7 @@ async fn call(app: &Router, method: &str, uri: &str, mut body: Option<Value>) ->
             if body.get("evidence").is_none() { body["evidence"] = json!({"basis":{"kind":"operational_judgment", "reference":"Operational judgment based on the received inject"}}); }
         }
     }
-    let req = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+    let req = Request::builder().method(method).uri(uri).header("content-type", "application/json").header("authorization", "Bearer test-master");
     let req = req.body(body.map(|b| Body::from(b.to_string())).unwrap_or(Body::empty())).unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
@@ -154,7 +158,7 @@ async fn master_player_llm_round_trip() {
 async fn works_without_llm() {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let app = server::router(Arc::new(Mutex::new(ex)), llm::Llm::off(), None).0;
+    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).0;
     call(&app, "POST", "/api/master/start", None).await;
     call(&app, "POST", "/api/master/inject", Some(json!({"title": "t", "recipients": ["mayor"], "text": "english only"}))).await;
     let (_, m) = call(&app, "GET", "/api/player/mayor", None).await;
@@ -226,7 +230,7 @@ async fn player_conversation_keeps_context() {
     });
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let app = server::router(Arc::new(Mutex::new(ex)), llm, None).0;
+    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access()).0;
     call(&app, "POST", "/api/master/start", None).await;
     call(&app, "POST", "/api/master/msel/I-03/send", None).await;
     call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "send the crews over there", "reply_to": reply_parent(&app, "fire_commander").await}))).await;
@@ -267,7 +271,7 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
 async fn operational_drafts_require_master_review_and_deliver_edited_text_once() {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let (app, state) = server::router(Arc::new(Mutex::new(ex)), mock_llm(), None);
+    let (app, state) = server::router_with_access(Arc::new(Mutex::new(ex)), mock_llm(), None, access());
     call(&app, "POST", "/api/master/start", None).await;
     let parent = reply_parent(&app, "mayor").await;
     let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4", "reply_to":parent}))).await;
@@ -321,7 +325,7 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
     let parent = reply_parent(&app, "mayor").await;
-    let req = Request::builder().method("POST").uri("/api/player/mayor/reply").header("content-type", "application/json")
+    let req = Request::builder().method("POST").uri("/api/player/mayor/reply").header("content-type", "application/json").header("authorization", "Bearer test-master")
         .body(Body::from(json!({"text":"warn F4","reply_to":parent}).to_string())).unwrap();
     assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNPROCESSABLE_ENTITY);
     let evidence = json!({"basis":{"kind":"plan","reference":"Municipal warning plan, annex 3"},"attachments":[{"title":"Area map","url":"https://example.test/map.pdf"}]});
@@ -341,4 +345,70 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
     call(&app, "POST", "/api/master/rollback", Some(json!({"turn":1}))).await;
     let (_, d) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(d["proposals"][0]["evidence"], evidence);
+}
+
+async fn call_key(app: &Router, method: &str, uri: &str, body: Option<Value>, key: Option<&str>) -> (StatusCode, Value) {
+    let mut req = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+    if let Some(key) = key { req = req.header("authorization", format!("Bearer {key}")); }
+    let resp = app.clone().oneshot(req.body(body.map(|v| Body::from(v.to_string())).unwrap_or(Body::empty())).unwrap()).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn role_keys_protect_all_authoritative_reads_and_actions() {
+    let app = app().await;
+    let (_, before) = call(&app, "GET", "/api/state", None).await;
+    for path in ["/api/state", "/api/master", "/api/debrief", "/api/catalogue", "/api/master/access", "/api/player/fire_commander"] {
+        assert_eq!(call_key(&app, "GET", path, None, Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(call_key(&app, "GET", path, None, None).await.0, StatusCode::UNAUTHORIZED, "{path}");
+    }
+    for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/knowledge", "/api/player/fire_commander/reply", "/api/player/fire_commander/language"] {
+        assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
+    }
+    assert_eq!(call_key(&app, "GET", "/api/state?token=test-master", None, None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(call_key(&app, "GET", "/ws", None, None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(call_key(&app, "GET", "/api/health", None, None).await, (StatusCode::OK, json!({"ok":true})));
+    let (_, after) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(before, after);
+    let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
+    assert!(own.get("msel").is_none() && own.get("reinforcements").is_none() && own.get("description").is_none());
+    assert_eq!(own["roles"].as_array().unwrap().len(), 1);
+    assert!(own["buildings"][0].get("occupants").is_none());
+    assert_eq!(call_key(&app, "POST", "/api/player/mayor/language", Some(json!({"language":"it"})), Some("test-mayor")).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let report = json!({"locations":[[2500,2500]],"cells":[{"row":3,"col":4,"state":1}]});
+    let (status, sent) = call(&app, "POST", "/api/master/inject", Some(json!({"title":"Field report","recipients":["mayor"],"text":"A fire is reported at these coordinates.","observation":report}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(mayor["map"]["cells"], report["cells"]);
+    assert_eq!(mayor["knowledge_events"][0]["message"], sent["messages"][0]);
+    assert!(mayor.get("world").is_none() && mayor["map"].get("fire").is_none() && mayor["map"].get("stats").is_none());
+    let (_, fire) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(fire["map"]["cells"].as_array().unwrap().is_empty());
+    assert!(fire["knowledge_events"].as_array().unwrap().is_empty());
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":"G5","radius_m":60}))).await;
+    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    let (_, unchanged) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(unchanged["map"], mayor["map"]);
+    let update = json!({"role":"mayor","source":"Field team observation","observation":{"cells":[{"row":3,"col":4,"state":2},{"row":3,"col":5,"state":1}]}});
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(update)).await.0, StatusCode::OK);
+    let (_, updated) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(updated["map"]["cells"].as_array().unwrap().len(), 2);
+    assert_eq!(updated["map"]["cells"][0]["state"], 2);
+    let (_, before_invalid) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(call(&app, "POST", "/api/master/inject", Some(json!({"title":"Invalid","recipients":["mayor"],"text":"bad report","observation":{"cells":[{"row":999999,"col":0,"state":1}]}}))).await.0, StatusCode::BAD_REQUEST);
+    let (_, after_invalid) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(before_invalid["messages"], after_invalid["messages"]);
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"Reviewed aerial perimeter","current_perimeter":true}))).await.0, StatusCode::OK);
+    let (_, acquired) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(!acquired["map"]["cells"].as_array().unwrap().is_empty());
+    let (_, debrief) = call(&app, "GET", "/api/debrief", None).await;
+    assert_eq!(debrief["knowledge_events"].as_array().unwrap().len(), 3);
 }

@@ -1964,6 +1964,7 @@ name = "exercise"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "scenario",
  "serde",
  "serde_json",
@@ -4403,6 +4404,7 @@ dependencies = [
  "futures",
  "http-body-util",
  "llm",
+ "rand 0.8.8",
  "scenario",
  "serde",
  "serde_json",

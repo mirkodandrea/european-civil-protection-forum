@@ -17,7 +17,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use access::{Access, Principal};
 use exercise::{Decision, Exercise, ProposalStatus};
 use llm::Llm;
 use serde::Deserialize;
@@ -26,11 +27,13 @@ use sim::Command;
 use tokio::sync::watch;
 
 pub mod flow;
+pub mod access;
 
 #[derive(Clone)]
 pub struct AppState {
     pub ex: Arc<Mutex<Exercise>>,
     pub llm: Llm,
+    pub access: Arc<Access>,
     generation: watch::Receiver<u64>,
 }
 
@@ -43,6 +46,11 @@ impl AppState {
 /// Build the application router. Spawns the generation watcher, so call it
 /// inside a Tokio runtime.
 pub fn router(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>) -> (Router, AppState) {
+    let access = Access::new(ex.lock().unwrap_or_else(|p| p.into_inner()).role_ids());
+    router_with_access(ex, llm, web_dir, access)
+}
+
+pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>, access: Access) -> (Router, AppState) {
     let (tx, rx) = watch::channel(0u64);
     let watched = ex.clone();
     tokio::spawn(async move {
@@ -58,8 +66,12 @@ pub fn router(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>) -> (
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
-    let state = AppState { ex, llm, generation: rx };
+    let state = AppState { ex, llm, generation: rx, access: Arc::new(access) };
     let api = Router::new()
+        .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
+        .route("/api/access", get(get_access))
+        .route("/api/master/access", get(get_access_links))
+        .route("/api/master/knowledge", post(post_knowledge))
         .route("/api/static", get(get_static))
         .route("/api/state", get(get_state))
         .route("/api/master", get(get_master))
@@ -79,19 +91,21 @@ pub fn router(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>) -> (
         .route("/api/catalogue", get(get_catalogue))
         .route("/api/debrief", get(get_debrief))
         .route("/ws", get(ws))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), access::authorize))
         .with_state(state.clone());
     let app = match web_dir {
         Some(dir) => api.fallback_service(tower_http::services::ServeDir::new(dir).append_index_html_on_directories(true)),
         None => api,
     };
-    (app.layer(tower_http::cors::CorsLayer::permissive()), state)
+    (app, state)
 }
 
 /// Serve until the process exits.
 pub async fn serve(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: PathBuf, addr: std::net::SocketAddr) -> anyhow::Result<()> {
-    let (app, _) = router(ex, llm, Some(web_dir));
+    let (app, state) = router(ex, llm, Some(web_dir));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("web UI on http://{addr}  (master: /master.html, players: /player.html)");
+    println!("Master access: http://localhost:{}/play.html?token={}", addr.port(), state.access.master);
+    tracing::info!("web UI on http://{addr}; distribute individual player links from the Master console");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -120,11 +134,35 @@ fn bad(msg: impl Into<String>) -> ApiError {
 
 // ---------------------------------------------------------------- reads
 
-async fn get_static(State(s): State<AppState>) -> ApiResult {
+async fn get_static(State(s): State<AppState>, Extension(principal): Extension<Principal>) -> ApiResult {
     let ex = s.lock();
+    if let Principal::Player { role } = principal { return Ok(Json(ex.player_static(&role)?)); }
     let mut v = ex.world.static_view();
     v["msel"] = json!(ex.world.scn.msel);
     Ok(Json(v))
+}
+
+async fn get_access(Extension(principal): Extension<Principal>) -> ApiResult { Ok(Json(json!(principal))) }
+
+async fn get_access_links(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>()})))
+}
+
+#[derive(Deserialize)]
+struct KnowledgeBody { role: String, source: String, #[serde(default)] observation: Option<exercise::MapObservation>, #[serde(default)] current_perimeter: bool }
+async fn post_knowledge(State(s): State<AppState>, Json(b): Json<KnowledgeBody>) -> ApiResult {
+    let observation = {
+        let ex = s.lock();
+        if !ex.players.contains_key(&b.role) || b.source.trim().is_empty() || b.source.chars().count() > 2000 { return Err(bad("known role and information source required")); }
+        if b.current_perimeter && b.observation.is_some() { return Err(bad("choose an observation or current_perimeter")); }
+        let observation = if b.current_perimeter { ex.current_perimeter() } else { b.observation.ok_or_else(|| bad("observation required"))? };
+        ex.validate_observation(&observation)?;
+        observation
+    };
+    let text = Exercise::map_information_text(&b.source);
+    let translations = flow::translations(&s, std::slice::from_ref(&b.role), &text).await;
+    let id = s.lock().acquire_map(&b.role, &b.source, observation, translations.get(&b.role).map(String::as_str))?;
+    Ok(Json(json!({"message":id})))
 }
 
 async fn get_state(State(s): State<AppState>) -> ApiResult {
@@ -164,9 +202,11 @@ async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiR
         .proposals
         .iter()
         .filter(|p| p.source.label() == role)
-        .map(|p| json!({"id": p.id, "turn": p.turn, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision, "executions": p.executions, "evidence": p.evidence}))
+        .map(|p| json!({"id": p.id, "turn": p.turn, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence}))
         .collect();
     Ok(Json(json!({
+        "map": ex.player_map(&role)?,
+        "knowledge_events": ex.knowledge_events.iter().filter(|e| e.role == role).collect::<Vec<_>>(),
         "player": player,
         "role": ex.world.scn.role(&role),
         "turn": ex.turn,
@@ -236,6 +276,8 @@ async fn post_start(State(s): State<AppState>) -> ApiResult {
 
 #[derive(Deserialize)]
 struct InjectBody {
+    #[serde(default)]
+    observation: Option<exercise::MapObservation>,
     title: String,
     #[serde(default = "default_sender")]
     sender: String,
@@ -248,7 +290,9 @@ fn default_sender() -> String {
 }
 
 async fn post_inject(State(s): State<AppState>, Json(b): Json<InjectBody>) -> ApiResult {
+    if let Some(o) = &b.observation { s.lock().validate_observation(o)?; }
     let ids = flow::send_inject(&s, None, &b.title, &b.sender, &b.recipients, &b.text).await?;
+    if let Some(o) = b.observation { let mut ex = s.lock(); for id in &ids { ex.attach_map_observation(*id, o.clone(), exercise::KnowledgeSource::Delivered)?; } }
     Ok(Json(json!({"messages": ids})))
 }
 

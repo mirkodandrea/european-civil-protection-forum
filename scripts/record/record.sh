@@ -44,7 +44,9 @@ phase "simulator (cinematic camera, LLM cassette: $CASSETTE_MODE)"
     exec "$ROOT/target/release/ttx" --port "$PORT" --web "$ROOT/web" --scenario "$ROOT/data/scenarios/synthetic_valley.json" > ttx.log 2>&1 ) &
 TTX_PID=$!
 trap 'kill $TTX_PID 2>/dev/null || true' EXIT
-for _ in $(seq 60); do curl -sf "http://localhost:$PORT/api/state" >/dev/null && break; sleep 0.5; done
+for _ in $(seq 60); do curl -sf "http://localhost:$PORT/api/health" >/dev/null && break; sleep 0.5; done
+export TTX_MASTER_KEY=$(python3 -c 'import re,sys; text=open(sys.argv[1]).read(); match=re.search(r"/play.html\?token=([0-9a-f]{64})",text); print(match.group(1) if match else "")' "$WORK/run/ttx.log")
+: "${TTX_MASTER_KEY:?No Director key found in simulator log}"
 sleep 3 # let the window come up
 
 phase "session"

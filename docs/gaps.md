@@ -51,7 +51,7 @@ Checked against the code on 2026-09-24 (commit `2255bcd`). Each row says what ex
 | Have | Gap | Where |
 |---|---|---|
 | The Master console shows everything in English; `/api/debrief` for after the fact | No evaluator role, token, language or read-only enforcement; no metrics module (`T_read`, `T_reply`, `T_decision`), which also needs the timestamps of spec 02; no dashboard page, notes, objectives view, chain view; no on-demand translation with cache; no UI localisation | new `exercise::metrics`, `server`, `web/evaluator.html` |
-| No authentication anywhere ("run it on a dedicated LAN", `docs/api.md`) | Role-based access is impossible without tokens: an "evaluator" is currently just another URL. Authentication (todo) is a prerequisite for a real read-only role | `server` |
+| Per-run Master/player capability keys and server-side endpoint authorization (`docs/api.md`) | Evaluator identities and dashboard are pending; role-bound keys provide the authorization foundation | `server` |
 
 ### 09 AI players and AI assessment
 | Have | Gap | Where |
@@ -62,7 +62,7 @@ Checked against the code on 2026-09-24 (commit `2255bcd`). Each row says what ex
 
 - **No persistence layer.** Only the event log survives a restart. 03 and 06 both need one (session directory, serialisable state).
 - **Only `{"generation": n}` goes over the WebSocket.** 02, 05 and 08 need typed events, and the pages need to handle them.
-- **No authentication** (spec §12.4): needed for evaluators (08), restart (06) and any use beyond a private LAN.
+- **Evaluator authorization/UI** (spec §12.4): player and Master keys are implemented; evaluator keys and read-only routes remain pending.
 - **The message model is too small.** `Message` (`exercise/src/lib.rs`) needs the fields of specs 02 and 05 (status, timestamps, source text and language, channel, thread, `forward_of`) in one change, not three.
 - **Tests.** The 111 headless tests use a mock LLM and don't cover concurrency of translation, ordering or restore. New tests are listed in each spec. The browser recording (`scripts/record/session.js`) has to be extended for chat, forwarding and an evaluator page.
 - **Docs.** `docs/api.md`, `docs/llm.md`, `docs/architecture.md` describe the built system and must be updated as each spec lands (`CLAUDE.md`: keep docs in step with code).

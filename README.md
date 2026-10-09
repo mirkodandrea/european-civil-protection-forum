@@ -34,12 +34,12 @@ Then open:
 
 | Who | URL |
 |---|---|
-| **All roles in one window** (Director + every player as tabs; good on a phone) | `http://<host>:8080/play.html` |
+| **All roles in one window** (Director + every player as tabs; good on a phone) | Startup Master link with access key |
 | Exercise Director | `http://<host>:8080/master.html` |
-| Players (tablets) | `http://<host>:8080/player.html` → choose a role |
+| Players (tablets) | Individual role link from the Master console |
 | Landing page | `http://<host>:8080/` |
 
-The simulator window shows the join URL with the machine's LAN address. Without an API key the exercise still runs in **manual mode**: injects are sent in English and the Master types the commands for each proposal.
+The server prints a fresh Master access link at startup. Open it, then distribute individual player links from the console; each key authorizes only its own role. The simulator window shows the machine's LAN address. Without an OpenRouter API key the exercise still runs in **manual mode**: injects are sent in English and the Master types the commands for each proposal.
 
 ### Playing from a phone
 
@@ -49,7 +49,7 @@ The simulator window shows the join URL with the machine's LAN address. Without 
 brew install --cask devtunnel
 devtunnel user login -g -d        # GitHub device-code login
 devtunnel host -p 8080            # private: only your account can open the URL
-# open https://<id>-8080.<region>.devtunnels.ms/play.html on the phone (GitHub login once)
+# open the tunnel URL with the startup Master access key, or use an individual player link (GitHub login once)
 ```
 
 Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the URL could run the Director console and spend your OpenRouter credit.
@@ -118,3 +118,8 @@ The server tests play the whole Master ↔ player ↔ LLM loop over HTTP with a 
 - [docs/todo.md](docs/todo.md): what is not built yet; [docs/specs/](docs/specs/README.md): draft specs for v0.3
 - [docs/screenshots](docs/screenshots): captures from a live session
 - [docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4): the demo video; [scripts/record/README.md](scripts/record/README.md) explains how it is recorded
+
+Player maps show reported locations and perimeter observations delivered to that
+role. The Master can attach map data to injects or publish a reviewed perimeter;
+undisclosed simulation changes remain hidden. See [role access and map API](docs/api.md#role-access-and-map-information).
+Scripted demos require `TTX_MASTER_KEY` from the startup link.
