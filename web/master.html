@@ -189,7 +189,7 @@ function renderProposals() {
       const drafts = (p.inject_drafts || []).map(d => `<li>Inject “${esc(d.title)}” → ${esc((d.recipients || []).join(', '))}: ${esc(d.text)}</li>`).join('');
       const editable = open.includes(p.status);
       return `<div class="card">
-        <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> <span class="muted small">turn ${p.turn} · #${p.id}</span></div></div>
+        <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> <span class="muted small">turn ${p.turn} · #${p.id}${p.inject_id ? ` · inject #${p.inject_id} · reply to #${p.reply_to}` : ''}</span></div></div>
         <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>
         ${p.translation_en && p.translation_en !== p.original ? `<div class="small muted">EN: ${esc(p.translation_en)}</div>` : ''}
         ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
@@ -249,7 +249,7 @@ async function refresh() {
     <div>${esc(i.text)}</div><div class="muted">Objective: ${esc(i.objective)}</div>
     <div class="row"><button data-msel="${i.id}" ${state.phase !== 'orders' ? 'disabled' : ''}>${state.sent_injects.includes(i.id) ? 'Send again' : 'Send'}</button></div></div>`).join('');
   $('msel').querySelectorAll('[data-msel]').forEach(b => b.onclick = () => api(`/api/master/msel/${b.dataset.msel}/send`, {}).catch(alertErr));
-  $('messages').innerHTML = [...master.messages].reverse().map(m => `<div>${kindBadge(m.kind)}<b>${esc(m.from)} → ${esc(m.to)}</b> <span class="muted">${esc(m.clock)}</span> ${m.title ? '<b>' + esc(m.title) + '</b>: ' : ''}${esc(m.text_en)}</div>`).join('');
+  $('messages').innerHTML = [...master.messages].reverse().map(m => `<div>${kindBadge(m.kind)}<b>${esc(m.from)} → ${esc(m.to)}</b> <span class="muted">${esc(m.clock)} · inject #${m.inject_id ?? '–'} · message #${m.id}${m.reply_to ? ` · reply to #${m.reply_to}` : ''}</span> ${m.title ? '<b>' + esc(m.title) + '</b>: ' : ''}${esc(m.text_en)}</div>`).join('');
   $('log').innerHTML = [...master.log].reverse().map(e => `<div><span class="muted">${esc(e.clock)} · t${e.turn}</span> <b>${esc(e.kind)}</b> ${esc(e.actor)} <span class="muted">${esc(JSON.stringify(e.data).slice(0, 220))}</span></div>`).join('');
 }
 

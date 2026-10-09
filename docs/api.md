@@ -20,7 +20,7 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `/api/player/{role}/reply` | `{"text": "..."}` → `{"proposal": id}`; parsed asynchronously by the LLM |
+| POST | `/api/player/{role}/reply` | `{"text": "...", "reply_to": message_id}` → `{"proposal": id}`; parsed asynchronously by the LLM |
 | POST | `/api/player/{role}/language` | `{"language": "it"}` |
 
 ## Director
@@ -30,7 +30,7 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 | POST | `/api/master/start` | Opens turn 1 |
 | POST | `/api/master/inject` | `{"title", "sender"?, "recipients": ["mayor"] or ["all"], "text"}`; translated per recipient |
 | POST | `/api/master/msel/{id}/send` | Sends an MSEL inject |
-| POST | `/api/master/prompt` | `{"text": "..."}` → proposal with commands and/or inject drafts (AI) |
+| POST | `/api/master/prompt` | `{"text": "...", "reply_to": message_id}` → proposal with commands and/or inject drafts (AI) |
 | POST | `/api/master/proposals/{id}/decide` | `{"approve": bool, "commands"?: [...], "note"?: "..."}`; `commands` replaces the proposal's actions (edit); feasibility is re-checked |
 | POST | `/api/master/command` | One command or a list, applied immediately as the Master → per-command results |
 | POST | `/api/master/resolve` | `{"minutes"?: 30}` → applies approved actions, then simulates the turn live in 1-second steps (phase `resolving`, observable through `/api/state` and `/ws`). The response comes when the turn ends: turn report (applied actions, events) |
@@ -45,7 +45,7 @@ B=http://localhost:8080/api; H='content-type: application/json'
 
 curl -XPOST $B/master/start
 curl -XPOST $B/master/msel/I-01/send
-curl -XPOST $B/player/mayor/reply -H "$H" -d '{"text":"Evacuate zone F4 to the sports centre"}'
+curl -XPOST $B/player/mayor/reply -H "$H" -d '{"text":"Evacuate zone F4 to the sports centre","reply_to":3}'
 curl $B/master | jq '.proposals[-1] | {status, descriptions, verdicts}'
 curl -XPOST $B/master/proposals/7/decide -H "$H" -d '{"approve":true,"note":"ok"}'
 
@@ -59,3 +59,18 @@ curl -XPOST $B/master/command -H "$H" -d '[
 
 curl -XPOST $B/master/resolve -H "$H" -d '{"minutes":30}'
 ```
+
+## Inject threads
+
+Every transmitted inject has a unique numeric `inject_id` shared across its
+recipient messages. Re-sending the same MSEL item creates a new delivery thread;
+`inject_sent` log entries retain the original `msel_id` and recipient message IDs.
+Messages retain sender, all inject recipients, simulated `t_s`/`clock`, wall-clock
+`wall_ms`, and turn. Proposals, replies, clarifications and feedback carry the
+same `inject_id`; `reply_to` references the selected received message.
+
+A reply must reference an inject or clarification delivered to that player.
+Missing references return 422; unknown references or another role's messages
+return 400 without creating a declaration. Obtain the actual message ID from
+`GET /api/player/{role}` before composing; the example ID above is illustrative.
+Master and debrief records retain the full thread across turns and rollbacks.

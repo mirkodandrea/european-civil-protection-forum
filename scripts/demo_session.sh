@@ -9,6 +9,12 @@ B="${1:-http://localhost:8080}/api"
 H='content-type: application/json'
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 post() { curl -sf -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
+reply() {
+  local role="$1" parent body
+  parent=$(curl -sf "$B/player/$role" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(m["id"] for m in reversed(d["inbox"]) if m["kind"] in ("inject","clarification") and m["to"] == d["player"]["role"]))')
+  body=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["reply_to"]=int(sys.argv[2]); print(json.dumps(d))' "$2" "$parent")
+  post "/player/$role/reply" "$body"
+}
 wait_parsed() { # wait until no proposal is still being parsed
   for _ in $(seq 60); do
     curl -sf "$B/master" | grep -q '"status":"parsing"' || return 0; sleep 1
@@ -23,8 +29,8 @@ post /master/start
 for i in I-01 I-02 I-03; do post /master/msel/$i/send; done
 
 echo "== turn 1: players reply in their own words"
-post /player/mayor/reply "{\"text\":\"Diramate subito l'allerta alla popolazione della zona F4 ed evacuate la scuola primaria di Pineta verso il centro sportivo di Valverde, che va aperto come area di accoglienza. Chiudete la Northern Road al traffico civile. Informate il comandante dei vigili del fuoco che la scuola sarà evacuata con i nostri autobus.\"}"
-post /player/fire_commander/reply '{"text":"Two crews cut a fire line along the northern edge of zone F4 to protect Pineta; the third crew cuts from Pineta east edge to Forest edge east. Air tanker: one drop on Pineta north edge. Tell regional civil protection we may need reinforcements soon."}'
+reply mayor "{\"text\":\"Diramate subito l'allerta alla popolazione della zona F4 ed evacuate la scuola primaria di Pineta verso il centro sportivo di Valverde, che va aperto come area di accoglienza. Chiudete la Northern Road al traffico civile. Informate il comandante dei vigili del fuoco che la scuola sarà evacuata con i nostri autobus.\"}"
+reply fire_commander '{"text":"Two crews cut a fire line along the northern edge of zone F4 to protect Pineta; the third crew cuts from Pineta east edge to Forest edge east. Air tanker: one drop on Pineta north edge. Tell regional civil protection we may need reinforcements soon."}'
 wait_parsed
 
 echo "== Director prompt: one more bus for the mayor"
@@ -41,11 +47,11 @@ sleep 3; shot sim_turn1_end.png
 echo "== turn 2: escalation"
 post /master/msel/I-04/send
 post /master/command '[{"type":"SetWeather","wind_speed_kmh":55},{"type":"Ignite","at":"G5","radius_m":60}]'
-post /player/regional_cp/reply '{"text":"Խնդրում ենք միջազգային օգնությամբ (UCPM) 2 լրացուցիչ օդային տանկեր և տարածաշրջանային հրշեջ ծառայությունից 2 վերգետնյա թիմ՝ հրշեջ հրամանատարի համար։ Տեղեկացրեք քաղաքապետին, որ Valverde Sports Centre-ը պատրաստ է ընդունել տարհանվածներին։"}'
-post /player/fire_commander/reply '{"text":"Send the remaining crews over there to hold it."}'
+reply regional_cp '{"text":"Խնդրում ենք միջազգային օգնությամբ (UCPM) 2 լրացուցիչ օդային տանկեր և տարածաշրջանային հրշեջ ծառայությունից 2 վերգետնյա թիմ՝ հրշեջ հրամանատարի համար։ Տեղեկացրեք քաղաքապետին, որ Valverde Sports Centre-ը պատրաստ է ընդունել տարհանվածներին։"}'
+reply fire_commander '{"text":"Send the remaining crews over there to hold it."}'
 wait_parsed
 post /master/proposals/$(last_pid)/decide '{"approve":false,"note":"Please specify the zone edge."}'
-post /player/fire_commander/reply '{"text":"One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4."}'
+reply fire_commander '{"text":"One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4."}'
 wait_parsed
 for id in $(curl -sf "$B/master" | python3 -c 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin)["proposals"] if p["status"]=="pending"))'); do
   post /master/proposals/$id/decide '{"approve":true}'
