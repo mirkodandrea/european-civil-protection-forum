@@ -141,6 +141,7 @@ async fn get_state(State(s): State<AppState>) -> ApiResult {
         "sent_injects": ex.sent_injects,
         "llm": {"available": s.llm.is_available(), "model": s.llm.model()},
         "world": ex.world.view(),
+        "resource_accounting": ex.resource_accounting(None),
     })))
 }
 
@@ -173,6 +174,8 @@ async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiR
         "clock": ex.world.clock(),
         "inbox": ex.inbox(&role),
         "resources": ex.world.d.pools.get(&role),
+        "resource_accounting": ex.resource_accounting(Some(&role))[&role],
+        "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
     })))
 }

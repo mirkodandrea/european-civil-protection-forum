@@ -43,7 +43,7 @@
       <div class="small error" id="err"></div>
     </div>
     <div class="panel">
-      <h2>Resources this turn</h2>
+      <h2>Resource ledger</h2>
       <div id="pools" class="small"></div>
     </div>
   </section>
@@ -228,6 +228,8 @@ function renderProposals() {
 async function refresh() {
   [state, master] = await Promise.all([api('/api/state'), api('/api/master')]);
   const w = state.world, st = w.stats;
+  $('pools').innerHTML = Object.entries(state.resource_accounting || {}).map(([role, pools]) => `<b>${esc(state.players[role]?.name || role)}</b><br>${Object.entries(pools).map(([resource, p]) => `${esc(resource)}: ${p.available} available / ${p.total} · requested ${p.requested} · committed ${p.committed} · deployed ${p.deployed} · returned ${p.returned}`).join('<br>')}`).join('<hr>') + (w.allocations || []).filter(a => a.returned < a.qty).map(a => `<div>#${a.id} · ${esc(a.role)} · ${a.qty - a.returned} ${esc(a.resource)} deployed <button data-return-resource="${a.id}" data-qty="${a.qty - a.returned}">Confirm return</button></div>`).join('');
+  $('pools').querySelectorAll('[data-return-resource]').forEach(b => b.onclick = () => api('/api/master/command', {type:'ReturnResource', allocation:Number(b.dataset.returnResource), qty:Number(b.dataset.qty)}).catch(alertErr));
   if (state.resolving) {
     const r = state.resolving, pct = Math.round(100 * (st.time_s - r.from_s) / Math.max(1, r.to_s - r.from_s));
     $('turn').textContent = `Turn ${state.turn} · simulating ${pct}%`;
@@ -245,8 +247,6 @@ async function refresh() {
   $('rbturn').innerHTML = Array.from({ length: Math.max(state.turn, 1) }, (_, i) => `<option value="${i + 1}">turn ${i + 1}</option>`).join('');
   $('rbturn').value = state.turn;
   $('stats').textContent = statsLine(st);
-  $('pools').innerHTML = Object.entries(w.pools).map(([r, p]) => `<div><b>${esc(state.players[r]?.name || r)}</b>: ${Object.entries(p).map(([k, v]) => `${k} ${v.total - v.used}/${v.total}`).join(', ') || '—'}</div>`).join('') +
-    (w.arrivals.filter(a => a.at_s > st.time_s).map(a => `<div class="muted">en route: ${a.qty} ${a.resource} for ${a.role}</div>`).join(''));
   map.setView(w);
   // Don't wipe what the Director is typing in a proposal card.
   const busy = $('tab-proposals').contains(document.activeElement) && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName);

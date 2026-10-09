@@ -162,6 +162,7 @@ pub struct ApprovalRecord {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecutionRecord {
+    pub allocations: Vec<u64>,
     pub command: Command,
     pub ok: bool,
     pub detail: String,
@@ -309,6 +310,8 @@ pub struct Exercise {
     pub messages: Vec<Message>,
     pub proposals: Vec<Proposal>,
     pub log: Vec<LogEntry>,
+    /// Append-only accounting evidence, including operations later rolled back.
+    pub resource_history: Vec<sim::ResourceEvent>,
     /// Bumped on every change; UIs and the renderer poll it.
     pub generation: u64,
     /// The last resolved turn's time window (the renderer replays it).
@@ -345,6 +348,7 @@ impl Exercise {
             messages: Vec::new(),
             proposals: Vec::new(),
             log: Vec::new(),
+            resource_history: Vec::new(),
             generation: 1,
             last_turn: None,
             sent_injects: Vec::new(),
@@ -396,6 +400,14 @@ impl Exercise {
         self.write_log(&e);
         self.log.push(e);
         self.touch();
+    }
+
+    fn record_resource_events(&mut self, from: usize, actor: &str) {
+        let events = self.world.d.resource_events[from..].to_vec();
+        for event in events {
+            self.record("resource_event", actor, json!(&event));
+            self.resource_history.push(event);
+        }
     }
 
     fn write_log(&self, e: &LogEntry) {
@@ -491,7 +503,9 @@ impl Exercise {
         let Some(to_s) = self.resolving.as_ref().map(|r| r.to_s) else { bail!("no turn is being resolved") };
         let dt = (to_s - self.world.time_s()).min(step_s);
         if dt > 0 {
+            let resource_event_count = self.world.d.resource_events.len();
             let events = self.world.advance(dt)?;
+            self.record_resource_events(resource_event_count, MASTER);
             if let Some(r) = self.resolving.as_mut() {
                 r.events.extend(events);
             }
@@ -506,7 +520,9 @@ impl Exercise {
         while self.world.time_s() < r.to_s {
             // Finishing early (e.g. a caller that did not step to the end) still completes the turn.
             let dt = (r.to_s - self.world.time_s()).min(STEP_S);
+            let resource_event_count = self.world.d.resource_events.len();
             self.world.advance(dt)?;
+            self.record_resource_events(resource_event_count, MASTER);
         }
         let report = TurnReport { turn: r.turn, from_s: r.from_s, to_s: r.to_s, applied: r.applied, events: r.events };
         self.record("turn_resolved", MASTER, json!({"turn": r.turn, "minutes": r.minutes, "applied": report.applied, "events": report.events, "stats": self.world.stats()}));
@@ -758,11 +774,14 @@ impl Exercise {
         let mut applied = Vec::new();
         let mut executions = Vec::new();
         for cmd in &p.commands {
+            let allocation_count = self.world.d.allocations.len();
+            let resource_event_count = self.world.d.resource_events.len();
             let (ok, detail) = match self.world.apply(cmd, &p.source.actor()) {
                 Ok(notes) => (true, notes.join("; ")),
                 Err(reason) => (false, reason),
             };
-            let execution = ExecutionRecord { command: cmd.clone(), ok, detail: detail.clone(), t_s: self.world.time_s(), wall_ms: wall_ms(), origin: origin.into() };
+            self.record_resource_events(resource_event_count, p.source.label());
+            let execution = ExecutionRecord { allocations: self.world.d.allocations[allocation_count..].iter().map(|a| a.id).collect(), command: cmd.clone(), ok, detail: detail.clone(), t_s: self.world.time_s(), wall_ms: wall_ms(), origin: origin.into() };
             self.record("action_executed", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "execution": execution}));
             executions.push(execution);
             applied.push(AppliedAction { proposal: pid, by: p.source.label().into(), action: cmd.describe(), ok, detail });
@@ -946,9 +965,33 @@ impl Exercise {
 
     /// A command from the Master GUI or a script: validated as Master and applied now.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
+        let resource_event_count = self.world.d.resource_events.len();
         let r = self.world.apply(cmd, &Actor::Master);
+        self.record_resource_events(resource_event_count, MASTER);
         self.record("master_command", MASTER, json!({"origin": "direct_excon_intervention", "command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
         r.map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Separate unmet declarations, approved reservations and actual deployments.
+    pub fn resource_accounting(&self, only_role: Option<&str>) -> Value {
+        let mut roles = serde_json::Map::new();
+        for (role, pools) in &self.world.d.pools {
+            if only_role.is_some_and(|r| r != role) { continue; }
+            let mut resources = serde_json::Map::new();
+            for (resource, pool) in pools {
+                let mut requested = 0u64;
+                let mut committed = 0u64;
+                for p in self.proposals.iter().filter(|p| p.source.label() == role && matches!(p.status, ProposalStatus::Parsing | ProposalStatus::Pending | ProposalStatus::NeedsClarification | ProposalStatus::Approved)) {
+                    let qty: u64 = p.commands.iter().map(|c| self.world.resource_requirements(c, &p.source.actor()).get(resource).copied().unwrap_or(0) as u64).sum();
+                    if p.status == ProposalStatus::Approved { committed += qty; } else { requested += qty; }
+                }
+                let returned: u64 = self.world.d.allocations.iter().filter(|a| &a.role == role && &a.resource == resource).map(|a| a.returned as u64).sum();
+                let external_requested: u64 = self.world.d.arrivals.iter().filter(|a| &a.role == role && &a.resource == resource && a.at_s > self.world.time_s()).map(|a| a.qty as u64).sum();
+                resources.insert(resource.clone(), json!({"total": pool.total, "requested": requested, "committed": committed, "deployed": pool.used, "available": (pool.available() as u64).saturating_sub(committed), "returned": returned, "external_requested": external_requested}));
+            }
+            roles.insert(role.clone(), Value::Object(resources));
+        }
+        Value::Object(roles)
     }
 
     /// The full log as a debrief timeline.
@@ -957,6 +1000,10 @@ impl Exercise {
             "scenario": self.world.scn.name,
             "turns": self.turn,
             "stats": self.world.stats(),
+            "resource_allocations": self.world.d.allocations,
+            "resource_events": self.resource_history,
+            "resource_accounting": self.resource_accounting(None),
+            "physical_state": self.world.view(),
             "proposals": self.proposals,
             "messages": self.messages,
             "log": self.log,

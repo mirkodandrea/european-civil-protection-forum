@@ -18,7 +18,7 @@ Unknown names are **rejected, never guessed**.
 
 ## Player actions
 
-Each role's `allowed_actions` in the scenario decides which of these it may use. Resources are counted per turn.
+Each role's `allowed_actions` in the scenario decides which of these it may use. Resources remain allocated across turns until EXCON explicitly confirms their return.
 
 | Command | JSON | Cost / rule |
 |---|---|---|
@@ -40,6 +40,7 @@ Each role's `allowed_actions` in the scenario decides which of these it may use.
 | SetWeather | `{"type":"SetWeather","wind_dir_deg":45,"wind_speed_kmh":55,"moisture_pct":4}` (any subset; the direction is where the wind blows **from**) |
 | SetBuildingStatus | `{"type":"SetBuildingStatus","building":"Pineta Fuel Station","damage":"destroyed","evacuated":true}`; `building` may be a zone code |
 | AdjustResource | `{"type":"AdjustResource","role":"mayor","resource":"buses","delta":1}` |
+| ReturnResource | `{"type":"ReturnResource","allocation":1,"qty":1}` (EXCON confirms a partial/full return from a recorded allocation) |
 | AdvanceTime | `{"type":"AdvanceTime","minutes":60}` (time jump outside the turn loop) |
 
 The Master may also issue any player action; the Master is not bound by resources or role authority.
@@ -49,6 +50,6 @@ The Master may also issue any player action; the Master is not bound by resource
 `World::validate_batch(prior, cmds, actor)` returns one `Verdict` per command:
 
 - `{"verdict":"ok","notes":[...]}`, for example `"500 m line, 1 crew(s)"` or `"3 bus(es) for 120 people"`;
-- `{"verdict":"rejected","reason":"..."}`, for example `"moving 120 people without cars needs 3 buses, only 2 available this turn"`.
+- `{"verdict":"rejected","reason":"..."}`, for example `"moving 120 people without cars needs 3 buses, only 2 currently available"`.
 
 The check covers role authority, resources (after earlier commands in the batch and already-approved proposals), place resolution, capacities and value ranges. Verdicts are computed when a proposal is parsed, again when the Master decides, and again at resolution.

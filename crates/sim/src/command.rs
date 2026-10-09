@@ -99,12 +99,14 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         evacuated: Option<bool>,
     },
+    /// Release units from a recorded deployment; EXCON confirms their return.
+    ReturnResource { allocation: u64, qty: u32 },
     AdjustResource { role: String, resource: String, delta: i32 },
     /// Skip simulated time outside the turn loop.
     AdvanceTime { minutes: u32 },
 }
 
-pub const MASTER_ONLY: &[&str] = &["Ignite", "Extinguish", "SetWeather", "SetBuildingStatus", "AdjustResource", "AdvanceTime"];
+pub const MASTER_ONLY: &[&str] = &["Ignite", "Extinguish", "SetWeather", "SetBuildingStatus", "AdjustResource", "ReturnResource", "AdvanceTime"];
 
 pub const ALL_KINDS: &[&str] = &[
     "CutFireLine",
@@ -121,6 +123,7 @@ pub const ALL_KINDS: &[&str] = &[
     "SetWeather",
     "SetBuildingStatus",
     "AdjustResource",
+    "ReturnResource",
     "AdvanceTime",
 ];
 
@@ -141,6 +144,7 @@ impl Command {
             Command::SetWeather { .. } => "SetWeather",
             Command::SetBuildingStatus { .. } => "SetBuildingStatus",
             Command::AdjustResource { .. } => "AdjustResource",
+            Command::ReturnResource { .. } => "ReturnResource",
             Command::AdvanceTime { .. } => "AdvanceTime",
         }
     }
@@ -191,6 +195,7 @@ impl Command {
                 damage.map(|d| format!(" damage={d:?}")).unwrap_or_default(),
                 evacuated.map(|e| format!(" evacuated={e}")).unwrap_or_default()
             ),
+            Command::ReturnResource { allocation, qty } => format!("Return {qty} units from allocation #{allocation}"),
             Command::AdjustResource { role, resource, delta } => format!("Adjust {role}.{resource} by {delta:+}"),
             Command::AdvanceTime { minutes } => format!("Advance time {minutes} min"),
         }
@@ -214,6 +219,7 @@ pub fn catalogue(allowed: &[String]) -> String {
         ("Extinguish", r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place or a circle."#),
         ("SetWeather", r#"{"type":"SetWeather","wind_dir_deg":45,"wind_speed_kmh":50,"moisture_pct":4}  — any subset; wind_dir = direction the wind blows FROM."#),
         ("SetBuildingStatus", r#"{"type":"SetBuildingStatus","building":"Pineta Fuel Station","damage":"destroyed","evacuated":true}  — damage: intact|damaged|destroyed. building may be a zone code."#),
+        ("ReturnResource", r#"{"type":"ReturnResource","allocation":1,"qty":1} — EXCON confirms units returned from a recorded deployment. Does not undo its physical effects."#),
         ("AdjustResource", r#"{"type":"AdjustResource","role":"fire_commander","resource":"ground_crews","delta":2}"#),
         ("AdvanceTime", r#"{"type":"AdvanceTime","minutes":60}  — skip simulated time."#),
     ];
@@ -252,6 +258,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 15);
+        assert_eq!(ALL_KINDS.len(), 16);
     }
 }

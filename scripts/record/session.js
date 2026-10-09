@@ -189,7 +189,9 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(500);
   await F('Director').locator('#ctext').scrollIntoViewIfNeeded();
   await F('Director').locator('#ctext').fill('');
-  await type(F('Director').locator('#ctext'), '[{"type":"SetWeather","wind_speed_kmh":55},\n {"type":"Ignite","at":"G5","radius_m":60}]', 20);
+  const returnedUnits = (await getJSON('/api/state')).world.allocations.filter(a => a.role === 'fire_commander' && a.qty > a.returned).map(a => ({type:'ReturnResource', allocation:a.id, qty:a.qty-a.returned}));
+  // EXCON explicitly confirms first-turn fire tasks completed before reassigning units.
+  await type(F('Director').locator('#ctext'), JSON.stringify([...returnedUnits, {type:'SetWeather', wind_speed_kmh:55}, {type:'Ignite', at:'G5', radius_m:60}], null, 1), 20);
   await F('Director').locator('#csend').click();
   await sleep(3000);
 

@@ -44,7 +44,7 @@
   <div class="panel a-role">
     <h2>Your role</h2>
     <div id="roledesc" class="small"></div>
-    <h2 style="margin-top:10px">Resources this turn</h2>
+    <h2 style="margin-top:10px">Resources across the exercise</h2>
     <div id="res" class="small"></div>
     <h2 style="margin-top:10px">Your orders</h2>
     <div id="props" class="small"></div>
@@ -85,7 +85,7 @@ async function refresh() {
   if (document.activeElement !== $('lang')) $('lang').value = p.player.language;
   $('roledesc').textContent = p.role.description;
   $('res').innerHTML = p.resources && Object.keys(p.resources).length
-    ? Object.entries(p.resources).map(([k, v]) => `${esc(stat.resource_types.find(r => r.id === k)?.name || k)}: <b>${v.total - v.used}</b> / ${v.total}`).join('<br>')
+    ? Object.entries(p.resources).map(([k, v]) => `${esc(stat.resource_types.find(r => r.id === k)?.name || k)}: <b>${p.resource_accounting[k]?.available ?? v.total - v.used}</b> available / ${v.total}<br><span class="muted">requested ${p.resource_accounting[k]?.requested ?? 0} · committed ${p.resource_accounting[k]?.committed ?? 0} · deployed ${v.used} · returned ${p.resource_accounting[k]?.returned ?? 0}</span>`).join('<br>')
     : '<span class="muted">No own resources — coordinate and request.</span>';
   $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span> · ${esc(x.declaration_kind.replaceAll('_', ' '))}${x.executions?.length ? `<div>${x.executions.map(e => `${e.ok ? 'Executed' : 'Failed'} at ${e.t_s}s: ${esc(e.detail)}`).join('<br>')}</div>` : ''}</div>`).join('') || '<span class="muted">none yet</span>';
   $('inbox').innerHTML = p.inbox.map(m => m.kind === 'reply'

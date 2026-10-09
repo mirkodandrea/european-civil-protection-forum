@@ -78,7 +78,7 @@ fn full_turn_inject_reply_approve_resolve() {
     assert_eq!(ex.proposal(p2).unwrap().status, ProposalStatus::Rejected);
     assert_eq!(ex.turn, 2);
     assert!(ex.world.d.warned.contains("F4"));
-    assert_eq!(ex.world.d.pools["fire_commander"]["air_tankers"].used, 0, "resources reset at new turn");
+    assert_eq!(ex.world.d.pools["fire_commander"]["air_tankers"].used, 1, "deployments persist across turns until explicitly returned");
     // Warned F4 evacuates in 10 min (+10 for the school): all out after 30.
     let school = ex.world.find_building("Pineta Primary School").unwrap();
     assert_eq!(ex.world.d.buildings[school].people_inside, 0);
@@ -366,4 +366,61 @@ fn master_can_reject_during_parse_without_late_ai_resurrection() {
     assert_eq!(ex.proposal(pid).unwrap().declaration_kind, DeclarationKind::Request);
     ex.end().unwrap();
     assert!(ex.decide(pid, Decision::default()).is_err());
+}
+
+#[test]
+fn pending_and_actual_resources_remain_distinct_across_turns() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "fire_commander", "drop on G3").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"WaterDrop","at":"G3"}]))).unwrap();
+    let before = ex.log[0].seq;
+    let accounting = ex.resource_accounting(Some("fire_commander"));
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["requested"], 1);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["deployed"], 0);
+    ex.resolve_turn(Some(1)).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(ex.proposal(pid).unwrap().turn, 1);
+    ex.decide(pid, Decision { approve:true, ..Default::default() }).unwrap();
+    let accounting = ex.resource_accounting(Some("fire_commander"));
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["requested"], 0);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["committed"], 1);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["available"], 0);
+    ex.resolve_turn(Some(1)).unwrap();
+    let accounting = ex.resource_accounting(Some("fire_commander"));
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["committed"], 0);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["deployed"], 1);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["available"], 0);
+    let allocation = ex.proposal(pid).unwrap().executions[0].allocations[0];
+    let p2 = reply(&mut ex, "fire_commander", "another drop on F3").unwrap();
+    ex.attach_parse(p2, parsed(json!([{"type":"WaterDrop","at":"F3"}]))).unwrap();
+    assert!(ex.decide(p2, Decision { approve:true, ..Default::default() }).is_err());
+    ex.direct_command(&Command::ReturnResource { allocation, qty:1 }).unwrap();
+    let accounting = ex.resource_accounting(Some("fire_commander"));
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["deployed"], 0);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["returned"], 1);
+    assert_eq!(accounting["fire_commander"]["air_tankers"]["available"], 1);
+    assert_eq!(ex.world.d.drops.len(), 1);
+    assert_eq!(ex.log[0].seq, before);
+    let d = ex.debrief();
+    assert_eq!(d["resource_allocations"][0]["id"], allocation);
+    assert!(d["resource_events"].as_array().unwrap().iter().any(|e| e["kind"] == "returned"));
+    assert!(d["physical_state"]["drops"].as_array().unwrap().len() == 1);
+}
+
+#[test]
+fn rollback_keeps_resource_history_even_when_actual_ledger_is_restored() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "fire_commander", "drop G3").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"WaterDrop","at":"G3"}]))).unwrap();
+    ex.decide(pid, Decision { approve:true, ..Default::default() }).unwrap();
+    ex.resolve_turn(Some(1)).unwrap();
+    let allocation = ex.world.d.allocations[0].id;
+    ex.direct_command(&Command::ReturnResource { allocation, qty:1 }).unwrap();
+    ex.rollback(1).unwrap();
+    assert!(ex.world.d.allocations.is_empty());
+    assert_eq!(ex.resource_history.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(), vec!["deployed", "returned"]);
+    assert_eq!(ex.debrief()["resource_events"].as_array().unwrap().len(), 2);
+    assert!(ex.log.iter().any(|l| l.kind == "rollback"));
 }
