@@ -11,6 +11,7 @@ pub struct EvidenceFilter {
     pub inject: Option<u64>,
     pub turn: Option<u32>,
     pub phase: Option<Phase>,
+    pub exercise_phase: Option<crate::ExercisePhase>,
     pub kind: Option<String>,
     pub status: Option<String>,
     pub offset: Option<usize>,
@@ -40,6 +41,7 @@ impl Exercise {
             let declaration_phase = self.log.iter().find(|l| (l.kind == "proposal_declared" && l.data["id"] == p.id) || (l.kind == "master_prompt" && l.data["proposal"] == p.id)).map(|l| l.phase);
             f.role.as_ref().is_none_or(|r| p.source.label() == r) && f.inject.is_none_or(|id| p.inject_id == Some(id))
                 && f.turn.is_none_or(|t| p.turn == t) && f.phase.is_none_or(|phase| declaration_phase == Some(phase))
+                && f.exercise_phase.is_none_or(|phase| self.log.iter().any(|l| ((l.kind=="proposal_declared" && l.data["id"]==p.id) || (l.kind=="master_prompt" && l.data["proposal"]==p.id)) && l.exercise_phase==phase))
                 && f.status.as_ref().is_none_or(|status| serde_json::to_value(p.status).unwrap() == status.as_str())
         }).collect::<Vec<_>>();
         let pids = proposals.iter().map(|p| p.id).collect::<BTreeSet<_>>();
@@ -57,7 +59,7 @@ impl Exercise {
             let message_id = if l.kind == "message" { l.data["id"].as_u64() } else { l.data["message"].as_u64() };
             let role_match = f.role.as_ref().is_none_or(|r| l.actor == *r || l.data["role"] == r.as_str() || l.data["to"] == r.as_str() || l.data["from"] == r.as_str() || l.data["recipients"].as_array().is_some_and(|roles| roles.iter().any(|role| role == r.as_str())) || proposal_id.is_some_and(|id| pids.contains(&id)) || message_id.is_some_and(|id| mids.contains(&id)));
             let inject_match = f.inject.is_none_or(|id| l.data["inject_id"] == id || proposal_id.is_some_and(|id| pids.contains(&id)) || message_id.is_some_and(|id| mids.contains(&id)));
-            role_match && inject_match && f.turn.is_none_or(|t| l.turn == t) && f.phase.is_none_or(|p| l.phase == p) && f.kind.as_ref().is_none_or(|kind| l.kind == *kind)
+            role_match && inject_match && f.turn.is_none_or(|t| l.turn == t) && f.phase.is_none_or(|p| l.phase == p) && f.exercise_phase.is_none_or(|phase| l.exercise_phase==phase) && f.kind.as_ref().is_none_or(|kind| l.kind == *kind)
         }).collect::<Vec<_>>();
         let timeline_total = log.len();
         let offset = f.offset.unwrap_or(0);
@@ -83,7 +85,7 @@ impl Exercise {
             let deliveries = self.log.iter().filter(|l| l.kind == "inject_sent" && l.data["msel_id"] == i.id).collect::<Vec<_>>();
             json!({"msel_id":i.id,"title":i.title,"objective":i.objective,"planned_turn":i.turn,"deliveries":deliveries})
         }).collect::<Vec<_>>();
-        Ok(json!({"context":{"clock":self.world.clock(),"turn":self.turn,"phase":self.phase,"stats":self.world.stats(),"weather":self.world.fire.weather(),"pending":self.proposals.iter().filter(|p| matches!(p.status, ProposalStatus::Parsing | ProposalStatus::Pending | ProposalStatus::NeedsClarification)).count()},
+        Ok(json!({"context":{"clock":self.world.clock(),"exercise_phase":self.exercise_phase,"clock_control":self.clock_control,"turn":self.turn,"phase":self.phase,"stats":self.world.stats(),"weather":self.world.fire.weather(),"pending":self.proposals.iter().filter(|p| matches!(p.status, ProposalStatus::Parsing | ProposalStatus::Pending | ProposalStatus::NeedsClarification)).count()},
             "role_cards":cards,"objectives":objectives,"reference_materials":self.reference_materials,"chains":chains,"messages":messages,"timeline":log,"timeline_total":timeline_total,"offset":offset,"limit":limit,
             "knowledge_events":self.knowledge_events.iter().filter(|e| mids.contains(&e.message)).collect::<Vec<_>>(),"resource_accounting":self.resource_accounting(None)}))
     }

@@ -4,7 +4,7 @@
 The pace of simulated time is set in advance and can be changed for each turn, including long jumps ("six hours later") between phases of the incident.
 
 ## Today
-`POST /api/master/settings {turn_minutes, speed}` sets a global turn length (default 30) and global speed (simulated seconds per real second, 0 = maximum). `resolve {minutes}` overrides the length for one resolution. `AdvanceTime` runs the model forward. Nothing is stored per turn, and the players are not told that time is compressed.
+`POST /api/master/settings {turn_minutes, speed}` sets a global turn length (default 30) and global speed (simulated seconds per real second, 0 = maximum). `resolve {minutes}` overrides the length for one resolution. `AdvanceTime` runs the model forward. Issue #11 adds a separate within-turn clock (`ratio`, running/pause controls), explicit training phases, scheduled MSEL delivery timestamps and phase/clock history. Player views disclose current phase and compression. The longer-term turn-plan/jump/checkpoint requirements below remain separate from this delivered clock workflow.
 
 ## Vocabulary
 - **Turn length** Δt: simulated time covered by one resolution.

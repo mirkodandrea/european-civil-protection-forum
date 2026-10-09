@@ -125,3 +125,9 @@ undisclosed simulation changes remain hidden. See [role access and map API](docs
 Scripted demos require `TTX_MASTER_KEY` from the startup link. The console also
 provides three evaluator links: each opens a read-only evidence dashboard with
 chains, objectives, supporting documents, filters, and full debrief export.
+
+EXCON can run a configurable clock within an open turn and schedule MSEL injects
+by simulated time. Training phases (early warning, early action, escalation,
+full response) preserve accumulated state and are independent of decision turns.
+Clock progression runs physics and arrivals; approved orders execute only when
+EXCON explicitly executes them or resolves the turn. See [time and phase API](docs/api.md#within-turn-clock-training-phases-and-scheduled-injects).

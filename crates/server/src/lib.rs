@@ -67,12 +67,18 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         }
     });
     let state = AppState { ex, llm, generation: rx, access: Arc::new(access) };
+    tokio::spawn(flow::run_clock(state.clone()));
     let api = Router::new()
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
         .route("/api/access", get(get_access))
         .route("/api/master/access", get(get_access_links))
         .route("/api/master/knowledge", post(post_knowledge))
         .route("/api/master/references", post(post_references))
+        .route("/api/master/clock", post(post_clock))
+        .route("/api/master/phase", post(post_phase))
+        .route("/api/master/schedules", post(post_schedule))
+        .route("/api/master/schedules/:id/cancel", post(post_cancel_schedule))
+        .route("/api/master/proposals/:id/execute", post(post_execute))
         .route("/api/evaluator", get(get_evaluator))
         .route("/api/static", get(get_static))
         .route("/api/state", get(get_state))
@@ -180,6 +186,11 @@ async fn get_evaluator(State(s): State<AppState>, Query(filter): Query<exercise:
 async fn get_state(State(s): State<AppState>) -> ApiResult {
     let ex = s.lock();
     Ok(Json(json!({
+        "wall_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
+        "exercise_phase":ex.exercise_phase,
+        "phase_history":ex.phase_history,
+        "clock_control":ex.clock_control,
+        "scheduled_injects":ex.scheduled_injects,
         "turn": ex.turn,
         "phase": ex.phase,
         "turn_minutes": ex.turn_minutes,
@@ -219,6 +230,8 @@ async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiR
     Ok(Json(json!({
         "map": ex.player_map(&role)?,
         "knowledge_events": ex.knowledge_events.iter().filter(|e| e.role == role).collect::<Vec<_>>(),
+        "exercise_phase":ex.exercise_phase,
+        "clock_control":ex.clock_control,
         "player": player,
         "role": ex.world.scn.role(&role),
         "turn": ex.turn,
@@ -280,6 +293,42 @@ async fn post_language(State(s): State<AppState>, Path(role): Path<String>, Json
 }
 
 // ---------------------------------------------------------------- master
+
+#[derive(Deserialize)]
+struct ClockBody { running:bool, ratio:f64, #[serde(default)] reason:String }
+async fn post_clock(State(s):State<AppState>,Json(b):Json<ClockBody>)->ApiResult {
+    s.lock().configure_clock(b.running,b.ratio,&b.reason)?;Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+struct PhaseBody { phase:exercise::ExercisePhase, reason:String }
+async fn post_phase(State(s):State<AppState>,Json(b):Json<PhaseBody>)->ApiResult {
+    s.lock().set_exercise_phase(b.phase,&b.reason)?;Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+struct ScheduleBody { msel_id:String, #[serde(default)] at_s:Option<i64>, #[serde(default)] at_clock:Option<String> }
+async fn post_schedule(State(s):State<AppState>,Json(b):Json<ScheduleBody>)->ApiResult {
+    let mut ex=s.lock();
+    let due=match (b.at_s,b.at_clock) {
+        (Some(s),None)=>s,
+        (None,Some(clock))=>{
+            let parts=clock.split(':').map(str::parse::<i64>).collect::<Result<Vec<_>,_>>().map_err(|_|bad("at_clock must be HH:MM or HH:MM:SS on Day 1"))?;
+            if !(2..=3).contains(&parts.len()) || !(0..=23).contains(&parts[0]) || !(0..=59).contains(&parts[1]) || parts.get(2).is_some_and(|s|!(0..=59).contains(s)){return Err(bad("at_clock must be HH:MM or HH:MM:SS on Day 1"));}
+            parts[0]*3600+parts[1]*60+parts.get(2).copied().unwrap_or(0)-ex.world.scn.start_clock_s
+        }
+        _=>return Err(bad("provide exactly one of at_s or at_clock")),
+    };
+    let id=ex.schedule_inject(&b.msel_id,due)?;Ok(Json(json!({"schedule":id})))
+}
+#[derive(Deserialize)]
+struct ReasonBody { reason:String }
+async fn post_cancel_schedule(State(s):State<AppState>,Path(id):Path<u64>,Json(b):Json<ReasonBody>)->ApiResult {
+    s.lock().cancel_schedule(id,&b.reason)?;Ok(Json(json!({"ok":true})))
+}
+async fn post_execute(State(s):State<AppState>,Path(id):Path<u64>)->ApiResult {
+    let results=s.lock().execute_approved(id)?;
+    let state=s.clone();tokio::spawn(async move {flow::send_drafts(&state,id).await;});
+    Ok(Json(json!({"results":results})))
+}
 
 async fn post_start(State(s): State<AppState>) -> ApiResult {
     s.lock().start()?;

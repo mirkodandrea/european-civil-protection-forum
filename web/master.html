@@ -26,6 +26,18 @@
 <main class="cols">
   <section>
     <div class="panel">
+      <h2>Time and exercise phase</h2>
+      <div id="timecontext" class="small"></div>
+      <label for="trainingphase">Training phase (independent of decision turns)</label>
+      <select id="trainingphase"><option value="early_warning">Early warning</option><option value="early_action">Early action</option><option value="escalation">Escalation</option><option value="full_response">Full response</option></select>
+      <input id="phasereason" placeholder="Reason for phase change"><button id="setphase">Change phase</button>
+      <label for="clockratio">Simulated seconds per real second while a turn stays open</label>
+      <input id="clockratio" type="number" min="0.01" max="86400" step="1" value="60">
+      <button id="runclock">Run clock</button><button id="pauseclock">Pause clock</button>
+      <p class="small muted">Physics and arrivals advance with this clock. Turns group declarations and approvals; phase changes preserve accumulated state. Turn resolution has a separate duration and playback speed and pauses this clock.</p>
+      <div id="schedulelist" class="small"></div>
+    </div>
+    <div class="panel">
       <div class="row" id="tools"></div>
       <div class="row small">
         <span id="toolhelp" class="muted"></span>
@@ -103,7 +115,7 @@ $('debriefdownload').onclick = async e => {
   e.preventDefault();
   try { const data = await api('/api/debrief'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'})); const a = document.createElement('a'); a.href = url; a.download = 'debrief.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alertErr(e); }
 };
-let state = null, master = null, tool = 'none';
+let state = null, master = null, tool = 'none', renderedProposals='', renderedMsel='';
 
 const TOOLS = [
   ['none', 'Inspect', 'Hover to read zone and coordinates.'],
@@ -183,6 +195,9 @@ $('csend').onclick = async () => {
 };
 api('/api/catalogue').then(c => { $('cdoc').textContent = c.doc; });
 
+$('setphase').onclick=()=>api('/api/master/phase',{phase:$('trainingphase').value,reason:$('phasereason').value}).catch(alertErr);
+$('runclock').onclick=()=>api('/api/master/clock',{running:true,ratio:Number($('clockratio').value),reason:'EXCON starts or adjusts within-turn clock'}).catch(alertErr);
+$('pauseclock').onclick=()=>api('/api/master/clock',{running:false,ratio:Number($('clockratio').value),reason:'EXCON pauses within-turn clock'}).catch(alertErr);
 $('start').onclick = () => api('/api/master/start', {}).catch(alertErr);
 $('resolve').onclick = async () => {
   $('resolve').disabled = true;
@@ -209,7 +224,7 @@ function renderProposals() {
       const editable = open.includes(p.status);
       return `<div class="card">
         <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> · ${esc(p.declaration_kind.replaceAll('_', ' '))} <span class="muted small">turn ${p.turn} · #${p.id}${p.inject_id ? ` · inject #${p.inject_id} · reply to #${p.reply_to}` : ''}</span></div></div>
-        <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>
+        <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>${p.status==='approved'?`<button data-execute="${p.id}">Execute approved actions now</button>`:''}
         ${p.evidence ? `<div class="small"><b>Decision basis:</b> ${esc(p.evidence.basis.kind.replaceAll('_', ' '))} — ${esc(p.evidence.basis.reference)}</div>${p.evidence.attachments.map(a => `<div class="small"><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></div>`).join('')}` : ''}
         ${p.translation_en && p.translation_en !== p.original ? `<div class="small muted">EN: ${esc(p.translation_en)}</div>` : ''}
         ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
@@ -227,6 +242,7 @@ function renderProposals() {
           <button class="ok" data-approve="${p.id}">Approve</button><button data-reject="${p.id}">Reject</button></div>` : ''}
       </div>`;
     }).join('');
+  $('tab-proposals').querySelectorAll('[data-execute]').forEach(b=>b.onclick=()=>api(`/api/master/proposals/${b.dataset.execute}/execute`,{}).catch(alertErr));
   $('tab-proposals').querySelectorAll('[data-approve],[data-reject]').forEach(b => b.onclick = async () => {
     const id = b.dataset.approve || b.dataset.reject;
     const body = { approve: !!b.dataset.approve, note: $('note-' + id).value || null };
@@ -247,6 +263,13 @@ function renderProposals() {
 async function refresh() {
   [state, master] = await Promise.all([api('/api/state'), api('/api/master')]);
   const w = state.world, st = w.stats;
+  $('timecontext').textContent=`${state.exercise_phase.replaceAll('_',' ')} · real time ${new Date(Number(state.wall_ms)).toLocaleTimeString()} · simulation ${st.clock} · ${state.clock_control.running ? 'running' : 'paused'} at ${state.clock_control.ratio} simulated s / real s${state.clock_control.lag_s>1?` · catching up ${state.clock_control.lag_s} simulated s`:""}`;
+  if(document.activeElement!==$('clockratio'))$('clockratio').value=state.clock_control.ratio;
+  if(document.activeElement!==$('trainingphase'))$('trainingphase').value=state.exercise_phase;
+  $('runclock').disabled=$('setphase').disabled=state.phase!=='orders';
+  $('pauseclock').disabled=!state.clock_control.running;
+  $('schedulelist').innerHTML=(state.scheduled_injects||[]).map(i=>`<div>#${i.id} ${esc(i.msel_id)} · due ${esc(i.due_clock)} · ${esc(i.status)}${i.delivered_s!==null?` · delivered t+${i.delivered_s}s`:''}${['pending','dispatching'].includes(i.status)?` <button data-cancel-schedule="${i.id}">Cancel</button>`:''}${i.error?` · ${esc(i.error)}`:''}</div>`).join('');
+  $('schedulelist').querySelectorAll('[data-cancel-schedule]').forEach(b=>b.onclick=()=>api(`/api/master/schedules/${b.dataset.cancelSchedule}/cancel`,{reason:'EXCON cancels scheduled delivery'}).catch(alertErr));
   $('pools').innerHTML = Object.entries(state.resource_accounting || {}).map(([role, pools]) => `<b>${esc(state.players[role]?.name || role)}</b><br>${Object.entries(pools).map(([resource, p]) => `${esc(resource)}: ${p.available} available / ${p.total} · requested ${p.requested} · committed ${p.committed} · deployed ${p.deployed} · returned ${p.returned}`).join('<br>')}`).join('<hr>') + (w.allocations || []).filter(a => a.returned < a.qty).map(a => `<div>#${a.id} · ${esc(a.role)} · ${a.qty - a.returned} ${esc(a.resource)} deployed <button data-return-resource="${a.id}" data-qty="${a.qty - a.returned}">Confirm return</button></div>`).join('');
   $('pools').querySelectorAll('[data-return-resource]').forEach(b => b.onclick = () => api('/api/master/command', {type:'ReturnResource', allocation:Number(b.dataset.returnResource), qty:Number(b.dataset.qty)}).catch(alertErr));
   if (state.resolving) {
@@ -269,15 +292,26 @@ async function refresh() {
   map.setView(w);
   // Don't wipe what the Director is typing in a proposal card.
   const busy = $('tab-proposals').contains(document.activeElement) && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName);
-  if (!busy) {
+  const proposalKey=JSON.stringify(master.proposals);
+  if (!busy && proposalKey!==renderedProposals) {
+    const dirty=[...$('tab-proposals').querySelectorAll('textarea,input')].filter(t=>t.value!==t.defaultValue).map(t=>[t.id,t.value]);
     const openEdits = [...$('tab-proposals').querySelectorAll('details[open] textarea')].map(t => t.id);
     renderProposals();
+    renderedProposals=proposalKey;
+    dirty.forEach(([id,value])=>{if($(id))$(id).value=value;});
     openEdits.forEach(id => { const t = $(id); if (t) t.parentElement.open = true; });
   }
+  const mselKey=JSON.stringify([state.phase,state.sent_injects]);
+  if(mselKey!==renderedMsel && !$('msel').contains(document.activeElement)) {
+    const draftTimes=new Map([...$('msel').querySelectorAll('[data-due-clock]')].map(i=>[i.dataset.dueClock,i.value]));
   $('msel').innerHTML = stat.msel.map(i => `<div class="card small"><div class="head"><b>${esc(i.id)} · ${esc(i.title)}</b><span class="muted">turn ${i.turn} · ${esc(i.sender)} → ${esc(i.recipients.join(', '))}</span></div>
     <div>${esc(i.text)}</div><div class="muted">Objective: ${esc(i.objective)}</div>
-    <div class="row"><button data-msel="${i.id}" ${state.phase !== 'orders' ? 'disabled' : ''}>${state.sent_injects.includes(i.id) ? 'Send again' : 'Send'}</button></div></div>`).join('');
+    <div class="row"><button data-msel="${i.id}" ${state.phase !== 'orders' ? 'disabled' : ''}>${state.sent_injects.includes(i.id) ? 'Send again' : 'Send'}</button><input data-due-clock="${i.id}" placeholder="HH:MM (Day 1)" style="width:130px"><button data-schedule="${i.id}">Schedule</button></div></div>`).join('');
+  $('msel').querySelectorAll('[data-schedule]').forEach(b=>b.onclick=()=>api('/api/master/schedules',{msel_id:b.dataset.schedule,at_clock:$('msel').querySelector(`[data-due-clock="${b.dataset.schedule}"]`).value}).catch(alertErr));
   $('msel').querySelectorAll('[data-msel]').forEach(b => b.onclick = () => api(`/api/master/msel/${b.dataset.msel}/send`, {}).catch(alertErr));
+    renderedMsel=mselKey;
+    $('msel').querySelectorAll('[data-due-clock]').forEach(i=>i.value=draftTimes.get(i.dataset.dueClock)||'');
+  }
   $('messages').innerHTML = [...master.messages].reverse().map(m => `<div>${kindBadge(m.kind)}<b>${esc(m.from)} → ${esc(m.to)}</b> <span class="muted">${esc(m.clock)} · inject #${m.inject_id ?? '–'} · message #${m.id}${m.reply_to ? ` · reply to #${m.reply_to}` : ''}</span> ${m.title ? '<b>' + esc(m.title) + '</b>: ' : ''}${esc(m.text_en)}</div>`).join('');
   $('log').innerHTML = [...master.log].reverse().map(e => `<div><span class="muted">${esc(e.clock)} · t${e.turn}</span> <b>${esc(e.kind)}</b> ${esc(e.actor)} <span class="muted">${esc(JSON.stringify(e.data).slice(0, 220))}</span></div>`).join('');
 }
