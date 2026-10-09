@@ -1,12 +1,25 @@
 // Shared helpers for the TTX web UIs: API calls, live updates, the map.
 
+const accessContext = new URLSearchParams(location.search).get('role') || 'master';
+const accessStore = `ttx-access:${accessContext}`;
+const suppliedKey = new URLSearchParams(location.search).get('token');
+if (suppliedKey) {
+  sessionStorage.setItem(accessStore, suppliedKey);
+  const clean = new URL(location.href); clean.searchParams.delete('token'); history.replaceState(null, '', clean);
+}
+export const accessToken = () => sessionStorage.getItem(accessStore) || '';
+
 export async function api(path, body, method) {
-  const opts = { method: method || (body === undefined ? 'GET' : 'POST'), headers: {} };
+  const opts = { method: method || (body === undefined ? 'GET' : 'POST'), headers: {Authorization: `Bearer ${accessToken()}`} };
   if (body !== undefined) {
     opts.headers['content-type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const r = await fetch(path, opts);
+  let r = await fetch(path, opts);
+  if (r.status === 401) {
+    const key = prompt('Enter the access key supplied by the exercise Director. Each player has a separate role key.');
+    if (key) { sessionStorage.setItem(accessStore, key.trim()); opts.headers.Authorization = `Bearer ${accessToken()}`; r = await fetch(path, opts); }
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
@@ -17,7 +30,7 @@ export function live(onChange) {
   let timer = null;
   const fire = () => { clearTimeout(timer); timer = setTimeout(onChange, 60); };
   function connect() {
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?token=${encodeURIComponent(accessToken())}`);
     ws.onmessage = fire;
     ws.onclose = () => setTimeout(connect, 1500);
   }
@@ -113,13 +126,17 @@ export class MapView {
   setView(view) {
     this.view = view;
     const { rows, cols } = this.s.grid;
-    const fire = b64bytes(view.fire);
+    const fire = view.fire ? b64bytes(view.fire) : [];
     const g = this.fireCanvas.getContext('2d');
     const img = g.createImageData(cols, rows);
     for (let i = 0; i < rows * cols; i++) {
       const v = fire[i];
       const rgba = v === 1 ? [255, 70, 20, 235] : v === 2 ? [35, 30, 28, 215] : v === 3 ? [150, 90, 30, 230] : v === 4 ? [60, 150, 255, 110] : v === 5 ? [255, 150, 40, 80] : [0, 0, 0, 0];
       img.data.set(rgba, i * 4);
+    }
+    for (const cell of view.cells || []) {
+      const rgba = cell.state === 1 ? [255, 70, 20, 235] : cell.state === 2 ? [35, 30, 28, 215] : cell.state === 3 ? [150, 90, 30, 230] : cell.state === 4 ? [60, 150, 255, 110] : cell.state === 5 ? [255, 150, 40, 80] : [0, 0, 0, 0];
+      img.data.set(rgba, (cell.row * cols + cell.col) * 4);
     }
     g.putImageData(img, 0, 0);
     this.draw();
@@ -133,6 +150,13 @@ export class MapView {
     ctx.drawImage(this.fireCanvas, 0, 0, this.W * k, this.H * k);
     const dpr = window.devicePixelRatio || 1;
     const v = this.view;
+
+    for (const location of v?.reported_locations || []) {
+      const [x, y] = this.px(location);
+      ctx.strokeStyle = '#e33'; ctx.lineWidth = 2 * dpr;
+      ctx.beginPath(); ctx.arc(x, y, 7 * dpr, 0, Math.PI * 2); ctx.stroke();
+      label(ctx, 'Reported fire', x + 9 * dpr, y, dpr);
+    }
 
     // Zone grid.
     const z = this.s.zones;

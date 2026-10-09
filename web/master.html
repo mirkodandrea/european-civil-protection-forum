@@ -21,7 +21,7 @@
   <select id="rbturn" title="Roll back to the start of turn"></select>
   <button id="rollback">Rollback</button>
   <button id="end">End</button>
-  <a href="/api/debrief" target="_blank" style="color:#fff">Debrief JSON</a>
+  <a href="#" id="debriefdownload" style="color:#fff">Debrief JSON</a>
 </header>
 <main class="cols">
   <section>
@@ -43,6 +43,7 @@
       <div class="small error" id="err"></div>
     </div>
     <div class="panel">
+      <h2>Participant links</h2><div id="participantlinks" class="small"></div>
       <h2>Resource ledger</h2>
       <div id="pools" class="small"></div>
     </div>
@@ -57,6 +58,10 @@
       <div class="row"><input id="ititle" placeholder="Title" style="flex:1"><input id="isender" placeholder="Sender (e.g. 112 Dispatch)" value="EXCON"></div>
       <div class="row" id="irecip"></div>
       <textarea id="itext" placeholder="Inject text in English — translated for each player"></textarea>
+      <label for="imap">Map observation (optional)</label>
+      <textarea id="imap" placeholder='{"locations":[[2500,2500]],"cells":[{"row":10,"col":20,"state":1}]}'></textarea>
+      <p class="small muted">Only selected recipients acquire this report. Coordinates are metres; rows start at the north edge. No fire information is inferred from text.</p>
+      <label><input type="checkbox" id="iperimeter">Also publish the current simulator perimeter to these recipients</label>
       <div class="row"><button id="isend" class="primary">Send inject</button></div>
     </div>
     <div id="tab-prompt" class="panel" hidden>
@@ -82,10 +87,16 @@
   </section>
 </main>
 <script type="module">
-import { api, live, esc, MapView, statsLine, kindBadge } from './common.js';
+import { api, live, esc, MapView, statsLine, kindBadge } from './common.js?v=role-access-1';
 
 const $ = id => document.getElementById(id);
 const stat = await api('/api/static');
+const links = await api('/api/master/access');
+$('participantlinks').innerHTML = links.players.map(p => `<p><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(stat.roles.find(r => r.id === p.role)?.name || p.role)}</a></p>`).join('');
+$('debriefdownload').onclick = async e => {
+  e.preventDefault();
+  try { const data = await api('/api/debrief'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'})); const a = document.createElement('a'); a.href = url; a.download = 'debrief.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alertErr(e); }
+};
 let state = null, master = null, tool = 'none';
 
 const TOOLS = [
@@ -154,7 +165,8 @@ $('irecip').innerHTML = `<label><input type="checkbox" value="all" checked> all<
 $('isend').onclick = async () => {
   const recipients = [...$('irecip').querySelectorAll('input:checked')].map(i => i.value);
   try {
-    await api('/api/master/inject', { title: $('ititle').value || 'Inject', sender: $('isender').value || 'EXCON', recipients, text: $('itext').value });
+    await api('/api/master/inject', { title: $('ititle').value || 'Inject', sender: $('isender').value || 'EXCON', recipients, text: $('itext').value, observation: $('imap').value.trim() ? JSON.parse($('imap').value) : undefined });
+    if ($('iperimeter').checked) for (const role of (recipients.includes('all') ? stat.roles.map(r => r.id) : recipients)) await api('/api/master/knowledge', {role, source: $('isender').value || 'EXCON perimeter report', current_perimeter:true});
     $('itext').value = '';
   } catch (e) { alertErr(e); }
 };

@@ -24,8 +24,10 @@
 <script type="module">
 // One window, every role: each role's page lives in its own iframe (kept
 // loaded, so switching is instant). A dot marks roles with unread messages.
-import { api } from './common.js';
+import { api, accessToken } from './common.js?v=role-access-1';
 
+const access = await api('/api/access');
+if (access.kind !== 'master') { location.replace(`player.html?role=${access.role}&token=${encodeURIComponent(accessToken())}`); throw new Error('Master access required'); }
 const s = await api('/api/static');
 const tabs = [{ id: 'master', label: 'Director', src: 'master.html' }]
   .concat(s.roles.map(r => ({ id: r.id, label: r.name.split(' ')[0], full: r.name, src: `player.html?role=${r.id}` })));
@@ -54,7 +56,7 @@ for (const t of tabs) {
   t.btn.onclick = () => show(t.id);
   bar.appendChild(t.btn);
   t.frame = document.createElement('iframe');
-  t.frame.src = t.src;
+  t.frame.src = `${t.src}${t.src.includes('?') ? '&' : '?'}token=${encodeURIComponent(accessToken())}`;
   t.frame.title = t.label;
   frames.appendChild(t.frame);
 }

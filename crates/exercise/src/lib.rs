@@ -20,6 +20,9 @@
 //! Master actions (direct commands, approved Master prompts) apply at once;
 //! approved player actions apply together at resolution.
 
+pub mod knowledge;
+pub use knowledge::{FireCell, MapObservation, KnowledgeEvent, KnowledgeSource};
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
@@ -359,6 +362,7 @@ pub struct Exercise {
     pub log: Vec<LogEntry>,
     /// Append-only accounting evidence, including operations later rolled back.
     pub resource_history: Vec<sim::ResourceEvent>,
+    pub knowledge_events: Vec<KnowledgeEvent>,
     /// Bumped on every change; UIs and the renderer poll it.
     pub generation: u64,
     /// The last resolved turn's time window (the renderer replays it).
@@ -396,6 +400,7 @@ impl Exercise {
             proposals: Vec::new(),
             log: Vec::new(),
             resource_history: Vec::new(),
+            knowledge_events: Vec::new(),
             generation: 1,
             last_turn: None,
             sent_injects: Vec::new(),
@@ -1057,6 +1062,7 @@ impl Exercise {
             "resource_events": self.resource_history,
             "resource_accounting": self.resource_accounting(None),
             "physical_state": self.world.view(),
+            "knowledge_events": self.knowledge_events,
             "proposals": self.proposals,
             "messages": self.messages,
             "log": self.log,

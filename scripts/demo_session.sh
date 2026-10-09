@@ -7,20 +7,22 @@
 set -euo pipefail
 B="${1:-http://localhost:8080}/api"
 H='content-type: application/json'
+: "${TTX_MASTER_KEY:?Set TTX_MASTER_KEY to the Director access key printed at startup}"
+A="Authorization: Bearer $TTX_MASTER_KEY"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-post() { curl -sf -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
+post() { curl -sf -H "$A" -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
 reply() {
   local role="$1" parent body
-  parent=$(curl -sf "$B/player/$role" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(m["id"] for m in reversed(d["inbox"]) if m["kind"] in ("inject","clarification") and m["to"] == d["player"]["role"]))')
+  parent=$(curl -sf -H "$A" "$B/player/$role" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(m["id"] for m in reversed(d["inbox"]) if m["kind"] in ("inject","clarification") and m["to"] == d["player"]["role"]))')
   body=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["reply_to"]=int(sys.argv[2]); d["evidence"]={"basis":{"kind":"operational_judgment","reference":"Operational judgment based on the delivered situation and available units"},"attachments":[]}; print(json.dumps(d))' "$2" "$parent")
   post "/player/$role/reply" "$body"
 }
 wait_parsed() { # wait until no proposal is still being parsed
   for _ in $(seq 60); do
-    curl -sf "$B/master" | grep -q '"status":"parsing"' || return 0; sleep 1
+    curl -sf -H "$A" "$B/master" | grep -q '"status":"parsing"' || return 0; sleep 1
   done
 }
-last_pid() { curl -sf "$B/master" | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposals"][-1]["id"])'; }
+last_pid() { curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposals"][-1]["id"])'; }
 shot() { echo "$ROOT/docs/screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
 
 echo "== setup: regional player plays in Armenian"
@@ -38,7 +40,7 @@ wait_parsed
 echo "== Director prompt: one more bus for the mayor"
 post /master/prompt '{"text":"The regional transport company makes one extra bus available to the mayor right now. Send the mayor a short inject from the Regional transport company confirming it."}'
 wait_parsed
-for id in $(curl -sf "$B/master" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(str(p["id"]) for p in sorted(d["proposals"], key=lambda p: p["source"]["kind"]!="master") if p["status"]=="pending"))'); do
+for id in $(curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(str(p["id"]) for p in sorted(d["proposals"], key=lambda p: p["source"]["kind"]!="master") if p["status"]=="pending"))'); do
   post /master/proposals/$id/decide '{"approve":true}'
 done
 sleep 5
@@ -47,7 +49,7 @@ post /master/resolve '{"minutes":30}' > /dev/null
 sleep 3; shot sim_turn1_end.png
 
 echo "== EXCON confirms first-turn fire tasks completed and units returned"
-for body in $(curl -sf "$B/state" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(json.dumps({"type":"ReturnResource","allocation":a["id"],"qty":a["qty"]-a["returned"]},separators=(",",":")) for a in d["world"]["allocations"] if a["role"]=="fire_commander" and a["qty"]>a["returned"]))'); do
+for body in $(curl -sf -H "$A" "$B/state" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(json.dumps({"type":"ReturnResource","allocation":a["id"],"qty":a["qty"]-a["returned"]},separators=(",",":")) for a in d["world"]["allocations"] if a["role"]=="fire_commander" and a["qty"]>a["returned"]))'); do
   post /master/command "$body"
 done
 echo "== turn 2: escalation"
@@ -59,11 +61,11 @@ wait_parsed
 post /master/proposals/$(last_pid)/decide '{"approve":true,"note":"Send the reviewed clarification asking for the zone edge."}'
 reply fire_commander '{"text":"One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4."}'
 wait_parsed
-for id in $(curl -sf "$B/master" | python3 -c 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin)["proposals"] if p["status"]=="pending"))'); do
+for id in $(curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin)["proposals"] if p["status"]=="pending"))'); do
   post /master/proposals/$id/decide '{"approve":true}'
 done
 sleep 5
 echo "== resolve turn 2 (60 min)"
 post /master/resolve '{"minutes":60}' > /dev/null
 sleep 3; shot sim_turn2_end.png
-curl -sf "$B/state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["world"]["stats"])'
+curl -sf -H "$A" "$B/state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["world"]["stats"])'

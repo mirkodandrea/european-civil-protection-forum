@@ -13,7 +13,6 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use exercise::{MsgKind, ParsedInput, MASTER};
 use futures::future::join_all;
-use serde_json::Value;
 
 use crate::AppState;
 
@@ -66,7 +65,7 @@ pub async fn process_reply(state: AppState, pid: u64) {
             sim::catalogue(&ex.world.scn.role(&role_id).map(|r| r.allowed_actions.clone()).unwrap_or_default()),
             others,
             ex.world.gazetteer(),
-            ex.world.digest(Some(&role_id)),
+            serde_json::json!({"clock":ex.world.clock(),"map":ex.player_map(&role_id).unwrap_or_default(),"resources":ex.world.d.pools.get(&role_id)}),
             history(&ex, &role_id),
             p.original.clone(),
         )
@@ -204,38 +203,15 @@ pub async fn send_drafts(state: &AppState, pid: u64) {
 }
 
 /// End-of-turn situation update for every player.
-pub async fn situation_updates(state: AppState, events_en: Vec<String>) {
-    let per_role: Vec<(String, String, String, Value)> = {
+pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
+    let per_role = {
         let ex = state.lock();
-        ex.players.values().map(|p| (p.role.clone(), p.name.clone(), p.language.clone(), ex.world.digest(Some(&p.role)))).collect()
+        ex.players.values().map(|p| (p.role.clone(), p.language.clone(), format!("{} — Turn resolved. Your resource ledger and reviewed orders are updated. Map reports retain their observation time; await new information from exercise control.", ex.world.clock()))).collect::<Vec<_>>()
     };
-    let futs = per_role.into_iter().map(|(role, _name, lang, digest)| {
-        let llm = state.llm.clone();
-        let events = events_en.clone();
-        async move {
-            let fallback = fallback_update(&digest, &events);
-            let text = if llm.is_available() { llm.translate(&fallback, &lang).await.unwrap_or_else(|_| fallback.clone()) } else { fallback.clone() };
-            (role, text, fallback)
-        }
-    });
-    for (role, text, en) in join_all(futs).await {
-        let title = format!("Situation update – {}", state.lock().world.clock());
-        state.lock().add_message(MASTER, &role, MsgKind::Situation, Some(&title), &text, &en, None);
+    for (role, lang, facts) in per_role {
+        let text = if state.llm.is_available() { state.llm.translate(&facts, &lang).await.unwrap_or_else(|_| facts.clone()) } else { facts.clone() };
+        state.lock().add_message(MASTER, &role, MsgKind::Situation, Some("Turn status"), &text, &facts, None);
     }
-}
-
-fn fallback_update(digest: &Value, events: &[String]) -> String {
-    let mut s = format!(
-        "{} — burned area {} ha, fire in zones {}.",
-        digest["clock"].as_str().unwrap_or(""),
-        digest["fire"]["burned_ha"],
-        digest["fire"]["burning_zones"].as_array().map(|a| a.iter().filter_map(|z| z.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()
-    );
-    for e in events.iter().take(12) {
-        s.push_str("\n• ");
-        s.push_str(e);
-    }
-    s
 }
 
 /// Simulate the resolving turn one simulated second at a time. The lock is

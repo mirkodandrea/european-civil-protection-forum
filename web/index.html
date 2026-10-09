@@ -20,11 +20,18 @@
   </div>
 </main>
 <script type="module">
-import { api, esc } from './common.js';
+import { api, esc, accessToken } from './common.js?v=role-access-1';
 const s = await api('/api/static');
 document.getElementById('scn').textContent = s.name;
 document.getElementById('desc').textContent = s.description;
-document.getElementById('roles').innerHTML = s.roles.map(r => `<p><a href="player.html?role=${r.id}">${esc(r.name)}</a> <span class="muted small">(${esc(r.language)}) ${esc(r.description)}</span></p>`).join('');
+const access = await api('/api/access');
+if (access.kind === 'master') {
+  const links = await api('/api/master/access');
+  document.getElementById('roles').innerHTML = links.players.map(p => `<p><a href="${esc(p.url)}">${esc(s.roles.find(r => r.id === p.role)?.name || p.role)}</a></p>`).join('');
+} else {
+  document.getElementById('roles').innerHTML = `<p><a href="player.html?role=${encodeURIComponent(access.role)}&token=${encodeURIComponent(accessToken())}">Open your role</a></p>`;
+  document.querySelectorAll('a[href="master.html"], a[href="play.html"]').forEach(a => a.hidden = true);
+}
 </script>
 </body>
 </html>

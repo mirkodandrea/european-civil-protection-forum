@@ -16,7 +16,8 @@
 </header>
 <main class="pgrid" id="main">
   <div class="panel a-map">
-    <h2>Situation map</h2>
+    <h2>Reported situation map</h2>
+    <p class="small muted">Only information delivered to your role appears here. Unmarked areas are unknown. Reports retain their observation time; they do not track the live simulator.</p>
     <div class="mapbox"><canvas id="map"></canvas></div>
     <div class="row small legend">
       <span><i style="background:#ff4614"></i>burning</span><span><i style="background:#231e1c"></i>burnt</span>
@@ -51,7 +52,7 @@
       <label for="attachments">Supporting documents, maps or ordinances</label>
       <textarea id="attachments" placeholder="Optional: one Title | https://document-url per line"></textarea>
       <textarea id="reply" placeholder="Write your orders, requests or information in your own words…"></textarea>
-      <div class="row"><button id="send" class="primary">Send</button><span id="status" class="small muted"></span></div>
+      <div class="row"><button id="send" class="primary" disabled>Send</button><span id="status" class="small muted"></span></div>
     </div>
   </div>
   <div class="panel a-role">
@@ -64,7 +65,7 @@
   </div>
 </main>
 <script type="module">
-import { api, live, esc, MapView, statsLine, kindBadge, LANGS } from './common.js';
+import { api, live, esc, MapView, kindBadge, LANGS } from './common.js?v=role-access-1';
 
 const $ = id => document.getElementById(id);
 const role = new URLSearchParams(location.search).get('role');
@@ -103,7 +104,7 @@ $('send').onclick = async () => {
 };
 
 async function refresh() {
-  const [p, st] = await Promise.all([api(`/api/player/${role}`), api('/api/state')]);
+  const p = await api(`/api/player/${role}`);
   document.title = p.player.name;
   $('rolename').textContent = p.player.name;
   $('languagejoin').hidden = p.player.language_confirmed;
@@ -132,8 +133,8 @@ async function refresh() {
   $('basiskind').onchange = showSelected;
   $('basis').oninput = showSelected;
   showSelected();
-  map.setView(st.world);
-  $('stats').textContent = statsLine(st.world.stats);
+  map.setView(p.map);
+  $('stats').textContent = p.map.last_observation_s === null ? 'No map report received yet.' : `${p.map.cells.length} reported cells · ${p.map.reported_locations.length} reported locations · latest observation ${p.map.last_observation_clock}`;
 }
 live(() => refresh().catch(e => { $('status').textContent = e.message; }));
 </script>
