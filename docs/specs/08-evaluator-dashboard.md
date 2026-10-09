@@ -4,7 +4,14 @@
 Evaluators follow the exercise live from their own devices, in their own language, and see the context, the response times and the actions of every player, without asking anyone and without influencing the play.
 
 ## Today
-No evaluator interface. The Master console shows everything, in English, mixed with controls. The debrief JSON has the log after the fact. Spec §8 lists an "Observer/Evaluator UI (P2)".
+Issue #15 delivers `evaluator.html` with three independent read-only capability
+keys, Master-information visibility, role cards, inject/reply/decision/execution
+chains, attachments, training objectives, reference library, evidence filters,
+paged timeline and full debrief export. Server authorization rejects every
+mutation from evaluator keys. Recorded delivery/reply/decision clocks support
+response and Master-queue durations; unrecorded read/send times are not inferred.
+The broader requirements below also describe future evaluator translation,
+notes and extended metrics. Advanced AI assessment is tracked separately in #17.
 
 ## Requirements
 1. **Evaluator role**: read-only, a token like the players', with its own language, chosen at join and changeable. It cannot change anything (server refuses every POST except notes and language).

@@ -20,6 +20,7 @@
 //! Master actions (direct commands, approved Master prompts) apply at once;
 //! approved player actions apply together at resolution.
 
+pub mod evaluation;
 pub mod knowledge;
 pub use knowledge::{FireCell, MapObservation, KnowledgeEvent, KnowledgeSource};
 
@@ -39,7 +40,7 @@ pub const CONVERSATION_MAX: usize = 60;
 pub const STEP_S: i64 = 1;
 pub const MASTER: &str = "master";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     Briefing,
@@ -315,6 +316,7 @@ pub struct TurnReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
+    pub phase: Phase,
     pub seq: u64,
     pub wall_ms: u128,
     pub turn: u32,
@@ -363,6 +365,7 @@ pub struct Exercise {
     /// Append-only accounting evidence, including operations later rolled back.
     pub resource_history: Vec<sim::ResourceEvent>,
     pub knowledge_events: Vec<KnowledgeEvent>,
+    pub reference_materials: Vec<DecisionEvidence>,
     /// Bumped on every change; UIs and the renderer poll it.
     pub generation: u64,
     /// The last resolved turn's time window (the renderer replays it).
@@ -401,6 +404,7 @@ impl Exercise {
             log: Vec::new(),
             resource_history: Vec::new(),
             knowledge_events: Vec::new(),
+            reference_materials: Vec::new(),
             generation: 1,
             last_turn: None,
             sent_injects: Vec::new(),
@@ -440,6 +444,7 @@ impl Exercise {
 
     pub fn record(&mut self, kind: &str, actor: &str, data: Value) {
         let e = LogEntry {
+            phase: self.phase,
             seq: self.log.len() as u64 + 1,
             wall_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
             turn: self.turn,
@@ -1063,6 +1068,8 @@ impl Exercise {
             "resource_accounting": self.resource_accounting(None),
             "physical_state": self.world.view(),
             "knowledge_events": self.knowledge_events,
+            "reference_materials": self.reference_materials,
+            "objectives": self.world.scn.msel.iter().map(|i| json!({"inject":i.id,"objective":i.objective})).collect::<Vec<_>>(),
             "proposals": self.proposals,
             "messages": self.messages,
             "log": self.log,

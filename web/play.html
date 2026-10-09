@@ -24,7 +24,7 @@
 <script type="module">
 // One window, every role: each role's page lives in its own iframe (kept
 // loaded, so switching is instant). A dot marks roles with unread messages.
-import { api, accessToken } from './common.js?v=role-access-1';
+import { api, accessToken } from './common.js?v=role-access-2';
 
 const access = await api('/api/access');
 if (access.kind !== 'master') { location.replace(`player.html?role=${access.role}&token=${encodeURIComponent(accessToken())}`); throw new Error('Master access required'); }

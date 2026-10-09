@@ -122,4 +122,6 @@ The server tests play the whole Master ↔ player ↔ LLM loop over HTTP with a 
 Player maps show reported locations and perimeter observations delivered to that
 role. The Master can attach map data to injects or publish a reviewed perimeter;
 undisclosed simulation changes remain hidden. See [role access and map API](docs/api.md#role-access-and-map-information).
-Scripted demos require `TTX_MASTER_KEY` from the startup link.
+Scripted demos require `TTX_MASTER_KEY` from the startup link. The console also
+provides three evaluator links: each opens a read-only evidence dashboard with
+chains, objectives, supporting documents, filters, and full debrief export.

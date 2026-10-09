@@ -187,3 +187,41 @@ Alternatively, `{"role":"mayor","source":"Reviewed aerial survey","current_perim
 explicitly discloses a full current raster snapshot. This Master-only choice is
 also available beside the custom inject form. Subsequent simulation changes stay
 undisclosed until another report. Debriefs retain the linked acquisition evidence.
+
+## Read-only evaluators
+
+Three independent evaluator keys are generated per run. The Master obtains their
+links from `/api/master/access`. `GET /api/access` identifies the evaluator. Each
+key permits read-only Master information (`/api/static`, `/api/state`,
+`/api/master`, `/api/catalogue`, `/api/debrief`, `/api/evaluator`, and `/ws`). Every
+POST is denied, including player replies/languages, reference changes and Master
+controls. Evaluators cannot retrieve participant access keys. The page has no
+exercise action controls and supports multiple concurrent evaluators.
+
+`GET /api/evaluator` returns context, role cards, objective-to-MSEL delivery links,
+reference plans/procedures, communication chains, map-acquisition evidence,
+resource accounting, and a paged evidence timeline. Filters: `role`, `inject`
+(unique delivery ID), `turn`, `phase` (`briefing`, `orders`, `resolving`, `debrief`),
+`status`, and timeline event `kind`. Chains are selected by declaration turn/phase
+and retain their complete subsequent decision/execution history. Timeline filters
+apply to each event's own turn/phase. `offset` defaults to 0 and `limit` to 200
+(maximum 1000); `timeline_total` counts all matching records, ordered newest first.
+The full debrief export retains all evidence, including rolled-back executions.
+
+Response metrics are computed from the delivered parent message, declaration's
+first history entry, and Master decision: `reply_delay_wall_ms`,
+`reply_delay_sim_s`, `master_queue_wall_ms`, and `master_queue_sim_s`. Missing events
+produce null metrics; read/open times and translation-send latency are not inferred.
+Wall durations are elapsed milliseconds; simulated durations follow the recorded
+simulation clock and can reflect rollback. Role cards count actual recorded
+approvals/edits/rejections/executions. Training objectives come from scenario MSEL
+entries; actual delivery IDs connect them to communication chains.
+
+The Master can publish a reference library through `POST /api/master/references`
+with `{"references":[{"basis":{"kind":"plan","reference":"Plan title/section"},
+"attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}]}`.
+Plan/procedure references and links use decision-evidence validation and are
+retained with change history in debriefs. The dashboard also exposes the original
+basis and attachments on every player decision. Evaluator language translation,
+notes and advanced AI assessment are separate enhancements; this dashboard is
+strictly read-only and shows English working text plus delivered original wording.

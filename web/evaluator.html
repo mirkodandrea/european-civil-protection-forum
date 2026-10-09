@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TTX evaluator</title><link rel="stylesheet" href="style.css">
+<style>main {display:grid;grid-template-columns:minmax(280px,1fr) minmax(320px,2fr);gap:12px} pre {white-space:pre-wrap;overflow-wrap:anywhere} .filters {display:flex;flex-wrap:wrap;gap:8px} .filters label {max-width:150px} .card {margin-bottom:8px} @media(max-width:800px){main{grid-template-columns:1fr}}</style></head>
+<body>
+<header><h1>Evaluator · read-only</h1><span id="context" class="small"></span><span class="grow"></span><a href="#" id="export" style="color:white">Export full debrief</a></header>
+<main><section>
+<div class="panel"><h2>Authoritative situation</h2><div class="mapbox"><canvas id="map"></canvas></div><div id="stats" class="small"></div><div id="resources" class="small"></div></div>
+<div class="panel"><h2>Participants</h2><div id="cards"></div></div>
+<div class="panel"><h2>Training objectives</h2><div id="objectives"></div><h2>Reference plans and procedures</h2><div id="references"></div></div>
+</section><section>
+<div class="panel"><h2>Evidence filters</h2><div class="filters">
+<label>Player<select id="role"><option value="">All</option></select></label>
+<label>Inject delivery ID<input id="inject" type="number" min="1"></label>
+<label>Declaration turn<input id="turn" type="number" min="0"></label>
+<label>Declaration phase<select id="phase"><option value="">All</option><option>briefing</option><option>orders</option><option>resolving</option><option>debrief</option></select></label>
+<label>Decision status<select id="status"><option value="">All</option><option>parsing</option><option>pending</option><option>needs_clarification</option><option>approved</option><option>rejected</option><option>applied</option><option>failed</option><option>rolled_back</option></select></label>
+<label>Timeline event kind<input id="kind" placeholder="e.g. message"></label>
+</div><p class="small muted">Chains keep their full reply, decision and execution history after filtering by declaration. Timeline filters use each event's own turn and phase. No action controls are available.</p><div id="error" class="error"></div></div>
+<div class="panel"><h2>Inject → reply → approval → execution</h2><div id="chains"></div></div>
+<div class="panel"><h2>Transmitted messages</h2><div id="messages"></div></div>
+<div class="panel"><h2>Evidence timeline</h2><div class="row"><button id="newer">Newer events</button><button id="older">Older events</button><span id="range" class="small"></span></div><div id="timeline"></div></div>
+</section></main>
+<script type="module">
+import {api,live,esc,MapView,statsLine,kindBadge} from './common.js?v=role-access-2';
+const $ = id => document.getElementById(id);
+const access = await api('/api/access');
+if (!['master','evaluator'].includes(access.kind)) { $('error').textContent='Evaluator access required'; throw new Error('Evaluator access required'); }
+const stat = await api('/api/static');
+$('role').innerHTML += stat.roles.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('') + '<option value="master">Master</option>';
+const map = new MapView($('map'),stat);
+let offset=0, busy=false, rerun=false;
+const wall = ms => new Date(Number(ms)).toLocaleString();
+const evidence = e => e ? `<p><b>${esc(e.basis.kind.replaceAll('_',' '))}:</b> ${esc(e.basis.reference)}</p>${e.attachments.map(a => `<p><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></p>`).join('')}` : '<p class="muted">No player evidence attached (Master-origin proposal).</p>';
+const durations = c => `Reply after delivery: ${c.reply_delay_wall_ms === null ? 'unanswered' : `${(Number(c.reply_delay_wall_ms)/1000).toFixed(1)} s wall / ${c.reply_delay_sim_s} s simulated`}; Master queue: ${c.master_queue_wall_ms === null ? 'undecided' : `${(Number(c.master_queue_wall_ms)/1000).toFixed(1)} s wall / ${c.master_queue_sim_s} s simulated`}`;
+for (const id of ['role','inject','turn','phase','status','kind']) $(id).onchange = () => {offset=0;refresh();};
+$('newer').onclick=()=>{offset=Math.max(0,offset-200);refresh();};
+$('older').onclick=()=>{offset+=200;refresh();};
+$('export').onclick=async e=>{e.preventDefault();try{const data=await api('/api/debrief');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='evaluator-debrief.json';a.click();URL.revokeObjectURL(url);}catch(e){$('error').textContent=e.message;}};
+async function refresh() {
+ if(busy){rerun=true;return;}busy=true;
+ const opened=new Set([...document.querySelectorAll('details[open][data-record]')].map(el=>el.dataset.record));
+ try {
+  const q = new URLSearchParams({offset:String(offset)});
+  for(const id of ['role','inject','turn','phase','status','kind'])if($(id).value)q.set(id,$(id).value);
+  const [v,state]=await Promise.all([api('/api/evaluator?'+q),api('/api/state')]);
+  $('error').textContent='';
+  $('context').textContent=`${access.id || 'Master preview'} · ${v.context.clock} · turn ${v.context.turn} · ${v.context.phase} · ${v.context.pending} awaiting Master/interpretation`;
+  map.setView(state.world);$('stats').textContent=statsLine(v.context.stats);
+  $('resources').innerHTML=`<details data-record="resources"><summary>Cumulative resource accounting</summary><pre>${esc(JSON.stringify(v.resource_accounting,null,2))}</pre></details>`;
+  $('cards').innerHTML=v.role_cards.map(c=>`<div class="card"><b>${esc(c.player.name)}</b><div class="small">Last inject ${c.last_inject ? `#${c.last_inject.inject_id} · ${esc(c.last_inject.clock)} · ${wall(c.last_inject.wall_ms)}` : 'none'}</div><div class="small">${c.awaiting_reply ? `Awaiting reply · ${((Date.now()-Number(c.last_inject.wall_ms))/1000).toFixed(0)} s wall since delivery` : `Last declaration: ${esc(c.last_reply?.status || 'none')}`}</div><div class="small">${Object.entries(c.counts).map(([k,n])=>`${esc(k)} ${n}`).join(' · ')}</div></div>`).join('');
+  $('objectives').innerHTML=v.objectives.map(o=>`<details data-record="objective-${esc(o.msel_id)}"><summary>${esc(o.msel_id)} · ${esc(o.title)}</summary><p>${esc(o.objective)}</p><p class="small">Planned turn ${o.planned_turn} · ${o.deliveries.length} actual deliveries</p>${o.deliveries.map(d=>`<p class="small">Inject #${d.data.inject_id} · ${esc(d.clock)} · recipients ${esc(d.data.recipients.join(', '))}</p>`).join('')}</details>`).join('');
+  $('references').innerHTML=v.reference_materials.length?v.reference_materials.map(evidence).join(''):'<p class="muted small">No reference library published. Consult each decision’s cited basis and attachments below.</p>';
+  $('chains').innerHTML=v.chains.map(c=>{const p=c.proposal;return `<details class="card" data-record="proposal-${p.id}"><summary>#${p.id} · ${esc(p.source.role || 'Master')} · inject #${p.inject_id ?? '—'} · ${esc(p.status)} · turn ${p.turn}</summary><p>${esc(p.original)}</p>${p.translation_en && p.translation_en !== p.original ? `<p class="small">English interpretation: ${esc(p.translation_en)}</p>`:''}${evidence(p.evidence)}<p class="small">${esc(durations(c))}</p><h3>State history</h3>${p.history.map(h=>`<p class="small">${esc(h.status)} · ${wall(h.wall_ms)} · t+${h.t_s}s · ${esc(h.actor)} · ${esc(h.note)}</p>`).join('')}<h3>Master decision</h3><pre>${esc(JSON.stringify(p.decision,null,2))}</pre><h3>Actual execution outcomes</h3>${p.executions.length?p.executions.map(e=>`<div class="small"><b>${e.ok?'Executed':'Failed'}</b> · t+${e.t_s}s · ${wall(e.wall_ms)}<pre>${esc(JSON.stringify(e,null,2))}</pre></div>`).join(''):'<p class="muted small">No recorded execution.</p>'}<h3>Complete communication chain</h3>${c.messages.map(m=>`<p class="small">#${m.id} ${esc(m.from)} → ${esc(m.to)} · ${esc(m.clock)} · ${esc(m.text_en)}</p>`).join('')}</details>`;}).join('')||'<p class="muted">No matching declarations.</p>';
+  $('messages').innerHTML=v.messages.map(m=>`<details class="card" data-record="message-${m.id}"><summary>${kindBadge(m.kind)} #${m.id} · ${esc(m.from)} → ${esc(m.to)} · inject #${m.inject_id ?? '—'} · ${esc(m.clock)}</summary><p>${esc(m.text_en)}</p>${m.text!==m.text_en?`<p class="small">Delivered wording: ${esc(m.text)}</p>`:''}<p class="small">Wall: ${wall(m.wall_ms)} · reply to #${m.reply_to ?? '—'} · proposal #${m.proposal ?? '—'}</p></details>`).join('');
+  $('range').textContent=`${v.timeline_total ? offset+1 : 0}–${Math.min(offset+v.timeline.length,v.timeline_total)} of ${v.timeline_total} events (newest first)`;
+  $('newer').disabled=offset===0;$('older').disabled=offset+v.limit>=v.timeline_total;
+  $('timeline').innerHTML=v.timeline.map(l=>`<details data-record="log-${l.seq}"><summary>#${l.seq} · ${esc(l.kind)} · ${esc(l.actor)} · ${esc(l.clock)} · ${esc(l.phase)} · turn ${l.turn}</summary><p class="small">Wall: ${wall(l.wall_ms)}</p><pre>${esc(JSON.stringify(l.data,null,2))}</pre></details>`).join('');
+  for(const el of document.querySelectorAll('details[data-record]'))el.open=opened.has(el.dataset.record);
+ }catch(e){$('error').textContent=e.message;}finally{busy=false;if(rerun){rerun=false;refresh();}}
+}
+live(refresh);
+</script></body></html>
