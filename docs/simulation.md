@@ -36,7 +36,7 @@ Deliberately simple around a real fire core: no individual people, no suppressio
 ## Roads, resources, reinforcements
 
 - A road is **cut by fire** when any cell along it burns (reported once). `CloseRoad` is a status for traffic management and uses a police patrol. There is no traffic model yet.
-- Resource pools belong to roles, with `total` and `used`; `used` resets each turn.
+- Resource pools belong to roles, with `total` and `used` (actual deployed units). Deployment usage persists across turns and phases. Each successful resource-consuming command creates an allocation with a unique ID. EXCON confirms partial or full returns with `ReturnResource`; returning units does not undo fire lines, drops or evacuation effects. Requested declarations and approved commitments remain separate from actual deployment. Availability changes cannot reduce total stock below deployed quantities.
 - `RequestReinforcement` schedules an arrival (`delay_min` from the offer). On arrival the offer's role gets `total += qty`.
 
 ## Calibration (synthetic scenario)

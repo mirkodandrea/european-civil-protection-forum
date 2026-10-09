@@ -129,7 +129,7 @@ fn extinguish_zone_and_rollback() {
 }
 
 #[test]
-fn reinforcements_arrive_after_delay_and_turns_reset_usage() {
+fn reinforcements_arrive_after_delay_and_turns_preserve_deployments() {
     let mut w = world();
     let req = Command::RequestReinforcement { resource: "ground_crews".into(), qty: 2 };
     w.apply(&req, &role("regional_cp")).unwrap();
@@ -140,7 +140,7 @@ fn reinforcements_arrive_after_delay_and_turns_reset_usage() {
     w.advance(61 * 60).unwrap();
     assert_eq!(w.d.pools["fire_commander"]["ground_crews"].total, 5);
     w.new_turn();
-    assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used, 0);
+    assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used, 1);
 }
 
 #[test]
@@ -175,4 +175,53 @@ fn digest_and_view_are_well_formed() {
     let raster = base64::engine::general_purpose::STANDARD.decode(v["fire"].as_str().unwrap()).unwrap();
     assert_eq!(raster.len(), w.scn.grid.len());
     assert!(w.gazetteer()["map"].as_str().unwrap().contains("A1"));
+}
+
+#[test]
+fn allocations_persist_and_returns_cannot_duplicate_or_undo_physical_work() {
+    let mut w = world();
+    let cmd = Command::CutFireLine { from: None, to: None, along: Some("G3:S".into()), width_m: None };
+    w.apply(&cmd, &role("fire_commander")).unwrap();
+    let allocation = w.d.allocations[0].id;
+    let line_count = w.d.lines.len();
+    assert_eq!(w.d.allocations[0].qty, 1);
+    let deployed = w.snapshot();
+    w.new_turn();
+    w.advance(60).unwrap();
+    assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used, 1);
+    let release = Command::ReturnResource { allocation, qty: 1 };
+    assert!(w.apply(&release, &role("fire_commander")).is_err(), "returns require EXCON confirmation");
+    assert!(w.apply(&Command::AdjustResource { role:"fire_commander".into(), resource:"ground_crews".into(), delta:-3 }, &Actor::Master).is_err());
+    w.apply(&release, &Actor::Master).unwrap();
+    assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used, 0);
+    assert_eq!(w.d.allocations[0].returned, 1);
+    assert_eq!(w.d.lines.len(), line_count);
+    assert!(w.apply(&release, &Actor::Master).is_err());
+    assert_eq!(w.d.resource_events.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(), vec!["deployed", "returned"]);
+    w.restore(&deployed).unwrap();
+    assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used, 1);
+    assert_eq!(w.d.allocations[0].returned, 0);
+    w.apply(&cmd, &role("fire_commander")).unwrap();
+    assert!(w.d.allocations[1].id > allocation, "rollback cannot reuse allocation identity");
+}
+
+#[test]
+fn batch_reinforcements_and_returns_respect_existing_reservations() {
+    let mut w = world();
+    let req = Command::RequestReinforcement { resource:"ground_crews".into(), qty:2 };
+    let verdicts = w.validate_batch(&[], &[req.clone(), req.clone()], &role("regional_cp"));
+    assert!(verdicts[0].is_ok());
+    assert!(!verdicts[1].is_ok());
+    let prior = vec![(role("regional_cp"), req.clone())];
+    assert!(!w.validate_batch(&prior, std::slice::from_ref(&req), &role("regional_cp"))[0].is_ok());
+    w.apply(&req, &role("regional_cp")).unwrap();
+    w.advance(61 * 60).unwrap();
+    assert!(w.d.resource_events.iter().any(|e| e.kind == "requested"));
+    assert!(w.d.resource_events.iter().any(|e| e.kind == "arrived"));
+    assert!(!w.validate(&req, &role("regional_cp")).is_ok(), "arrived reinforcements still count against total offer");
+    w.apply(&Command::CutFireLine { from:None, to:None, along:Some("G3:S".into()), width_m:None }, &role("fire_commander")).unwrap();
+    let release = Command::ReturnResource { allocation:w.d.allocations[0].id, qty:1 };
+    let verdicts = w.validate_batch(&[], &[release.clone(), release], &Actor::Master);
+    assert!(verdicts[0].is_ok());
+    assert!(!verdicts[1].is_ok());
 }

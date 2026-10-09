@@ -98,6 +98,7 @@ impl World {
             "facilities": facilities,
             "populated_zones": populated,
             "roads": roads,
+            "resources": pools,
             "resources_this_turn": pools,
             "reinforcements_en_route": arrivals,
             "open_shelters": self.d.shelters.keys().filter_map(|id| self.scn.buildings.iter().find(|b| b.id == *id).and_then(|b| b.name.clone())).collect::<Vec<_>>(),
@@ -172,6 +173,8 @@ impl World {
             "warned": self.d.warned,
             "shelters": self.d.shelters,
             "pools": self.d.pools,
+            "allocations": self.d.allocations,
+            "resource_events": self.d.resource_events,
             "arrivals": self.d.arrivals,
             "burning_zones": self.burning_zones(),
         })

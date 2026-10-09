@@ -29,7 +29,7 @@ pub use fire::FireOptions;
 /// arrivals update every simulated second; the fire core is event-driven, so
 /// its result does not depend on this.
 pub const SUBSTEP_S: i64 = 1;
-/// Metres of fire line one ground crew cuts per turn.
+/// Metres of fire line one ground crew can cut in an assigned task.
 pub const LINE_M_PER_CREW: f32 = 600.0;
 pub const DEFAULT_LINE_WIDTH_M: f32 = 40.0;
 pub const DROP_RADIUS_M: f32 = 60.0;
@@ -144,6 +144,28 @@ pub struct Arrival {
     pub source: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceAllocation {
+    pub id: u64,
+    pub role: String,
+    pub resource: String,
+    pub qty: u32,
+    pub returned: u32,
+    pub command: Command,
+    pub deployed_at_s: i64,
+    pub last_return_at_s: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceEvent {
+    pub kind: String,
+    pub allocation: Option<u64>,
+    pub role: String,
+    pub resource: String,
+    pub qty: i64,
+    pub t_s: i64,
+}
+
 /// Everything that changes, except the fire (which snapshots itself).
 #[derive(Debug, Clone)]
 pub struct Dyn {
@@ -155,6 +177,8 @@ pub struct Dyn {
     pub shelters: BTreeMap<u32, u32>,
     pub warned: BTreeSet<String>,
     pub pools: BTreeMap<String, BTreeMap<String, Pool>>,
+    pub allocations: Vec<ResourceAllocation>,
+    pub resource_events: Vec<ResourceEvent>,
     pub arrivals: Vec<Arrival>,
     pub events: Vec<SimEvent>,
 }
@@ -179,6 +203,7 @@ pub struct World {
     pub fire: FireSim,
     pub d: Dyn,
     cache: Cache,
+    next_allocation_id: u64,
 }
 
 impl World {
@@ -227,10 +252,13 @@ impl World {
                 shelters: BTreeMap::new(),
                 warned: BTreeSet::new(),
                 pools,
+                allocations: Vec::new(),
+                resource_events: Vec::new(),
                 arrivals: Vec::new(),
                 events: Vec::new(),
             },
             cache,
+            next_allocation_id: 1,
         })
     }
 
@@ -253,13 +281,21 @@ impl World {
         Ok(())
     }
 
-    /// Start of a new turn: per-turn resource usage resets.
-    pub fn new_turn(&mut self) {
-        for pools in self.d.pools.values_mut() {
-            for p in pools.values_mut() {
-                p.used = 0;
-            }
-        }
+    /// Opening a turn preserves actual deployments and physical state.
+    /// Resources become available only through an explicit ReturnResource command.
+    pub fn new_turn(&mut self) {}
+
+    fn resource_event(&mut self, kind: &str, allocation: Option<u64>, role: &str, resource: &str, qty: i64) {
+        self.d.resource_events.push(ResourceEvent { kind: kind.into(), allocation, role: role.into(), resource: resource.into(), qty, t_s: self.time_s() });
+    }
+
+    /// Requested quantities, independent of available units. Invalid places/actions yield no demand.
+    pub fn resource_requirements(&self, cmd: &Command, actor: &Actor) -> BTreeMap<String, u32> {
+        let Actor::Role(role) = actor else { return BTreeMap::new() };
+        let mut pools = self.d.pools.clone();
+        pools.insert(role.clone(), self.scn.resource_types.iter().map(|r| (r.id.clone(), Pool { total: u32::MAX, used: 0 })).collect());
+        if self.check_inner(cmd, actor, &mut pools).is_err() { return BTreeMap::new(); }
+        pools.get(role).into_iter().flat_map(|p| p.iter().filter(|(_, p)| p.used > 0).map(|(resource, p)| (resource.clone(), p.used))).collect()
     }
 
     fn event(&mut self, kind: &str, text: String, zone: Option<String>) -> SimEvent {
@@ -337,10 +373,37 @@ impl World {
     /// (already-approved, not yet applied) commands have consumed resources.
     pub fn validate_batch(&self, prior: &[(Actor, Command)], cmds: &[Command], actor: &Actor) -> Vec<Verdict> {
         let mut pools = self.d.pools.clone();
-        for (a, c) in prior {
-            let _ = self.check(c, a, &mut pools);
-        }
-        cmds.iter().map(|c| self.check(c, actor, &mut pools)).collect()
+        let mut requested: BTreeMap<String, u32> = BTreeMap::new();
+        let mut returned: BTreeMap<u64, u32> = BTreeMap::new();
+        let mut check = |cmd: &Command, actor: &Actor| {
+            match cmd {
+                Command::RequestReinforcement { resource, qty } => {
+                    if let Some(offer) = self.offer(resource) {
+                        let prior = requested.get(resource).copied().unwrap_or(0);
+                        let left = offer.max_qty.saturating_sub(self.requested_so_far(resource)).saturating_sub(prior);
+                        if *qty > left { return Verdict::Rejected { reason: format!("only {left} more {resource} available after approved requests") }; }
+                    }
+                }
+                Command::ReturnResource { allocation, qty } => {
+                    if let Some(a) = self.d.allocations.iter().find(|a| a.id == *allocation) {
+                        let prior = returned.get(allocation).copied().unwrap_or(0);
+                        if *qty > a.qty.saturating_sub(a.returned).saturating_sub(prior) { return Verdict::Rejected { reason: "return quantity exceeds remaining allocation".into() }; }
+                    }
+                }
+                _ => {}
+            }
+            let verdict = self.check(cmd, actor, &mut pools);
+            if verdict.is_ok() {
+                match cmd {
+                    Command::RequestReinforcement { resource, qty } => *requested.entry(resource.clone()).or_default() += *qty,
+                    Command::ReturnResource { allocation, qty } => *returned.entry(*allocation).or_default() += *qty,
+                    _ => {}
+                }
+            }
+            verdict
+        };
+        for (actor, cmd) in prior { let _ = check(cmd, actor); }
+        cmds.iter().map(|cmd| check(cmd, actor)).collect()
     }
 
     pub fn validate(&self, cmd: &Command, actor: &Actor) -> Verdict {
@@ -372,7 +435,7 @@ impl World {
             let pool = pools.get_mut(&r.id).and_then(|p| p.get_mut(res));
             let avail = pool.as_ref().map(|p| p.available()).unwrap_or(0);
             if avail < n {
-                return Err(format!("{what} needs {n} {res}, only {avail} available this turn"));
+                return Err(format!("{what} needs {n} {res}, only {avail} currently available"));
             }
             if let Some(p) = pool {
                 p.used += n;
@@ -476,13 +539,23 @@ impl World {
                     return Err(format!("unknown building or zone \"{building}\""));
                 }
             }
-            Command::AdjustResource { role, resource, .. } => {
+            Command::ReturnResource { allocation, qty } => {
+                let a = self.d.allocations.iter().find(|a| a.id == *allocation).ok_or_else(|| format!("unknown allocation {allocation}"))?;
+                if *qty == 0 || *qty > a.qty.saturating_sub(a.returned) { return Err("return quantity exceeds active allocation".into()); }
+                let p = pools.get_mut(&a.role).and_then(|p| p.get_mut(&a.resource)).ok_or("allocation pool missing")?;
+                if p.used < *qty { return Err("return exceeds deployed units".into()); }
+                p.used -= *qty;
+            }
+            Command::AdjustResource { role, resource, delta } => {
                 if self.scn.role(role).is_none() {
                     return Err(format!("unknown role {role}"));
                 }
                 if !self.scn.resource_types.iter().any(|r| &r.id == resource) {
                     return Err(format!("unknown resource {resource}"));
                 }
+                let p = pools.get(role).and_then(|p| p.get(resource)).copied().unwrap_or(Pool { total: 0, used: 0 });
+                let total = p.total as i64 + *delta as i64;
+                if total < p.used as i64 || total > u32::MAX as i64 { return Err("availability cannot fall below deployed units or overflow".into()); }
             }
             Command::AdvanceTime { minutes } => {
                 if *minutes == 0 || *minutes > 60 * 24 * 14 {
@@ -532,7 +605,8 @@ impl World {
     /// Execute a command. Validates first; resources are consumed from the
     /// acting role. Returns human-readable notes.
     pub fn apply(&mut self, cmd: &Command, actor: &Actor) -> Result<Vec<String>, String> {
-        let mut pools = self.d.pools.clone();
+        let before_pools = self.d.pools.clone();
+        let mut pools = before_pools.clone();
         let notes = self.check_inner(cmd, actor, &mut pools)?;
         self.d.pools = pools;
         let by = actor.label().to_string();
@@ -598,6 +672,7 @@ impl World {
                     at_s: t + o.delay_min as i64 * 60,
                     source: o.source.clone(),
                 });
+                self.resource_event("requested", None, &o.assigned_to, resource, *qty as i64);
                 self.event("reinforcement_requested", format!("{by} requested {qty} {resource} from {} (ETA {} min)", o.source, o.delay_min), None);
             }
             Command::Ignite { at, radius_m } => {
@@ -668,15 +743,34 @@ impl World {
                 }
                 self.event("building_status", format!("Master set {}", cmd.describe().trim_start_matches("Set ")), None);
             }
+            Command::ReturnResource { allocation, qty } => {
+                let a = self.d.allocations.iter_mut().find(|a| a.id == *allocation).unwrap();
+                a.returned += *qty;
+                a.last_return_at_s = Some(t);
+                let (role, resource) = (a.role.clone(), a.resource.clone());
+                self.resource_event("returned", Some(*allocation), &role, &resource, *qty as i64);
+                self.event("resources_returned", format!("{qty} {resource} returned to {role} from allocation #{allocation}"), None);
+            }
             Command::AdjustResource { role, resource, delta } => {
                 let p = self.d.pools.entry(role.clone()).or_default().entry(resource.clone()).or_insert(Pool { total: 0, used: 0 });
                 p.total = (p.total as i64 + *delta as i64).max(0) as u32;
+                self.resource_event("adjusted", None, role, resource, *delta as i64);
                 self.event("resources", format!("{role} {resource} adjusted by {delta:+}"), None);
             }
             Command::AdvanceTime { minutes } => {
                 let ev = self.advance(*minutes as i64 * 60).map_err(|e| e.to_string())?;
                 out.push(format!("{} events", ev.len()));
             }
+        }
+        let deployed: Vec<(String, String, u32)> = self.d.pools.iter().flat_map(|(role, pools)| pools.iter().filter_map(|(resource, p)| {
+            let previous = before_pools.get(role).and_then(|p| p.get(resource)).map(|p| p.used).unwrap_or(0);
+            (p.used > previous).then(|| (role.clone(), resource.clone(), p.used - previous))
+        })).collect();
+        for (role, resource, qty) in deployed {
+            let id = self.next_allocation_id;
+            self.next_allocation_id += 1;
+            self.d.allocations.push(ResourceAllocation { id, role: role.clone(), resource: resource.clone(), qty, returned: 0, command: cmd.clone(), deployed_at_s: t, last_return_at_s: None });
+            self.resource_event("deployed", Some(id), &role, &resource, qty as i64);
         }
         Ok(out)
     }
@@ -809,6 +903,7 @@ impl World {
         for a in due {
             let p = self.d.pools.entry(a.role.clone()).or_default().entry(a.resource.clone()).or_insert(Pool { total: 0, used: 0 });
             p.total += a.qty;
+            self.resource_event("arrived", None, &a.role, &a.resource, a.qty as i64);
             self.event("reinforcement_arrived", format!("{} {} from {} arrived for {}", a.qty, a.resource, a.source, a.role), None);
         }
     }

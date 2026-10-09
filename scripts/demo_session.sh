@@ -44,6 +44,10 @@ echo "== resolve turn 1 (30 min)"
 post /master/resolve '{"minutes":30}' > /dev/null
 sleep 3; shot sim_turn1_end.png
 
+echo "== EXCON confirms first-turn fire tasks completed and units returned"
+for body in $(curl -sf "$B/state" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(json.dumps({"type":"ReturnResource","allocation":a["id"],"qty":a["qty"]-a["returned"]},separators=(",",":")) for a in d["world"]["allocations"] if a["role"]=="fire_commander" and a["qty"]>a["returned"]))'); do
+  post /master/command "$body"
+done
 echo "== turn 2: escalation"
 post /master/msel/I-04/send
 post /master/command '[{"type":"SetWeather","wind_speed_kmh":55},{"type":"Ignite","at":"G5","radius_m":60}]'

@@ -109,3 +109,20 @@ rechecks effective approval after translation, and records proposal/message IDs.
 Rejected, failed or rolled-back suggestions cannot produce operational messages.
 Automatic decision feedback and turn summaries translate recorded facts, preserving
 original English evidence, rather than generating new operational content.
+
+## Persistent resource accounting
+
+`/api/state` exposes `resource_accounting` by role/resource. Player responses expose
+their own accounting and allocations. `requested` is demand in pending declarations;
+`committed` is approved demand queued for execution; `deployed` is actual usage;
+`available` subtracts both commitments and deployments; `returned` is cumulative
+confirmed returns. `external_requested` records executed requests still awaiting
+reinforcement arrival. World/debrief data retain allocations, resource events and
+actual physical state.
+
+Deployment does not reset when opening a turn or changing phase. Each execution
+records its allocation IDs. EXCON returns units with
+`{"type":"ReturnResource","allocation":id,"qty":count}`; excess/duplicate returns
+are rejected and physical effects remain in place. Inventory cannot be reduced
+below active deployment. Snapshot rollback restores the actual ledger but retains
+execution/rollback evidence in the exercise log; allocation IDs are never reused.
