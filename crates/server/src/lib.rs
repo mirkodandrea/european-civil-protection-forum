@@ -74,6 +74,7 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/master/access", get(get_access_links))
         .route("/api/master/knowledge", post(post_knowledge))
         .route("/api/master/references", post(post_references))
+        .route("/api/master/resource-limits", post(post_resource_limits))
         .route("/api/master/clock", post(post_clock))
         .route("/api/master/phase", post(post_phase))
         .route("/api/master/schedules", post(post_schedule))
@@ -189,6 +190,7 @@ async fn get_state(State(s): State<AppState>) -> ApiResult {
         "wall_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
         "exercise_phase":ex.exercise_phase,
         "phase_history":ex.phase_history,
+        "resource_limits":ex.resource_limits,
         "clock_control":ex.clock_control,
         "scheduled_injects":ex.scheduled_injects,
         "turn": ex.turn,
@@ -296,6 +298,11 @@ async fn post_language(State(s): State<AppState>, Path(role): Path<String>, Json
 
 #[derive(Deserialize)]
 struct ClockBody { running:bool, ratio:f64, #[serde(default)] reason:String }
+#[derive(Deserialize)]
+struct LimitsBody {limits:exercise::ResourceLimits,reason:String}
+async fn post_resource_limits(State(s):State<AppState>,Json(b):Json<LimitsBody>)->ApiResult {
+    s.lock().set_resource_limits(b.limits,&b.reason,None)?;Ok(Json(json!({"ok":true})))
+}
 async fn post_clock(State(s):State<AppState>,Json(b):Json<ClockBody>)->ApiResult {
     s.lock().configure_clock(b.running,b.ratio,&b.reason)?;Ok(Json(json!({"ok":true})))
 }
@@ -375,6 +382,8 @@ async fn post_prompt(State(s): State<AppState>, Json(b): Json<TextBody>) -> ApiR
 #[derive(Deserialize)]
 struct DecideBody {
     #[serde(default)]
+    resource_limits:Option<exercise::ResourceLimits>,
+    #[serde(default)]
     communication_drafts: Option<Vec<exercise::CommunicationDraft>>,
     #[serde(default)]
     inject_drafts: Option<Vec<Value>>,
@@ -392,6 +401,7 @@ async fn post_decide(State(s): State<AppState>, Path(id): Path<u64>, Json(b): Js
     };
     let (outcome, drafts) = {
         let mut ex = s.lock();
+        if let Some(limits)=b.resource_limits {ex.edit_resource_limit_draft(id,limits)?;}
         if b.communication_drafts.is_some() || b.inject_drafts.is_some() { ex.edit_communications(id, b.communication_drafts, b.inject_drafts)?; }
         let outcome = ex.decide(id, Decision { approve: b.approve, commands, note: b.note })?;
         let p = ex.proposal(id).unwrap();

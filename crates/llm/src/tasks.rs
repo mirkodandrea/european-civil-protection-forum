@@ -49,6 +49,9 @@ pub struct InjectDraft {
 /// What the model made of a player reply or a Master prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ParsedReply {
+    /// Master-only recommendation; applied only after explicit review/approval.
+    #[serde(default)]
+    pub resource_limits:Option<Value>,
     #[serde(default)]
     pub detected_language: String,
     /// The reply in English (the working language), for the Master.
@@ -166,11 +169,11 @@ Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:
     pub async fn master_prompt(&self, i: MasterInput<'_>) -> Result<ParsedReply> {
         let system = format!(
             "You assist the Exercise Director (Game Master) of a Civil Protection table-top exercise, in an ongoing conversation. \
-The Director is omnipotent within the simulator: every action below is allowed. Convert each new instruction into simulator actions \
+The Director reviews every suggestion before it becomes effective. Convert each new instruction into simulator actions \
 and/or draft injects (messages to players, in English, from a simulated sender such as \"112 Dispatch\" or \"ERCC\"). \
 Use the conversation for context (earlier instructions and what you proposed). Use only names from the gazetteer or zone codes. \
-If the instruction is unclear, return no actions and a clarification question.\n\
-Answer with ONE JSON object:\n{{\"actions\": [...], \"injects\": [{{\"recipients\": [\"role_id\" or \"all\"], \"title\": \"...\", \"sender\": \"...\", \"text\": \"...\"}}], \"clarification\": null, \"summary\": \"one sentence\", \"translation_en\": \"the instruction in English\"}}\n\n\
+You may suggest exercise-wide and per-training-phase deployable resource caps as resource_limits: {{total:{{resource_id:units}},phases:{{early_warning:{{resource_id:units}},early_action:{{...}},escalation:{{...}},full_response:{{...}}}}}} or null. Supply the complete replacement configuration and respect active deployments, committed orders and inventory from CURRENT SITUATION. Limits are recommendations: never claim they changed before Director approval. If the instruction is unclear, return no actions and a clarification question.\n\
+Answer with ONE JSON object:\n{{\"resource_limits\": null, \"actions\": [...], \"injects\": [{{\"recipients\": [\"role_id\" or \"all\"], \"title\": \"...\", \"sender\": \"...\", \"text\": \"...\"}}], \"clarification\": null, \"summary\": \"one sentence\", \"translation_en\": \"the instruction in English\"}}\n\n\
 Actions:\n{}\nRoles: {}\n\nGAZETTEER:\n{}",
             i.catalogue,
             i.roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", "),

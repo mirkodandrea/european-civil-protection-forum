@@ -190,6 +190,10 @@ pub struct WorldSnapshot {
     time_s: i64,
 }
 
+impl WorldSnapshot {
+    pub fn resource_pools(&self) -> &BTreeMap<String,BTreeMap<String,Pool>> { &self.d.pools }
+}
+
 /// Precomputed geometry: which fire cells matter to each building and road.
 struct Cache {
     /// Per building: (cell index, weight) within 70 m.

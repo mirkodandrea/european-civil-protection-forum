@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use crate::{Exercise, Phase, MASTER};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExercisePhase { EarlyWarning, EarlyAction, Escalation, FullResponse }
 
@@ -62,6 +62,7 @@ impl Exercise {
     pub fn set_exercise_phase(&mut self, phase: ExercisePhase, reason: &str) -> Result<()> {
         if self.phase != Phase::Orders { bail!("training phase changes require an open turn"); }
         if reason.trim().is_empty() || reason.chars().count() > 2000 { bail!("phase transition requires a reason (up to 2000 characters)"); }
+        self.validate_limits_for_phase(&self.resource_limits,phase)?;
         let from=self.exercise_phase;
         self.exercise_phase=phase;
         let entry=PhaseEntry {phase,turn:self.turn,t_s:self.world.time_s(),wall_ms:crate::wall_ms(),reason:reason.into()};

@@ -131,3 +131,7 @@ by simulated time. Training phases (early warning, early action, escalation,
 full response) preserve accumulated state and are independent of decision turns.
 Clock progression runs physics and arrivals; approved orders execute only when
 EXCON explicitly executes them or resolves the turn. See [time and phase API](docs/api.md#within-turn-clock-training-phases-and-scheduled-injects).
+
+Resource deployment respects physical inventory plus reviewed exercise-wide and
+per-training-phase caps. Active and approved units count together; requests and
+returns stay distinct. AI-recommended limits remain drafts until Master approval.

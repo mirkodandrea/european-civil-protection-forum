@@ -83,3 +83,9 @@ changing proposed actions into completed actions; original English text remains
 available as evidence. Model failures fall back to the original facts. This is
 a model instruction, not a formal semantic guarantee; Master-reviewed operational
 drafts remain the control boundary for new operational content.
+
+Master prompts can recommend a complete `resource_limits` configuration. The
+prompt includes current training phase, effective limits and resource accounting;
+recommendations are retained as proposal drafts. Only explicit Master approval
+applies them, with edits and before/after policy evidence recorded. Pending or
+rejected recommendations have no operational effect.

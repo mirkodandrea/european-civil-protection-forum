@@ -278,3 +278,38 @@ orders within the open turn without resolving it. Unapproved/previously executed
 proposals fail. Commands are revalidated by the world and actual outcomes are
 recorded. Approved orders otherwise execute at turn resolution. The Master UI
 provides separate approval, execution, clock, phase and scheduling controls.
+
+## Total and per-training-phase resource limits
+
+`POST /api/master/resource-limits` publishes a reviewed complete configuration:
+`{"limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":1},"early_action":{"ground_crews":2}}},"reason":"Progressive tactical capacity"}`.
+Keys must be scenario resource IDs. Missing caps mean physical inventory is the
+limit; zero explicitly blocks deployment. Caps apply across roles to concurrent
+active deployment plus approved-but-unexecuted commitments. Effective capacity is
+the minimum of actual exercise-wide inventory, the total cap and the current
+training-phase cap. They do not create inventory or reset on a phase transition.
+Returns free deployable capacity; physical effects and usage evidence remain.
+
+Approval and actual execution both check total/phase caps and the simulator's
+role-specific inventory. Requests alone do not consume capacity. Reductions and
+phase transitions that would undercut active/approved units fail without cancelling
+an effective action. Inventory adjustments also respect approved reservations.
+A snapshot rollback that would restore deployment above current policy fails until
+EXCON reviews the limits. Policy changes remain independent of physical rollback
+and have before/after, rationale, approver, proposal ID and phase/time evidence.
+Master physical interventions remain explicit EXCON simulation interventions;
+they do not pretend to allocate operational teams. Resource-using role actions
+are the allocations subject to inventory and deployment caps.
+
+Accounting additionally separates `inventory_available`, `effective_capacity`,
+`total_limit`, `phase_limit` and actual deployable `available` from requested,
+committed, deployed and returned quantities. Current policy appears in Master,
+evaluator and debrief views; players see their own deployable accounting.
+
+The Master AI may return a `resource_limits` recommendation (complete configuration).
+It stays in `resource_limit_draft` and has no operational effect while pending or
+rejected. The Master can edit it using proposal decide body `resource_limits` and
+then explicitly approve it. Only Master-origin proposals can recommend policy.
+Actual application and the approved configuration are recorded separately from
+the original draft; malformed recommendations can always be rejected. Limits-only
+proposals require the same approval as physical commands or communications.

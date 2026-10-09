@@ -87,6 +87,6 @@ impl Exercise {
         }).collect::<Vec<_>>();
         Ok(json!({"context":{"clock":self.world.clock(),"exercise_phase":self.exercise_phase,"clock_control":self.clock_control,"turn":self.turn,"phase":self.phase,"stats":self.world.stats(),"weather":self.world.fire.weather(),"pending":self.proposals.iter().filter(|p| matches!(p.status, ProposalStatus::Parsing | ProposalStatus::Pending | ProposalStatus::NeedsClarification)).count()},
             "role_cards":cards,"objectives":objectives,"reference_materials":self.reference_materials,"chains":chains,"messages":messages,"timeline":log,"timeline_total":timeline_total,"offset":offset,"limit":limit,
-            "knowledge_events":self.knowledge_events.iter().filter(|e| mids.contains(&e.message)).collect::<Vec<_>>(),"resource_accounting":self.resource_accounting(None)}))
+            "knowledge_events":self.knowledge_events.iter().filter(|e| mids.contains(&e.message)).collect::<Vec<_>>(),"resource_limits":self.resource_limits,"resource_accounting":self.resource_accounting(None)}))
     }
 }

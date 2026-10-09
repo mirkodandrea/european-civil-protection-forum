@@ -99,6 +99,7 @@ pub async fn process_reply(state: AppState, pid: u64) {
         Ok(parsed) => {
             let communication_drafts = parsed.messages.iter().filter(|m| m.to != role.id && state.lock().players.contains_key(&m.to)).map(|m| exercise::CommunicationDraft { to: m.to.clone(), from: role.id.clone(), kind: MsgKind::RoleMessage, title: format!("Message from {}", role.name), text_en: m.text.clone() }).collect();
             let input = ParsedInput {
+                resource_limit_draft:None,
                 communication_drafts,
                 language: parsed.detected_language,
                 translation_en: parsed.translation_en,
@@ -127,7 +128,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
             sim::catalogue(&all),
             ex.world.scn.roles.iter().map(|r| (r.id.clone(), r.name.clone())).collect::<Vec<_>>(),
             ex.world.gazetteer(),
-            ex.world.digest(None),
+            serde_json::json!({"world":ex.world.digest(None),"exercise_phase":ex.exercise_phase,"resource_limits":ex.resource_limits,"resource_accounting":ex.resource_accounting(None)}),
             history(&ex, exercise::MASTER),
             ex.proposal(pid).map(|p| p.original.clone()).unwrap_or_default(),
         )
@@ -143,6 +144,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
         Ok(p) => {
             let drafts = p.injects.iter().filter_map(|d| serde_json::to_value(d).ok()).collect();
             let input = ParsedInput {
+                resource_limit_draft:p.resource_limits,
                 communication_drafts: Vec::new(),
                 language: "en".into(),
                 translation_en: if p.translation_en.is_empty() { prompt.clone() } else { p.translation_en },

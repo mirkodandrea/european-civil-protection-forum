@@ -23,7 +23,7 @@ fn reply(ex: &mut Exercise, role: &str, text: &str) -> anyhow::Result<u64> {
 }
 
 fn parsed(actions: serde_json::Value) -> ParsedInput {
-    ParsedInput { communication_drafts: vec![], language: "it".into(), translation_en: "t".into(), actions: actions.as_array().unwrap().clone(), clarification: None, summary: "s".into(), inject_drafts: vec![] }
+    ParsedInput { resource_limit_draft:None, communication_drafts: vec![], language: "it".into(), translation_en: "t".into(), actions: actions.as_array().unwrap().clone(), clarification: None, summary: "s".into(), inject_drafts: vec![] }
 }
 
 #[test]
@@ -345,13 +345,14 @@ fn infeasible_approval_is_refused_and_execution_failures_are_truthful() {
     assert!(ex.proposal(pid).unwrap().decision.is_none());
     ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }).unwrap();
     ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
-    ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: -3 }).unwrap();
+    assert!(ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: -3 }).is_err(), "inventory cannot undercut approved commitments");
+    ex.direct_command(&Command::SetBuildingStatus {building:"Pineta Primary School".into(),damage:None,evacuated:Some(true)}).unwrap();
     let report = ex.resolve_turn(Some(1)).unwrap();
     assert!(!report.applied[0].ok);
     let p = ex.proposal(pid).unwrap();
     assert_eq!(p.status, ProposalStatus::Failed);
     assert!(!p.executions[0].ok);
-    assert!(p.executions[0].detail.contains("buses"));
+    assert!(p.executions[0].detail.contains("already empty"));
     assert!(ex.log.iter().any(|l| l.kind == "master_command" && l.data["origin"] == "direct_excon_intervention"));
 }
 
@@ -478,8 +479,10 @@ fn evaluator_durations_use_actual_delivery_declaration_and_decision_clocks() {
 #[test]
 fn clock_and_training_phases_keep_one_turn_and_accumulated_resources() {
     let mut ex=exercise();ex.start().unwrap();
-    ex.direct_command(&serde_json::from_value::<Command>(json!({"type":"CutFireLine","along":"F4:N"})).unwrap()).unwrap();
-    let used=ex.world.d.pools["fire_commander"]["ground_crews"].used;
+    let deployment=reply(&mut ex,"fire_commander","Cut F4 north edge").unwrap();
+    ex.attach_parse(deployment,parsed(json!([{"type":"CutFireLine","along":"F4:N"}]))).unwrap();
+    ex.decide(deployment,Decision{approve:true,..Default::default()}).unwrap();ex.execute_approved(deployment).unwrap();
+    let used=ex.world.d.pools["fire_commander"]["ground_crews"].used;assert_eq!(used,1);
     for (msel,due) in [("I-01",0),("I-02",1800),("I-03",3600)] {ex.schedule_inject(msel,due).unwrap();}
     ex.configure_clock(true,60.0,"One real second represents one simulated minute").unwrap();
     for target in [0,1800,3600] {
@@ -523,4 +526,72 @@ fn scheduled_deliveries_and_explicit_execution_cannot_duplicate_after_rollback()
     ex.rollback(1).unwrap();assert!(!ex.clock_control.running);assert!(ex.claim_due_injects().is_empty());
     assert_eq!(ex.proposal(pid).unwrap().executions.len(),1);
     assert!(ex.log.iter().any(|l|l.kind=="clock_paused"));
+}
+
+#[test]
+fn total_and_phase_limits_count_deployed_and_committed_units_across_phases() {
+    let mut ex=exercise();ex.start().unwrap();
+    let limits:ResourceLimits=serde_json::from_value(json!({"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":1},"early_action":{"ground_crews":2},"escalation":{"ground_crews":1}}})).unwrap();
+    ex.set_resource_limits(limits.clone(),"Progressive tactical capacity",None).unwrap();
+    let p1=reply(&mut ex,"fire_commander","Cut F4 north").unwrap();
+    ex.attach_parse(p1,parsed(json!([{"type":"CutFireLine","along":"F4:N"}]))).unwrap();
+    ex.decide(p1,Decision{approve:true,..Default::default()}).unwrap();
+    let p2=reply(&mut ex,"fire_commander","Cut G4 north").unwrap();
+    ex.attach_parse(p2,parsed(json!([{"type":"CutFireLine","along":"G4:N"}]))).unwrap();
+    assert!(!ex.proposal(p2).unwrap().verdicts[0].is_ok());assert!(ex.decide(p2,Decision{approve:true,..Default::default()}).is_err());
+    assert_eq!(ex.resource_accounting(Some("fire_commander"))["fire_commander"]["ground_crews"]["available"],0);
+    ex.set_exercise_phase(ExercisePhase::EarlyAction,"Deploy second crew").unwrap();
+    ex.decide(p2,Decision{approve:true,..Default::default()}).unwrap();
+    ex.execute_approved(p1).unwrap();ex.execute_approved(p2).unwrap();
+    assert_eq!(ex.world.d.pools["fire_commander"]["ground_crews"].used,2);
+    let p3=reply(&mut ex,"fire_commander","Cut H4 north").unwrap();
+    ex.attach_parse(p3,parsed(json!([{"type":"CutFireLine","along":"H4:N"}]))).unwrap();
+    assert!(!ex.proposal(p3).unwrap().verdicts[0].is_ok());
+    assert!(ex.set_exercise_phase(ExercisePhase::Escalation,"Lower cap cannot cancel effective work").is_err());
+    assert_eq!(ex.exercise_phase,ExercisePhase::EarlyAction);
+    let too_small:ResourceLimits=serde_json::from_value(json!({"total":{"ground_crews":1}})).unwrap();
+    assert!(ex.set_resource_limits(too_small,"Reduce cap",None).is_err());assert_eq!(ex.resource_limits,limits);
+    let allocation=ex.world.d.allocations[0].id;
+    ex.direct_command(&Command::ReturnResource{allocation,qty:1}).unwrap();
+    ex.set_exercise_phase(ExercisePhase::Escalation,"One crew actually returned").unwrap();
+    assert_eq!(ex.world.d.lines.len(),2);
+    let ledger=ex.resource_accounting(Some("fire_commander"));let crews=&ledger["fire_commander"]["ground_crews"];
+    assert_eq!(crews["effective_capacity"],1);assert_eq!(crews["deployed"],1);assert_eq!(crews["returned"],1);assert_eq!(crews["available"],0);
+    assert!(ex.log.iter().any(|l|l.kind=="resource_limits_changed"));
+    assert_eq!(ex.debrief()["resource_limits"]["total"]["ground_crews"],2);
+}
+
+#[test]
+fn ai_limit_drafts_are_inert_until_master_approval_and_invalid_drafts_can_be_rejected() {
+    let mut ex=exercise();ex.start().unwrap();
+    let limits=json!({"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":1}}});
+    let pid=ex.master_prompt("Suggest realistic resource limits");
+    ex.attach_parse(pid,ParsedInput{resource_limit_draft:Some(limits.clone()),..Default::default()}).unwrap();
+    assert_eq!(ex.resource_limits,ResourceLimits::default());
+    ex.decide(pid,Decision{approve:false,..Default::default()}).unwrap();assert_eq!(ex.resource_limits,ResourceLimits::default());
+    let pid=ex.master_prompt("Recommend reviewed limits");
+    ex.attach_parse(pid,ParsedInput{resource_limit_draft:Some(limits.clone()),..Default::default()}).unwrap();
+    ex.decide(pid,Decision{approve:true,note:Some("Reviewed for warning phase".into()),..Default::default()}).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status,ProposalStatus::Applied);
+    assert_eq!(serde_json::to_value(&ex.resource_limits).unwrap(),limits);
+    assert!(ex.log.iter().any(|l|l.kind=="resource_limits_changed" && l.data["proposal"]==pid && l.data["reason"]=="Reviewed for warning phase"));
+    let bad=ex.master_prompt("Invalid AI cap");
+    ex.attach_parse(bad,ParsedInput{resource_limit_draft:Some(json!({"total":{"invented_resource":3}})),..Default::default()}).unwrap();
+    assert!(!ex.proposal(bad).unwrap().invalid.is_empty());
+    ex.decide(bad,Decision{approve:false,..Default::default()}).unwrap();
+    assert_eq!(serde_json::to_value(&ex.resource_limits).unwrap(),limits);
+}
+
+#[test]
+fn rollback_cannot_restore_deployments_above_current_reviewed_limits() {
+    let mut ex=exercise();ex.start().unwrap();
+    let pid=reply(&mut ex,"fire_commander","Cut F4 north").unwrap();
+    ex.attach_parse(pid,parsed(json!([{"type":"CutFireLine","along":"F4:N"}]))).unwrap();ex.decide(pid,Decision{approve:true,..Default::default()}).unwrap();
+    ex.resolve_turn(Some(1)).unwrap();
+    let allocation=ex.world.d.allocations[0].id;ex.direct_command(&Command::ReturnResource{allocation,qty:1}).unwrap();
+    ex.set_resource_limits(serde_json::from_value(json!({"total":{"ground_crews":0}})).unwrap(),"All crews stood down",None).unwrap();
+    let before=ex.world.view();let generation=ex.generation;
+    assert!(ex.rollback(2).is_err());assert_eq!(ex.world.view(),before);assert_eq!(ex.generation,generation);
+    ex.set_resource_limits(serde_json::from_value(json!({"total":{"ground_crews":1}})).unwrap(),"Review restoration capacity",None).unwrap();
+    ex.rollback(2).unwrap();assert_eq!(ex.world.d.pools["fire_commander"]["ground_crews"].used,1);
 }
