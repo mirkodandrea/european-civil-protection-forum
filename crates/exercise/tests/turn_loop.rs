@@ -293,3 +293,72 @@ fn repeated_msel_deliveries_have_distinct_threads_shared_by_recipients() {
     assert_ne!(ex.messages.last().unwrap().inject_id, first);
     assert_eq!(ids.len(), 3);
 }
+
+#[test]
+fn lifecycle_retains_approval_execution_and_rejects_late_parse_or_duplicate_run() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
+    assert!(ex.log.iter().any(|l| l.kind == "proposal_declared" && l.data["id"] == pid));
+    assert_eq!(ex.proposal(pid).unwrap().history[0].status, ProposalStatus::Parsing);
+    let original_world = ex.world.view();
+    ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    assert_eq!(ex.world.view(), original_world, "pending proposals cannot change the world");
+    ex.decide(pid, Decision { approve: true, note: Some("Use warning plan".into()), ..Default::default() }).unwrap();
+    assert_eq!(ex.world.view(), original_world, "approval queues player actions until resolution");
+    assert!(ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"G4"}]))).is_err());
+    assert!(ex.parse_failed(pid, "late timeout").is_err());
+    assert!(ex.decide(pid, Decision { approve: true, ..Default::default() }).is_err());
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.decision.as_ref().unwrap().actor, MASTER);
+    assert_eq!(p.decision.as_ref().unwrap().note.as_deref(), Some("Use warning plan"));
+    let first = ex.resolve_turn(Some(1)).unwrap();
+    assert_eq!(first.applied.len(), 1);
+    let second = ex.resolve_turn(Some(1)).unwrap();
+    assert!(second.applied.is_empty());
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.executions.len(), 1);
+    assert!(p.executions[0].ok);
+    assert_eq!(p.executions[0].origin, "approved_player_decision");
+    assert_eq!(p.history.iter().map(|h| h.status).collect::<Vec<_>>(), vec![ProposalStatus::Parsing, ProposalStatus::Pending, ProposalStatus::Approved, ProposalStatus::Applied]);
+    ex.rollback(1).unwrap();
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.history.last().unwrap().status, ProposalStatus::RolledBack);
+    assert_eq!(p.executions.len(), 1, "rollback retains execution evidence");
+}
+
+#[test]
+fn infeasible_approval_is_refused_and_execution_failures_are_truthful() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "evacuate school").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"EvacuateBuilding","building":"Pineta Primary School"}]))).unwrap();
+    assert!(ex.decide(pid, Decision { approve: true, ..Default::default() }).is_err());
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
+    assert!(ex.proposal(pid).unwrap().decision.is_none());
+    ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }).unwrap();
+    ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
+    ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: -3 }).unwrap();
+    let report = ex.resolve_turn(Some(1)).unwrap();
+    assert!(!report.applied[0].ok);
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.status, ProposalStatus::Failed);
+    assert!(!p.executions[0].ok);
+    assert!(p.executions[0].detail.contains("buses"));
+    assert!(ex.log.iter().any(|l| l.kind == "master_command" && l.data["origin"] == "direct_excon_intervention"));
+}
+
+#[test]
+fn master_can_reject_during_parse_without_late_ai_resurrection() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "request transport").unwrap();
+    ex.set_declaration_kind(pid, DeclarationKind::Request).unwrap();
+    ex.decide(pid, Decision { approve: false, ..Default::default() }).unwrap();
+    assert!(ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).is_err());
+    assert!(ex.parse_failed(pid, "timeout").is_err());
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Rejected);
+    assert_eq!(ex.proposal(pid).unwrap().declaration_kind, DeclarationKind::Request);
+    ex.end().unwrap();
+    assert!(ex.decide(pid, Decision::default()).is_err());
+}

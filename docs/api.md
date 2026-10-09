@@ -74,3 +74,22 @@ Missing references return 422; unknown references or another role's messages
 return 400 without creating a declaration. Obtain the actual message ID from
 `GET /api/player/{role}` before composing; the example ID above is illustrative.
 Master and debrief records retain the full thread across turns and rollbacks.
+
+## Declaration, approval and execution evidence
+
+Replies may set `declaration_kind` to `request` or `proposed_decision` (default).
+Declarations are recorded immediately before AI processing. `parsing` means
+awaiting interpretation, `pending` means awaiting exercise control, and
+`approved` means queued for resolution; none of these statuses imply execution.
+The Master can reject during parsing or supply edited commands manually. Late
+AI results cannot overwrite decisions or revive rolled-back proposals.
+
+Approval requires an open turn and feasible commands. Invalid AI actions require
+an explicit edit. A proposal's `decision` retains the Master identity, approval,
+original/effective commands, edit flag, note, turn and timestamps. `history` is
+append-only. `executions` retain each attempted command, actual success/failure,
+reason and timestamps. Failed commands produce `failed`, rather than claiming
+execution. Repeated decision/resolution requests cannot execute a proposal twice.
+Rollback marks proposals undone while retaining their evidence. Direct Master
+commands carry `direct_excon_intervention` origin; approved player actions and
+Master suggestions have distinct origins in execution records.

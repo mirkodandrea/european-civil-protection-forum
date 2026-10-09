@@ -109,6 +109,7 @@ pub async fn process_reply(state: AppState, pid: u64) {
             };
             if let Err(e) = state.lock().attach_parse(pid, input) {
                 tracing::warn!("attach_parse {pid}: {e}");
+                return;
             }
             // Messages to other roles: delivered at once, translated.
             for m in messages {
