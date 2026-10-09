@@ -26,6 +26,14 @@
     <div class="small" id="stats"></div>
   </div>
   <div class="a-inbox">
+    <div class="panel" id="languagejoin">
+      <h2>Choose your language</h2>
+      <p class="small">New incoming messages are translated into your chosen language. Write replies in that language; the Master sees your original words and the English interpretation. Earlier messages keep their delivery language. If translation is unavailable, messages use English.</p>
+      <label for="joinlang">Language for this role</label>
+      <select id="joinlang"></select>
+      <button id="confirmlang" class="primary" disabled>Confirm language</button>
+      <div id="joinstatus" class="small"></div>
+    </div>
     <div class="panel">
       <h2>Inbox</h2>
       <div id="inbox" class="inbox"></div>
@@ -37,6 +45,11 @@
       <label for="replyto">Reply to inject or clarification</label>
       <select id="replyto"></select>
       <div id="selectedinject" class="small muted"></div>
+      <label for="basiskind">Decision basis</label>
+      <select id="basiskind"><option value="">Choose a basis…</option><option value="procedure">Procedure</option><option value="plan">Plan</option><option value="operational_judgment">Operational judgment</option></select>
+      <textarea id="basis" placeholder="Name the procedure or plan, or explain your operational judgment…" required></textarea>
+      <label for="attachments">Supporting documents, maps or ordinances</label>
+      <textarea id="attachments" placeholder="Optional: one Title | https://document-url per line"></textarea>
       <textarea id="reply" placeholder="Write your orders, requests or information in your own words…"></textarea>
       <div class="row"><button id="send" class="primary">Send</button><span id="status" class="small muted"></span></div>
     </div>
@@ -61,7 +74,13 @@ if (!role || !stat.roles.find(r => r.id === role)) {
   throw new Error('no role');
 }
 $('lang').innerHTML = Object.entries(LANGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-$('lang').onchange = () => api(`/api/player/${role}/language`, { language: $('lang').value });
+$('joinlang').innerHTML = '<option value="">Select your language…</option>' + $('lang').innerHTML;
+$('joinlang').onchange = () => { $('confirmlang').disabled = !$('joinlang').value; };
+$('confirmlang').onclick = async () => {
+  try { await api(`/api/player/${role}/language`, { language: $('joinlang').value }); await refresh(); }
+  catch (e) { $('joinstatus').textContent = e.message; }
+};
+$('lang').onchange = () => api(`/api/player/${role}/language`, { language: $('lang').value }).then(refresh).catch(e => { $('status').textContent = e.message; });
 // On a phone the map sits on top: keep it to ~40% of the screen height.
 const map = new MapView($('map'), stat, { maxHeight: Math.round(window.innerHeight * 0.42) });
 const STATUS = { parsing: 'being read…', pending: 'awaiting exercise control', needs_clarification: 'question asked', approved: 'approved – executes at end of turn', rejected: 'not approved', applied: 'executed', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
@@ -69,9 +88,16 @@ let lastCount = 0;
 
 $('send').onclick = async () => {
   const text = $('reply').value.trim();
-  if (!text || !$('replyto').value) return;
+  if (!text || !$('replyto').value || !$('basiskind').value || !$('basis').value.trim()) return;
   $('send').disabled = true;
-  try { await api(`/api/player/${role}/reply`, { text, reply_to: Number($('replyto').value), declaration_kind: $('declarationkind').value }); $('reply').value = ''; $('status').textContent = 'sent'; }
+  try {
+    const attachments = $('attachments').value.split('\n').filter(line => line.trim()).map(line => {
+      const split = line.indexOf('|');
+      if (split < 1) throw new Error('Use Title | https://document-url for each evidence link.');
+      return {title:line.slice(0, split).trim(), url:line.slice(split + 1).trim()};
+    });
+    const evidence = {basis:{kind:$('basiskind').value, reference:$('basis').value.trim()}, attachments};
+    await api(`/api/player/${role}/reply`, { evidence, text, reply_to: Number($('replyto').value), declaration_kind: $('declarationkind').value }); $('reply').value = ''; $('status').textContent = 'sent'; }
   catch (e) { $('status').textContent = e.message; }
   $('send').disabled = false;
 };
@@ -80,6 +106,7 @@ async function refresh() {
   const [p, st] = await Promise.all([api(`/api/player/${role}`), api('/api/state')]);
   document.title = p.player.name;
   $('rolename').textContent = p.player.name;
+  $('languagejoin').hidden = p.player.language_confirmed;
   $('turn').textContent = p.phase === 'orders' ? `Turn ${p.turn}` : p.phase === 'resolving' ? `Turn ${p.turn} · simulating…` : p.phase;
   $('clock').textContent = p.clock;
   if (document.activeElement !== $('lang')) $('lang').value = p.player.language;
@@ -99,9 +126,11 @@ async function refresh() {
   const showSelected = () => {
     const m = parents.find(m => String(m.id) === $('replyto').value);
     $('selectedinject').textContent = m ? `${m.from} → ${m.recipients.join(', ')} · inject #${m.inject_id} · ${m.clock}: ${m.text}` : '';
-    $('send').disabled = p.phase !== 'orders' || !m;
+    $('send').disabled = p.phase !== 'orders' || !m || !p.player.language_confirmed || !$('basiskind').value || !$('basis').value.trim();
   };
   $('replyto').onchange = showSelected;
+  $('basiskind').onchange = showSelected;
+  $('basis').oninput = showSelected;
   showSelected();
   map.setView(st.world);
   $('stats').textContent = statsLine(st.world.stats);

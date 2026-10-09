@@ -12,7 +12,7 @@ post() { curl -sf -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
 reply() {
   local role="$1" parent body
   parent=$(curl -sf "$B/player/$role" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(m["id"] for m in reversed(d["inbox"]) if m["kind"] in ("inject","clarification") and m["to"] == d["player"]["role"]))')
-  body=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["reply_to"]=int(sys.argv[2]); print(json.dumps(d))' "$2" "$parent")
+  body=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["reply_to"]=int(sys.argv[2]); d["evidence"]={"basis":{"kind":"operational_judgment","reference":"Operational judgment based on the delivered situation and available units"},"attachments":[]}; print(json.dumps(d))' "$2" "$parent")
   post "/player/$role/reply" "$body"
 }
 wait_parsed() { # wait until no proposal is still being parsed
@@ -25,6 +25,8 @@ shot() { echo "$ROOT/docs/screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
 
 echo "== setup: regional player plays in Armenian"
 post /player/regional_cp/language '{"language":"hy"}'
+post /player/mayor/language '{"language":"it"}'
+post /player/fire_commander/language '{"language":"en"}'
 post /master/start
 for i in I-01 I-02 I-03; do post /master/msel/$i/send; done
 

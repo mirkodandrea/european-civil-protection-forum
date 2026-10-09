@@ -29,7 +29,12 @@ async fn app() -> Router {
     server::router(Arc::new(Mutex::new(ex)), mock_llm(), None).0
 }
 
-async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn call(app: &Router, method: &str, uri: &str, mut body: Option<Value>) -> (StatusCode, Value) {
+    if method == "POST" && uri.ends_with("/reply") {
+        if let Some(body) = body.as_mut() {
+            if body.get("evidence").is_none() { body["evidence"] = json!({"basis":{"kind":"operational_judgment", "reference":"Operational judgment based on the received inject"}}); }
+        }
+    }
     let req = Request::builder().method(method).uri(uri).header("content-type", "application/json");
     let req = req.body(body.map(|b| Body::from(b.to_string())).unwrap_or(Body::empty())).unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -40,6 +45,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 
 async fn reply_parent(app: &Router, role: &str) -> u64 {
     let (_, p) = call(app, "GET", &format!("/api/player/{role}"), None).await;
+    call(app, "POST", &format!("/api/player/{role}/language"), Some(json!({"language":p["player"]["language"]}))).await;
     if let Some(m) = p["inbox"].as_array().unwrap().iter().rev().find(|m| m["kind"] == "inject") {
         return m["id"].as_u64().unwrap();
     }
@@ -241,6 +247,7 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
     call(&app, "POST", "/api/master/start", None).await;
     let (_, sent) = call(&app, "POST", "/api/master/inject", Some(json!({"title":"Fire", "recipients":["mayor"], "text":"Reported fire"}))).await;
     let parent = sent["messages"][0].as_u64().unwrap();
+    call(&app, "POST", "/api/player/mayor/language", Some(json!({"language":"it"}))).await;
     assert_eq!(call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello"}))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello", "reply_to":99999}))).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text":"hello", "reply_to":parent}))).await.0, StatusCode::BAD_REQUEST);
@@ -307,4 +314,31 @@ async fn rejected_ai_suggestions_never_deliver_or_change_world() {
         let (_, p) = call(&app, "GET", &format!("/api/player/{role}"), None).await;
         assert!(!p["inbox"].as_array().unwrap().iter().any(|m| m["title"] == "Wind"));
     }
+}
+
+#[tokio::test]
+async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let parent = reply_parent(&app, "mayor").await;
+    let req = Request::builder().method("POST").uri("/api/player/mayor/reply").header("content-type", "application/json")
+        .body(Body::from(json!({"text":"warn F4","reply_to":parent}).to_string())).unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let evidence = json!({"basis":{"kind":"plan","reference":"Municipal warning plan, annex 3"},"attachments":[{"title":"Area map","url":"https://example.test/map.pdf"}]});
+    let invalid = json!({"basis":{"kind":"plan","reference":""}});
+    assert_eq!(call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4","reply_to":parent,"evidence":invalid}))).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app, "POST", "/api/player/mayor/language", Some(json!({"language":"unsupported"}))).await.0, StatusCode::BAD_REQUEST);
+    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let pid = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true}))).await;
+    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    let (_, p) = call(&app, "GET", "/api/player/mayor", None).await;
+    assert_eq!(p["proposals"][0]["evidence"], evidence);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["proposals"][0]["evidence"], evidence);
+    call(&app, "POST", "/api/master/rollback", Some(json!({"turn":1}))).await;
+    let (_, d) = call(&app, "GET", "/api/debrief", None).await;
+    assert_eq!(d["proposals"][0]["evidence"], evidence);
 }

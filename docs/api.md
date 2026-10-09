@@ -20,7 +20,7 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `/api/player/{role}/reply` | `{"text": "...", "reply_to": message_id}` → `{"proposal": id}`; parsed asynchronously by the LLM |
+| POST | `/api/player/{role}/reply` | `{"text": "...", "reply_to": message_id, "evidence": {"basis":{"kind":"plan", "reference":"..."}, "attachments":[]}}` → `{"proposal": id}`; parsed asynchronously by the LLM |
 | POST | `/api/player/{role}/language` | `{"language": "it"}` |
 
 ## Director
@@ -30,7 +30,7 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 | POST | `/api/master/start` | Opens turn 1 |
 | POST | `/api/master/inject` | `{"title", "sender"?, "recipients": ["mayor"] or ["all"], "text"}`; translated per recipient |
 | POST | `/api/master/msel/{id}/send` | Sends an MSEL inject |
-| POST | `/api/master/prompt` | `{"text": "...", "reply_to": message_id}` → proposal with commands and/or inject drafts (AI) |
+| POST | `/api/master/prompt` | `{"text": "..."}` → proposal with commands and/or inject drafts (AI) |
 | POST | `/api/master/proposals/{id}/decide` | `{"approve": bool, "commands"?: [...], "note"?: "..."}`; `commands` replaces the proposal's actions (edit); feasibility is re-checked |
 | POST | `/api/master/command` | One command or a list, applied immediately as the Master → per-command results |
 | POST | `/api/master/resolve` | `{"minutes"?: 30}` → applies approved actions, then simulates the turn live in 1-second steps (phase `resolving`, observable through `/api/state` and `/ws`). The response comes when the turn ends: turn report (applied actions, events) |
@@ -43,11 +43,15 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 ```bash
 B=http://localhost:8080/api; H='content-type: application/json'
 
+curl -XPOST $B/player/mayor/language -H "$H" -d '{"language":"it"}'
 curl -XPOST $B/master/start
 curl -XPOST $B/master/msel/I-01/send
-curl -XPOST $B/player/mayor/reply -H "$H" -d '{"text":"Evacuate zone F4 to the sports centre","reply_to":3}'
-curl $B/master | jq '.proposals[-1] | {status, descriptions, verdicts}'
-curl -XPOST $B/master/proposals/7/decide -H "$H" -d '{"approve":true,"note":"ok"}'
+INJECT_MESSAGE=$(curl -s $B/player/mayor | jq '[.inbox[] | select(.kind == "inject")] | last | .id')
+BODY=$(jq -n --argjson reply_to "$INJECT_MESSAGE" '{text:"Issue warning to F4", reply_to:$reply_to, evidence:{basis:{kind:"procedure",reference:"Municipal warning procedure, section 3"}}}')
+PROPOSAL=$(curl -s -XPOST $B/player/mayor/reply -H "$H" -d "$BODY" | jq '.proposal')
+curl $B/master | jq '.proposals[-1] | {status, descriptions, verdicts, evidence}'
+# Master supplies the effective command explicitly; a pending AI parse cannot overwrite this decision.
+curl -XPOST $B/master/proposals/$PROPOSAL/decide -H "$H" -d '{"approve":true,"commands":[{"type":"IssueWarning","zone":"F4"}],"note":"Follow warning procedure"}'
 
 # Commands by code (no LLM): a list is applied in order
 curl -XPOST $B/master/command -H "$H" -d '[
@@ -126,3 +130,21 @@ records its allocation IDs. EXCON returns units with
 are rejected and physical effects remain in place. Inventory cannot be reduced
 below active deployment. Snapshot rollback restores the actual ledger but retains
 execution/rollback evidence in the exercise log; allocation IDs are never reused.
+
+## Decision evidence and language onboarding
+
+Each role must confirm a supported language through `/api/player/{role}/language`
+before declaring a decision. Player data expose `language_confirmed`. New incoming
+messages use that language; earlier messages keep the language in which they were
+delivered. Players write replies in their language, with original wording retained
+alongside the English interpretation. Without translation, incoming messages use
+English. The player page explains this before language confirmation.
+
+Reply `evidence` is required. Its `basis` has `kind` (`procedure`, `plan`, or
+`operational_judgment`) and a nonempty `reference`: cite the procedure/plan or explain
+the operational rationale. Optional `attachments` contain `title` and an HTTP(S)
+`url`, linking documents, maps or ordinances. Invalid bases and unsafe URL schemes
+are rejected before recording a declaration. Evidence stays attached to proposals,
+approval/execution history and debrief records; the Master interface displays the
+basis and supporting links. Maximums: 2000 characters of basis, 20 links, 200
+characters per title and 4000 characters per URL.

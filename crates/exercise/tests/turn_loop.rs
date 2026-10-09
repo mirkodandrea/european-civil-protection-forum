@@ -8,7 +8,9 @@ use sim::{Command, Loc, World};
 
 fn exercise() -> Exercise {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
-    Exercise::new(World::new(scn, 1).unwrap())
+    let mut ex = Exercise::new(World::new(scn, 1).unwrap());
+    for role in ex.role_ids() { let lang = ex.language_of(&role); ex.set_language(&role, &lang).unwrap(); }
+    ex
 }
 
 fn reply(ex: &mut Exercise, role: &str, text: &str) -> anyhow::Result<u64> {
@@ -17,7 +19,7 @@ fn reply(ex: &mut Exercise, role: &str, text: &str) -> anyhow::Result<u64> {
         None if ex.phase == Phase::Orders => ex.send_inject(None, "Task", "EXCON", &[role.into()], "Exercise task", &BTreeMap::new())?[0],
         None => 0,
     };
-    ex.player_reply(role, text, parent)
+    ex.player_reply(role, text, parent, DecisionEvidence::judgment("Operational judgment based on received information"))
 }
 
 fn parsed(actions: serde_json::Value) -> ParsedInput {
@@ -270,17 +272,17 @@ fn replies_require_delivered_inject_and_keep_clarification_thread() {
     let ids = ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap();
     let mid = ids[0];
     let root = ex.messages.last().unwrap().inject_id.unwrap();
-    assert!(ex.player_reply("mayor", "hello", 99999).is_err());
-    assert!(ex.player_reply("fire_commander", "hello", mid).is_err());
+    assert!(ex.player_reply("mayor", "hello", 99999, DecisionEvidence::judgment("Based on the received inject")).is_err());
+    assert!(ex.player_reply("fire_commander", "hello", mid, DecisionEvidence::judgment("Based on the received inject")).is_err());
     assert!(ex.proposals.is_empty());
-    let pid = ex.player_reply("mayor", "Where?", mid).unwrap();
+    let pid = ex.player_reply("mayor", "Where?", mid, DecisionEvidence::judgment("Based on the received inject")).unwrap();
     ex.attach_parse(pid, ParsedInput { clarification: Some("Which location?".into()), ..Default::default() }).unwrap();
     ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
     ex.deliver_approved_communication(pid, 0, "Which location?").unwrap();
     let clarification = ex.messages.last().unwrap();
     assert_eq!(clarification.inject_id, Some(root));
     assert_eq!(clarification.reply_to, Some(mid));
-    let followup = ex.player_reply("mayor", "School", clarification.id).unwrap();
+    let followup = ex.player_reply("mayor", "School", clarification.id, DecisionEvidence::judgment("Based on the received inject")).unwrap();
     assert_eq!(ex.proposal(followup).unwrap().inject_id, Some(root));
     ex.resolve_turn(Some(1)).unwrap();
     let d = ex.debrief();
@@ -423,4 +425,30 @@ fn rollback_keeps_resource_history_even_when_actual_ledger_is_restored() {
     assert_eq!(ex.resource_history.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(), vec!["deployed", "returned"]);
     assert_eq!(ex.debrief()["resource_events"].as_array().unwrap().len(), 2);
     assert!(ex.log.iter().any(|l| l.kind == "rollback"));
+}
+
+#[test]
+fn joining_requires_language_and_evidence_is_validated_before_recording() {
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let mut ex = Exercise::new(World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let mid = ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap()[0];
+    assert!(ex.player_reply("mayor", "warn F4", mid, DecisionEvidence::judgment("Urgent warning based on report")).is_err());
+    assert!(ex.set_language("mayor", "invented-language").is_err());
+    ex.set_language("mayor", "it").unwrap();
+    assert!(ex.players["mayor"].language_confirmed);
+    assert!(ex.player_reply("mayor", "warn F4", mid, DecisionEvidence::judgment(" ")).is_err());
+    let unsafe_link = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Plan, reference:"Municipal plan".into() }, attachments:vec![Attachment {title:"Map".into(), url:"javascript:alert(1)".into()}] };
+    assert!(ex.player_reply("mayor", "warn F4", mid, unsafe_link).is_err());
+    assert!(ex.proposals.is_empty());
+    let evidence = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Procedure, reference:"Municipal warning procedure, section 3".into() }, attachments:vec![Attachment {title:"Warning map".into(), url:"https://example.test/warning-map.pdf".into()}] };
+    let expected = serde_json::to_value(&evidence).unwrap();
+    let pid = ex.player_reply("mayor", "warn F4", mid, evidence).unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    ex.decide(pid, Decision { approve:true, ..Default::default() }).unwrap();
+    ex.resolve_turn(Some(1)).unwrap();
+    ex.rollback(1).unwrap();
+    assert_eq!(serde_json::to_value(ex.proposal(pid).unwrap().evidence.as_ref().unwrap()).unwrap(), expected);
+    assert_eq!(ex.debrief()["proposals"][0]["evidence"], expected);
+    assert!(ex.log.iter().any(|e| e.kind == "proposal_declared" && e.data["evidence"] == expected));
 }

@@ -51,6 +51,7 @@ pub struct Player {
     pub role: String,
     pub name: String,
     pub language: String,
+    pub language_confirmed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +176,51 @@ fn wall_ms() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BasisKind {
+    Procedure,
+    Plan,
+    OperationalJudgment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionBasis {
+    pub kind: BasisKind,
+    /// Procedure/plan reference or the player's operational rationale.
+    pub reference: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attachment {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionEvidence {
+    pub basis: DecisionBasis,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+impl DecisionEvidence {
+    pub fn judgment(reference: &str) -> Self {
+        Self { basis: DecisionBasis { kind: BasisKind::OperationalJudgment, reference: reference.into() }, attachments: Vec::new() }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.basis.reference.trim().is_empty() || self.basis.reference.chars().count() > 2000 { bail!("decision basis requires a reference or rationale (up to 2000 characters)"); }
+        if self.attachments.len() > 20 { bail!("at most 20 evidence links are allowed"); }
+        for attachment in &self.attachments {
+            if attachment.title.trim().is_empty() || attachment.title.chars().count() > 200 || attachment.url.chars().count() > 4000 { bail!("evidence link needs a title (up to 200 characters) and URL (up to 4000 characters)"); }
+            let url = url::Url::parse(&attachment.url)?;
+            if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() { bail!("evidence links must use HTTP or HTTPS"); }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommunicationDraft {
     pub to: String,
@@ -186,6 +232,7 @@ pub struct CommunicationDraft {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
+    pub evidence: Option<DecisionEvidence>,
     pub communication_drafts: Vec<CommunicationDraft>,
     pub communications_claimed: bool,
     pub delivered_communications: Vec<usize>,
@@ -337,7 +384,7 @@ impl Exercise {
             .scn
             .roles
             .iter()
-            .map(|r| (r.id.clone(), Player { role: r.id.clone(), name: r.name.clone(), language: r.language.clone() }))
+            .map(|r| (r.id.clone(), Player { role: r.id.clone(), name: r.name.clone(), language: r.language.clone(), language_confirmed: false }))
             .collect();
         let mut ex = Exercise {
             world,
@@ -427,8 +474,10 @@ impl Exercise {
     }
 
     pub fn set_language(&mut self, role: &str, lang: &str) -> Result<()> {
+        if !["en", "it", "fr", "de", "es", "hy", "ka", "uk", "ro", "az", "ru", "el", "pt"].contains(&lang) { bail!("choose a supported language"); }
         let Some(p) = self.players.get_mut(role) else { bail!("unknown role {role}") };
         p.language = lang.to_string();
+        p.language_confirmed = true;
         self.record("language_set", role, json!({"language": lang}));
         Ok(())
     }
@@ -661,7 +710,7 @@ impl Exercise {
     // -------------------------------------------------------------- proposals
 
     /// A player's free-text reply: stored, and a proposal opened for parsing.
-    pub fn player_reply(&mut self, role: &str, text: &str, reply_to: u64) -> Result<u64> {
+    pub fn player_reply(&mut self, role: &str, text: &str, reply_to: u64, evidence: DecisionEvidence) -> Result<u64> {
         if self.phase != Phase::Orders {
             bail!("no turn is open for replies");
         }
@@ -671,12 +720,15 @@ impl Exercise {
         if text.trim().is_empty() {
             bail!("empty reply");
         }
+        if !self.players[role].language_confirmed { bail!("select your language before submitting a declaration"); }
+        evidence.validate()?;
         let parent = self.messages.iter().find(|m| m.id == reply_to && m.to == role && matches!(m.kind, MsgKind::Inject | MsgKind::Clarification))
             .ok_or_else(|| anyhow::anyhow!("reply_to must reference an inject or clarification delivered to your role"))?;
         let inject_id = parent.inject_id.ok_or_else(|| anyhow::anyhow!("message has no inject thread"))?;
         let pid = self.id();
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
+            evidence: Some(evidence),
             communication_drafts: Vec::new(),
             communications_claimed: false,
             delivered_communications: Vec::new(),
@@ -714,6 +766,7 @@ impl Exercise {
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
+            evidence: None,
             communication_drafts: Vec::new(),
             communications_claimed: false,
             delivered_communications: Vec::new(),

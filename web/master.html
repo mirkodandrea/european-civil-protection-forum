@@ -192,6 +192,7 @@ function renderProposals() {
       return `<div class="card">
         <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> · ${esc(p.declaration_kind.replaceAll('_', ' '))} <span class="muted small">turn ${p.turn} · #${p.id}${p.inject_id ? ` · inject #${p.inject_id} · reply to #${p.reply_to}` : ''}</span></div></div>
         <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>
+        ${p.evidence ? `<div class="small"><b>Decision basis:</b> ${esc(p.evidence.basis.kind.replaceAll('_', ' '))} — ${esc(p.evidence.basis.reference)}</div>${p.evidence.attachments.map(a => `<div class="small"><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></div>`).join('')}` : ''}
         ${p.translation_en && p.translation_en !== p.original ? `<div class="small muted">EN: ${esc(p.translation_en)}</div>` : ''}
         ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
         ${cmds ? `<ul class="small">${cmds}</ul>` : ''}${drafts ? `<ul class="small">${drafts}</ul>` : ''}${communications ? `<ul class="small">${communications}</ul>` : ''}
