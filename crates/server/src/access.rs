@@ -48,7 +48,7 @@ pub async fn authorize(State(s): State<AppState>, mut req: Request, next: Next) 
     let allowed = match &principal {
         Principal::Master => true,
         Principal::Evaluator { .. } => {
-            req.method() == axum::http::Method::GET && matches!(path, "/api/access" | "/api/static" | "/api/state" | "/api/master" | "/api/debrief" | "/api/catalogue" | "/api/evaluator" | "/ws")
+            req.method() == axum::http::Method::GET && matches!(path, "/api/access" | "/api/static" | "/api/state" | "/api/master" | "/api/debrief" | "/api/catalogue" | "/api/evaluator" | "/api/evaluator/assessment" | "/ws")
         }
         Principal::Player { role } => {
             let own = format!("/api/player/{role}");
