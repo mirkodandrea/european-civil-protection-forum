@@ -21,6 +21,11 @@ What happens in the video, and how to play or re-record it: [docs/demo.md](docs/
 
 ## Quick start
 
+On Windows, use the supported MSVC setup and one-command launchers in
+[docs/windows.md](docs/windows.md). The default launcher builds a headless
+binary without Bevy/WGPU; `-Visualization` starts the 3D view in the same process.
+
+
 ```bash
 # .env in the repo root
 OPENROUTER_API_KEY=sk-or-...

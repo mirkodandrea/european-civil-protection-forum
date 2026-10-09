@@ -1,0 +1,40 @@
+name: Windows MSVC
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      OPENROUTER_API_KEY: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target/windows-headless
+            . -> target/windows-viz
+      - name: Headless startup and dashboard smoke test
+        shell: pwsh
+        run: ./scripts/start-windows.ps1 -SmokeTest -NoBrowser
+      - name: Visualization build and startup
+        shell: pwsh
+        run: |
+          ./scripts/start-windows.ps1 -Visualization -SmokeTest -NoBrowser -Port 8081 *>&1 | Tee-Object -FilePath visualization.log
+          if (-not (Select-String -Path visualization.log -Pattern 'Creating new window')) {
+            throw 'No Bevy window initialization was recorded.'
+          }
+      - name: Upload visualization diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-visualization-log
+          path: visualization.log
