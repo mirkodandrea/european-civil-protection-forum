@@ -20,6 +20,8 @@
 //! Master actions (direct commands, approved Master prompts) apply at once;
 //! approved player actions apply together at resolution.
 
+pub mod limits;
+pub use limits::ResourceLimits;
 pub mod timing;
 pub use timing::{ExercisePhase, PhaseEntry, ClockControl, ScheduledInject, ScheduleStatus};
 pub mod evaluation;
@@ -156,6 +158,7 @@ pub struct StatusChange {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ApprovalRecord {
+    pub resource_limits:Option<ResourceLimits>,
     pub approve: bool,
     pub actor: String,
     pub turn: u32,
@@ -238,6 +241,7 @@ pub struct CommunicationDraft {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
+    pub resource_limit_draft:Option<Value>,
     pub evidence: Option<DecisionEvidence>,
     pub communication_drafts: Vec<CommunicationDraft>,
     pub communications_claimed: bool,
@@ -272,6 +276,7 @@ pub struct Proposal {
 /// What the LLM made of a reply, in exercise terms.
 #[derive(Debug, Clone, Default)]
 pub struct ParsedInput {
+    pub resource_limit_draft:Option<Value>,
     pub communication_drafts: Vec<CommunicationDraft>,
     pub language: String,
     pub translation_en: String,
@@ -357,6 +362,7 @@ pub struct TurnWindow {
 }
 
 pub struct Exercise {
+    pub resource_limits:ResourceLimits,
     pub exercise_phase: ExercisePhase,
     pub phase_history: Vec<PhaseEntry>,
     pub clock_control: ClockControl,
@@ -401,6 +407,7 @@ impl Exercise {
             .map(|r| (r.id.clone(), Player { role: r.id.clone(), name: r.name.clone(), language: r.language.clone(), language_confirmed: false }))
             .collect();
         let mut ex = Exercise {
+            resource_limits:ResourceLimits::default(),
             exercise_phase:ExercisePhase::EarlyWarning,
             phase_history:vec![PhaseEntry {phase:ExercisePhase::EarlyWarning,turn:0,t_s:world.time_s(),wall_ms:wall_ms(),reason:"Initial training phase".into()}],
             clock_control:ClockControl::default(),
@@ -616,6 +623,7 @@ impl Exercise {
         let Some((_, snap)) = self.snapshots.iter().find(|(t, _)| *t == turn).cloned() else {
             bail!("no snapshot for turn {turn}");
         };
+        self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
         self.world.restore(&snap)?;
         self.snapshots.retain(|(t, _)| *t <= turn);
@@ -753,6 +761,7 @@ impl Exercise {
         let pid = self.id();
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
+            resource_limit_draft:None,
             evidence: Some(evidence),
             communication_drafts: Vec::new(),
             communications_claimed: false,
@@ -791,6 +800,7 @@ impl Exercise {
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
+            resource_limit_draft:None,
             evidence: None,
             communication_drafts: Vec::new(),
             communications_claimed: false,
@@ -853,13 +863,19 @@ impl Exercise {
         if p.status != ProposalStatus::Approved || p.decision.as_ref().map(|d| d.approve) != Some(true) {
             bail!("proposal has no effective Master approval");
         }
+        if let Some(draft)=&p.resource_limit_draft {
+            self.set_resource_limits(serde_json::from_value(draft.clone())?,p.decision.as_ref().and_then(|d|d.note.as_deref()).unwrap_or("Approved Master resource-limit recommendation"),Some(pid))?;
+        }
         let origin = if matches!(p.source, Source::Master) { "approved_master_suggestion" } else { "approved_player_decision" };
         let mut applied = Vec::new();
         let mut executions = Vec::new();
         for cmd in &p.commands {
             let allocation_count = self.world.d.allocations.len();
             let resource_event_count = self.world.d.resource_events.len();
-            let (ok, detail) = match self.world.apply(cmd, &p.source.actor()) {
+            let mut verdicts=self.world.validate_batch(&self.prior(pid),std::slice::from_ref(cmd),&p.source.actor());
+            self.check_limit_batch(pid,std::slice::from_ref(cmd),&p.source.actor(),&mut verdicts);
+            let result=if let Verdict::Rejected {reason}=&verdicts[0]{Err(reason.clone())}else{self.world.apply(cmd,&p.source.actor())};
+            let (ok, detail) = match result {
                 Ok(notes) => (true, notes.join("; ")),
                 Err(reason) => (false, reason),
             };
@@ -873,6 +889,7 @@ impl Exercise {
         let all_ok = applied.iter().all(|a| a.ok);
         let pm = self.proposal_mut(pid)?;
         pm.results = applied.iter().map(|a| format!("{}: {} ({})", a.action, if a.ok { "done" } else { "not executed" }, a.detail)).collect();
+        if p.resource_limit_draft.is_some(){pm.results.push("Master-approved resource limits applied".into());}
         pm.executions = executions;
         self.transition(pid, if all_ok { ProposalStatus::Applied } else { ProposalStatus::Failed }, MASTER, "Execution outcomes recorded")?;
         Ok(applied)
@@ -898,7 +915,8 @@ impl Exercise {
     fn set_commands(&mut self, pid: u64, commands: Vec<Command>) -> Result<()> {
         let actor = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?.source.actor();
         let prior = self.prior(pid);
-        let verdicts = self.world.validate_batch(&prior, &commands, &actor);
+        let mut verdicts = self.world.validate_batch(&prior, &commands, &actor);
+        self.check_limit_batch(pid,&commands,&actor,&mut verdicts);
         let p = self.proposal_mut(pid)?;
         p.descriptions = commands.iter().map(|c| c.describe()).collect();
         p.commands = commands;
@@ -918,8 +936,13 @@ impl Exercise {
                 Err(e) => invalid.push(format!("{a} ({e})")),
             }
         }
+        if parsed.resource_limit_draft.is_some() && !matches!(self.proposal(pid).unwrap().source,Source::Master){bail!("players cannot draft operational limits");}
+        if let Some(draft)=&parsed.resource_limit_draft {
+            if let Err(e)=serde_json::from_value::<ResourceLimits>(draft.clone()).map_err(anyhow::Error::from).and_then(|limits|self.validate_limits_for_phase(&limits,self.exercise_phase)){invalid.push(format!("resource limits: {e}"));}
+        }
         self.set_commands(pid, commands)?;
         let p = self.proposal_mut(pid)?;
+        p.resource_limit_draft=parsed.resource_limit_draft;
         if !parsed.language.is_empty() {
             p.language = parsed.language.clone();
         }
@@ -1014,11 +1037,14 @@ impl Exercise {
         let note = d.note.clone().filter(|n| !n.trim().is_empty());
         if d.approve {
             self.edit_communications(pid, Some(p.communication_drafts.clone()), Some(p.inject_drafts.clone()))?;
-            if p.commands.is_empty() && p.inject_drafts.is_empty() && p.communication_drafts.is_empty() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
+            if p.commands.is_empty() && p.inject_drafts.is_empty() && p.communication_drafts.is_empty() && p.resource_limit_draft.is_none() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
             if p.verdicts.iter().any(|v| !v.is_ok()) { bail!("proposal is not feasible; edit its actions or resources before approval"); }
             if d.commands.is_none() && !p.invalid.is_empty() { bail!("proposal contains invalid actions; edit it before approval"); }
         }
+        let effective_limits=if d.approve {p.resource_limit_draft.as_ref().map(|v|serde_json::from_value::<ResourceLimits>(v.clone())).transpose()?}else{None};
+        if d.approve {if let Some(limits)=&effective_limits{self.validate_limits_for_phase(limits,self.exercise_phase)?;}}
         self.proposal_mut(pid)?.decision = Some(ApprovalRecord {
+            resource_limits:effective_limits,
             approve: d.approve, actor: MASTER.into(), turn: self.turn, t_s: self.world.time_s(), wall_ms: wall_ms(), note: note.clone(), edited: d.commands.is_some(), proposed_commands, effective_commands: p.commands.clone(),
         });
         let mut facts = Vec::new();
@@ -1030,7 +1056,7 @@ impl Exercise {
             if matches!(p.source, Source::Master) || p.commands.is_empty() {
                 self.execute_proposal(pid)?;
                 facts.extend(self.proposal(pid).unwrap().results.clone());
-                if p.commands.is_empty() { facts.push("APPROVED: the reviewed communication will be delivered by exercise control.".into()); }
+                if p.commands.is_empty() && (!p.communication_drafts.is_empty() || !p.inject_drafts.is_empty()) { facts.push("APPROVED: the reviewed communication will be delivered by exercise control.".into()); }
             } else {
                 for (desc, v) in p.descriptions.iter().zip(&p.verdicts) {
                     let notes = match v { Verdict::Ok { notes } => notes.join("; "), _ => String::new() };
@@ -1050,7 +1076,8 @@ impl Exercise {
     /// A command from the Master GUI or a script: validated as Master and applied now.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
         let resource_event_count = self.world.d.resource_events.len();
-        let r = self.world.apply(cmd, &Actor::Master);
+        let verdict=self.world.validate_batch(&self.prior(0),std::slice::from_ref(cmd),&Actor::Master).remove(0);
+        let r=if let Verdict::Rejected {reason}=verdict{Err(reason)}else{self.world.apply(cmd,&Actor::Master)};
         self.record_resource_events(resource_event_count, MASTER);
         if r.is_ok() && matches!(cmd, Command::AdvanceTime { .. }) { self.clock_control.revision+=1; }
         self.record("master_command", MASTER, json!({"origin": "direct_excon_intervention", "command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
@@ -1072,7 +1099,10 @@ impl Exercise {
                 }
                 let returned: u64 = self.world.d.allocations.iter().filter(|a| &a.role == role && &a.resource == resource).map(|a| a.returned as u64).sum();
                 let external_requested: u64 = self.world.d.arrivals.iter().filter(|a| &a.role == role && &a.resource == resource && a.at_s > self.world.time_s()).map(|a| a.qty as u64).sum();
-                resources.insert(resource.clone(), json!({"total": pool.total, "requested": requested, "committed": committed, "deployed": pool.used, "available": (pool.available() as u64).saturating_sub(committed), "returned": returned, "external_requested": external_requested}));
+                let effective_capacity=self.effective_capacity(resource,self.exercise_phase,&self.resource_limits);
+                let shared_used=self.resource_usage_with_commitments(0).get(resource).copied().unwrap_or(0);
+                let deployable=(pool.available() as u64).saturating_sub(committed).min(effective_capacity.saturating_sub(shared_used));
+                resources.insert(resource.clone(), json!({"inventory_available":(pool.available() as u64).saturating_sub(committed),"effective_capacity":effective_capacity,"total_limit":self.resource_limits.total.get(resource),"phase_limit":self.resource_limits.phases.get(&self.exercise_phase).and_then(|p|p.get(resource)),"total": pool.total, "requested": requested, "committed": committed, "deployed": pool.used, "available": deployable, "returned": returned, "external_requested": external_requested}));
             }
             roles.insert(role.clone(), Value::Object(resources));
         }
@@ -1082,6 +1112,7 @@ impl Exercise {
     /// The full log as a debrief timeline.
     pub fn debrief(&self) -> Value {
         json!({
+            "resource_limits":self.resource_limits,
             "exercise_phase":self.exercise_phase,
             "phase_history":self.phase_history,
             "clock_control":self.clock_control,

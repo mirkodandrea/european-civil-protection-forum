@@ -365,7 +365,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
         assert_eq!(call_key(&app, "GET", path, None, Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
         assert_eq!(call_key(&app, "GET", path, None, None).await.0, StatusCode::UNAUTHORIZED, "{path}");
     }
-    for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/player/fire_commander/reply", "/api/player/fire_commander/language"] {
+    for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/resource-limits", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/player/fire_commander/reply", "/api/player/fire_commander/language"] {
         assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
     }
     assert_eq!(call_key(&app, "GET", "/api/state?token=test-master", None, None).await.0, StatusCode::UNAUTHORIZED);
@@ -424,7 +424,7 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
             assert_eq!(call_key(&app, "GET", path, None, Some(key)).await.0, StatusCode::OK, "{key} {path}");
         }
         assert_eq!(call_key(&app, "GET", "/api/master/access", None, Some(key)).await.0, StatusCode::FORBIDDEN);
-        for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/master/references", "/api/player/mayor/reply", "/api/player/mayor/language", "/api/evaluator"] {
+        for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/resource-limits", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/master/references", "/api/player/mayor/reply", "/api/player/mayor/language", "/api/evaluator"] {
             assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some(key)).await.0, StatusCode::FORBIDDEN, "{key} {path}");
         }
     }
@@ -533,4 +533,45 @@ async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only(
     let (_,e)=call_key(&app,"GET","/api/evaluator?exercise_phase=early_warning",None,Some("test-eval-one")).await;
     assert_eq!(e["chains"][0]["proposal"]["status"],"applied");
     assert!(e["timeline"].as_array().unwrap().iter().all(|l|l["exercise_phase"]=="early_warning"));
+}
+
+#[tokio::test]
+async fn ai_resource_limits_are_recommendations_until_reviewed_and_approved() {
+    let scn=Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex=exercise::Exercise::new(sim::World::new(scn,1).unwrap());
+    let llm=llm::Llm::mock(|task,_,_|if task=="master_prompt"{Ok(r#"{"resource_limits":{"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":1}}},"actions":[],"summary":"Limit first-phase deployment to one crew"}"#.into())}else{anyhow::bail!("unexpected task")});
+    let app=server::router_with_access(Arc::new(Mutex::new(ex)),llm,None,access()).0;
+    call(&app,"POST","/api/master/start",None).await;
+    let (_,before)=call(&app,"GET","/api/state",None).await;
+    let (_,p)=call(&app,"POST","/api/master/prompt",Some(json!({"text":"Recommend initial crew deployment limits"}))).await;
+    let pid=p["proposal"].as_u64().unwrap();
+    let proposal=eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
+    assert_eq!(proposal["proposals"][0]["resource_limit_draft"]["total"]["ground_crews"],1);
+    let (_,pending)=call(&app,"GET","/api/state",None).await;
+    assert_eq!(pending["resource_limits"],before["resource_limits"]);assert_eq!(pending["world"],before["world"]);
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"Master edits recommendation to two crews"}))).await.0,StatusCode::OK);
+    let (_,effective)=call(&app,"GET","/api/state",None).await;assert_eq!(effective["resource_limits"]["total"]["ground_crews"],2);
+    assert_eq!(effective["resource_accounting"]["fire_commander"]["ground_crews"]["available"],2);
+    let (_,evidence)=call_key(&app,"GET","/api/evaluator",None,Some("test-eval-one")).await;
+    assert_eq!(evidence["chains"][0]["proposal"]["decision"]["resource_limits"]["total"]["ground_crews"],2);
+    assert!(evidence["timeline"].as_array().unwrap().iter().any(|l|l["kind"]=="resource_limit_draft_reviewed"));
+    assert!(evidence["timeline"].as_array().unwrap().iter().any(|l|l["kind"]=="resource_limits_changed" && l["data"]["proposal"]==pid));
+    let (_,p)=call(&app,"POST","/api/master/prompt",Some(json!({"text":"Recommend another limit"}))).await;
+    let pid=p["proposal"].as_u64().unwrap();
+    eventually(&app,"/api/master",|m|m["proposals"][1]["status"]=="pending").await;
+    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":false}))).await;
+    let (_,after)=call(&app,"GET","/api/state",None).await;assert_eq!(after["resource_limits"],effective["resource_limits"]);
+}
+
+#[tokio::test]
+async fn configured_limit_controls_enforce_capacity_and_reject_unknown_resources() {
+    let app=app().await;call(&app,"POST","/api/master/start",None).await;
+    let body=json!({"limits":{"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":0}}},"reason":"Initial stand-by phase"});
+    assert_eq!(call(&app,"POST","/api/master/resource-limits",Some(body.clone())).await.0,StatusCode::OK);
+    let (_,fc)=call_key(&app,"GET","/api/player/fire_commander",None,Some("test-fire")).await;
+    assert_eq!(fc["resource_accounting"]["ground_crews"]["available"],0);
+    assert_eq!(fc["resource_accounting"]["ground_crews"]["inventory_available"],3);
+    assert_eq!(call(&app,"POST","/api/master/resource-limits",Some(json!({"limits":{"total":{"invented":2}},"reason":"invalid"}))).await.0,StatusCode::BAD_REQUEST);
+    let (_,state)=call(&app,"GET","/api/state",None).await;assert_eq!(state["resource_limits"],body["limits"]);
+    assert_eq!(call_key(&app,"POST","/api/master/resource-limits",Some(body),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
 }
