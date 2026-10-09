@@ -32,6 +32,8 @@
     </div>
     <div class="panel">
       <h2 id="replyh">Your decision</h2>
+      <label for="declarationkind">Declaration</label>
+      <select id="declarationkind"><option value="proposed_decision">Proposed decision — requires Master approval</option><option value="request">Request — requires exercise control response</option></select>
       <label for="replyto">Reply to inject or clarification</label>
       <select id="replyto"></select>
       <div id="selectedinject" class="small muted"></div>
@@ -69,7 +71,7 @@ $('send').onclick = async () => {
   const text = $('reply').value.trim();
   if (!text || !$('replyto').value) return;
   $('send').disabled = true;
-  try { await api(`/api/player/${role}/reply`, { text, reply_to: Number($('replyto').value) }); $('reply').value = ''; $('status').textContent = 'sent'; }
+  try { await api(`/api/player/${role}/reply`, { text, reply_to: Number($('replyto').value), declaration_kind: $('declarationkind').value }); $('reply').value = ''; $('status').textContent = 'sent'; }
   catch (e) { $('status').textContent = e.message; }
   $('send').disabled = false;
 };
@@ -85,7 +87,7 @@ async function refresh() {
   $('res').innerHTML = p.resources && Object.keys(p.resources).length
     ? Object.entries(p.resources).map(([k, v]) => `${esc(stat.resource_types.find(r => r.id === k)?.name || k)}: <b>${v.total - v.used}</b> / ${v.total}`).join('<br>')
     : '<span class="muted">No own resources — coordinate and request.</span>';
-  $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span></div>`).join('') || '<span class="muted">none yet</span>';
+  $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span> · ${esc(x.declaration_kind.replaceAll('_', ' '))}${x.executions?.length ? `<div>${x.executions.map(e => `${e.ok ? 'Executed' : 'Failed'} at ${e.t_s}s: ${esc(e.detail)}`).join('<br>')}</div>` : ''}</div>`).join('') || '<span class="muted">none yet</span>';
   $('inbox').innerHTML = p.inbox.map(m => m.kind === 'reply'
     ? `<div class="msg k-reply"><div class="meta">${kindBadge('reply')} you · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div><div class="text">${esc(m.text)}</div></div>`
     : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || '<p class="muted">Waiting for the exercise to start…</p>';

@@ -189,7 +189,7 @@ function renderProposals() {
       const drafts = (p.inject_drafts || []).map(d => `<li>Inject “${esc(d.title)}” → ${esc((d.recipients || []).join(', '))}: ${esc(d.text)}</li>`).join('');
       const editable = open.includes(p.status);
       return `<div class="card">
-        <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> <span class="muted small">turn ${p.turn} · #${p.id}${p.inject_id ? ` · inject #${p.inject_id} · reply to #${p.reply_to}` : ''}</span></div></div>
+        <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> · ${esc(p.declaration_kind.replaceAll('_', ' '))} <span class="muted small">turn ${p.turn} · #${p.id}${p.inject_id ? ` · inject #${p.inject_id} · reply to #${p.reply_to}` : ''}</span></div></div>
         <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>
         ${p.translation_en && p.translation_en !== p.original ? `<div class="small muted">EN: ${esc(p.translation_en)}</div>` : ''}
         ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
@@ -197,6 +197,8 @@ function renderProposals() {
         ${p.invalid.length ? `<div class="small error">Not understood: ${esc(p.invalid.join('; '))}</div>` : ''}
         ${p.clarification ? `<div class="small" style="color:var(--warn)">Asked the player: ${esc(p.clarification)}</div>` : ''}
         ${p.results.length ? `<div class="small">${p.results.map(esc).join('<br>')}</div>` : ''}
+        ${p.history?.length ? `<details class="small"><summary>Declaration and status history</summary>${p.history.map(h => `<div>${esc(h.status)} · turn ${h.turn} · ${h.t_s}s · ${esc(h.actor)}: ${esc(h.note)}</div>`).join('')}</details>` : ''}
+        ${p.decision ? `<div class="small muted">Master ${p.decision.approve ? 'approval' : 'rejection'} recorded at ${p.decision.t_s}s${p.decision.edited ? ' (actions edited)' : ''}</div>` : ''}
         ${p.master_note ? `<div class="small muted">Note: ${esc(p.master_note)}</div>` : ''}
         ${editable ? `<details class="small"><summary>Edit actions (JSON)</summary><textarea id="edit-${p.id}">${esc(JSON.stringify(p.commands, null, 1))}</textarea></details>
           <div class="row"><input id="note-${p.id}" placeholder="Note to the player (optional)" style="flex:1">

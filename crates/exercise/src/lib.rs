@@ -25,7 +25,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sim::{Actor, Command, SimEvent, Verdict, World, WorldSnapshot};
 
@@ -129,8 +129,57 @@ impl Source {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeclarationKind {
+    Request,
+    #[default]
+    ProposedDecision,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusChange {
+    pub status: ProposalStatus,
+    pub turn: u32,
+    pub t_s: i64,
+    pub wall_ms: u128,
+    pub actor: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApprovalRecord {
+    pub approve: bool,
+    pub actor: String,
+    pub turn: u32,
+    pub t_s: i64,
+    pub wall_ms: u128,
+    pub note: Option<String>,
+    pub edited: bool,
+    pub proposed_commands: Vec<Command>,
+    pub effective_commands: Vec<Command>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecutionRecord {
+    pub command: Command,
+    pub ok: bool,
+    pub detail: String,
+    pub t_s: i64,
+    pub wall_ms: u128,
+    pub origin: String,
+}
+
+fn wall_ms() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
+    pub declaration_kind: DeclarationKind,
+    pub history: Vec<StatusChange>,
+    pub decision: Option<ApprovalRecord>,
+    pub executions: Vec<ExecutionRecord>,
     pub inject_id: Option<u64>,
     pub reply_to: Option<u64>,
     pub id: u64,
@@ -412,27 +461,9 @@ impl Exercise {
         let minutes = minutes.unwrap_or(self.turn_minutes).clamp(1, 24 * 60);
         let from_s = self.world.time_s();
         let mut applied = Vec::new();
-        for i in 0..self.proposals.len() {
-            if self.proposals[i].status != ProposalStatus::Approved {
-                continue;
-            }
-            let actor = self.proposals[i].source.actor();
-            let by = self.proposals[i].source.label().to_string();
-            let mut all_ok = true;
-            let mut results = Vec::new();
-            for cmd in self.proposals[i].commands.clone() {
-                let r = self.world.apply(&cmd, &actor);
-                let (ok, detail) = match r {
-                    Ok(notes) => (true, notes.join("; ")),
-                    Err(reason) => (false, reason),
-                };
-                all_ok &= ok;
-                results.push(format!("{}: {}", cmd.describe(), if ok { "done" } else { "not executed" }));
-                applied.push(AppliedAction { proposal: self.proposals[i].id, by: by.clone(), action: cmd.describe(), ok, detail });
-            }
-            let p = &mut self.proposals[i];
-            p.status = if all_ok { ProposalStatus::Applied } else { ProposalStatus::Failed };
-            p.results = results;
+        let approved: Vec<u64> = self.proposals.iter().filter(|p| p.status == ProposalStatus::Approved).map(|p| p.id).collect();
+        for pid in approved {
+            applied.extend(self.execute_proposal(pid)?);
         }
         let to_s = from_s + minutes as i64 * 60;
         self.resolving = Some(Resolution { turn: self.turn, minutes, from_s, to_s, applied, events: Vec::new() });
@@ -486,11 +517,8 @@ impl Exercise {
         };
         self.world.restore(&snap)?;
         self.snapshots.retain(|(t, _)| *t <= turn);
-        for p in &mut self.proposals {
-            if p.turn >= turn && p.status != ProposalStatus::Rejected {
-                p.status = ProposalStatus::RolledBack;
-            }
-        }
+        let undone: Vec<u64> = self.proposals.iter().filter(|p| p.turn >= turn && p.status != ProposalStatus::Rejected && p.status != ProposalStatus::RolledBack).map(|p| p.id).collect();
+        for pid in undone { self.transition(pid, ProposalStatus::RolledBack, MASTER, "Undone by explicit rollback")?; }
         self.turn = turn;
         self.phase = Phase::Orders;
         self.last_turn = None;
@@ -620,6 +648,10 @@ impl Exercise {
         let pid = self.id();
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
+            declaration_kind: DeclarationKind::ProposedDecision,
+            history: Vec::new(),
+            decision: None,
+            executions: Vec::new(),
             inject_id: Some(inject_id),
             reply_to: Some(reply_to),
             id: pid,
@@ -640,6 +672,8 @@ impl Exercise {
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
+        self.transition(pid, ProposalStatus::Parsing, role, "Declaration recorded; awaiting interpretation")?;
+        self.record("proposal_declared", role, json!(self.proposal(pid)));
         self.add_message(role, MASTER, MsgKind::Reply, None, text, text, Some(pid));
         Ok(pid)
     }
@@ -648,6 +682,10 @@ impl Exercise {
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
+            declaration_kind: DeclarationKind::ProposedDecision,
+            history: Vec::new(),
+            decision: None,
+            executions: Vec::new(),
             inject_id: None,
             reply_to: None,
             id: pid,
@@ -668,8 +706,54 @@ impl Exercise {
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
+        self.transition(pid, ProposalStatus::Parsing, MASTER, "Master suggestion requested").expect("new proposal");
         self.record("master_prompt", MASTER, json!({"proposal": pid, "text": text}));
         pid
+    }
+
+    fn transition(&mut self, pid: u64, status: ProposalStatus, actor: &str, note: &str) -> Result<()> {
+        let change = StatusChange { status, turn: self.turn, t_s: self.world.time_s(), wall_ms: wall_ms(), actor: actor.into(), note: note.into() };
+        let p = self.proposal_mut(pid)?;
+        p.status = status;
+        p.history.push(change.clone());
+        self.record("proposal_status", actor, json!({"proposal": pid, "change": change}));
+        Ok(())
+    }
+
+    /// Set the explicitly selected declaration type before parsing starts.
+    pub fn set_declaration_kind(&mut self, pid: u64, kind: DeclarationKind) -> Result<()> {
+        let p = self.proposal_mut(pid)?;
+        if p.status != ProposalStatus::Parsing { bail!("declaration already interpreted"); }
+        p.declaration_kind = kind;
+        let actor = p.source.label().to_string();
+        self.record("declaration_kind", &actor, json!({"proposal": pid, "kind": kind}));
+        Ok(())
+    }
+
+    fn execute_proposal(&mut self, pid: u64) -> Result<Vec<AppliedAction>> {
+        let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?.clone();
+        if p.status != ProposalStatus::Approved || p.decision.as_ref().map(|d| d.approve) != Some(true) {
+            bail!("proposal has no effective Master approval");
+        }
+        let origin = if matches!(p.source, Source::Master) { "approved_master_suggestion" } else { "approved_player_decision" };
+        let mut applied = Vec::new();
+        let mut executions = Vec::new();
+        for cmd in &p.commands {
+            let (ok, detail) = match self.world.apply(cmd, &p.source.actor()) {
+                Ok(notes) => (true, notes.join("; ")),
+                Err(reason) => (false, reason),
+            };
+            let execution = ExecutionRecord { command: cmd.clone(), ok, detail: detail.clone(), t_s: self.world.time_s(), wall_ms: wall_ms(), origin: origin.into() };
+            self.record("action_executed", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "execution": execution}));
+            executions.push(execution);
+            applied.push(AppliedAction { proposal: pid, by: p.source.label().into(), action: cmd.describe(), ok, detail });
+        }
+        let all_ok = applied.iter().all(|a| a.ok);
+        let pm = self.proposal_mut(pid)?;
+        pm.results = applied.iter().map(|a| format!("{}: {} ({})", a.action, if a.ok { "done" } else { "not executed" }, a.detail)).collect();
+        pm.executions = executions;
+        self.transition(pid, if all_ok { ProposalStatus::Applied } else { ProposalStatus::Failed }, MASTER, "Execution outcomes recorded")?;
+        Ok(applied)
     }
 
     fn proposal_mut(&mut self, pid: u64) -> Result<&mut Proposal> {
@@ -703,6 +787,7 @@ impl Exercise {
     /// Attach the LLM's interpretation. Returns the clarification question
     /// (in the player's language) if the player must be asked one.
     pub fn attach_parse(&mut self, pid: u64, parsed: ParsedInput) -> Result<Option<String>> {
+        if self.proposal(pid).map(|p| p.status) != Some(ProposalStatus::Parsing) { bail!("proposal is no longer awaiting interpretation"); }
         let mut commands = Vec::new();
         let mut invalid = Vec::new();
         for a in &parsed.actions {
@@ -721,10 +806,10 @@ impl Exercise {
         p.invalid = invalid;
         p.clarification = parsed.clarification.clone();
         p.inject_drafts = parsed.inject_drafts.clone();
-        p.status = if p.commands.is_empty() && p.inject_drafts.is_empty() && p.clarification.is_some() { ProposalStatus::NeedsClarification } else { ProposalStatus::Pending };
+        let status = if p.commands.is_empty() && p.inject_drafts.is_empty() && p.clarification.is_some() { ProposalStatus::NeedsClarification } else { ProposalStatus::Pending };
         let (source, clar) = (p.source.clone(), p.clarification.clone());
-        let snapshot = serde_json::to_value(&*p)?;
-        self.record("proposal_parsed", source.label(), snapshot);
+        self.transition(pid, status, source.label(), "Interpretation stored; awaiting exercise control")?;
+        self.record("proposal_parsed", source.label(), serde_json::to_value(self.proposal(pid))?);
         if let (Source::Player(role), Some(q)) = (&source, &clar) {
             self.add_message(MASTER, role, MsgKind::Clarification, Some("Clarification needed"), q, q, Some(pid));
         }
@@ -734,20 +819,23 @@ impl Exercise {
     /// The LLM could not parse: the proposal waits for the Master, who can
     /// type the commands themselves.
     pub fn parse_failed(&mut self, pid: u64, error: &str) -> Result<()> {
+        if self.proposal(pid).map(|p| p.status) != Some(ProposalStatus::Parsing) { bail!("proposal is no longer awaiting interpretation"); }
         let p = self.proposal_mut(pid)?;
-        p.status = ProposalStatus::Pending;
         p.summary = format!("(AI unavailable: {error}) — enter the actions manually");
         let label = p.source.label().to_string();
+        self.transition(pid, ProposalStatus::Pending, &label, "Manual interpretation required")?;
         self.record("proposal_parse_failed", &label, json!({"proposal": pid, "error": error}));
         Ok(())
     }
 
     /// The Master decides on a proposal.
     pub fn decide(&mut self, pid: u64, d: Decision) -> Result<DecisionOutcome> {
+        if self.phase != Phase::Orders { bail!("decisions require an open exercise turn"); }
         let status = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?.status;
         if !matches!(status, ProposalStatus::Pending | ProposalStatus::NeedsClarification | ProposalStatus::Parsing) {
             bail!("proposal {pid} is already {status:?}");
         }
+        let proposed_commands = self.proposal(pid).unwrap().commands.clone();
         // Re-check feasibility now: resources may have changed since parsing.
         let cmds = match d.commands.clone() {
             Some(c) => c,
@@ -760,30 +848,27 @@ impl Exercise {
             Source::Master => None,
         };
         let note = d.note.clone().filter(|n| !n.trim().is_empty());
+        if d.approve {
+            if p.commands.is_empty() && p.inject_drafts.is_empty() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
+            if p.verdicts.iter().any(|v| !v.is_ok()) { bail!("proposal is not feasible; edit its actions or resources before approval"); }
+            if d.commands.is_none() && !p.invalid.is_empty() { bail!("proposal contains invalid actions; edit it before approval"); }
+        }
+        self.proposal_mut(pid)?.decision = Some(ApprovalRecord {
+            approve: d.approve, actor: MASTER.into(), turn: self.turn, t_s: self.world.time_s(), wall_ms: wall_ms(), note: note.clone(), edited: d.commands.is_some(), proposed_commands, effective_commands: p.commands.clone(),
+        });
         let mut facts = Vec::new();
         if !d.approve {
-            self.proposal_mut(pid)?.status = ProposalStatus::Rejected;
+            self.transition(pid, ProposalStatus::Rejected, MASTER, note.as_deref().unwrap_or("Rejected by exercise control"))?;
             facts.push(format!("Your orders were NOT approved by exercise control: {}", if p.descriptions.is_empty() { p.summary.clone() } else { p.descriptions.join("; ") }));
-        } else if p.commands.is_empty() && p.inject_drafts.is_empty() {
-            bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)");
-        } else if matches!(p.source, Source::Master) {
-            let mut results = Vec::new();
-            for c in &p.commands {
-                match self.world.apply(c, &Actor::Master) {
-                    Ok(n) => results.push(format!("{}: done{}", c.describe(), if n.is_empty() { String::new() } else { format!(" ({})", n.join("; ")) })),
-                    Err(e) => results.push(format!("{}: failed ({e})", c.describe())),
-                }
-            }
-            let pm = self.proposal_mut(pid)?;
-            pm.status = ProposalStatus::Applied;
-            pm.results = results.clone();
-            facts.extend(results);
         } else {
-            self.proposal_mut(pid)?.status = ProposalStatus::Approved;
-            for (desc, v) in p.descriptions.iter().zip(&p.verdicts) {
-                match v {
-                    Verdict::Ok { notes } => facts.push(format!("APPROVED: {desc}{}. It will be executed at the end of the turn.", if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) })),
-                    Verdict::Rejected { reason } => facts.push(format!("APPROVED BUT NOT FEASIBLE: {desc} — {reason}")),
+            self.transition(pid, ProposalStatus::Approved, MASTER, note.as_deref().unwrap_or("Approved by exercise control"))?;
+            if matches!(p.source, Source::Master) {
+                self.execute_proposal(pid)?;
+                facts.extend(self.proposal(pid).unwrap().results.clone());
+            } else {
+                for (desc, v) in p.descriptions.iter().zip(&p.verdicts) {
+                    let notes = match v { Verdict::Ok { notes } => notes.join("; "), _ => String::new() };
+                    facts.push(format!("APPROVED: {desc}{}. It will be executed at the end of the turn.", if notes.is_empty() { String::new() } else { format!(" ({notes})") }));
                 }
             }
         }
@@ -792,14 +877,14 @@ impl Exercise {
         }
         self.proposal_mut(pid)?.master_note = note;
         let facts_en = facts.join("\n");
-        self.record("proposal_decided", MASTER, json!({"proposal": pid, "approve": d.approve, "edited": d.commands.is_some(), "facts": facts_en}));
+        self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
         Ok(DecisionOutcome { proposal: pid, notify, facts_en })
     }
 
     /// A command from the Master GUI or a script: validated as Master and applied now.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
         let r = self.world.apply(cmd, &Actor::Master);
-        self.record("master_command", MASTER, json!({"command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
+        self.record("master_command", MASTER, json!({"origin": "direct_excon_intervention", "command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
         r.map_err(|e| anyhow::anyhow!(e))
     }
 

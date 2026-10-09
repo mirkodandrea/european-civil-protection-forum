@@ -243,10 +243,12 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
     assert_eq!(call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text":"hello", "reply_to":parent}))).await.0, StatusCode::BAD_REQUEST);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert!(master["proposals"].as_array().unwrap().is_empty());
-    let (status, reply) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello", "reply_to":parent}))).await;
+    let (status, reply) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello", "reply_to":parent, "declaration_kind":"request"}))).await;
     assert_eq!(status, StatusCode::OK);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["proposals"][0]["reply_to"], parent);
+    assert_eq!(master["proposals"][0]["declaration_kind"], "request");
+    assert_eq!(master["proposals"][0]["history"][0]["status"], "parsing");
     assert_eq!(master["messages"][1]["proposal"], reply["proposal"]);
     assert_eq!(master["messages"][1]["inject_id"], master["messages"][0]["inject_id"]);
 }
