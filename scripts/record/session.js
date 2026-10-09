@@ -104,6 +104,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await caption('mayor_replies', 300);
   await scrollTo('Mayor', '#reply');
   await type(F('Mayor').locator('#reply'), "Allertate la zona F4 ed evacuate la scuola primaria di Pineta verso il centro sportivo di Valverde, da aprire come area di accoglienza. Chiudete la Northern Road al traffico civile. Avvisate i vigili del fuoco.");
+  await F('Mayor').locator('#replyto').selectOption(await F('Mayor').locator('#replyto option').last().getAttribute('value'));
   await F('Mayor').locator('#send').click();
   await sleep(1200);
 
@@ -113,6 +114,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(1500);
   await scrollTo('Fire', '#reply');
   await type(F('Fire').locator('#reply'), 'Two crews cut a fire line along the northern edge of zone F4; the third crew from Pineta east edge to Forest edge east. Air tanker: one drop on Pineta north edge. Tell regional civil protection we may need reinforcements.');
+  await F('Fire').locator('#replyto').selectOption(await F('Fire').locator('#replyto option').last().getAttribute('value'));
   await F('Fire').locator('#send').click();
   await sleep(1000);
 
@@ -197,6 +199,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(2000);
   await scrollTo('Regional', '#reply');
   await type(F('Regional').locator('#reply'), 'Խնդրում ենք միջազգային օգնությամբ (UCPM) 2 օդային տանկեր և տարածաշրջանային հրշեջ ծառայությունից 2 վերգետնյա թիմ հրշեջ հրամանատարի համար։ Տեղեկացրեք քաղաքապետին, որ Valverde Sports Centre-ը բաց է։', 10);
+  await F('Regional').locator('#replyto').selectOption(await F('Regional').locator('#replyto option').last().getAttribute('value'));
   await F('Regional').locator('#send').click();
   await sleep(1000);
 
@@ -204,6 +207,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await caption('vague', 300);
   await scrollTo('Fire', '#reply');
   await type(F('Fire').locator('#reply'), 'Send the remaining crews over there to hold it.', 30);
+  await F('Fire').locator('#replyto').selectOption(await F('Fire').locator('#replyto option').last().getAttribute('value'));
   await F('Fire').locator('#send').click();
   await waitFor(async () => (await getJSON('/api/player/fire_commander')).inbox.some(m => m.kind === 'clarification'), 'clarification');
   await sleep(800);
@@ -212,6 +216,7 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await caption('precise', 300);
   await scrollTo('Fire', '#reply');
   await type(F('Fire').locator('#reply'), 'One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4.', 22);
+  await F('Fire').locator('#replyto').selectOption(await F('Fire').locator('#replyto option').last().getAttribute('value'));
   await F('Fire').locator('#send').click();
   await sleep(800);
 

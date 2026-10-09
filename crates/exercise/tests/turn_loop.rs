@@ -11,6 +11,15 @@ fn exercise() -> Exercise {
     Exercise::new(World::new(scn, 1).unwrap())
 }
 
+fn reply(ex: &mut Exercise, role: &str, text: &str) -> anyhow::Result<u64> {
+    let parent = match ex.messages.iter().rev().find(|m| m.to == role && m.kind == MsgKind::Inject) {
+        Some(m) => m.id,
+        None if ex.phase == Phase::Orders => ex.send_inject(None, "Task", "EXCON", &[role.into()], "Exercise task", &BTreeMap::new())?[0],
+        None => 0,
+    };
+    ex.player_reply(role, text, parent)
+}
+
 fn parsed(actions: serde_json::Value) -> ParsedInput {
     ParsedInput { language: "it".into(), translation_en: "t".into(), actions: actions.as_array().unwrap().clone(), clarification: None, summary: "s".into(), inject_drafts: vec![] }
 }
@@ -18,7 +27,7 @@ fn parsed(actions: serde_json::Value) -> ParsedInput {
 #[test]
 fn full_turn_inject_reply_approve_resolve() {
     let mut ex = exercise();
-    assert!(ex.player_reply("mayor", "hello").is_err(), "replies before start must fail");
+    assert!(reply(&mut ex, "mayor", "hello").is_err(), "replies before start must fail");
     ex.start().unwrap();
 
     let mut tr = BTreeMap::new();
@@ -29,7 +38,7 @@ fn full_turn_inject_reply_approve_resolve() {
     assert_eq!(ex.inbox("fire_commander")[0].text, "Fire on Pine Hill");
 
     // Mayor: warn and evacuate F4 (school included; the mayor lacks buses for 120 -> verdict rejected).
-    let pid = ex.player_reply("mayor", "Allertate F4 ed evacuate la zona").unwrap();
+    let pid = reply(&mut ex, "mayor", "Allertate F4 ed evacuate la zona").unwrap();
     let q = ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"},{"type":"EvacuateZone","zone":"F4"},{"type":"Nonsense"}]))).unwrap();
     assert!(q.is_none());
     let p = ex.proposal(pid).unwrap();
@@ -51,10 +60,10 @@ fn full_turn_inject_reply_approve_resolve() {
     assert!(out.facts_en.contains("good call"));
 
     // Fire commander: a drop; a second drop in another proposal exceeds the single air tanker.
-    let p1 = ex.player_reply("fire_commander", "drop on G3").unwrap();
+    let p1 = reply(&mut ex, "fire_commander", "drop on G3").unwrap();
     ex.attach_parse(p1, parsed(json!([{"type":"WaterDrop","at":"G3"}]))).unwrap();
     ex.decide(p1, Decision { approve: true, ..Default::default() }).unwrap();
-    let p2 = ex.player_reply("fire_commander", "another drop on F3").unwrap();
+    let p2 = reply(&mut ex, "fire_commander", "another drop on F3").unwrap();
     ex.attach_parse(p2, parsed(json!([{"type":"WaterDrop","at":"F3"}]))).unwrap();
     assert!(!ex.proposal(p2).unwrap().verdicts[0].is_ok(), "approved drop must hold the air tanker");
     ex.decide(p2, Decision { approve: false, commands: None, note: None }).unwrap();
@@ -79,7 +88,7 @@ fn full_turn_inject_reply_approve_resolve() {
 fn clarification_goes_back_to_the_player() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let pid = ex.player_reply("fire_commander", "send two teams there").unwrap();
+    let pid = reply(&mut ex, "fire_commander", "send two teams there").unwrap();
     let mut p = parsed(json!([]));
     p.clarification = Some("Where exactly should the two crews cut the line?".into());
     let q = ex.attach_parse(pid, p).unwrap();
@@ -111,7 +120,7 @@ fn master_prompt_applies_immediately_on_approval() {
 fn llm_failure_leaves_proposal_for_manual_entry() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let pid = ex.player_reply("fire_commander", "cut a line along the south edge of G3").unwrap();
+    let pid = reply(&mut ex, "fire_commander", "cut a line along the south edge of G3").unwrap();
     ex.parse_failed(pid, "timeout").unwrap();
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
     let cmds = vec![Command::CutFireLine { from: None, to: None, along: Some("G3:S".into()), width_m: None }];
@@ -125,7 +134,7 @@ fn llm_failure_leaves_proposal_for_manual_entry() {
 fn rollback_restores_world_and_marks_proposals() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let pid = ex.player_reply("fire_commander", "drop").unwrap();
+    let pid = reply(&mut ex, "fire_commander", "drop").unwrap();
     ex.attach_parse(pid, parsed(json!([{"type":"WaterDrop","at":{"x":3000.0,"y":2500.0}}]))).unwrap();
     ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
     ex.resolve_turn(None).unwrap();
@@ -171,7 +180,7 @@ fn languages_are_per_player() {
 fn decision_rechecks_feasibility_after_resources_change() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let pid = ex.player_reply("mayor", "evacuate the school").unwrap();
+    let pid = reply(&mut ex, "mayor", "evacuate the school").unwrap();
     ex.attach_parse(pid, parsed(json!([{"type":"EvacuateBuilding","building":"Pineta Primary School"}]))).unwrap();
     assert!(!ex.proposal(pid).unwrap().verdicts[0].is_ok(), "2 buses for 120 people");
     ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }).unwrap();
@@ -183,7 +192,7 @@ fn decision_rechecks_feasibility_after_resources_change() {
 fn resolution_steps_second_by_second() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let pid = ex.player_reply("fire_commander", "line").unwrap();
+    let pid = reply(&mut ex, "fire_commander", "line").unwrap();
     ex.attach_parse(pid, parsed(json!([{"type":"CutFireLine","along":"F4:N"}]))).unwrap();
     ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
 
@@ -193,7 +202,7 @@ fn resolution_steps_second_by_second() {
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Applied);
     assert!(ex.world.stats().line_km > 0.4);
     // Nothing else may happen while the turn is being simulated.
-    assert!(ex.player_reply("mayor", "evacuate").is_err());
+    assert!(reply(&mut ex, "mayor", "evacuate").is_err());
     assert!(ex.begin_resolution(None).is_err());
     assert!(ex.rollback(1).is_err());
     assert!(ex.end().is_err());
@@ -249,4 +258,38 @@ fn conversations_collect_what_each_player_received() {
         ex.converse("mayor", "user", format!("note {i}"));
     }
     assert_eq!(ex.conversation("mayor").len(), CONVERSATION_MAX);
+}
+
+#[test]
+fn replies_require_delivered_inject_and_keep_clarification_thread() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let ids = ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap();
+    let mid = ids[0];
+    let root = ex.messages.last().unwrap().inject_id.unwrap();
+    assert!(ex.player_reply("mayor", "hello", 99999).is_err());
+    assert!(ex.player_reply("fire_commander", "hello", mid).is_err());
+    assert!(ex.proposals.is_empty());
+    let pid = ex.player_reply("mayor", "Where?", mid).unwrap();
+    ex.attach_parse(pid, ParsedInput { clarification: Some("Which location?".into()), ..Default::default() }).unwrap();
+    let clarification = ex.messages.last().unwrap();
+    assert_eq!(clarification.inject_id, Some(root));
+    assert_eq!(clarification.reply_to, Some(mid));
+    let followup = ex.player_reply("mayor", "School", clarification.id).unwrap();
+    assert_eq!(ex.proposal(followup).unwrap().inject_id, Some(root));
+    ex.resolve_turn(Some(1)).unwrap();
+    let d = ex.debrief();
+    assert!(d["messages"].as_array().unwrap().iter().filter(|m| m["inject_id"] == root).count() >= 4);
+    assert_eq!(ex.proposal(pid).unwrap().reply_to, Some(mid));
+}
+
+#[test]
+fn repeated_msel_deliveries_have_distinct_threads_shared_by_recipients() {
+    let mut ex = exercise();
+    let ids = ex.send_inject(Some("I-01"), "Fire", "112", &["all".into()], "Fire", &BTreeMap::new()).unwrap();
+    let first = ex.messages[0].inject_id;
+    assert!(ex.messages.iter().all(|m| m.inject_id == first && m.recipients.len() == 3));
+    ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap();
+    assert_ne!(ex.messages.last().unwrap().inject_id, first);
+    assert_eq!(ids.len(), 3);
 }

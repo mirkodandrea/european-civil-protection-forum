@@ -163,7 +163,7 @@ async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiR
         .proposals
         .iter()
         .filter(|p| p.source.label() == role)
-        .map(|p| json!({"id": p.id, "turn": p.turn, "status": p.status, "original": p.original}))
+        .map(|p| json!({"id": p.id, "turn": p.turn, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to}))
         .collect();
     Ok(Json(json!({
         "player": player,
@@ -194,8 +194,14 @@ struct TextBody {
     text: String,
 }
 
-async fn post_reply(State(s): State<AppState>, Path(role): Path<String>, Json(b): Json<TextBody>) -> ApiResult {
-    let pid = s.lock().player_reply(&role, &b.text)?;
+#[derive(Deserialize)]
+struct ReplyBody {
+    text: String,
+    reply_to: u64,
+}
+
+async fn post_reply(State(s): State<AppState>, Path(role): Path<String>, Json(b): Json<ReplyBody>) -> ApiResult {
+    let pid = s.lock().player_reply(&role, &b.text, b.reply_to)?;
     tokio::spawn(flow::process_reply(s.clone(), pid));
     Ok(Json(json!({"proposal": pid})))
 }

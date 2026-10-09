@@ -32,6 +32,9 @@
     </div>
     <div class="panel">
       <h2 id="replyh">Your decision</h2>
+      <label for="replyto">Reply to inject or clarification</label>
+      <select id="replyto"></select>
+      <div id="selectedinject" class="small muted"></div>
       <textarea id="reply" placeholder="Write your orders, requests or information in your own words…"></textarea>
       <div class="row"><button id="send" class="primary">Send</button><span id="status" class="small muted"></span></div>
     </div>
@@ -64,9 +67,9 @@ let lastCount = 0;
 
 $('send').onclick = async () => {
   const text = $('reply').value.trim();
-  if (!text) return;
+  if (!text || !$('replyto').value) return;
   $('send').disabled = true;
-  try { await api(`/api/player/${role}/reply`, { text }); $('reply').value = ''; $('status').textContent = 'sent'; }
+  try { await api(`/api/player/${role}/reply`, { text, reply_to: Number($('replyto').value) }); $('reply').value = ''; $('status').textContent = 'sent'; }
   catch (e) { $('status').textContent = e.message; }
   $('send').disabled = false;
 };
@@ -84,10 +87,20 @@ async function refresh() {
     : '<span class="muted">No own resources — coordinate and request.</span>';
   $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span></div>`).join('') || '<span class="muted">none yet</span>';
   $('inbox').innerHTML = p.inbox.map(m => m.kind === 'reply'
-    ? `<div class="msg k-reply"><div class="meta">${kindBadge('reply')} you · ${esc(m.clock)}</div><div class="text">${esc(m.text)}</div></div>`
-    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || '<p class="muted">Waiting for the exercise to start…</p>';
+    ? `<div class="msg k-reply"><div class="meta">${kindBadge('reply')} you · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div><div class="text">${esc(m.text)}</div></div>`
+    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || '<p class="muted">Waiting for the exercise to start…</p>';
   if (p.inbox.length !== lastCount) { $('inbox').scrollTop = $('inbox').scrollHeight; lastCount = p.inbox.length; }
-  $('send').disabled = p.phase !== 'orders';
+  const selected = $('replyto').value;
+  const parents = p.inbox.filter(m => m.to === role && ['inject', 'clarification'].includes(m.kind));
+  $('replyto').innerHTML = '<option value="">Select a received inject…</option>' + parents.map(m => `<option value="${m.id}">#${m.inject_id} · ${esc(m.clock)} · ${esc(m.title || m.kind)}</option>`).join('');
+  if (parents.some(m => String(m.id) === selected)) $('replyto').value = selected;
+  const showSelected = () => {
+    const m = parents.find(m => String(m.id) === $('replyto').value);
+    $('selectedinject').textContent = m ? `${m.from} → ${m.recipients.join(', ')} · inject #${m.inject_id} · ${m.clock}: ${m.text}` : '';
+    $('send').disabled = p.phase !== 'orders' || !m;
+  };
+  $('replyto').onchange = showSelected;
+  showSelected();
   map.setView(st.world);
   $('stats').textContent = statsLine(st.world.stats);
 }

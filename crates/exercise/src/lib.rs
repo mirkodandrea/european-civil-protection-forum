@@ -67,6 +67,11 @@ pub enum MsgKind {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Message {
+    /// Unique delivery event, shared by every recipient of an inject.
+    pub inject_id: Option<u64>,
+    pub reply_to: Option<u64>,
+    pub recipients: Vec<String>,
+    pub wall_ms: u128,
     pub id: u64,
     pub turn: u32,
     pub t_s: i64,
@@ -126,6 +131,8 @@ impl Source {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
+    pub inject_id: Option<u64>,
+    pub reply_to: Option<u64>,
     pub id: u64,
     pub turn: u32,
     pub t_s: i64,
@@ -523,8 +530,22 @@ impl Exercise {
 
     #[allow(clippy::too_many_arguments)]
     pub fn add_message(&mut self, from: &str, to: &str, kind: MsgKind, title: Option<&str>, text: &str, text_en: &str, proposal: Option<u64>) -> u64 {
+        let thread = proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.inject_id.map(|id| (id, p.reply_to, vec![to.into()])));
+        self.add_message_in_thread(from, to, kind, title, text, text_en, proposal, thread)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_message_in_thread(&mut self, from: &str, to: &str, kind: MsgKind, title: Option<&str>, text: &str, text_en: &str, proposal: Option<u64>, thread: Option<(u64, Option<u64>, Vec<String>)>) -> u64 {
         let id = self.id();
+        let (inject_id, reply_to, recipients) = match thread {
+            Some((root, parent, recipients)) => (Some(root), parent, recipients),
+            None => (None, None, vec![to.into()]),
+        };
         let m = Message {
+            inject_id,
+            reply_to,
+            recipients,
+            wall_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
             id,
             turn: self.turn,
             t_s: self.world.time_s(),
@@ -537,7 +558,7 @@ impl Exercise {
             text_en: text_en.into(),
             proposal,
         };
-        self.record("message", from, json!({"to": to, "kind": kind, "title": title, "text_en": text_en, "text": text}));
+        self.record("message", from, json!(&m));
         // What a player receives becomes context of their conversation with the AI.
         // (Clarifications are the AI's own words: they are already in it.)
         if self.players.contains_key(to) && kind != MsgKind::Clarification && kind != MsgKind::Reply {
@@ -562,15 +583,17 @@ impl Exercise {
             bail!("the exercise has ended");
         }
         let to = self.recipients(recipients)?;
+        let delivery_id = self.id();
         let mut ids = Vec::new();
         for r in &to {
             let text = translations.get(r).cloned().unwrap_or_else(|| text_en.to_string());
-            ids.push(self.add_message(sender, r, MsgKind::Inject, Some(title), &text, text_en, None));
+            let mid = self.add_message_in_thread(sender, r, MsgKind::Inject, Some(title), &text, text_en, None, Some((delivery_id, None, to.clone())));
+            ids.push(mid);
         }
         if let Some(id) = inject_id {
             self.sent_injects.push(id.to_string());
         }
-        self.record("inject_sent", MASTER, json!({"inject": inject_id, "title": title, "sender": sender, "recipients": to}));
+        self.record("inject_sent", MASTER, json!({"inject_id": delivery_id, "msel_id": inject_id, "title": title, "sender": sender, "recipients": to, "messages": ids}));
         Ok(ids)
     }
 
@@ -581,7 +604,7 @@ impl Exercise {
     // -------------------------------------------------------------- proposals
 
     /// A player's free-text reply: stored, and a proposal opened for parsing.
-    pub fn player_reply(&mut self, role: &str, text: &str) -> Result<u64> {
+    pub fn player_reply(&mut self, role: &str, text: &str, reply_to: u64) -> Result<u64> {
         if self.phase != Phase::Orders {
             bail!("no turn is open for replies");
         }
@@ -591,9 +614,14 @@ impl Exercise {
         if text.trim().is_empty() {
             bail!("empty reply");
         }
+        let parent = self.messages.iter().find(|m| m.id == reply_to && m.to == role && matches!(m.kind, MsgKind::Inject | MsgKind::Clarification))
+            .ok_or_else(|| anyhow::anyhow!("reply_to must reference an inject or clarification delivered to your role"))?;
+        let inject_id = parent.inject_id.ok_or_else(|| anyhow::anyhow!("message has no inject thread"))?;
         let pid = self.id();
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
+            inject_id: Some(inject_id),
+            reply_to: Some(reply_to),
             id: pid,
             turn: self.turn,
             t_s: self.world.time_s(),
@@ -620,6 +648,8 @@ impl Exercise {
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
+            inject_id: None,
+            reply_to: None,
             id: pid,
             turn: self.turn,
             t_s: self.world.time_s(),
