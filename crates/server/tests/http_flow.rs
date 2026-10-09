@@ -89,19 +89,21 @@ async fn master_player_llm_round_trip() {
     let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap().clone();
     assert_eq!(p["commands"][0]["type"], "IssueWarning");
     assert_eq!(p["verdicts"][0]["verdict"], "ok");
-    eventually(&app, "/api/player/fire_commander", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message")).await;
+    let (_, before) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    assert!(!before["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"), "operational AI drafts await Master approval and execution");
 
     // Master approves -> translated feedback to the player.
     let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": true}))).await;
     assert_eq!(s, StatusCode::OK, "{out}");
-    eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "feedback" && m["text"].as_str().unwrap().starts_with("[feedback]"))).await;
+    eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "feedback" && m["text"].as_str().unwrap().starts_with("[it]"))).await;
 
     // Unclear reply -> clarification question back to the player.
     let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "evacuate where?", "reply_to": reply_parent(&app, "mayor").await}))).await;
     let pid2 = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
-    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid2}/decide"), Some(json!({"approve": false, "note": "be specific"}))).await;
+    eventually(&app, "/api/master", |v| v["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid2 && p["status"] == "needs_clarification")).await;
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid2}/decide"), Some(json!({"approve": true, "note": "Send the clarification"}))).await;
     assert_eq!(s, StatusCode::OK);
+    eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
 
     // Master prompt -> proposal with a command and an inject draft; approval applies both.
     let (_, r) = call(&app, "POST", "/api/master/prompt", Some(json!({"text": "make the wind much stronger and tell everyone"}))).await;
@@ -125,6 +127,7 @@ async fn master_player_llm_round_trip() {
     assert_eq!(s, StatusCode::OK, "{rep}");
     assert_eq!(rep["to_s"], 1800);
     assert!(rep["applied"].as_array().unwrap().iter().any(|a| a["action"] == "Issue warning to zone F4" && a["ok"] == true));
+    eventually(&app, "/api/player/fire_commander", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message")).await;
     for role in ["mayor", "fire_commander", "regional_cp"] {
         eventually(&app, &format!("/api/player/{role}"), |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "situation")).await;
     }
@@ -251,4 +254,57 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
     assert_eq!(master["proposals"][0]["history"][0]["status"], "parsing");
     assert_eq!(master["messages"][1]["proposal"], reply["proposal"]);
     assert_eq!(master["messages"][1]["inject_id"], master["messages"][0]["inject_id"]);
+}
+
+#[tokio::test]
+async fn operational_drafts_require_master_review_and_deliver_edited_text_once() {
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let (app, state) = server::router(Arc::new(Mutex::new(ex)), mock_llm(), None);
+    call(&app, "POST", "/api/master/start", None).await;
+    let parent = reply_parent(&app, "mayor").await;
+    let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4", "reply_to":parent}))).await;
+    let pid = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    server::flow::send_drafts(&state, pid).await;
+    let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    assert!(!fc["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"));
+    let edited = json!([{"to":"fire_commander","from":"mayor","kind":"role_message","title":"Warning coordination","text_en":"The warning to F4 is now issued; please confirm receipt."}]);
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true, "communication_drafts":edited}))).await;
+    assert_eq!(s, StatusCode::OK);
+    server::flow::send_drafts(&state, pid).await;
+    let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    assert!(!fc["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"), "action-dependent message waits for actual execution");
+    assert_eq!(call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await.0, StatusCode::OK);
+    eventually(&app, "/api/player/fire_commander", |p| p["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message")).await;
+    server::flow::send_drafts(&state, pid).await;
+    server::flow::send_drafts(&state, pid).await;
+    let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    let delivered = fc["inbox"].as_array().unwrap().iter().filter(|m| m["kind"] == "role_message").collect::<Vec<_>>();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0]["text_en"], "The warning to F4 is now issued; please confirm receipt.");
+    assert_eq!(delivered[0]["proposal"], pid);
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    assert!(m["log"].as_array().unwrap().iter().any(|l| l["kind"] == "communications_reviewed"));
+    assert!(m["log"].as_array().unwrap().iter().any(|l| l["kind"] == "approved_communication_delivered"));
+}
+
+#[tokio::test]
+async fn rejected_ai_suggestions_never_deliver_or_change_world() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, before) = call(&app, "GET", "/api/state", None).await;
+    let (_, r) = call(&app, "POST", "/api/master/prompt", Some(json!({"text":"stronger wind and tell everyone"}))).await;
+    let pid = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    let (_, proposed) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(proposed["world"], before["world"]);
+    call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":false}))).await;
+    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(state["world"]["weather"], before["world"]["weather"]);
+    for role in ["mayor", "fire_commander", "regional_cp"] {
+        let (_, p) = call(&app, "GET", &format!("/api/player/{role}"), None).await;
+        assert!(!p["inbox"].as_array().unwrap().iter().any(|m| m["title"] == "Wind"));
+    }
 }

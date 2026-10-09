@@ -113,7 +113,7 @@ const REPLY_SCHEMA: &str = r#"{
   "translation_en": "the reply translated to English (verbatim meaning)",
   "actions": [ /* zero or more action objects exactly as documented */ ],
   "messages": [ {"to": "role_id", "text": "message in English"} ],
-  "clarification": null or "short question to the player, in the player's language",
+  "clarification": null or "short clarification question in English for Master review",
   "summary": "one English sentence: what the player decided"
 }"#;
 
@@ -125,7 +125,7 @@ impl Llm {
             return Ok(text.to_string());
         }
         let system = format!(
-            "You translate civil-protection exercise messages into {}. Keep place names, facility names, zone codes (like F4), road ids, numbers and times unchanged. Keep the tone of an operational message. Output only the translation, nothing else.",
+            "You translate civil-protection exercise messages into {}. Keep place names, facility names, zone codes (like F4), road ids, numbers and times unchanged. Preserve the original meaning exactly. Never add facts, decisions, advice, interpretations, explanations, urgency, or operational instructions. Never change a request or pending proposal into an accomplished action. Output only the translation, nothing else.",
             language_name(target_lang)
         );
         Ok(self.complete("translate", &system, text, false).await?.trim().to_string())
@@ -144,7 +144,7 @@ You turn each new reply into structured actions for the simulator. Rules:\n\
 - Use ONLY the action types documented below, with exactly the documented JSON shape.\n\
 - Use ONLY place names, facility names, road ids and zone codes from the gazetteer, or zone codes like F4. Never invent places, resources or facts.\n\
 - The player decides: add an action only if the player clearly ordered it in the NEW reply. Do not repeat actions from earlier replies. Do not add your own ideas.\n\
-- Use the conversation to resolve references (\"there\", \"them\", an answer to your earlier question). If an order is still ambiguous or misses essential information, do NOT guess: leave it out and ask one short clarification question in the player's language.\n\
+- Use the conversation to resolve references (\"there\", \"them\", an answer to your earlier question). If an order is still ambiguous or misses essential information, do NOT guess: leave it out and draft one short clarification question in English for Master review.\n\
 - Information shared or requested with other roles goes into \"messages\" (role ids: {}).\n\
 - Do not check resource availability yourself; the simulator validates.\n\
 Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:\n{}\n\nGAZETTEER:\n{}",
@@ -181,17 +181,13 @@ Actions:\n{}\nRoles: {}\n\nGAZETTEER:\n{}",
         ParsedReply::from_value(self.chat_json("master_prompt", &system, &messages).await?)
     }
 
-    /// EXCON's answer to a player once the Master has decided on a proposal.
-    pub async fn feedback(&self, role_name: &str, lang: &str, decision_en: &str) -> Result<String> {
-        let system = format!(
-            "You write as EXCON (exercise control) of a Civil Protection table-top exercise. Write a brief operational reply (2-4 sentences) to the {role_name} in {}, \
-reporting the outcome of their orders exactly as given in the facts. Do not add facts, advice or judgement. Output only the message.",
-            language_name(lang)
-        );
-        Ok(self.complete("feedback", &system, decision_en, false).await?.trim().to_string())
+    /// Translate the recorded Master decision without generating operational content.
+    pub async fn feedback(&self, _role_name: &str, lang: &str, decision_en: &str) -> Result<String> {
+        self.translate(decision_en, lang).await
     }
 
-    /// End-of-turn situation update for one role.
+    /// Draft a situation summary for review. Operational delivery uses recorded facts
+    /// and translation instead of sending this generated text automatically.
     pub async fn situation_update(&self, role_name: &str, lang: &str, digest: &Value, events_en: &[String]) -> Result<String> {
         let system = format!(
             "You write the situation update that EXCON sends to the {role_name} at the end of a turn of a Civil Protection table-top exercise, in {}. \
@@ -245,5 +241,21 @@ mod tests {
     async fn translate_skips_english() {
         let llm = Llm::mock(|_, _, _| panic!("should not be called"));
         assert_eq!(llm.translate("hello", "en").await.unwrap(), "hello");
+    }
+}
+
+#[cfg(test)]
+mod translation_control_tests {
+    #[tokio::test]
+    async fn translation_preserves_original_input_and_forbids_operational_additions() {
+        let facts = "PENDING: evacuate F4 at 13:30 with 2 buses. Not yet executed.";
+        let model = crate::Llm::mock(move |task, system, user| {
+            assert_eq!(task, "translate");
+            assert_eq!(user, facts);
+            assert!(system.contains("Never add facts, decisions, advice"));
+            assert!(system.contains("Never change a request or pending proposal into an accomplished action"));
+            Ok("IN ATTESA: evacuare F4 alle 13:30 con 2 autobus. Non ancora eseguito.".into())
+        });
+        assert!(model.translate(facts, "it").await.unwrap().contains("Non ancora eseguito"));
     }
 }

@@ -53,7 +53,7 @@ pub struct Player {
     pub language: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MsgKind {
     Inject,
@@ -174,8 +174,20 @@ fn wall_ms() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunicationDraft {
+    pub to: String,
+    pub from: String,
+    pub kind: MsgKind,
+    pub title: String,
+    pub text_en: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
+    pub communication_drafts: Vec<CommunicationDraft>,
+    pub communications_claimed: bool,
+    pub delivered_communications: Vec<usize>,
     pub declaration_kind: DeclarationKind,
     pub history: Vec<StatusChange>,
     pub decision: Option<ApprovalRecord>,
@@ -206,6 +218,7 @@ pub struct Proposal {
 /// What the LLM made of a reply, in exercise terms.
 #[derive(Debug, Clone, Default)]
 pub struct ParsedInput {
+    pub communication_drafts: Vec<CommunicationDraft>,
     pub language: String,
     pub translation_en: String,
     pub actions: Vec<Value>,
@@ -648,6 +661,9 @@ impl Exercise {
         let pid = self.id();
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
+            communication_drafts: Vec::new(),
+            communications_claimed: false,
+            delivered_communications: Vec::new(),
             declaration_kind: DeclarationKind::ProposedDecision,
             history: Vec::new(),
             decision: None,
@@ -682,6 +698,9 @@ impl Exercise {
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
+            communication_drafts: Vec::new(),
+            communications_claimed: false,
+            delivered_communications: Vec::new(),
             declaration_kind: DeclarationKind::ProposedDecision,
             history: Vec::new(),
             decision: None,
@@ -806,13 +825,14 @@ impl Exercise {
         p.invalid = invalid;
         p.clarification = parsed.clarification.clone();
         p.inject_drafts = parsed.inject_drafts.clone();
+        p.communication_drafts = parsed.communication_drafts.clone();
+        if let (Source::Player(role), Some(q)) = (&p.source, &parsed.clarification) {
+            p.communication_drafts.push(CommunicationDraft { to: role.clone(), from: MASTER.into(), kind: MsgKind::Clarification, title: "Clarification needed".into(), text_en: q.clone() });
+        }
         let status = if p.commands.is_empty() && p.inject_drafts.is_empty() && p.clarification.is_some() { ProposalStatus::NeedsClarification } else { ProposalStatus::Pending };
         let (source, clar) = (p.source.clone(), p.clarification.clone());
         self.transition(pid, status, source.label(), "Interpretation stored; awaiting exercise control")?;
         self.record("proposal_parsed", source.label(), serde_json::to_value(self.proposal(pid))?);
-        if let (Source::Player(role), Some(q)) = (&source, &clar) {
-            self.add_message(MASTER, role, MsgKind::Clarification, Some("Clarification needed"), q, q, Some(pid));
-        }
         Ok(clar)
     }
 
@@ -825,6 +845,47 @@ impl Exercise {
         let label = p.source.label().to_string();
         self.transition(pid, ProposalStatus::Pending, &label, "Manual interpretation required")?;
         self.record("proposal_parse_failed", &label, json!({"proposal": pid, "error": error}));
+        Ok(())
+    }
+
+    /// Deliver an approved communication once; translation may only preserve its meaning.
+    pub fn deliver_approved_communication(&mut self, pid: u64, index: usize, translated: &str) -> Result<u64> {
+        let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
+        if self.phase == Phase::Debrief || p.status != ProposalStatus::Applied || p.decision.as_ref().map(|d| d.approve) != Some(true) { bail!("communication has no effective Master approval"); }
+        if p.delivered_communications.contains(&index) { bail!("communication already delivered"); }
+        let draft = p.communication_drafts.get(index).ok_or_else(|| anyhow::anyhow!("unknown communication draft"))?.clone();
+        let mid = self.add_message(&draft.from, &draft.to, draft.kind, Some(&draft.title), translated, &draft.text_en, Some(pid));
+        let p = self.proposal_mut(pid)?;
+        p.delivered_communications.push(index);
+        p.results.push(format!("Communication to {} delivered as message #{mid}", draft.to));
+        self.record("approved_communication_delivered", MASTER, json!({"proposal": pid, "draft": index, "message": mid}));
+        Ok(mid)
+    }
+
+    /// Review/edit operational communications while the proposal is still pending.
+    pub fn edit_communications(&mut self, pid: u64, communications: Option<Vec<CommunicationDraft>>, injects: Option<Vec<Value>>) -> Result<()> {
+        let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
+        if !matches!(p.status, ProposalStatus::Parsing | ProposalStatus::Pending | ProposalStatus::NeedsClarification) { bail!("proposal already decided"); }
+        if let Some(drafts) = &communications {
+            for d in drafts {
+                if !self.players.contains_key(&d.to) || !matches!(d.kind, MsgKind::RoleMessage | MsgKind::Clarification) || d.text_en.trim().is_empty() { bail!("invalid communication draft"); }
+                if d.from != MASTER && d.from != p.source.label() { bail!("draft sender must match the proposal origin or EXCON"); }
+            }
+        }
+        if let Some(drafts) = &injects {
+            if !matches!(p.source, Source::Master) && !drafts.is_empty() { bail!("players cannot draft scenario injects"); }
+            for d in drafts {
+                if d["text"].as_str().unwrap_or("").trim().is_empty() { bail!("inject draft needs text"); }
+                let to: Vec<String> = serde_json::from_value(d["recipients"].clone())?;
+                self.recipients(&to)?;
+            }
+        }
+        let before = json!({"communications": p.communication_drafts, "injects": p.inject_drafts});
+        let p = self.proposal_mut(pid)?;
+        if let Some(d) = communications { p.communication_drafts = d; }
+        if let Some(d) = injects { p.inject_drafts = d; }
+        let after = json!({"communications": p.communication_drafts, "injects": p.inject_drafts});
+        self.record("communications_reviewed", MASTER, json!({"proposal": pid, "before": before, "after": after}));
         Ok(())
     }
 
@@ -849,7 +910,8 @@ impl Exercise {
         };
         let note = d.note.clone().filter(|n| !n.trim().is_empty());
         if d.approve {
-            if p.commands.is_empty() && p.inject_drafts.is_empty() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
+            self.edit_communications(pid, Some(p.communication_drafts.clone()), Some(p.inject_drafts.clone()))?;
+            if p.commands.is_empty() && p.inject_drafts.is_empty() && p.communication_drafts.is_empty() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
             if p.verdicts.iter().any(|v| !v.is_ok()) { bail!("proposal is not feasible; edit its actions or resources before approval"); }
             if d.commands.is_none() && !p.invalid.is_empty() { bail!("proposal contains invalid actions; edit it before approval"); }
         }
@@ -862,9 +924,10 @@ impl Exercise {
             facts.push(format!("Your orders were NOT approved by exercise control: {}", if p.descriptions.is_empty() { p.summary.clone() } else { p.descriptions.join("; ") }));
         } else {
             self.transition(pid, ProposalStatus::Approved, MASTER, note.as_deref().unwrap_or("Approved by exercise control"))?;
-            if matches!(p.source, Source::Master) {
+            if matches!(p.source, Source::Master) || p.commands.is_empty() {
                 self.execute_proposal(pid)?;
                 facts.extend(self.proposal(pid).unwrap().results.clone());
+                if p.commands.is_empty() { facts.push("APPROVED: the reviewed communication will be delivered by exercise control.".into()); }
             } else {
                 for (desc, v) in p.descriptions.iter().zip(&p.verdicts) {
                     let notes = match v { Verdict::Ok { notes } => notes.join("; "), _ => String::new() };

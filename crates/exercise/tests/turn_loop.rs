@@ -21,7 +21,7 @@ fn reply(ex: &mut Exercise, role: &str, text: &str) -> anyhow::Result<u64> {
 }
 
 fn parsed(actions: serde_json::Value) -> ParsedInput {
-    ParsedInput { language: "it".into(), translation_en: "t".into(), actions: actions.as_array().unwrap().clone(), clarification: None, summary: "s".into(), inject_drafts: vec![] }
+    ParsedInput { communication_drafts: vec![], language: "it".into(), translation_en: "t".into(), actions: actions.as_array().unwrap().clone(), clarification: None, summary: "s".into(), inject_drafts: vec![] }
 }
 
 #[test]
@@ -94,10 +94,13 @@ fn clarification_goes_back_to_the_player() {
     let q = ex.attach_parse(pid, p).unwrap();
     assert!(q.is_some());
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::NeedsClarification);
+    assert!(!ex.inbox("fire_commander").iter().any(|m| m.kind == MsgKind::Clarification));
+    assert!(ex.deliver_approved_communication(pid, 0, "Where?").is_err());
+    ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
+    ex.deliver_approved_communication(pid, 0, "Where exactly should the two crews cut the line?").unwrap();
     let last = ex.inbox("fire_commander").last().cloned().unwrap();
     assert_eq!(last.kind, MsgKind::Clarification);
-    // Nothing to approve without actions.
-    assert!(ex.decide(pid, Decision { approve: true, ..Default::default() }).is_err());
+    assert!(ex.deliver_approved_communication(pid, 0, "Where?").is_err());
 }
 
 #[test]
@@ -272,6 +275,8 @@ fn replies_require_delivered_inject_and_keep_clarification_thread() {
     assert!(ex.proposals.is_empty());
     let pid = ex.player_reply("mayor", "Where?", mid).unwrap();
     ex.attach_parse(pid, ParsedInput { clarification: Some("Which location?".into()), ..Default::default() }).unwrap();
+    ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
+    ex.deliver_approved_communication(pid, 0, "Which location?").unwrap();
     let clarification = ex.messages.last().unwrap();
     assert_eq!(clarification.inject_id, Some(root));
     assert_eq!(clarification.reply_to, Some(mid));

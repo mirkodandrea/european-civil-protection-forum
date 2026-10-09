@@ -186,6 +186,7 @@ function renderProposals() {
         const v = p.verdicts[i] || {};
         return `<li>${esc(p.descriptions[i])} <span class="verdict-${v.verdict}">${v.verdict === 'ok' ? '✓ ' + esc((v.notes || []).join('; ')) : '✗ ' + esc(v.reason || '')}</span></li>`;
       }).join('');
+      const communications = (p.communication_drafts || []).map(d => `<li>Draft ${esc(d.kind)} from ${esc(d.from)} → ${esc(d.to)}: ${esc(d.text_en)}</li>`).join('');
       const drafts = (p.inject_drafts || []).map(d => `<li>Inject “${esc(d.title)}” → ${esc((d.recipients || []).join(', '))}: ${esc(d.text)}</li>`).join('');
       const editable = open.includes(p.status);
       return `<div class="card">
@@ -193,14 +194,16 @@ function renderProposals() {
         <div class="small" style="margin-top:6px">“${esc(p.original)}”</div>
         ${p.translation_en && p.translation_en !== p.original ? `<div class="small muted">EN: ${esc(p.translation_en)}</div>` : ''}
         ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
-        ${cmds ? `<ul class="small">${cmds}</ul>` : ''}${drafts ? `<ul class="small">${drafts}</ul>` : ''}
+        ${cmds ? `<ul class="small">${cmds}</ul>` : ''}${drafts ? `<ul class="small">${drafts}</ul>` : ''}${communications ? `<ul class="small">${communications}</ul>` : ''}
         ${p.invalid.length ? `<div class="small error">Not understood: ${esc(p.invalid.join('; '))}</div>` : ''}
-        ${p.clarification ? `<div class="small" style="color:var(--warn)">Asked the player: ${esc(p.clarification)}</div>` : ''}
+        ${p.clarification ? `<div class="small" style="color:var(--warn)">Draft clarification for Master review: ${esc(p.clarification)}</div>` : ''}
         ${p.results.length ? `<div class="small">${p.results.map(esc).join('<br>')}</div>` : ''}
         ${p.history?.length ? `<details class="small"><summary>Declaration and status history</summary>${p.history.map(h => `<div>${esc(h.status)} · turn ${h.turn} · ${h.t_s}s · ${esc(h.actor)}: ${esc(h.note)}</div>`).join('')}</details>` : ''}
         ${p.decision ? `<div class="small muted">Master ${p.decision.approve ? 'approval' : 'rejection'} recorded at ${p.decision.t_s}s${p.decision.edited ? ' (actions edited)' : ''}</div>` : ''}
         ${p.master_note ? `<div class="small muted">Note: ${esc(p.master_note)}</div>` : ''}
         ${editable ? `<details class="small"><summary>Edit actions (JSON)</summary><textarea id="edit-${p.id}">${esc(JSON.stringify(p.commands, null, 1))}</textarea></details>
+          <details class="small"><summary>Edit communication drafts (JSON)</summary><textarea id="comm-${p.id}">${esc(JSON.stringify(p.communication_drafts || [], null, 1))}</textarea></details>
+          ${p.source.kind === 'master' ? `<details class="small"><summary>Edit inject drafts (JSON)</summary><textarea id="inject-${p.id}">${esc(JSON.stringify(p.inject_drafts || [], null, 1))}</textarea></details>` : ''}
           <div class="row"><input id="note-${p.id}" placeholder="Note to the player (optional)" style="flex:1">
           <button class="ok" data-approve="${p.id}">Approve</button><button data-reject="${p.id}">Reject</button></div>` : ''}
       </div>`;
@@ -209,9 +212,14 @@ function renderProposals() {
     const id = b.dataset.approve || b.dataset.reject;
     const body = { approve: !!b.dataset.approve, note: $('note-' + id).value || null };
     const ed = $('edit-' + id);
-    const orig = JSON.stringify(master.proposals.find(p => p.id == id).commands, null, 1);
+    const proposal = master.proposals.find(p => p.id == id);
+    const orig = JSON.stringify(proposal.commands, null, 1);
     try {
       if (ed && ed.value.trim() !== orig) body.commands = JSON.parse(ed.value);
+      const communications = $('comm-' + id)?.value;
+      if (communications !== JSON.stringify(proposal.communication_drafts || [], null, 1)) body.communication_drafts = JSON.parse(communications);
+      const injects = $('inject-' + id)?.value;
+      if (injects != null && injects !== JSON.stringify(proposal.inject_drafts || [], null, 1)) body.inject_drafts = JSON.parse(injects);
       await api(`/api/master/proposals/${id}/decide`, body);
     } catch (e) { alertErr(e); }
   });

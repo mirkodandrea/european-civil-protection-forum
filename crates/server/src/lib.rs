@@ -265,6 +265,10 @@ async fn post_prompt(State(s): State<AppState>, Json(b): Json<TextBody>) -> ApiR
 
 #[derive(Deserialize)]
 struct DecideBody {
+    #[serde(default)]
+    communication_drafts: Option<Vec<exercise::CommunicationDraft>>,
+    #[serde(default)]
+    inject_drafts: Option<Vec<Value>>,
     approve: bool,
     #[serde(default)]
     commands: Option<Vec<Value>>,
@@ -279,17 +283,18 @@ async fn post_decide(State(s): State<AppState>, Path(id): Path<u64>, Json(b): Js
     };
     let (outcome, drafts) = {
         let mut ex = s.lock();
+        if b.communication_drafts.is_some() || b.inject_drafts.is_some() { ex.edit_communications(id, b.communication_drafts, b.inject_drafts)?; }
         let outcome = ex.decide(id, Decision { approve: b.approve, commands, note: b.note })?;
         let p = ex.proposal(id).unwrap();
-        let drafts = if b.approve && p.status == ProposalStatus::Applied { p.inject_drafts.clone() } else { Vec::new() };
+        let drafts = b.approve && p.status == ProposalStatus::Applied;
         (outcome, drafts)
     };
     if let Some(role) = outcome.notify.clone() {
         tokio::spawn(flow::send_feedback(s.clone(), role, id, outcome.facts_en.clone()));
     }
-    if !drafts.is_empty() {
+    if drafts {
         let st = s.clone();
-        tokio::spawn(async move { flow::send_drafts(&st, &drafts).await });
+        tokio::spawn(async move { flow::send_drafts(&st, id).await });
     }
     Ok(Json(json!(outcome)))
 }
@@ -326,6 +331,8 @@ async fn post_resolve(State(s): State<AppState>, body: Option<Json<ResolveBody>>
     let report = tokio::spawn(flow::run_resolution(s.clone())).await.map_err(|e| bad(e.to_string()))??;
     let mut events: Vec<String> = report.applied.iter().map(|a| format!("{} ({}): {}", a.action, a.by, if a.ok { "done" } else { &a.detail })).collect();
     events.extend(report.events.iter().map(|e| e.text.clone()));
+    let approved = s.lock().proposals.iter().filter(|p| p.status == ProposalStatus::Applied && !p.communications_claimed).map(|p| p.id).collect::<Vec<_>>();
+    for pid in approved { let st = s.clone(); tokio::spawn(async move { flow::send_drafts(&st, pid).await; }); }
     tokio::spawn(flow::situation_updates(s.clone(), events));
     Ok(Json(json!(report)))
 }
