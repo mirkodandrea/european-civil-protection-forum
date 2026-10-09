@@ -44,6 +44,10 @@
     </div>
     <div class="panel">
       <h2>Participant links</h2><div id="participantlinks" class="small"></div>
+      <details><summary>Reference plans and procedures</summary>
+      <p class="small">Published to all evaluators and retained in the debrief. Enter decision-evidence JSON entries with plan/procedure basis and optional document links.</p>
+      <textarea id="references" placeholder='[{"basis":{"kind":"plan","reference":"Municipal plan, section 3"},"attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}]'>[]</textarea>
+      <button id="savereferences">Publish references</button><span id="referencestatus" class="small"></span></details>
       <h2>Resource ledger</h2>
       <div id="pools" class="small"></div>
     </div>
@@ -87,12 +91,14 @@
   </section>
 </main>
 <script type="module">
-import { api, live, esc, MapView, statsLine, kindBadge } from './common.js?v=role-access-1';
+import { api, live, esc, MapView, statsLine, kindBadge } from './common.js?v=role-access-2';
 
 const $ = id => document.getElementById(id);
 const stat = await api('/api/static');
 const links = await api('/api/master/access');
-$('participantlinks').innerHTML = links.players.map(p => `<p><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(stat.roles.find(r => r.id === p.role)?.name || p.role)}</a></p>`).join('');
+$('participantlinks').innerHTML = links.players.map(p => `<p><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(stat.roles.find(r => r.id === p.role)?.name || p.role)}</a></p>`).join('') + links.evaluators.map(e => `<p><a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.id)} (read-only)</a></p>`).join('');
+$('savereferences').onclick = async () => { try { await api('/api/master/references', {references:JSON.parse($('references').value)}); $('referencestatus').textContent = 'Published'; } catch (e) { $('referencestatus').textContent = e.message; } };
+api('/api/evaluator').then(e => { $('references').value = JSON.stringify(e.reference_materials, null, 2); });
 $('debriefdownload').onclick = async e => {
   e.preventDefault();
   try { const data = await api('/api/debrief'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'})); const a = document.createElement('a'); a.href = url; a.download = 'debrief.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alertErr(e); }

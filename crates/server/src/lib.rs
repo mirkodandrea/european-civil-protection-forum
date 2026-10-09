@@ -72,6 +72,8 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/access", get(get_access))
         .route("/api/master/access", get(get_access_links))
         .route("/api/master/knowledge", post(post_knowledge))
+        .route("/api/master/references", post(post_references))
+        .route("/api/evaluator", get(get_evaluator))
         .route("/api/static", get(get_static))
         .route("/api/state", get(get_state))
         .route("/api/master", get(get_master))
@@ -145,7 +147,7 @@ async fn get_static(State(s): State<AppState>, Extension(principal): Extension<P
 async fn get_access(Extension(principal): Extension<Principal>) -> ApiResult { Ok(Json(json!(principal))) }
 
 async fn get_access_links(State(s): State<AppState>) -> ApiResult {
-    Ok(Json(json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>()})))
+    Ok(Json(json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.iter().map(|(id, token)| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}&token={token}")})).collect::<Vec<_>>()})))
 }
 
 #[derive(Deserialize)]
@@ -163,6 +165,16 @@ async fn post_knowledge(State(s): State<AppState>, Json(b): Json<KnowledgeBody>)
     let translations = flow::translations(&s, std::slice::from_ref(&b.role), &text).await;
     let id = s.lock().acquire_map(&b.role, &b.source, observation, translations.get(&b.role).map(String::as_str))?;
     Ok(Json(json!({"message":id})))
+}
+
+#[derive(Deserialize)]
+struct ReferencesBody { references: Vec<exercise::DecisionEvidence> }
+async fn post_references(State(s): State<AppState>, Json(b): Json<ReferencesBody>) -> ApiResult {
+    s.lock().set_reference_materials(b.references)?;
+    Ok(Json(json!({"ok":true})))
+}
+async fn get_evaluator(State(s): State<AppState>, Query(filter): Query<exercise::evaluation::EvidenceFilter>) -> ApiResult {
+    Ok(Json(s.lock().evaluator_view(&filter)?))
 }
 
 async fn get_state(State(s): State<AppState>) -> ApiResult {

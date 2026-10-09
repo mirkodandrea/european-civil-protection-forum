@@ -8,12 +8,13 @@ use crate::AppState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Principal { Master, Player { role: String } }
+pub enum Principal { Master, Player { role: String }, Evaluator { id: String } }
 
 #[derive(Clone)]
 pub struct Access {
     pub master: String,
     pub players: BTreeMap<String, String>,
+    pub evaluators: BTreeMap<String, String>,
 }
 
 fn key() -> String {
@@ -24,10 +25,11 @@ fn key() -> String {
 
 impl Access {
     pub fn new(roles: impl IntoIterator<Item = String>) -> Self {
-        Self { master: key(), players: roles.into_iter().map(|role| (role, key())).collect() }
+        Self { master: key(), players: roles.into_iter().map(|role| (role, key())).collect(), evaluators: (1..=3).map(|n| (format!("evaluator-{n}"), key())).collect() }
     }
     pub fn principal(&self, token: &str) -> Option<Principal> {
         if token == self.master { return Some(Principal::Master); }
+        if let Some((id, _)) = self.evaluators.iter().find(|(_, key)| key.as_str() == token) { return Some(Principal::Evaluator {id:id.clone()}); }
         self.players.iter().find(|(_, key)| key.as_str() == token).map(|(role, _)| Principal::Player { role: role.clone() })
     }
 }
@@ -45,6 +47,9 @@ pub async fn authorize(State(s): State<AppState>, mut req: Request, next: Next) 
     };
     let allowed = match &principal {
         Principal::Master => true,
+        Principal::Evaluator { .. } => {
+            req.method() == axum::http::Method::GET && matches!(path, "/api/access" | "/api/static" | "/api/state" | "/api/master" | "/api/debrief" | "/api/catalogue" | "/api/evaluator" | "/ws")
+        }
         Principal::Player { role } => {
             let own = format!("/api/player/{role}");
             path == "/api/static" || path == "/api/access" || path == "/ws" || path == own

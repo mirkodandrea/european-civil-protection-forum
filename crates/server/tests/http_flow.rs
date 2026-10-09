@@ -24,7 +24,7 @@ fn mock_llm() -> llm::Llm {
 }
 
 fn access() -> server::access::Access {
-    server::access::Access { master:"test-master".into(), players: std::collections::BTreeMap::from([("mayor".into(), "test-mayor".into()), ("fire_commander".into(), "test-fire".into())]) }
+    server::access::Access { master:"test-master".into(), players: std::collections::BTreeMap::from([("mayor".into(), "test-mayor".into()), ("fire_commander".into(), "test-fire".into())]), evaluators: std::collections::BTreeMap::from([("eval-one".into(), "test-eval-one".into()), ("eval-two".into(), "test-eval-two".into())]) }
 }
 
 async fn app() -> Router {
@@ -411,4 +411,71 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
     assert!(!acquired["map"]["cells"].as_array().unwrap().is_empty());
     let (_, debrief) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(debrief["knowledge_events"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
+    let app = app().await;
+    let (_, before) = call(&app, "GET", "/api/debrief", None).await;
+    for key in ["test-eval-one", "test-eval-two"] {
+        for path in ["/api/static", "/api/state", "/api/master", "/api/catalogue", "/api/debrief", "/api/evaluator"] {
+            assert_eq!(call_key(&app, "GET", path, None, Some(key)).await.0, StatusCode::OK, "{key} {path}");
+        }
+        assert_eq!(call_key(&app, "GET", "/api/master/access", None, Some(key)).await.0, StatusCode::FORBIDDEN);
+        for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/knowledge", "/api/master/references", "/api/player/mayor/reply", "/api/player/mayor/language", "/api/evaluator"] {
+            assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some(key)).await.0, StatusCode::FORBIDDEN, "{key} {path}");
+        }
+    }
+    let (_, after) = call(&app, "GET", "/api/debrief", None).await;
+    assert_eq!(before, after);
+    let (s, identity) = call_key(&app, "GET", "/api/access", None, Some("test-eval-two")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(identity, json!({"kind":"evaluator","id":"eval-two"}));
+    assert_eq!(call_key(&app, "GET", "/api/evaluator", None, Some("test-mayor")).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materials() {
+    let app = app().await;
+    let references = json!([{"basis":{"kind":"procedure","reference":"Warning procedure, section 3"},"attachments":[{"title":"Procedure","url":"https://example.test/procedure.pdf"}]}]);
+    assert_eq!(call(&app, "POST", "/api/master/references", Some(json!({"references":references}))).await.0, StatusCode::OK);
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    let parent = reply_parent(&app, "mayor").await;
+    let evidence = json!({"basis":{"kind":"procedure","reference":"Warning procedure, section 3"},"attachments":[{"title":"Map","url":"https://example.test/map.pdf"}]});
+    let (_, response) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence}))).await;
+    let pid = response["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true,"note":"Follow the procedure"}))).await;
+    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    let (s, view) = call_key(&app, "GET", "/api/evaluator?role=mayor&turn=1&phase=orders&status=applied", None, Some("test-eval-one")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(view["chains"].as_array().unwrap().len(), 1);
+    let chain = &view["chains"][0];
+    assert_eq!(chain["proposal"]["evidence"], evidence);
+    assert_eq!(chain["proposal"]["decision"]["approve"], true);
+    assert_eq!(chain["proposal"]["executions"][0]["ok"], true);
+    assert!(chain["reply_delay_wall_ms"].is_number() && chain["master_queue_wall_ms"].is_number());
+    assert!(chain["messages"].as_array().unwrap().iter().any(|m| m["id"] == parent));
+    assert!(view["messages"].as_array().unwrap().iter().all(|m| m["to"] == "mayor" || m["from"] == "mayor"));
+    assert_eq!(view["reference_materials"], references);
+    assert_eq!(view["objectives"][0]["msel_id"], "I-01");
+    assert!(!view["objectives"][0]["objective"].as_str().unwrap().is_empty());
+    let inject = chain["proposal"]["inject_id"].as_u64().unwrap();
+    let (_, filtered) = call_key(&app, "GET", &format!("/api/evaluator?inject={inject}&kind=message&limit=1"), None, Some("test-eval-two")).await;
+    assert_eq!(filtered["timeline"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["timeline"][0]["kind"], "message");
+    assert!(filtered["timeline_total"].as_u64().unwrap() > 1);
+    let (_, older) = call_key(&app, "GET", &format!("/api/evaluator?inject={inject}&kind=message&limit=1&offset=1"), None, Some("test-eval-two")).await;
+    assert_ne!(filtered["timeline"][0]["seq"], older["timeline"][0]["seq"]);
+    call(&app, "POST", "/api/master/rollback", Some(json!({"turn":1}))).await;
+    let (_, rolled) = call_key(&app, "GET", "/api/evaluator?role=mayor&status=rolled_back", None, Some("test-eval-one")).await;
+    assert_eq!(rolled["chains"][0]["proposal"]["evidence"], evidence);
+    assert_eq!(rolled["chains"][0]["proposal"]["executions"][0]["ok"], true);
+    let (_, export) = call_key(&app, "GET", "/api/debrief", None, Some("test-eval-two")).await;
+    assert_eq!(export["reference_materials"], references);
+    assert_eq!(export["proposals"][0]["evidence"], evidence);
+    assert!(export["log"].as_array().unwrap().iter().any(|l| l["kind"] == "rollback"));
+    assert_eq!(call_key(&app, "GET", "/api/evaluator?role=unknown", None, Some("test-eval-one")).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call_key(&app, "GET", "/api/evaluator?status=unknown", None, Some("test-eval-one")).await.0, StatusCode::BAD_REQUEST);
 }

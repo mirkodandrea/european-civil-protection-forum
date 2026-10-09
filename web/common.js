@@ -1,6 +1,6 @@
 // Shared helpers for the TTX web UIs: API calls, live updates, the map.
 
-const accessContext = new URLSearchParams(location.search).get('role') || 'master';
+const accessContext = new URLSearchParams(location.search).get('role') || new URLSearchParams(location.search).get('evaluator') || 'master';
 const accessStore = `ttx-access:${accessContext}`;
 const suppliedKey = new URLSearchParams(location.search).get('token');
 if (suppliedKey) {

@@ -20,14 +20,16 @@
   </div>
 </main>
 <script type="module">
-import { api, esc, accessToken } from './common.js?v=role-access-1';
+import { api, esc, accessToken } from './common.js?v=role-access-2';
 const s = await api('/api/static');
 document.getElementById('scn').textContent = s.name;
 document.getElementById('desc').textContent = s.description;
 const access = await api('/api/access');
 if (access.kind === 'master') {
   const links = await api('/api/master/access');
-  document.getElementById('roles').innerHTML = links.players.map(p => `<p><a href="${esc(p.url)}">${esc(s.roles.find(r => r.id === p.role)?.name || p.role)}</a></p>`).join('');
+  document.getElementById('roles').innerHTML = links.players.map(p => `<p><a href="${esc(p.url)}">${esc(s.roles.find(r => r.id === p.role)?.name || p.role)}</a></p>`).join('') + links.evaluators.map(e => `<p><a href="${esc(e.url)}">${esc(e.id)} (read-only)</a></p>`).join('');
+} else if (access.kind === 'evaluator') {
+  location.replace(`evaluator.html?evaluator=${encodeURIComponent(access.id)}&token=${encodeURIComponent(accessToken())}`);
 } else {
   document.getElementById('roles').innerHTML = `<p><a href="player.html?role=${encodeURIComponent(access.role)}&token=${encodeURIComponent(accessToken())}">Open your role</a></p>`;
   document.querySelectorAll('a[href="master.html"], a[href="play.html"]').forEach(a => a.hidden = true);

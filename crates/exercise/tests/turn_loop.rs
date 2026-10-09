@@ -452,3 +452,25 @@ fn joining_requires_language_and_evidence_is_validated_before_recording() {
     assert_eq!(ex.debrief()["proposals"][0]["evidence"], expected);
     assert!(ex.log.iter().any(|e| e.kind == "proposal_declared" && e.data["evidence"] == expected));
 }
+
+#[test]
+fn evaluator_durations_use_actual_delivery_declaration_and_decision_clocks() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    ex.decide(pid, Decision {approve:true, ..Default::default()}).unwrap();
+    let parent = ex.proposal(pid).unwrap().reply_to.unwrap();
+    let m = ex.messages.iter_mut().find(|m| m.id == parent).unwrap();
+    m.wall_ms=1000;m.t_s=10;
+    let p=ex.proposals.iter_mut().find(|p| p.id==pid).unwrap();
+    p.history[0].wall_ms=4000;p.history[0].t_s=20;
+    let d=p.decision.as_mut().unwrap();d.wall_ms=8000;d.t_s=30;
+    let view=ex.evaluator_view(&exercise::evaluation::EvidenceFilter::default()).unwrap();
+    let c=&view["chains"][0];
+    assert_eq!(c["reply_delay_wall_ms"],3000);assert_eq!(c["reply_delay_sim_s"],10);
+    assert_eq!(c["master_queue_wall_ms"],4000);assert_eq!(c["master_queue_sim_s"],10);
+    let before=ex.generation;
+    assert!(ex.set_reference_materials(vec![DecisionEvidence::judgment("not a reference plan")]).is_err());
+    assert_eq!(ex.generation,before);
+}
