@@ -52,6 +52,8 @@ fn snapshot(view: Value, generation: u64) -> Value {
             bytes += size;
         }
     }
+    let design_size=view["training_design"].to_string().len();
+    if !view["training_design"].is_null() {if bytes+design_size<=80_000 {evidence.insert("design:original-and-paths".into(),view["training_design"].clone());}else{omitted+=1;}}
     omitted += view["timeline_total"].as_u64().unwrap_or(0).saturating_sub(view["timeline"].as_array().map_or(0, |a| a.len()) as u64) as usize;
     json!({"generation":generation,"context":view["context"],"evidence":evidence,"omitted_records":omitted,
         "limitations":["Filtered and bounded snapshot; omitted or unmatched records cannot establish absence.","Delivered messages do not prove reading, acknowledgement or effective coordination.","Response and queue times describe recorded timestamps; no performance thresholds are assumed.","Reference and attachment links have not been fetched. Citing a plan does not establish its contents or compliance.","AI findings are derived interpretations for human review, not recorded facts or scores."]})

@@ -96,6 +96,11 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/master/prompt", post(post_prompt))
         .route("/api/master/proposals/:id/decide", post(post_decide))
         .route("/api/master/command", post(post_command))
+        .route("/api/master/preview", post(post_preview))
+        .route("/api/master/preview/apply", post(post_preview_apply))
+        .route("/api/master/correct-intervention", post(post_correction))
+        .route("/api/master/design", post(post_design))
+        .route("/api/master/path", post(post_path))
         .route("/api/master/resolve", post(post_resolve))
         .route("/api/master/rollback", post(post_rollback))
         .route("/api/master/end", post(post_end))
@@ -218,6 +223,8 @@ async fn get_master(State(s): State<AppState>) -> ApiResult {
         "proposals": ex.proposals,
         "messages": ex.messages,
         "log": &ex.log[tail..],
+        "training_design":ex.design_view(),
+        "correction":ex.correction_view(),
         "digest": ex.world.digest(None),
         "conversations": ex.conversations,
     })))
@@ -385,6 +392,8 @@ async fn post_prompt(State(s): State<AppState>, Json(b): Json<TextBody>) -> ApiR
 #[derive(Deserialize)]
 struct DecideBody {
     #[serde(default)]
+    preview_generation:Option<u64>,
+    #[serde(default)]
     resource_limits:Option<exercise::ResourceLimits>,
     #[serde(default)]
     communication_drafts: Option<Vec<exercise::CommunicationDraft>>,
@@ -404,6 +413,7 @@ async fn post_decide(State(s): State<AppState>, Path(id): Path<u64>, Json(b): Js
     };
     let (outcome, drafts) = {
         let mut ex = s.lock();
+        if b.approve && b.preview_generation.is_some_and(|g|g!=ex.generation) {return Err(bad("exercise changed; review a fresh physical preview"));}
         if let Some(limits)=b.resource_limits {ex.edit_resource_limit_draft(id,limits)?;}
         if b.communication_drafts.is_some() || b.inject_drafts.is_some() { ex.edit_communications(id, b.communication_drafts, b.inject_drafts)?; }
         let outcome = ex.decide(id, Decision { approve: b.approve, commands, note: b.note })?;
@@ -419,6 +429,31 @@ async fn post_decide(State(s): State<AppState>, Path(id): Path<u64>, Json(b): Js
         tokio::spawn(async move { flow::send_drafts(&st, id).await });
     }
     Ok(Json(json!(outcome)))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {commands:Vec<Command>}
+async fn post_preview(State(s):State<AppState>,Json(b):Json<PreviewBody>)->ApiResult {Ok(Json(s.lock().preview_commands(&b.commands)?))}
+#[derive(Deserialize)]
+struct CorrectionBody {reason:String}
+async fn post_correction(State(s):State<AppState>,Json(b):Json<CorrectionBody>)->ApiResult {s.lock().correct_intervention(&b.reason)?;Ok(Json(json!({"ok":true})))}
+async fn post_design(State(s):State<AppState>,Json(b):Json<exercise::design::TrainingDesign>)->ApiResult {s.lock().configure_design(b)?;Ok(Json(json!({"ok":true})))}
+#[derive(Deserialize)]
+struct PathBody {point:String,path:String,reason:String,#[serde(default)]adaptation:bool}
+async fn post_path(State(s):State<AppState>,Json(b):Json<PathBody>)->ApiResult {s.lock().approve_path(&b.point,&b.path,&b.reason,b.adaptation)?;Ok(Json(json!({"ok":true})))}
+#[derive(Deserialize)]
+struct PreviewApplyBody {generation:u64,commands:Vec<Command>,reason:String}
+async fn post_preview_apply(State(s):State<AppState>,Json(b):Json<PreviewApplyBody>)->ApiResult {
+ let mut ex=s.lock();
+ if ex.generation!=b.generation {return Err(bad("exercise changed; refresh the preview"));}
+ if ex.clock_control.running || ex.phase==exercise::Phase::Resolving {return Err(bad("pause simulation before applying a reviewed intervention"));}
+ if b.reason.trim().is_empty()||b.reason.len()>2000||b.commands.is_empty()||b.commands.len()>20{return Err(bad("intervention requires rationale and 1–20 commands"));}
+ let mut results=Vec::new();
+ for cmd in b.commands {let r=ex.direct_command(&cmd);results.push(match r {Ok(n)=>json!({"command":cmd.describe(),"ok":true,"notes":n}),Err(e)=>json!({"command":cmd.describe(),"ok":false,"error":e.to_string()})});}
+ // Rationale becomes part of the same correctable intervention generation.
+ ex.record("physical_preview_approved",exercise::MASTER,json!({"reason":b.reason,"preview_generation":b.generation,"results":results}));
+ ex.refresh_correction_generation();
+ Ok(Json(json!({"results":results})))
 }
 
 /// One command or a list, applied immediately as the Master.

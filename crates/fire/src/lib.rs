@@ -89,6 +89,8 @@ impl Default for FireOptions {
 /// Everything needed to put a [`FireSim`] back to an earlier moment.
 #[derive(Clone)]
 pub struct FireSnapshot {
+    pending_veg: Option<Grid2<f64>>,
+    pending_moisture: Option<Grid2<f32>>,
     core: PropagatorCheckpoint,
     weather: WeatherSpec,
     time_s: i64,
@@ -486,6 +488,8 @@ impl FireSim {
 
     pub fn snapshot(&self) -> FireSnapshot {
         FireSnapshot {
+            pending_veg: self.pending_veg.clone(),
+            pending_moisture: self.pending_moisture.clone(),
             core: self.core.checkpoint(),
             weather: self.weather,
             time_s: self.time_s,
@@ -513,8 +517,8 @@ impl FireSim {
         self.cleared = s.cleared.clone();
         self.extinguished = s.extinguished.clone();
         self.added_moisture = s.added_moisture.clone();
-        self.pending_veg = None;
-        self.pending_moisture = None;
+        self.pending_veg = s.pending_veg.clone();
+        self.pending_moisture = s.pending_moisture.clone();
         self.last_refresh_s = s.time_s;
         Ok(())
     }

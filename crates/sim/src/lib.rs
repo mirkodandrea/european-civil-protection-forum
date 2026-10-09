@@ -310,11 +310,28 @@ impl World {
 
     // ------------------------------------------------------------------ lookups
 
+    /// Resolved geometry and units for EXCON previews. Areas are nominal;
+    /// affected cells are clipped to map/burnable fuel and shown by preview results.
+    pub fn command_geometry(&self,cmd:&Command)->serde_json::Value {
+        use serde_json::json;
+        match cmd {
+            Command::Ignite {at,radius_m} => {let r=radius_m.unwrap_or(80.0);json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":r,"nominal_area_ha":std::f64::consts::PI*(r as f64).powi(2)/10000.0})},
+            Command::Extinguish {area}=>match area {
+                Area::Named(n)=>if let Some(code)=self.zone_code(n){let b=self.scn.zone_bounds(&code).unwrap();json!({"bounds_m":b,"nominal_area_ha":((b[2]-b[0])*(b[3]-b[1]))/10000.0})}else{json!({"centre_m":self.scn.resolve_place(n),"radius_m":PLACE_EXTINGUISH_RADIUS_M,"nominal_area_ha":std::f64::consts::PI*(PLACE_EXTINGUISH_RADIUS_M as f64).powi(2)/10000.0})},
+                Area::Circle {at,radius_m}=>json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":radius_m,"nominal_area_ha":std::f64::consts::PI*(*radius_m as f64).powi(2)/10000.0}),
+            },
+            Command::CutFireLine {from,to,along,width_m}=>match self.line_endpoints(from,to,along){Ok((a,b))=>{let length=((b[0]-a[0]).powi(2)+(b[1]-a[1]).powi(2)).sqrt();json!({"from_m":a,"to_m":b,"length_m":length,"width_m":width_m.unwrap_or(40.0),"nominal_area_ha":length*width_m.unwrap_or(40.0)/10000.0})},Err(_)=>serde_json::Value::Null},
+            Command::WaterDrop {at}=>json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":60,"effect":"temporary wetting of unburnt fuel; does not extinguish burning cells"}),
+            Command::SetWeather {..}=>json!({"wind_direction":"degrees FROM","wind_speed":"km/h","fuel_moisture":"percent","spread":"future simulated time, stochastic ensemble; no instant perimeter change"}),
+            _=>serde_json::Value::Null,
+        }
+    }
+
     pub fn resolve_loc(&self, loc: &Loc) -> Result<Pos, String> {
         match loc {
             Loc::Point { x, y } => {
                 let (w, h) = (self.scn.grid.width_m(), self.scn.grid.height_m());
-                if *x < 0.0 || *y < 0.0 || *x >= w || *y >= h {
+                if !x.is_finite() || !y.is_finite() || *x < 0.0 || *y < 0.0 || *x >= w || *y >= h {
                     return Err(format!("point ({x:.0}, {y:.0}) is outside the map"));
                 }
                 Ok([*x, *y])
@@ -517,8 +534,9 @@ impl World {
                 }
                 notes.push(format!("{} arrive in {} min from {}", qty, o.delay_min, o.source));
             }
-            Command::Ignite { at, .. } => {
+            Command::Ignite { at, radius_m } => {
                 self.resolve_loc(at)?;
+                if radius_m.is_some_and(|r|!r.is_finite()||r<=0.0||r>self.scn.grid.width_m().max(self.scn.grid.height_m())) {return Err("ignition radius must be finite, positive and no larger than map extent".into());}
             }
             Command::Extinguish { area } => match area {
                 Area::Named(n) => {
@@ -528,7 +546,7 @@ impl World {
                 }
                 Area::Circle { at, radius_m } => {
                     self.resolve_loc(at)?;
-                    if *radius_m <= 0.0 {
+                    if !radius_m.is_finite() || *radius_m <= 0.0 {
                         return Err("radius must be positive".into());
                     }
                 }

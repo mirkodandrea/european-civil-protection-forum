@@ -91,6 +91,9 @@ fn fire_line_holds_the_head() {
         g.advance(20 * 60).unwrap();
         let already = behind(&g);
         let cut = g.fire_line(a, b, 60.0);
+        // A checkpoint before physics must retain the pending fuel edit.
+        let checkpoint=g.snapshot();
+        g.restore(&checkpoint,seed).unwrap();
         assert!(cut > 50, "only {cut} cells cut");
         f.advance(90 * 60).unwrap();
         g.advance(90 * 60).unwrap();

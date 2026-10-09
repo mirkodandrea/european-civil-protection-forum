@@ -128,7 +128,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
             sim::catalogue(&all),
             ex.world.scn.roles.iter().map(|r| (r.id.clone(), r.name.clone())).collect::<Vec<_>>(),
             ex.world.gazetteer(),
-            serde_json::json!({"world":ex.world.digest(None),"exercise_phase":ex.exercise_phase,"resource_limits":ex.resource_limits,"resource_accounting":ex.resource_accounting(None)}),
+            serde_json::json!({"training_design":ex.design_view(),"recorded_decisions":ex.proposals.iter().rev().take(100).collect::<Vec<_>>(),"world":ex.world.digest(None),"exercise_phase":ex.exercise_phase,"resource_limits":ex.resource_limits,"resource_accounting":ex.resource_accounting(None)}),
             history(&ex, exercise::MASTER),
             ex.proposal(pid).map(|p| p.original.clone()).unwrap_or_default(),
         )
