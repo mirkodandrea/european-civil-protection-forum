@@ -474,3 +474,53 @@ fn evaluator_durations_use_actual_delivery_declaration_and_decision_clocks() {
     assert!(ex.set_reference_materials(vec![DecisionEvidence::judgment("not a reference plan")]).is_err());
     assert_eq!(ex.generation,before);
 }
+
+#[test]
+fn clock_and_training_phases_keep_one_turn_and_accumulated_resources() {
+    let mut ex=exercise();ex.start().unwrap();
+    ex.direct_command(&serde_json::from_value::<Command>(json!({"type":"CutFireLine","along":"F4:N"})).unwrap()).unwrap();
+    let used=ex.world.d.pools["fire_commander"]["ground_crews"].used;
+    for (msel,due) in [("I-01",0),("I-02",1800),("I-03",3600)] {ex.schedule_inject(msel,due).unwrap();}
+    ex.configure_clock(true,60.0,"One real second represents one simulated minute").unwrap();
+    for target in [0,1800,3600] {
+        while ex.world.time_s()<target {ex.advance_clock((target-ex.world.time_s()).min(60)).unwrap();}
+        for (id,t) in ex.claim_due_injects() {
+            let ids=ex.send_inject(Some(&t.id),&t.title,&t.sender,&t.recipients,&t.text,&BTreeMap::new()).unwrap();
+            ex.complete_schedule(id,Ok(ids));
+        }
+    }
+    assert_eq!(ex.turn,1);assert_eq!(ex.phase,Phase::Orders);assert_eq!(ex.exercise_phase,ExercisePhase::EarlyWarning);
+    assert_eq!(ex.scheduled_injects.iter().map(|i|i.delivered_s.unwrap()).collect::<Vec<_>>(),vec![0,1800,3600]);
+    assert!(ex.messages.iter().any(|m|m.clock=="Day 1 13:00"));
+    assert!(ex.messages.iter().any(|m|m.clock=="Day 1 13:30"));
+    assert!(ex.messages.iter().any(|m|m.clock=="Day 1 14:00"));
+    let history=ex.resource_history.len();let world=ex.world.view();
+    for phase in [ExercisePhase::EarlyAction,ExercisePhase::Escalation,ExercisePhase::FullResponse] {ex.set_exercise_phase(phase,"EXCON confirms next incident stage").unwrap();}
+    assert_eq!(ex.turn,1);assert_eq!(ex.world.view(),world);assert_eq!(ex.resource_history.len(),history);
+    assert_eq!(ex.world.d.pools["fire_commander"]["ground_crews"].used,used);
+    assert_eq!(ex.phase_history.len(),4);
+    assert_eq!(ex.debrief()["scheduled_injects"][2]["delivered_s"],3600);
+    ex.configure_clock(false,120.0,"Pause to review").unwrap();assert!(ex.advance_clock(1).is_err());
+    assert!(ex.configure_clock(true,f64::NAN,"invalid").is_err());
+    assert!(ex.schedule_inject("I-01",0).is_err());
+    ex.configure_clock(true,120.0,"Resume").unwrap();ex.begin_resolution(Some(1)).unwrap();assert!(!ex.clock_control.running);
+}
+
+#[test]
+fn scheduled_deliveries_and_explicit_execution_cannot_duplicate_after_rollback() {
+    let mut ex=exercise();ex.start().unwrap();
+    let schedule=ex.schedule_inject("I-01",0).unwrap();
+    assert_eq!(ex.claim_due_injects().len(),1);assert!(ex.claim_due_injects().is_empty());
+    ex.cancel_schedule(schedule,"Cancelled during translation").unwrap();
+    ex.complete_schedule(schedule,Ok(vec![123]));assert_eq!(ex.scheduled_injects[0].status,ScheduleStatus::Cancelled);
+    let pid=reply(&mut ex,"mayor","warn F4").unwrap();
+    assert!(ex.execute_approved(pid).is_err());
+    ex.attach_parse(pid,parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    ex.decide(pid,Decision{approve:true,..Default::default()}).unwrap();
+    ex.execute_approved(pid).unwrap();assert_eq!(ex.proposal(pid).unwrap().status,ProposalStatus::Applied);
+    assert_eq!(ex.turn,1);assert!(ex.execute_approved(pid).is_err());
+    ex.configure_clock(true,60.0,"Run").unwrap();ex.advance_clock(60).unwrap();
+    ex.rollback(1).unwrap();assert!(!ex.clock_control.running);assert!(ex.claim_due_injects().is_empty());
+    assert_eq!(ex.proposal(pid).unwrap().executions.len(),1);
+    assert!(ex.log.iter().any(|l|l.kind=="clock_paused"));
+}

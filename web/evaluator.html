@@ -14,6 +14,7 @@
 <label>Inject delivery ID<input id="inject" type="number" min="1"></label>
 <label>Declaration turn<input id="turn" type="number" min="0"></label>
 <label>Declaration phase<select id="phase"><option value="">All</option><option>briefing</option><option>orders</option><option>resolving</option><option>debrief</option></select></label>
+<label>Training phase<select id="exercise_phase"><option value="">All</option><option value="early_warning">Early warning</option><option value="early_action">Early action</option><option value="escalation">Escalation</option><option value="full_response">Full response</option></select></label>
 <label>Decision status<select id="status"><option value="">All</option><option>parsing</option><option>pending</option><option>needs_clarification</option><option>approved</option><option>rejected</option><option>applied</option><option>failed</option><option>rolled_back</option></select></label>
 <label>Timeline event kind<input id="kind" placeholder="e.g. message"></label>
 </div><p class="small muted">Chains keep their full reply, decision and execution history after filtering by declaration. Timeline filters use each event's own turn and phase. No action controls are available.</p><div id="error" class="error"></div></div>
@@ -33,7 +34,7 @@ let offset=0, busy=false, rerun=false;
 const wall = ms => new Date(Number(ms)).toLocaleString();
 const evidence = e => e ? `<p><b>${esc(e.basis.kind.replaceAll('_',' '))}:</b> ${esc(e.basis.reference)}</p>${e.attachments.map(a => `<p><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></p>`).join('')}` : '<p class="muted">No player evidence attached (Master-origin proposal).</p>';
 const durations = c => `Reply after delivery: ${c.reply_delay_wall_ms === null ? 'unanswered' : `${(Number(c.reply_delay_wall_ms)/1000).toFixed(1)} s wall / ${c.reply_delay_sim_s} s simulated`}; Master queue: ${c.master_queue_wall_ms === null ? 'undecided' : `${(Number(c.master_queue_wall_ms)/1000).toFixed(1)} s wall / ${c.master_queue_sim_s} s simulated`}`;
-for (const id of ['role','inject','turn','phase','status','kind']) $(id).onchange = () => {offset=0;refresh();};
+for (const id of ['role','inject','turn','phase','exercise_phase','status','kind']) $(id).onchange = () => {offset=0;refresh();};
 $('newer').onclick=()=>{offset=Math.max(0,offset-200);refresh();};
 $('older').onclick=()=>{offset+=200;refresh();};
 $('export').onclick=async e=>{e.preventDefault();try{const data=await api('/api/debrief');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='evaluator-debrief.json';a.click();URL.revokeObjectURL(url);}catch(e){$('error').textContent=e.message;}};
@@ -42,10 +43,10 @@ async function refresh() {
  const opened=new Set([...document.querySelectorAll('details[open][data-record]')].map(el=>el.dataset.record));
  try {
   const q = new URLSearchParams({offset:String(offset)});
-  for(const id of ['role','inject','turn','phase','status','kind'])if($(id).value)q.set(id,$(id).value);
+  for(const id of ['role','inject','turn','phase','exercise_phase','status','kind'])if($(id).value)q.set(id,$(id).value);
   const [v,state]=await Promise.all([api('/api/evaluator?'+q),api('/api/state')]);
   $('error').textContent='';
-  $('context').textContent=`${access.id || 'Master preview'} · ${v.context.clock} · turn ${v.context.turn} · ${v.context.phase} · ${v.context.pending} awaiting Master/interpretation`;
+  $('context').textContent=`${access.id || 'Master preview'} · ${v.context.clock} · turn ${v.context.turn} · ${v.context.phase} / ${v.context.exercise_phase.replaceAll('_',' ')} · ${v.context.pending} awaiting Master/interpretation`;
   map.setView(state.world);$('stats').textContent=statsLine(v.context.stats);
   $('resources').innerHTML=`<details data-record="resources"><summary>Cumulative resource accounting</summary><pre>${esc(JSON.stringify(v.resource_accounting,null,2))}</pre></details>`;
   $('cards').innerHTML=v.role_cards.map(c=>`<div class="card"><b>${esc(c.player.name)}</b><div class="small">Last inject ${c.last_inject ? `#${c.last_inject.inject_id} · ${esc(c.last_inject.clock)} · ${wall(c.last_inject.wall_ms)}` : 'none'}</div><div class="small">${c.awaiting_reply ? `Awaiting reply · ${((Date.now()-Number(c.last_inject.wall_ms))/1000).toFixed(0)} s wall since delivery` : `Last declaration: ${esc(c.last_reply?.status || 'none')}`}</div><div class="small">${Object.entries(c.counts).map(([k,n])=>`${esc(k)} ${n}`).join(' · ')}</div></div>`).join('');
@@ -55,7 +56,7 @@ async function refresh() {
   $('messages').innerHTML=v.messages.map(m=>`<details class="card" data-record="message-${m.id}"><summary>${kindBadge(m.kind)} #${m.id} · ${esc(m.from)} → ${esc(m.to)} · inject #${m.inject_id ?? '—'} · ${esc(m.clock)}</summary><p>${esc(m.text_en)}</p>${m.text!==m.text_en?`<p class="small">Delivered wording: ${esc(m.text)}</p>`:''}<p class="small">Wall: ${wall(m.wall_ms)} · reply to #${m.reply_to ?? '—'} · proposal #${m.proposal ?? '—'}</p></details>`).join('');
   $('range').textContent=`${v.timeline_total ? offset+1 : 0}–${Math.min(offset+v.timeline.length,v.timeline_total)} of ${v.timeline_total} events (newest first)`;
   $('newer').disabled=offset===0;$('older').disabled=offset+v.limit>=v.timeline_total;
-  $('timeline').innerHTML=v.timeline.map(l=>`<details data-record="log-${l.seq}"><summary>#${l.seq} · ${esc(l.kind)} · ${esc(l.actor)} · ${esc(l.clock)} · ${esc(l.phase)} · turn ${l.turn}</summary><p class="small">Wall: ${wall(l.wall_ms)}</p><pre>${esc(JSON.stringify(l.data,null,2))}</pre></details>`).join('');
+  $('timeline').innerHTML=v.timeline.map(l=>`<details data-record="log-${l.seq}"><summary>#${l.seq} · ${esc(l.kind)} · ${esc(l.actor)} · ${esc(l.clock)} · ${esc(l.phase)} / ${esc(l.exercise_phase)} · turn ${l.turn}</summary><p class="small">Wall: ${wall(l.wall_ms)}</p><pre>${esc(JSON.stringify(l.data,null,2))}</pre></details>`).join('');
   for(const el of document.querySelectorAll('details[data-record]'))el.open=opened.has(el.dataset.record);
  }catch(e){$('error').textContent=e.message;}finally{busy=false;if(rerun){rerun=false;refresh();}}
 }

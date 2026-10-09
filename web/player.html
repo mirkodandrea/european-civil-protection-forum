@@ -84,7 +84,7 @@ $('confirmlang').onclick = async () => {
 $('lang').onchange = () => api(`/api/player/${role}/language`, { language: $('lang').value }).then(refresh).catch(e => { $('status').textContent = e.message; });
 // On a phone the map sits on top: keep it to ~40% of the screen height.
 const map = new MapView($('map'), stat, { maxHeight: Math.round(window.innerHeight * 0.42) });
-const STATUS = { parsing: 'being read…', pending: 'awaiting exercise control', needs_clarification: 'question asked', approved: 'approved – executes at end of turn', rejected: 'not approved', applied: 'executed', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
+const STATUS = { parsing: 'being read…', pending: 'awaiting exercise control', needs_clarification: 'question asked', approved: 'approved – awaiting EXCON execution or turn resolution', rejected: 'not approved', applied: 'executed', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
 let lastCount = 0;
 
 $('send').onclick = async () => {
@@ -109,7 +109,7 @@ async function refresh() {
   $('rolename').textContent = p.player.name;
   $('languagejoin').hidden = p.player.language_confirmed;
   $('turn').textContent = p.phase === 'orders' ? `Turn ${p.turn}` : p.phase === 'resolving' ? `Turn ${p.turn} · simulating…` : p.phase;
-  $('clock').textContent = p.clock;
+  $('clock').textContent = `${p.clock} · ${p.exercise_phase.replaceAll('_',' ')} · ${p.clock_control.running ? `${p.clock_control.ratio} simulated s / real s` : 'clock paused'}`;
   if (document.activeElement !== $('lang')) $('lang').value = p.player.language;
   $('roledesc').textContent = p.role.description;
   $('res').innerHTML = p.resources && Object.keys(p.resources).length

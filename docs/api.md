@@ -225,3 +225,56 @@ retained with change history in debriefs. The dashboard also exposes the origina
 basis and attachments on every player decision. Evaluator language translation,
 notes and advanced AI assessment are separate enhancements; this dashboard is
 strictly read-only and shows English working text plus delivered original wording.
+
+## Within-turn clock, training phases and scheduled injects
+
+The decision-turn lifecycle (`briefing`, `orders`, `resolving`, `debrief`) is
+separate from the training/incident `exercise_phase`: `early_warning`,
+`early_action`, `escalation`, `full_response`. A training phase may span turns;
+one open turn can contain several training phases and many injects. Phase changes
+require EXCON's reason and retain the physical world, proposals, messages,
+resource commitments/deployments and accounting history. `phase_history` records
+the entry time, wall time, turn and reason. Logs include both phase dimensions.
+Evaluator filtering additionally accepts `exercise_phase`.
+
+`POST /api/master/clock {"running":true,"ratio":60,"reason":"..."}` runs
+physical simulation during an open turn: 60 simulated seconds per wall second.
+Ratio is 0.01–86400; pause explicitly with `running:false`. This is distinct from
+`turn_minutes` (resolution duration) and `speed` (resolution playback, where 0
+means maximum speed). Defaults: paused, ratio 60. `/api/state` and player views
+expose `clock_control`; state includes current `wall_ms` and authoritative
+simulation time. Large ratios can exceed hardware throughput: `lag_s` reports
+catch-up lag and the displayed simulation clock remains authoritative. No
+unapproved orders execute as time passes. Physics and timed arrivals continue.
+Ratio/pause changes reanchor pacing at the actual current simulation time.
+
+`POST /api/master/phase {"phase":"early_action","reason":"Protect vulnerable groups"}`
+changes training phase without advancing a turn or resetting resources. Starting
+turn resolution pauses the within-turn clock; rollback and exercise end also
+pause it. Resuming is an explicit EXCON action. Direct/approved `AdvanceTime`
+jumps reanchor pacing so elapsed wall time is not applied twice. Rollback retains
+phase/schedule evidence; delivered schedules are never silently sent again.
+
+`POST /api/master/schedules {"msel_id":"I-02","at_clock":"13:30"}` schedules an
+MSEL inject at a Day 1 clock time (`HH:MM` or `HH:MM:SS`). Alternatively use `at_s`
+(seconds since scenario start) for later days; choose exactly one. Scheduling
+accepts current/future times within seven simulated days. Schedules at 13:00,
+13:30 and 14:00 can all occur in the same open turn and training phase. The clock
+steps stop at scheduled due instants and claims each delivery once. Translation
+runs independently: `due_s`, `triggered_s`/`triggered_wall_ms`, and
+`delivered_s`/`delivered_wall_ms` distinguish planned, dispatch and actual delivery
+and expose any latency. Message timestamps always use the actual world clock at
+delivery. Explicit jumps can make a scheduled inject overdue; the actual late
+trigger/delivery is recorded rather than backdating it. Declarations and actions
+continue while translations run.
+
+Cancel a pending/dispatching schedule through
+`POST /api/master/schedules/{id}/cancel {"reason":"..."}`. Delivery rechecks
+cancellation/end before sending, and terminal schedules cannot duplicate. All
+schedules and delivery message IDs are retained in the debrief.
+
+`POST /api/master/proposals/{id}/execute` explicitly executes already-approved
+orders within the open turn without resolving it. Unapproved/previously executed
+proposals fail. Commands are revalidated by the world and actual outcomes are
+recorded. Approved orders otherwise execute at turn resolution. The Master UI
+provides separate approval, execution, clock, phase and scheduling controls.

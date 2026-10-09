@@ -359,18 +359,20 @@ async fn call_key(app: &Router, method: &str, uri: &str, body: Option<Value>, ke
 #[tokio::test]
 async fn role_keys_protect_all_authoritative_reads_and_actions() {
     let app = app().await;
-    let (_, before) = call(&app, "GET", "/api/state", None).await;
+    let (_, mut before) = call(&app, "GET", "/api/state", None).await;
+    before.as_object_mut().unwrap().remove("wall_ms");
     for path in ["/api/state", "/api/master", "/api/debrief", "/api/catalogue", "/api/master/access", "/api/player/fire_commander"] {
         assert_eq!(call_key(&app, "GET", path, None, Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
         assert_eq!(call_key(&app, "GET", path, None, None).await.0, StatusCode::UNAUTHORIZED, "{path}");
     }
-    for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/knowledge", "/api/player/fire_commander/reply", "/api/player/fire_commander/language"] {
+    for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/player/fire_commander/reply", "/api/player/fire_commander/language"] {
         assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
     }
     assert_eq!(call_key(&app, "GET", "/api/state?token=test-master", None, None).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(call_key(&app, "GET", "/ws", None, None).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(call_key(&app, "GET", "/api/health", None, None).await, (StatusCode::OK, json!({"ok":true})));
-    let (_, after) = call(&app, "GET", "/api/state", None).await;
+    let (_, mut after) = call(&app, "GET", "/api/state", None).await;
+    after.as_object_mut().unwrap().remove("wall_ms");
     assert_eq!(before, after);
     let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
     assert!(own.get("msel").is_none() && own.get("reinforcements").is_none() && own.get("description").is_none());
@@ -422,7 +424,7 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
             assert_eq!(call_key(&app, "GET", path, None, Some(key)).await.0, StatusCode::OK, "{key} {path}");
         }
         assert_eq!(call_key(&app, "GET", "/api/master/access", None, Some(key)).await.0, StatusCode::FORBIDDEN);
-        for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/knowledge", "/api/master/references", "/api/player/mayor/reply", "/api/player/mayor/language", "/api/evaluator"] {
+        for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/master/references", "/api/player/mayor/reply", "/api/player/mayor/language", "/api/evaluator"] {
             assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some(key)).await.0, StatusCode::FORBIDDEN, "{key} {path}");
         }
     }
@@ -478,4 +480,57 @@ async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materia
     assert!(export["log"].as_array().unwrap().iter().any(|l| l["kind"] == "rollback"));
     assert_eq!(call_key(&app, "GET", "/api/evaluator?role=unknown", None, Some("test-eval-one")).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(call_key(&app, "GET", "/api/evaluator?status=unknown", None, Some("test-eval-one")).await.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
+    let app=app().await;
+    assert_eq!(call(&app,"POST","/api/master/clock",Some(json!({"running":true,"ratio":60}))).await.0,StatusCode::BAD_REQUEST);
+    call(&app,"POST","/api/master/start",None).await;
+    for (id,clock) in [("I-01","13:00"),("I-02","13:30"),("I-03","14:00")] {
+        assert_eq!(call(&app,"POST","/api/master/schedules",Some(json!({"msel_id":id,"at_clock":clock}))).await.0,StatusCode::OK);
+    }
+    assert_eq!(call(&app,"POST","/api/master/clock",Some(json!({"running":true,"ratio":86400,"reason":"Compressed acceptance exercise"}))).await.0,StatusCode::OK);
+    let delivered=eventually(&app,"/api/state",|s|s["scheduled_injects"].as_array().unwrap().iter().all(|i|i["status"]=="delivered")).await;
+    assert_eq!(delivered["turn"],1);assert_eq!(delivered["phase"],"orders");assert_eq!(delivered["exercise_phase"],"early_warning");
+    assert_eq!(delivered["scheduled_injects"].as_array().unwrap().iter().map(|i|i["triggered_s"].as_i64().unwrap()).collect::<Vec<_>>(),vec![0,1800,3600]);
+    for i in delivered["scheduled_injects"].as_array().unwrap() {
+        assert!(i["delivered_s"].as_i64().unwrap()>=i["due_s"].as_i64().unwrap());
+        assert!(i["delivered_wall_ms"].as_u64().unwrap()>=i["triggered_wall_ms"].as_u64().unwrap());
+        assert!(!i["messages"].as_array().unwrap().is_empty());
+    }
+    call(&app,"POST","/api/master/clock",Some(json!({"running":false,"ratio":60,"reason":"Review phase"}))).await;
+    let (_,paused)=call(&app,"GET","/api/state",None).await;
+    tokio::time::sleep(Duration::from_millis(70)).await;
+    let (_,still)=call(&app,"GET","/api/state",None).await;assert_eq!(paused["world"],still["world"]);
+    call(&app,"POST","/api/master/phase",Some(json!({"phase":"early_action","reason":"Begin protective measures"}))).await;
+    let (_,next)=call(&app,"GET","/api/state",None).await;assert_eq!(next["turn"],1);assert_eq!(next["world"],paused["world"]);
+    assert_eq!(next["exercise_phase"],"early_action");
+    assert_eq!(call(&app,"POST","/api/master/phase",Some(json!({"phase":"escalation","reason":""}))).await.0,StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app,"POST","/api/master/clock",Some(json!({"running":true,"ratio":0}))).await.0,StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app,"POST","/api/master/schedules",Some(json!({"msel_id":"I-01","at_clock":"25:00"}))).await.0,StatusCode::BAD_REQUEST);
+    let (_,debrief)=call(&app,"GET","/api/debrief",None).await;
+    assert_eq!(debrief["scheduled_injects"].as_array().unwrap().len(),3);
+    assert!(debrief["log"].as_array().unwrap().iter().any(|l|l["kind"]=="clock_configured"));
+    assert!(debrief["log"].as_array().unwrap().iter().any(|l|l["kind"]=="exercise_phase_changed"));
+}
+
+#[tokio::test]
+async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only() {
+    let app=app().await;call(&app,"POST","/api/master/start",None).await;
+    let (_,s)=call(&app,"POST","/api/master/schedules",Some(json!({"msel_id":"I-01","at_s":3600}))).await;
+    let id=s["schedule"].as_u64().unwrap();
+    assert_eq!(call(&app,"POST",&format!("/api/master/schedules/{id}/cancel"),Some(json!({"reason":"Change the scenario sequence"}))).await.0,StatusCode::OK);
+    let parent=reply_parent(&app,"mayor").await;
+    let (_,r)=call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"warn F4","reply_to":parent}))).await;
+    let pid=r["proposal"].as_u64().unwrap();
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::BAD_REQUEST);
+    eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
+    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true}))).await;
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::OK);
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::BAD_REQUEST);
+    let (_,state)=call(&app,"GET","/api/state",None).await;assert_eq!(state["turn"],1);assert_eq!(state["scheduled_injects"][0]["status"],"cancelled");
+    let (_,e)=call_key(&app,"GET","/api/evaluator?exercise_phase=early_warning",None,Some("test-eval-one")).await;
+    assert_eq!(e["chains"][0]["proposal"]["status"],"applied");
+    assert!(e["timeline"].as_array().unwrap().iter().all(|l|l["exercise_phase"]=="early_warning"));
 }

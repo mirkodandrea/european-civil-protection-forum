@@ -20,6 +20,8 @@
 //! Master actions (direct commands, approved Master prompts) apply at once;
 //! approved player actions apply together at resolution.
 
+pub mod timing;
+pub use timing::{ExercisePhase, PhaseEntry, ClockControl, ScheduledInject, ScheduleStatus};
 pub mod evaluation;
 pub mod knowledge;
 pub use knowledge::{FireCell, MapObservation, KnowledgeEvent, KnowledgeSource};
@@ -316,6 +318,7 @@ pub struct TurnReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
+    pub exercise_phase: ExercisePhase,
     pub phase: Phase,
     pub seq: u64,
     pub wall_ms: u128,
@@ -354,6 +357,10 @@ pub struct TurnWindow {
 }
 
 pub struct Exercise {
+    pub exercise_phase: ExercisePhase,
+    pub phase_history: Vec<PhaseEntry>,
+    pub clock_control: ClockControl,
+    pub scheduled_injects: Vec<ScheduledInject>,
     pub world: World,
     pub turn: u32,
     pub phase: Phase,
@@ -394,6 +401,10 @@ impl Exercise {
             .map(|r| (r.id.clone(), Player { role: r.id.clone(), name: r.name.clone(), language: r.language.clone(), language_confirmed: false }))
             .collect();
         let mut ex = Exercise {
+            exercise_phase:ExercisePhase::EarlyWarning,
+            phase_history:vec![PhaseEntry {phase:ExercisePhase::EarlyWarning,turn:0,t_s:world.time_s(),wall_ms:wall_ms(),reason:"Initial training phase".into()}],
+            clock_control:ClockControl::default(),
+            scheduled_injects:Vec::new(),
             world,
             turn: 0,
             phase: Phase::Briefing,
@@ -444,6 +455,7 @@ impl Exercise {
 
     pub fn record(&mut self, kind: &str, actor: &str, data: Value) {
         let e = LogEntry {
+            exercise_phase:self.exercise_phase,
             phase: self.phase,
             seq: self.log.len() as u64 + 1,
             wall_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
@@ -542,6 +554,7 @@ impl Exercise {
         if self.phase != Phase::Orders {
             bail!("no turn is open");
         }
+        self.stop_clock("Turn resolution uses its own duration and playback speed");
         let minutes = minutes.unwrap_or(self.turn_minutes).clamp(1, 24 * 60);
         let from_s = self.world.time_s();
         let mut applied = Vec::new();
@@ -603,6 +616,7 @@ impl Exercise {
         let Some((_, snap)) = self.snapshots.iter().find(|(t, _)| *t == turn).cloned() else {
             bail!("no snapshot for turn {turn}");
         };
+        self.stop_clock("Explicit snapshot rollback");
         self.world.restore(&snap)?;
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self.proposals.iter().filter(|p| p.turn >= turn && p.status != ProposalStatus::Rejected && p.status != ProposalStatus::RolledBack).map(|p| p.id).collect();
@@ -622,6 +636,7 @@ impl Exercise {
         if self.phase == Phase::Resolving {
             bail!("a turn is being resolved; wait for it to finish");
         }
+        self.stop_clock("Exercise ended");
         self.phase = Phase::Debrief;
         self.record("exercise_ended", MASTER, json!({"stats": self.world.stats()}));
         Ok(())
@@ -828,6 +843,11 @@ impl Exercise {
         Ok(())
     }
 
+    pub fn execute_approved(&mut self, pid:u64) -> Result<Vec<AppliedAction>> {
+        if self.phase!=Phase::Orders { bail!("execution requires an open turn"); }
+        self.execute_proposal(pid)
+    }
+
     fn execute_proposal(&mut self, pid: u64) -> Result<Vec<AppliedAction>> {
         let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?.clone();
         if p.status != ProposalStatus::Approved || p.decision.as_ref().map(|d| d.approve) != Some(true) {
@@ -844,6 +864,7 @@ impl Exercise {
                 Err(reason) => (false, reason),
             };
             self.record_resource_events(resource_event_count, p.source.label());
+            if ok && matches!(cmd, Command::AdvanceTime { .. }) { self.clock_control.revision+=1; }
             let execution = ExecutionRecord { allocations: self.world.d.allocations[allocation_count..].iter().map(|a| a.id).collect(), command: cmd.clone(), ok, detail: detail.clone(), t_s: self.world.time_s(), wall_ms: wall_ms(), origin: origin.into() };
             self.record("action_executed", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "execution": execution}));
             executions.push(execution);
@@ -1013,7 +1034,7 @@ impl Exercise {
             } else {
                 for (desc, v) in p.descriptions.iter().zip(&p.verdicts) {
                     let notes = match v { Verdict::Ok { notes } => notes.join("; "), _ => String::new() };
-                    facts.push(format!("APPROVED: {desc}{}. It will be executed at the end of the turn.", if notes.is_empty() { String::new() } else { format!(" ({notes})") }));
+                    facts.push(format!("APPROVED: {desc}{}. It awaits EXCON execution or turn resolution.", if notes.is_empty() { String::new() } else { format!(" ({notes})") }));
                 }
             }
         }
@@ -1031,6 +1052,7 @@ impl Exercise {
         let resource_event_count = self.world.d.resource_events.len();
         let r = self.world.apply(cmd, &Actor::Master);
         self.record_resource_events(resource_event_count, MASTER);
+        if r.is_ok() && matches!(cmd, Command::AdvanceTime { .. }) { self.clock_control.revision+=1; }
         self.record("master_command", MASTER, json!({"origin": "direct_excon_intervention", "command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
         r.map_err(|e| anyhow::anyhow!(e))
     }
@@ -1060,6 +1082,10 @@ impl Exercise {
     /// The full log as a debrief timeline.
     pub fn debrief(&self) -> Value {
         json!({
+            "exercise_phase":self.exercise_phase,
+            "phase_history":self.phase_history,
+            "clock_control":self.clock_control,
+            "scheduled_injects":self.scheduled_injects,
             "scenario": self.world.scn.name,
             "turns": self.turn,
             "stats": self.world.stats(),

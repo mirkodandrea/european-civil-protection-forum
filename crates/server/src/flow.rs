@@ -257,3 +257,59 @@ pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {
     let report = state.lock().finish_resolution()?;
     Ok(report)
 }
+
+/// Claim scheduled deliveries under the lock, then translate independently. Actual
+/// simulated/wall delivery times are retained rather than pretending translation is instant.
+pub fn dispatch_due(state: &AppState) {
+    let due=state.lock().claim_due_injects();
+    for (id, template) in due {
+        let state=state.clone();
+        tokio::spawn(async move {
+            let recipients={state.lock().recipients(&template.recipients)};
+            let to=match recipients {Ok(to)=>to,Err(e)=>{state.lock().complete_schedule(id,Err(e));return;}};
+            let tr=translations(&state,&to,&template.text).await;
+            let mut ex=state.lock();
+            if ex.scheduled_injects.iter().find(|i|i.id==id).map(|i|i.status)!=Some(exercise::ScheduleStatus::Dispatching){return;}
+            let result=ex.send_inject(Some(&template.id),&template.title,&template.sender,&to,&template.text,&tr);
+            ex.complete_schedule(id,result);
+        });
+    }
+}
+
+/// Wall-time pacing while a decision turn stays open. Revision changes (pause,
+/// ratio edits, explicit time jumps and rollback) always reanchor at the actual world.
+pub async fn run_clock(state:AppState) {
+    use std::time::Instant;
+    let mut anchor:Option<(u64,Instant,i64)>=None;
+    loop {
+        dispatch_due(&state);
+        let control={let ex=state.lock();(ex.clock_control.clone(),ex.phase,ex.world.time_s())};
+        if !control.0.running || control.1!=exercise::Phase::Orders {anchor=None;}
+        else {
+            if anchor.is_none_or(|(revision,_,_)|revision!=control.0.revision){anchor=Some((control.0.revision,Instant::now(),control.2));}
+            let (revision,start,sim_start)=anchor.unwrap();
+            let target=sim_start+(start.elapsed().as_secs_f64()*control.0.ratio) as i64;
+            for _ in 0..10 {
+                let result={
+                    let mut ex=state.lock();
+                    if !ex.clock_control.running || ex.clock_control.revision!=revision || ex.phase!=exercise::Phase::Orders {break;}
+                    let now=ex.world.time_s();
+                    let next_due=ex.scheduled_injects.iter().filter(|i|i.status==exercise::ScheduleStatus::Pending && i.due_s>now).map(|i|i.due_s).min().unwrap_or(target);
+                    let dt=(target-now).min(next_due-now).min(60);
+                    if dt<=0 {break;}
+                    ex.advance_clock(dt)
+                };
+                if let Err(e)=result {
+                    let mut ex=state.lock();let ratio=ex.clock_control.ratio;
+                    let _=ex.configure_clock(false,ratio,"Clock paused after simulation error");
+                    ex.record("clock_failed",MASTER,serde_json::json!({"error":e.to_string()}));break;
+                }
+                dispatch_due(&state);
+                tokio::task::yield_now().await;
+            }
+            let mut ex=state.lock();
+            if ex.clock_control.revision==revision {ex.clock_control.lag_s=(target-ex.world.time_s()).max(0);}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
