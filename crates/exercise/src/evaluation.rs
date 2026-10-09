@@ -1,11 +1,11 @@
 //! Read-only, evidence-derived evaluator views. No simulation mutation or AI.
 use anyhow::{bail, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use crate::{BasisKind, DecisionEvidence, Exercise, MsgKind, Phase, ProposalStatus};
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct EvidenceFilter {
     pub role: Option<String>,
     pub inject: Option<u64>,

@@ -51,18 +51,18 @@ Checked against the code on 2026-09-24 (commit `2255bcd`). Each row says what ex
 | Have | Gap | Where |
 |---|---|---|
 | The Master console shows everything in English; `/api/debrief` for after the fact | No evaluator role, token, language or read-only enforcement; no metrics module (`T_read`, `T_reply`, `T_decision`), which also needs the timestamps of spec 02; no dashboard page, notes, objectives view, chain view; no on-demand translation with cache; no UI localisation | new `exercise::metrics`, `server`, `web/evaluator.html` |
-| Per-run Master/player capability keys and server-side endpoint authorization (`docs/api.md`) | Three evaluator identities and a read-only evidence dashboard are implemented; advanced AI assessment remains separate | `server` |
+| Per-run Master/player capability keys and server-side endpoint authorization (`docs/api.md`) | Three evaluator identities and a read-only evidence dashboard are implemented; optional evidence-cited AI assessment is implemented; translation and saved annotations remain separate | `server` |
 
 ### 09 AI players and AI assessment
 | Have | Gap | Where |
 |---|---|---|
-| One conversation per player, cassette replay, the same reply path for every role | No bot config in `Role`; no `bot_turn` (L9) or `assess` (L10) workflow; no scheduler, delay or message limits; no `actor_kind` in the log; no labels in the UIs; depends on 03 and 07 | `llm/src/tasks.rs`, `server/src/flow.rs` |
+| One conversation per player, cassette replay, the same reply path for every role | No bot config in `Role`; no `bot_turn` (L9) workflow; on-demand read-only assessment is implemented; no scheduler, delay or message limits; no `actor_kind` in the log; no labels in the UIs; depends on 03 and 07 | `llm/src/tasks.rs`, `server/src/flow.rs` |
 
 ## Across specs
 
 - **No persistence layer.** Only the event log survives a restart. 03 and 06 both need one (session directory, serialisable state).
 - **Only `{"generation": n}` goes over the WebSocket.** 02, 05 and 08 need typed events, and the pages need to handle them.
-- **Extended evaluator workflow** (spec §12.4): Master/player/evaluator authorization and evidence UI are implemented; evaluator translation, notes and AI assessment remain separate enhancements.
+- **Extended evaluator workflow** (spec §12.4): Master/player/evaluator authorization and evidence UI are implemented; evaluator translation and saved notes remain separate enhancements.
 - **The message model is too small.** `Message` (`exercise/src/lib.rs`) needs the fields of specs 02 and 05 (status, timestamps, source text and language, channel, thread, `forward_of`) in one change, not three.
 - **Tests.** The 111 headless tests use a mock LLM and don't cover concurrency of translation, ordering or restore. New tests are listed in each spec. The browser recording (`scripts/record/session.js`) has to be extended for chat, forwarding and an evaluator page.
 - **Docs.** `docs/api.md`, `docs/llm.md`, `docs/architecture.md` describe the built system and must be updated as each spec lands (`CLAUDE.md`: keep docs in step with code).

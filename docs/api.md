@@ -193,7 +193,8 @@ undisclosed until another report. Debriefs retain the linked acquisition evidenc
 Three independent evaluator keys are generated per run. The Master obtains their
 links from `/api/master/access`. `GET /api/access` identifies the evaluator. Each
 key permits read-only Master information (`/api/static`, `/api/state`,
-`/api/master`, `/api/catalogue`, `/api/debrief`, `/api/evaluator`, and `/ws`). Every
+`/api/master`, `/api/catalogue`, `/api/debrief`, `/api/evaluator`,
+`/api/evaluator/assessment`, and `/ws`). Every
 POST is denied, including player replies/languages, reference changes and Master
 controls. Evaluators cannot retrieve participant access keys. The page has no
 exercise action controls and supports multiple concurrent evaluators.
@@ -222,9 +223,32 @@ with `{"references":[{"basis":{"kind":"plan","reference":"Plan title/section"},
 "attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}]}`.
 Plan/procedure references and links use decision-evidence validation and are
 retained with change history in debriefs. The dashboard also exposes the original
-basis and attachments on every player decision. Evaluator language translation,
-notes and advanced AI assessment are separate enhancements; this dashboard is
-strictly read-only and shows English working text plus delivered original wording.
+basis and attachments on every player decision. The dashboard is strictly read-only
+and shows English working text plus delivered original wording. Evaluator language
+translation and saved annotations remain separate enhancements.
+
+`GET /api/evaluator/assessment` accepts the same evidence filters. The evaluator
+button invokes the optional `evaluator_assessment` model task on demand. The result
+contains `snapshot` (generation, context, filters, exact evidence keyed by stable
+IDs, omission count, limitations), `captured_wall_ms`, `derived_assessment` and
+`error`. Each finding contains category (`response_time`, `coordination`,
+`procedure`, `objective`), assessment, evidence IDs, uncertainty and debrief question.
+All citations must match included evidence; unknown fields, operational commands,
+unrecognised citations and oversized findings invalidate the complete AI response.
+Invalid/unavailable/disabled AI leaves the recorded snapshot accessible. No exercise
+state, logs, messages or proposals are written by analysis. Players cannot access it.
+
+Snapshots include at most 100 complete records per section and 80 KB of evidence;
+omissions are explicit. Whole records are omitted instead of cutting their text.
+The input includes actual response/queue metrics and original decision evidence.
+Reference URLs are retained but their documents are not fetched, so plan compliance
+cannot be inferred merely from a citation. Delivery does not establish reading or
+acknowledgement. Findings are hypotheses for human review, never scores or facts.
+The report preserves its captured evidence as the live exercise progresses. Up to
+32 successful generation/filter reports are cached across evaluators; new exercise
+generations invalidate reuse. Model inference times out after 45 seconds and never
+holds the exercise mutex. Analysis remains optional; full debrief export works
+independently. Saved evaluator edits and staged session summaries remain future work.
 
 ## Within-turn clock, training phases and scheduled injects
 

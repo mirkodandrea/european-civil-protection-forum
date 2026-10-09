@@ -575,3 +575,59 @@ async fn configured_limit_controls_enforce_capacity_and_reject_unknown_resources
     let (_,state)=call(&app,"GET","/api/state",None).await;assert_eq!(state["resource_limits"],body["limits"]);
     assert_eq!(call_key(&app,"POST","/api/master/resource-limits",Some(body),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn evaluator_assessment_cites_snapshot_is_cached_and_never_mutates_exercise() {
+    let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted=calls.clone();
+    let model=llm::Llm::mock(move |task, system, user| {
+        if task=="parse_reply" { return Ok(r#"{"detected_language":"en","translation_en":"Warn F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into()); }
+        if task=="translate" { return Ok(user.into()); }
+        assert_eq!(task,"evaluator_assessment");
+        assert!(system.contains("external documents have NOT been fetched"));
+        counted.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        let pack:Value=serde_json::from_str(user)?;
+        assert_eq!(pack["evidence"]["reference:0"]["basis"]["reference"],"Plan section 3");
+        let chain=pack["evidence"].as_object().unwrap().iter().find(|(id,_)|id.starts_with("proposal:")).unwrap().1;
+        assert!(chain["reply_delay_wall_ms"].is_number());
+        assert!(chain["master_queue_wall_ms"].is_null());
+        assert_eq!(chain["proposal"]["evidence"]["basis"]["reference"],"Plan section 3");
+        let id=pack["evidence"].as_object().unwrap().keys().find(|id|id.starts_with("message:")).unwrap();
+        Ok(json!({"findings":[{"category":"coordination","assessment":"A message was delivered","evidence":[id],"uncertainty":"Delivery does not establish acknowledgement or plan compliance","debrief_question":"How was receipt confirmed?"}]}).to_string())
+    });
+    let scn=Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let mut ex=exercise::Exercise::new(sim::World::new(scn,1).unwrap());
+    ex.set_reference_materials(serde_json::from_value(json!([{"basis":{"kind":"plan","reference":"Plan section 3"},"attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}])).unwrap()).unwrap();
+    ex.start().unwrap();
+    let (app,_)=server::router_with_access(Arc::new(Mutex::new(ex)),model,None,access());
+    let parent=reply_parent(&app,"mayor").await;
+    call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"Warn F4","reply_to":parent,"evidence":{"basis":{"kind":"plan","reference":"Plan section 3"}}}))).await;
+    eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
+    let (_,before)=call(&app,"GET","/api/debrief",None).await;
+    let (status,report)=call_key(&app,"GET","/api/evaluator/assessment",None,Some("test-eval-one")).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(report["error"],Value::Null);
+    let citation=report["derived_assessment"]["findings"][0]["evidence"][0].as_str().unwrap();
+    assert!(report["snapshot"]["evidence"].get(citation).is_some());
+    let (_,second)=call_key(&app,"GET","/api/evaluator/assessment",None,Some("test-eval-two")).await;
+    assert_eq!(second,report);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),1);
+    let (_,after)=call(&app,"GET","/api/debrief",None).await;
+    assert_eq!(before,after);
+    assert_eq!(call_key(&app,"GET","/api/evaluator/assessment",None,Some("test-mayor")).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(call_key(&app,"POST","/api/evaluator/assessment",Some(json!({})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn invalid_ai_assessment_keeps_recorded_evidence_and_no_operational_effects() {
+    let model=llm::Llm::mock(|_,_,_|Ok(r#"{"findings":[],"commands":[{"type":"Ignite"}]}"#.into()));
+    let scn=Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex=exercise::Exercise::new(sim::World::new(scn,1).unwrap());
+    let (app,_)=server::router_with_access(Arc::new(Mutex::new(ex)),model,None,access());
+    let (_,before)=call(&app,"GET","/api/debrief",None).await;
+    let (_,report)=call(&app,"GET","/api/evaluator/assessment",None).await;
+    assert_eq!(report["derived_assessment"],Value::Null);
+    assert!(report["error"].as_str().unwrap().contains("validation"));
+    assert!(!report["snapshot"]["evidence"].as_object().unwrap().is_empty());
+    assert_eq!(call(&app,"GET","/api/debrief",None).await.1,before);
+}

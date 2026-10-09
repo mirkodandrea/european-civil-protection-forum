@@ -18,6 +18,7 @@
 <label>Decision status<select id="status"><option value="">All</option><option>parsing</option><option>pending</option><option>needs_clarification</option><option>approved</option><option>rejected</option><option>applied</option><option>failed</option><option>rolled_back</option></select></label>
 <label>Timeline event kind<input id="kind" placeholder="e.g. message"></label>
 </div><p class="small muted">Chains keep their full reply, decision and execution history after filtering by declaration. Timeline filters use each event's own turn and phase. No action controls are available.</p><div id="error" class="error"></div></div>
+<div class="panel"><h2>Evidence-based assessment</h2><p class="small muted">Optional AI interpretation for evaluator review. Uses the current filters and a bounded snapshot. It cannot send messages or change the exercise.</p><button id="assess">Assess current evidence</button><div id="assessment"></div></div>
 <div class="panel"><h2>Inject → reply → approval → execution</h2><div id="chains"></div></div>
 <div class="panel"><h2>Transmitted messages</h2><div id="messages"></div></div>
 <div class="panel"><h2>Evidence timeline</h2><div class="row"><button id="newer">Newer events</button><button id="older">Older events</button><span id="range" class="small"></span></div><div id="timeline"></div></div>
@@ -37,6 +38,17 @@ const durations = c => `Reply after delivery: ${c.reply_delay_wall_ms === null ?
 for (const id of ['role','inject','turn','phase','exercise_phase','status','kind']) $(id).onchange = () => {offset=0;refresh();};
 $('newer').onclick=()=>{offset=Math.max(0,offset-200);refresh();};
 $('older').onclick=()=>{offset+=200;refresh();};
+$('assess').onclick=async()=>{
+ $('assess').disabled=true;$('assessment').textContent='Assessing recorded evidence…';
+ try {
+  const q=new URLSearchParams({offset:String(offset)});
+  for(const id of ['role','inject','turn','phase','exercise_phase','status','kind'])if($(id).value)q.set(id,$(id).value);
+  const r=await api('/api/evaluator/assessment?'+q);
+  const pack=r.snapshot;
+  $('assessment').innerHTML=`<p class="small"><b>Derived assessment · human review required</b><br>Snapshot generation ${pack.generation} · ${esc(pack.context.clock)} · ${wall(r.captured_wall_ms)}. Captured filters and evidence stay fixed when the live exercise changes. ${pack.omitted_records} records omitted.</p>${r.error?`<p class="muted">${esc(r.error)}</p>`:''}${pack.limitations.map(x=>`<p class="small muted">${esc(x)}</p>`).join('')}${(r.derived_assessment?.findings||[]).map(f=>`<div class="card"><b>${esc(f.category.replaceAll('_',' '))}</b><p>${esc(f.assessment)}</p><p class="small">Uncertainty: ${esc(f.uncertainty)}</p><p>Debrief question: ${esc(f.debrief_question)}</p><p>${f.evidence.map(id=>`<a href="#assessment-${esc(id)}">${esc(id)}</a>`).join(' · ')}</p></div>`).join('')}<details><summary>Captured filters</summary><pre>${esc(JSON.stringify(pack.filters,null,2))}</pre></details><h3>Recorded evidence supporting this snapshot</h3>${Object.entries(pack.evidence).map(([id,v])=>`<details id="assessment-${esc(id)}"><summary>${esc(id)}</summary><pre>${esc(JSON.stringify(v,null,2))}</pre></details>`).join('')}`;
+  for(const a of $('assessment').querySelectorAll('a'))a.onclick=()=>{const d=document.getElementById(a.getAttribute('href').slice(1));if(d)d.open=true;};
+ }catch(e){$('assessment').textContent=e.message;}finally{$('assess').disabled=false;}
+};
 $('export').onclick=async e=>{e.preventDefault();try{const data=await api('/api/debrief');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='evaluator-debrief.json';a.click();URL.revokeObjectURL(url);}catch(e){$('error').textContent=e.message;}};
 async function refresh() {
  if(busy){rerun=true;return;}busy=true;

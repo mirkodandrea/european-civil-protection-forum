@@ -28,6 +28,7 @@ use tokio::sync::watch;
 
 pub mod flow;
 pub mod access;
+mod assessment;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,6 +36,7 @@ pub struct AppState {
     pub llm: Llm,
     pub access: Arc<Access>,
     generation: watch::Receiver<u64>,
+    assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
 }
 
 impl AppState {
@@ -66,7 +68,7 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
-    let state = AppState { ex, llm, generation: rx, access: Arc::new(access) };
+    let state = AppState { ex, llm, generation: rx, access: Arc::new(access), assessments: Default::default() };
     tokio::spawn(flow::run_clock(state.clone()));
     let api = Router::new()
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
@@ -81,6 +83,7 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/master/schedules/:id/cancel", post(post_cancel_schedule))
         .route("/api/master/proposals/:id/execute", post(post_execute))
         .route("/api/evaluator", get(get_evaluator))
+        .route("/api/evaluator/assessment", get(assessment::get))
         .route("/api/static", get(get_static))
         .route("/api/state", get(get_state))
         .route("/api/master", get(get_master))

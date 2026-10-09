@@ -33,6 +33,20 @@ Every role is a human in a browser. The LLM only translates and interprets what 
 ### Goal
 The evaluators get an AI-drafted reading of how the exercise is going and how each player responded to the objectives, in context, as a suggestion they can accept or discard.
 
+### Implemented issue #17 scope
+On-demand English evaluator analysis is available in `evaluator.html` and
+`GET /api/evaluator/assessment`. It combines recorded timings, communication chains,
+objectives, execution outcomes and cited decision evidence. Strict schema and
+citation validation reject unsupported output. A bounded snapshot with explicit
+omissions keeps the original evidence accessible; failed/disabled AI falls back to
+that snapshot. Analysis never mutates the exercise or sends operational messages.
+Reports are optional derived interpretations, not scores. Reference document
+contents are not fetched. See `docs/api.md` for bounds and caching.
+
+The broader requirements below retain future evaluator localisation, saved
+accept/edit/dismiss annotations, staged long-session summaries and turn-triggered
+analysis. Bot players in Part A remain separate.
+
 ### Requirements
 1. Workflow **L10 `assess`**, run on request (button) and optionally at the end of each turn. Input: the game objectives and expected responses (spec 07), the turn's injects, the players' replies and decisions, the timings (spec 08 metrics), the simulation context (what the fire did, and what was at risk when a decision was made), and the chat and forwards.
 2. Output, in the evaluator's language: per objective, `met | partly | not met | not observed`, with **evidence** (links to log events, so the evaluator can check), per-player observations, notable delays, missed opportunities, and questions for the debrief. It replaces and extends L7 (debrief narrative).
