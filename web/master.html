@@ -37,6 +37,8 @@
       <p class="small muted">Physics and arrivals advance with this clock. Turns group declarations and approvals; phase changes preserve accumulated state. Turn resolution has a separate duration and playback speed and pauses this clock.</p>
       <div id="schedulelist" class="small"></div>
     </div>
+    <div class="panel"><h2>Training design and paths</h2><p class="small">Original design is editable during briefing only. Paths change only after explicit approval; adaptations preserve physical work.</p><textarea id="designjson">{"objectives":["Contain the fire through timely coordination"],"phases":{"early_warning":"Assess and mobilise","early_action":"Successful containment","escalation":"Fire exceeds local containment"},"decision_points":[{"id":"containment-check","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0}]},{"path":"escalating","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1}]}]}]}</textarea><button id="savedesign">Save original design</button><div id="pathoptions"></div><label>Transition rationale<input id="pathreason"></label><label><input type="checkbox" id="pathadaptation">Explicit Master adaptation when phase/conditions diverge</label><div id="designview" class="small"></div></div>
+    <div class="panel"><h2>Physical intervention preview</h2><p class="small">Coordinates and widths/radii in metres; area in hectares. A zone is a whole grid square. Pause the clock to apply a reviewed preview or correct the latest intervention.</p><div id="physicalpreview"></div><input id="interventionreason" placeholder="Rationale for intervention"><button id="applypreview" disabled>Apply reviewed preview</button><input id="correctionreason" placeholder="Why the latest intervention needs correction"><button id="correctphysical" disabled>Correct latest intervention</button><div id="correctioninfo" class="small"></div></div>
     <div class="panel">
       <div class="row" id="tools"></div>
       <div class="row small">
@@ -91,9 +93,9 @@
     </div>
     <div id="tab-commands" class="panel" hidden>
       <h2>Commands by code</h2>
-      <p class="small muted">JSON command or list, applied immediately as the Director. Same format as <code>POST /api/master/command</code>.</p>
+      <p class="small muted">JSON command or list, previewed before application. API scripts can explicitly intervene through <code>POST /api/master/command</code>; use preview/apply for a guarded review.</p>
       <textarea id="ctext" style="min-height:120px">[{"type":"Extinguish","area":"G2"}, {"type":"EvacuateZone","zone":"F4"}]</textarea>
-      <div class="row"><button id="csend" class="primary">Apply</button></div>
+      <div class="row"><button id="csend" class="primary">Preview</button></div>
       <pre id="cres"></pre>
       <pre id="cdoc" class="small"></pre>
     </div>
@@ -139,14 +141,25 @@ for (const [id, label, help] of TOOLS) {
 }
 $('tools').firstChild.classList.add('sel');
 
-async function command(cmd) {
-  $('err').textContent = '';
-  try {
-    const r = await api('/api/master/command', cmd);
-    const bad = r.results.filter(x => !x.ok);
-    if (bad.length) $('err').textContent = bad.map(x => `${x.command}: ${x.error}`).join('; ');
-  } catch (e) { $('err').textContent = e.message; }
+let reviewedPreview=null;
+const proposalPreviews=new Map();
+async function command(cmd,previewOnly=false) {
+ $('err').textContent='';
+ try {
+  const commands=Array.isArray(cmd)?cmd:[cmd];
+  const r=await api('/api/master/preview',{commands});
+  reviewedPreview=previewOnly?null:{generation:r.generation,commands};
+  $('physicalpreview').innerHTML=`<p><b>Expected immediate effect</b> · ${esc(r.before.clock)}<br>Burning cells ${r.before.burning_cells} → ${r.after.burning_cells}; burned area ${r.before.burned_ha.toFixed(2)} → ${r.after.burned_ha.toFixed(2)} ha.</p>${r.results.map(x=>{const g=x.geometry||{};return `<div class="card"><b>${esc(x.command.type)}</b>${g.centre_m?`<p>Centre: ${g.centre_m.join(', ')} m east/north</p>`:''}${g.radius_m?`<p>Radius: ${g.radius_m} m</p>`:''}${g.bounds_m?`<p>Bounds: ${g.bounds_m.join(', ')} m</p>`:''}${g.length_m?`<p>Length: ${g.length_m.toFixed(0)} m · width: ${g.width_m} m</p>`:''}${g.nominal_area_ha!=null?`<p>Nominal area: ${Number(g.nominal_area_ha).toFixed(2)} ha</p>`:''}<p>${esc(x.result.Err||(x.result.Ok||[]).join('; '))}</p>${g.effect?`<p>${esc(g.effect)}</p>`:''}</div>`}).join('')}<p class="small muted">${esc(r.warning)}</p><details><summary>Complete preview data</summary><pre>${esc(JSON.stringify(r,null,2))}</pre></details>`;
+  $('applypreview').disabled=previewOnly||r.results.some(x=>x.result.Err);
+  return r;
+ }catch(e){$('err').textContent=e.message;}
 }
+$('applypreview').onclick=async()=>{try{
+ const r=await api('/api/master/preview/apply',{...reviewedPreview,reason:$('interventionreason').value});
+ $('cres').textContent=JSON.stringify(r,null,2);reviewedPreview=null;$('applypreview').disabled=true;
+}catch(e){$('err').textContent=e.message;}};
+$('correctphysical').onclick=()=>api('/api/master/correct-intervention',{reason:$('correctionreason').value}).catch(alertErr);
+$('savedesign').onclick=()=>{try{api('/api/master/design',JSON.parse($('designjson').value)).catch(alertErr);}catch(e){alertErr(e);}};
 
 const map = new MapView($('map'), stat, {
   onClick: async (p, m) => {
@@ -193,7 +206,7 @@ $('isend').onclick = async () => {
 };
 $('psend').onclick = async () => { try { await api('/api/master/prompt', { text: $('ptext').value }); $('ptext').value = ''; $('tb-proposals').click(); } catch (e) { alertErr(e); } };
 $('csend').onclick = async () => {
-  try { $('cres').textContent = JSON.stringify(await api('/api/master/command', JSON.parse($('ctext').value)), null, 2); }
+  try { await command(JSON.parse($('ctext').value)); }
   catch (e) { $('cres').textContent = e.message; }
 };
 api('/api/catalogue').then(c => { $('cdoc').textContent = c.doc; });
@@ -262,6 +275,16 @@ function renderProposals() {
       if (communications !== JSON.stringify(proposal.communication_drafts || [], null, 1)) body.communication_drafts = JSON.parse(communications);
       const injects = $('inject-' + id)?.value;
       if (injects != null && injects !== JSON.stringify(proposal.inject_drafts || [], null, 1)) body.inject_drafts = JSON.parse(injects);
+      const commands=body.commands||proposal.commands;
+      if(body.approve && proposal.source.kind==='master' && commands.some(c=>['Ignite','Extinguish','SetWeather','CutFireLine','WaterDrop','SetBuildingStatus'].includes(c.type))) {
+       const key=JSON.stringify(commands);const previous=proposalPreviews.get(id);
+       if(!previous||previous.key!==key||previous.generation!==state.generation){
+        const p=await command(commands,true);if(!p)return;
+        proposalPreviews.set(id,{key,generation:p.generation});
+        $('err').textContent='Review physical preview in the left panel, then approve again. Exercise changes require a new preview.';return;
+       }
+       body.preview_generation=previous.generation;
+      }
       await api(`/api/master/proposals/${id}/decide`, body);
     } catch (e) { alertErr(e); }
   });
@@ -286,6 +309,12 @@ async function refresh() {
   } else {
     $('turn').textContent = `Turn ${state.turn} · ${state.phase}`;
   }
+  $('designview').innerHTML=`<details><summary>Original design, observed transition evidence and deviations · path ${esc(master.training_design.current_path||'unselected')}</summary><pre>${esc(JSON.stringify(master.training_design,null,2))}</pre></details>`;
+  $('savedesign').disabled=state.phase!=='briefing';
+  $('pathoptions').innerHTML=master.training_design.decision_points.map(p=>p.branches.map(b=>`<button data-point="${esc(p.id)}" data-path="${esc(b.path)}">${esc(p.id)} → ${esc(b.path)} (${esc(b.phase)})</button>`).join('')).join('');
+  $('pathoptions').querySelectorAll('button').forEach(b=>b.onclick=()=>api('/api/master/path',{point:b.dataset.point,path:b.dataset.path,reason:$('pathreason').value,adaptation:$('pathadaptation').checked}).catch(alertErr));
+  $('correctphysical').disabled=!master.correction?.available;
+  $('correctioninfo').textContent=master.correction?`Latest intervention log #${master.correction.log_seq} · ${master.correction.command.type} · ${master.correction.available?'correctable':'subsequent change or running clock prevents checkpoint correction'}`:'No physical intervention to correct';
   $('clock').textContent = st.clock;
   $('weather').textContent = `wind ${w.weather.wind_dir_deg.toFixed(0)}° ${w.weather.wind_speed_kmh.toFixed(0)} km/h · moisture ${w.weather.moisture_pct.toFixed(0)}%`;
   $('llm').textContent = state.llm.available ? `AI: ${state.llm.model}` : 'AI: off';

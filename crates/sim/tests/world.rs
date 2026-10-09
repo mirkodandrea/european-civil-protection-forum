@@ -225,3 +225,19 @@ fn batch_reinforcements_and_returns_respect_existing_reservations() {
     assert!(verdicts[0].is_ok());
     assert!(!verdicts[1].is_ok());
 }
+
+#[test]
+fn physical_geometry_reports_area_units_and_rejects_invalid_ignition_scale() {
+ let w=world();
+ let c=Command::Ignite {at:Loc::Named("Pine Hill".into()),radius_m:Some(100.0)};
+ let g=w.command_geometry(&c);
+ assert!((g["nominal_area_ha"].as_f64().unwrap()-std::f64::consts::PI).abs()<1e-6);
+ assert_eq!(g["radius_m"],100.0);
+ for r in [0.0,-80.0,f32::NAN,f32::INFINITY,100_000.0] {
+  assert!(!w.validate(&Command::Ignite {at:Loc::Named("Pine Hill".into()),radius_m:Some(r)},&Actor::Master).is_ok());
+ }
+ assert!(!w.validate(&Command::Ignite {at:Loc::Point {x:f32::NAN,y:100.0},radius_m:Some(80.0)},&Actor::Master).is_ok());
+ let zone=w.scn.zone_bounds("F4").unwrap();
+ let area=(zone[2]-zone[0])*(zone[3]-zone[1])/10000.0;
+ assert_eq!(w.command_geometry(&Command::Extinguish {area:Area::Named("F4".into())})["nominal_area_ha"],serde_json::json!(area));
+}

@@ -25,6 +25,8 @@ pub use limits::ResourceLimits;
 pub mod timing;
 pub use timing::{ExercisePhase, PhaseEntry, ClockControl, ScheduledInject, ScheduleStatus};
 pub mod evaluation;
+pub mod design;
+pub mod interventions;
 pub mod knowledge;
 pub use knowledge::{FireCell, MapObservation, KnowledgeEvent, KnowledgeSource};
 
@@ -362,6 +364,10 @@ pub struct TurnWindow {
 }
 
 pub struct Exercise {
+    pub training_design: design::TrainingDesign,
+    pub current_path: Option<String>,
+    pub path_history: Vec<Value>,
+    intervention: Option<interventions::Intervention>,
     pub resource_limits:ResourceLimits,
     pub exercise_phase: ExercisePhase,
     pub phase_history: Vec<PhaseEntry>,
@@ -407,6 +413,7 @@ impl Exercise {
             .map(|r| (r.id.clone(), Player { role: r.id.clone(), name: r.name.clone(), language: r.language.clone(), language_confirmed: false }))
             .collect();
         let mut ex = Exercise {
+            training_design: Default::default(), current_path: None, path_history: Vec::new(), intervention: None,
             resource_limits:ResourceLimits::default(),
             exercise_phase:ExercisePhase::EarlyWarning,
             phase_history:vec![PhaseEntry {phase:ExercisePhase::EarlyWarning,turn:0,t_s:world.time_s(),wall_ms:wall_ms(),reason:"Initial training phase".into()}],
@@ -1035,6 +1042,7 @@ impl Exercise {
             Source::Master => None,
         };
         let note = d.note.clone().filter(|n| !n.trim().is_empty());
+        if d.approve && matches!(p.source,Source::Master) && p.summary.contains("UNPLANNED DIVERGENCE") && note.is_none() {bail!("unplanned training divergence requires explicit Master rationale");}
         if d.approve {
             self.edit_communications(pid, Some(p.communication_drafts.clone()), Some(p.inject_drafts.clone()))?;
             if p.commands.is_empty() && p.inject_drafts.is_empty() && p.communication_drafts.is_empty() && p.resource_limit_draft.is_none() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
@@ -1075,12 +1083,14 @@ impl Exercise {
 
     /// A command from the Master GUI or a script: validated as Master and applied now.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
+        let before = if interventions::physical(cmd) {Some(self.world.snapshot())}else{None};
         let resource_event_count = self.world.d.resource_events.len();
         let verdict=self.world.validate_batch(&self.prior(0),std::slice::from_ref(cmd),&Actor::Master).remove(0);
         let r=if let Verdict::Rejected {reason}=verdict{Err(reason)}else{self.world.apply(cmd,&Actor::Master)};
         self.record_resource_events(resource_event_count, MASTER);
         if r.is_ok() && matches!(cmd, Command::AdvanceTime { .. }) { self.clock_control.revision+=1; }
         self.record("master_command", MASTER, json!({"origin": "direct_excon_intervention", "command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
+        if r.is_ok() { if let Some(snapshot)=before {self.intervention=Some(interventions::Intervention {snapshot,generation:self.generation,log_seq:self.log.last().unwrap().seq,command:cmd.clone()});} }
         r.map_err(|e| anyhow::anyhow!(e))
     }
 
@@ -1112,6 +1122,7 @@ impl Exercise {
     /// The full log as a debrief timeline.
     pub fn debrief(&self) -> Value {
         json!({
+            "training_design":self.design_view(),
             "resource_limits":self.resource_limits,
             "exercise_phase":self.exercise_phase,
             "phase_history":self.phase_history,

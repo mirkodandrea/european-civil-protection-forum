@@ -631,3 +631,57 @@ async fn invalid_ai_assessment_keeps_recorded_evidence_and_no_operational_effect
     assert!(!report["snapshot"]["evidence"].as_object().unwrap().is_empty());
     assert_eq!(call(&app,"GET","/api/debrief",None).await.1,before);
 }
+
+#[tokio::test]
+async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adaptation() {
+ let app=app().await;
+ let design=json!({"objectives":["Contain fire"],"phases":{"early_warning":"Mobilise","early_action":"Contained","escalation":"Escalated"},"decision_points":[{"id":"fire","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0},{"type":"executed_action","kind":"IssueWarning"}]},{"path":"escalation","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1},{"type":"executed_action","kind":"IssueWarning"}]}]}]});
+ assert_eq!(call(&app,"POST","/api/master/design",Some(design.clone())).await.0,StatusCode::OK);
+ call(&app,"POST","/api/master/start",None).await;
+ assert_eq!(call(&app,"POST","/api/master/design",Some(design.clone())).await.0,StatusCode::BAD_REQUEST);
+ assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Premature"}))).await.0,StatusCode::BAD_REQUEST);
+ let parent=reply_parent(&app,"mayor").await;
+ let (_,declared)=call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"Warn F4","reply_to":parent}))).await;
+ let pid=declared["proposal"].as_u64().unwrap();
+ eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
+ call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true}))).await;
+ assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Approved but not executed"}))).await.0,StatusCode::BAD_REQUEST);
+ call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await;
+ let (_,state)=call(&app,"GET","/api/state",None).await;
+ assert!(state["world"]["stats"]["burning_cells"].as_u64().unwrap()>0);
+ call(&app,"POST","/api/master/command",Some(json!({"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}}))).await;
+ assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Observed all cells extinguished"}))).await.0,StatusCode::OK);
+ assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Force escalation"}))).await.0,StatusCode::BAD_REQUEST);
+ assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Exercise a plausible second incident while retaining original containment","adaptation":true}))).await.0,StatusCode::OK);
+ let (_,e)=call_key(&app,"GET","/api/evaluator",None,Some("test-eval-one")).await;
+ assert_eq!(e["context"]["stats"]["burning_cells"],0);
+ assert_eq!(e["training_design"]["original"],design);
+ assert_eq!(e["training_design"]["current_path"],"escalation");
+ assert_eq!(e["training_design"]["history"][1]["deviation"],true);
+ assert_eq!(e["training_design"]["history"][1]["approved_by"],"master");
+ assert_eq!(call_key(&app,"POST","/api/master/path",Some(json!({})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_is_traceable() {
+ let app=app().await;
+ call(&app,"POST","/api/master/start",None).await;
+ let cmds=json!([{"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}}]);
+ let (_,before)=call(&app,"GET","/api/debrief",None).await;
+ let (_,preview)=call(&app,"POST","/api/master/preview",Some(json!({"commands":cmds}))).await;
+ assert_eq!(preview["after"]["burning_cells"],0);
+ assert!(preview["results"][0]["geometry"]["nominal_area_ha"].as_f64().unwrap()>10000.0);
+ assert_eq!(call(&app,"GET","/api/debrief",None).await.1,before);
+ let (_,applied)=call(&app,"POST","/api/master/preview/apply",Some(json!({"commands":cmds,"generation":preview["generation"],"reason":"Reviewed whole-map extinction for exercise demonstration"}))).await;
+ assert_eq!(applied["results"][0]["ok"],true);
+ assert_eq!(call(&app,"POST","/api/master/preview/apply",Some(json!({"commands":cmds,"generation":preview["generation"],"reason":"Duplicate"}))).await.0,StatusCode::BAD_REQUEST);
+ assert_eq!(call(&app,"POST","/api/master/correct-intervention",Some(json!({"reason":"Whole area was unintended"}))).await.0,StatusCode::OK);
+ let (_,corrected)=call(&app,"GET","/api/debrief",None).await;
+ assert_eq!(corrected["stats"],before["stats"]);
+ assert!(corrected["log"].as_array().unwrap().iter().any(|e|e["kind"]=="physical_intervention_corrected"));
+ // A subsequent recorded change protects intervening state from checkpoint restore.
+ call(&app,"POST","/api/master/command",Some(cmds[0].clone())).await;
+ call(&app,"POST","/api/master/phase",Some(json!({"phase":"early_action","reason":"Subsequent progress"}))).await;
+ assert_eq!(call(&app,"POST","/api/master/correct-intervention",Some(json!({"reason":"Too late"}))).await.0,StatusCode::BAD_REQUEST);
+ assert_eq!(call_key(&app,"POST","/api/master/preview",Some(json!({"commands":cmds})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+}

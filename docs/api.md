@@ -337,3 +337,71 @@ then explicitly approve it. Only Master-origin proposals can recommend policy.
 Actual application and the approved configuration are recorded separately from
 the original draft; malformed recommendations can always be rejected. Limits-only
 proposals require the same approval as physical commands or communications.
+
+## Original design, decision paths and physical previews
+
+Before starting, `POST /api/master/design` sets an original design:
+
+```json
+{"objectives":["Contain the fire"],"phases":{"early_warning":"Mobilise","early_action":"Contained","escalation":"Fire exceeds containment"},"decision_points":[{"id":"fire","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0},{"type":"executed_action","kind":"IssueWarning"}]},{"path":"escalating","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1}]}]}]}
+```
+
+The design is fixed after start. Conditions are conjunctive: `burning_at_most`,
+`burning_at_least` (`cells`), `burned_at_most`, `burned_at_least` (`ha`) and
+`executed_action` (`kind`). Execution conditions require successful recorded
+execution with Master approval, excluding rolled-back proposals. Approval alone
+is insufficient. Actual burning/burned thresholds describe the current world.
+`POST /api/master/path` takes `point`, `path`, `reason` and optional `adaptation`.
+A phase/condition mismatch requires `adaptation:true` plus rationale. Resource caps
+for the destination phase still apply. Transitions retain physical work, record
+observations and approval, and never automatically restore fire to force escalation.
+Master/evaluator/debrief views expose the immutable design, current path, live
+conditions and append-only transition/deviation history. Direct phase changes
+remain explicit Master decisions with rationale and separate phase history.
+Master AI context includes this design, path history, recorded decisions and current
+physics/resources. Prompts require flagging unplanned divergence in the summary;
+flagged Master suggestions need a nonempty approval note. These semantic flags
+remain model interpretations; authoritative path checks use actual recorded state.
+
+`POST /api/master/preview` with `{"commands":[COMMAND,...]}` applies up to 20 commands
+on a disposable snapshot with the same fire options. It returns generation, before/
+after stats, resolved geometry, per-command results and limitations. The live world
+and log are unchanged. Preview is immediate raster effects, not a forecast. Weather
+changes affect stochastic future spread over time, not the existing perimeter.
+`AdvanceTime` is excluded; use the controlled clock. Master map tools and JSON
+commands show this preview before the separate apply action. Physical commands in
+Master AI proposals require preview, then a second approval click; optional
+`preview_generation` on the decision endpoint rejects stale reviewed approvals. `POST
+/api/master/preview/apply` takes the same `commands`, the preview `generation` and
+`reason`; it requires a paused simulation and rejects stale generations. Results
+and rationale are logged. Scripts using `/api/master/command` remain explicit direct
+EXCON interventions, recorded separately from approved role deployments.
+
+Physical units and effects:
+
+- Locations are metres east/north within the map. Ignite radius defaults to 80 m;
+  nominal circle area is πr²/10,000 hectares. Raster cells and burnable fuel determine
+  actual lit area; finite positive radius cannot exceed the map's largest extent.
+- Extinguish of a zone covers the entire zone rectangle. A named place uses 250 m
+  radius; a circle uses its explicit positive finite radius. Only burning cells are
+  put out; previous burnt area remains recorded. Large radii can deliberately cover
+  the whole map, and their nominal area is displayed before application.
+- Fire line width defaults to 40 m (allowed 10–200 m), with length resolved from
+  endpoints or zone edge. One crew per 600 m for role deployments. Lines clear
+  unburnt fuel, leaving past burned area intact.
+- Water drop radius is 60 m, adding 1.2 litres/m² to unburnt fuel. It slows future
+  spread through wetting and does not extinguish existing burning cells.
+- Wind speed is km/h, direction is degrees FROM, fuel moisture is percent.
+
+`POST /api/master/correct-intervention` with `reason` restores the checkpoint before
+only the latest successful direct physical intervention. It requires a paused
+simulation and absolutely no intervening recorded change. Thus it cannot erase
+subsequent player execution, simulation progress or decisions. For a multi-command
+batch only the last physical intervention may be corrected; earlier effects remain.
+The original command and separate correction with before/after stats, rationale,
+Master identity and original log sequence remain in the audit trail. Checkpoint
+restore reseeds future ensemble spread, explicitly disclosed in preview and log.
+If the exercise has progressed, issue a new explicit corrective command instead.
+Reports of unexpectedly excessive fire/extinguishing areas are observations: the
+geometry/actual-cell previews make their scale reproducible without assuming a
+confirmed propagation defect.
