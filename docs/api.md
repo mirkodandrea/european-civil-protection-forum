@@ -93,3 +93,19 @@ execution. Repeated decision/resolution requests cannot execute a proposal twice
 Rollback marks proposals undone while retaining their evidence. Direct Master
 commands carry `direct_excon_intervention` origin; approved player actions and
 Master suggestions have distinct origins in execution records.
+
+## Review operational AI communications
+
+AI role messages and clarification questions are `communication_drafts` on the
+proposal. They are not delivered during parsing. Master decision requests may
+replace `communication_drafts` (each has `to`, `from`, `kind`, `title`, `text_en`)
+and Master proposals' `inject_drafts` before approving. Only `role_message` and
+`clarification` communication kinds are accepted; recipients and sender origin
+are validated. Empty arrays remove drafts.
+
+Approved action-dependent communications wait for successful execution.
+Approved communication-only proposals send immediately. Delivery is claimed once,
+rechecks effective approval after translation, and records proposal/message IDs.
+Rejected, failed or rolled-back suggestions cannot produce operational messages.
+Automatic decision feedback and turn summaries translate recorded facts, preserving
+original English evidence, rather than generating new operational content.

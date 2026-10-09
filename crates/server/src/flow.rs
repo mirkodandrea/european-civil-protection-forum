@@ -98,8 +98,9 @@ pub async fn process_reply(state: AppState, pid: u64) {
     }
     match result {
         Ok(parsed) => {
-            let messages = parsed.messages.clone();
+            let communication_drafts = parsed.messages.iter().filter(|m| m.to != role.id && state.lock().players.contains_key(&m.to)).map(|m| exercise::CommunicationDraft { to: m.to.clone(), from: role.id.clone(), kind: MsgKind::RoleMessage, title: format!("Message from {}", role.name), text_en: m.text.clone() }).collect();
             let input = ParsedInput {
+                communication_drafts,
                 language: parsed.detected_language,
                 translation_en: parsed.translation_en,
                 actions: parsed.actions,
@@ -109,19 +110,8 @@ pub async fn process_reply(state: AppState, pid: u64) {
             };
             if let Err(e) = state.lock().attach_parse(pid, input) {
                 tracing::warn!("attach_parse {pid}: {e}");
-                return;
             }
-            // Messages to other roles: delivered at once, translated.
-            for m in messages {
-                let valid = state.lock().players.contains_key(&m.to);
-                if !valid || m.to == role.id {
-                    continue;
-                }
-                let tr = translations(&state, std::slice::from_ref(&m.to), &m.text).await;
-                let text = tr.get(&m.to).cloned().unwrap_or_else(|| m.text.clone());
-                let title = format!("Message from {}", role.name);
-                state.lock().add_message(&role.id, &m.to, MsgKind::RoleMessage, Some(&title), &text, &m.text, Some(pid));
-            }
+
         }
         Err(e) => {
             let _ = state.lock().parse_failed(pid, &e.to_string());
@@ -154,6 +144,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
         Ok(p) => {
             let drafts = p.injects.iter().filter_map(|d| serde_json::to_value(d).ok()).collect();
             let input = ParsedInput {
+                communication_drafts: Vec::new(),
                 language: "en".into(),
                 translation_en: if p.translation_en.is_empty() { prompt.clone() } else { p.translation_en },
                 actions: p.actions,
@@ -173,26 +164,41 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
 
 /// Feedback to a player after a Master decision (translated, or English).
 pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: String) {
-    let (name, lang) = {
-        let ex = state.lock();
-        (ex.players.get(&role).map(|p| p.name.clone()).unwrap_or_default(), ex.language_of(&role))
-    };
+    let lang = state.lock().language_of(&role);
     let text = if state.llm.is_available() {
-        state.llm.feedback(&name, &lang, &facts_en).await.unwrap_or_else(|_| facts_en.clone())
-    } else {
-        facts_en.clone()
-    };
+        state.llm.translate(&facts_en, &lang).await.unwrap_or_else(|_| facts_en.clone())
+    } else { facts_en.clone() };
     state.lock().add_message(MASTER, &role, MsgKind::Feedback, Some("Orders reviewed"), &text, &facts_en, Some(pid));
 }
 
-/// Send the inject drafts of an approved Master proposal.
-pub async fn send_drafts(state: &AppState, drafts: &[Value]) {
-    for d in drafts {
-        let Ok(d) = serde_json::from_value::<llm::InjectDraft>(d.clone()) else { continue };
+/// Claim and deliver communications once, only after the reviewed proposal executes.
+pub async fn send_drafts(state: &AppState, pid: u64) {
+    let (drafts, injects) = {
+        let mut ex = state.lock();
+        let Some(p) = ex.proposals.iter_mut().find(|p| p.id == pid) else { return };
+        if p.status != exercise::ProposalStatus::Applied || p.decision.as_ref().map(|d| d.approve) != Some(true) || p.communications_claimed { return; }
+        p.communications_claimed = true;
+        (p.communication_drafts.clone(), p.inject_drafts.clone())
+    };
+    for (index, d) in drafts.into_iter().enumerate() {
+        let tr = translations(state, std::slice::from_ref(&d.to), &d.text_en).await;
+        let text = tr.get(&d.to).cloned().unwrap_or_else(|| d.text_en.clone());
+        let mut ex = state.lock();
+        if ex.phase == exercise::Phase::Debrief || ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Applied) { return; }
+        if let Err(e) = ex.deliver_approved_communication(pid, index, &text) {
+            ex.record("approved_communication_failed", MASTER, serde_json::json!({"proposal": pid, "draft": index, "error": e.to_string()}));
+        }
+    }
+    for d in injects {
+        let Ok(d) = serde_json::from_value::<llm::InjectDraft>(d) else { continue };
         let recipients = if d.recipients.is_empty() { vec!["all".to_string()] } else { d.recipients.clone() };
-        let sender = if d.sender.is_empty() { "EXCON".to_string() } else { d.sender.clone() };
-        if let Err(e) = send_inject(state, None, &d.title, &sender, &recipients, &d.text).await {
-            tracing::warn!("sending drafted inject: {e}");
+        let Ok(to) = state.lock().recipients(&recipients) else { continue };
+        let tr = translations(state, &to, &d.text).await;
+        let mut ex = state.lock();
+        if ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Applied) { return; }
+        match ex.send_inject(None, &d.title, if d.sender.is_empty() { "EXCON" } else { &d.sender }, &to, &d.text, &tr) {
+            Ok(ids) => ex.record("approved_inject_delivered", MASTER, serde_json::json!({"proposal": pid, "messages": ids})),
+            Err(e) => ex.record("approved_inject_failed", MASTER, serde_json::json!({"proposal": pid, "error": e.to_string()})),
         }
     }
 }
@@ -203,12 +209,12 @@ pub async fn situation_updates(state: AppState, events_en: Vec<String>) {
         let ex = state.lock();
         ex.players.values().map(|p| (p.role.clone(), p.name.clone(), p.language.clone(), ex.world.digest(Some(&p.role)))).collect()
     };
-    let futs = per_role.into_iter().map(|(role, name, lang, digest)| {
+    let futs = per_role.into_iter().map(|(role, _name, lang, digest)| {
         let llm = state.llm.clone();
         let events = events_en.clone();
         async move {
             let fallback = fallback_update(&digest, &events);
-            let text = if llm.is_available() { llm.situation_update(&name, &lang, &digest, &events).await.unwrap_or_else(|_| fallback.clone()) } else { fallback.clone() };
+            let text = if llm.is_available() { llm.translate(&fallback, &lang).await.unwrap_or_else(|_| fallback.clone()) } else { fallback.clone() };
             (role, text, fallback)
         }
     });

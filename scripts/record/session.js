@@ -209,6 +209,14 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await type(F('Fire').locator('#reply'), 'Send the remaining crews over there to hold it.', 30);
   await F('Fire').locator('#replyto').selectOption(await F('Fire').locator('#replyto option').last().getAttribute('value'));
   await F('Fire').locator('#send').click();
+  await waitFor(noneParsing, 'clarification draft');
+  const clarificationDraft = (await getJSON('/api/master')).proposals.find(p => p.status === 'needs_clarification' && p.source.role === 'fire_commander');
+  if (!clarificationDraft) throw new Error('No clarification draft to review');
+  await tab('Director');
+  await F('Director').locator('#tb-proposals').click();
+  await scrollTo('Director', `[data-approve="${clarificationDraft.id}"]`);
+  await F('Director').locator(`[data-approve="${clarificationDraft.id}"]`).click();
+  await tab('Fire');
   await waitFor(async () => (await getJSON('/api/player/fire_commander')).inbox.some(m => m.kind === 'clarification'), 'clarification');
   await sleep(800);
   await scrollInbox('Fire', 'bottom');

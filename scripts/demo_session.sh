@@ -50,7 +50,7 @@ post /master/command '[{"type":"SetWeather","wind_speed_kmh":55},{"type":"Ignite
 reply regional_cp '{"text":"Խնդրում ենք միջազգային օգնությամբ (UCPM) 2 լրացուցիչ օդային տանկեր և տարածաշրջանային հրշեջ ծառայությունից 2 վերգետնյա թիմ՝ հրշեջ հրամանատարի համար։ Տեղեկացրեք քաղաքապետին, որ Valverde Sports Centre-ը պատրաստ է ընդունել տարհանվածներին։"}'
 reply fire_commander '{"text":"Send the remaining crews over there to hold it."}'
 wait_parsed
-post /master/proposals/$(last_pid)/decide '{"approve":false,"note":"Please specify the zone edge."}'
+post /master/proposals/$(last_pid)/decide '{"approve":true,"note":"Send the reviewed clarification asking for the zone edge."}'
 reply fire_commander '{"text":"One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4."}'
 wait_parsed
 for id in $(curl -sf "$B/master" | python3 -c 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin)["proposals"] if p["status"]=="pending"))'); do

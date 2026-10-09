@@ -24,8 +24,8 @@ JSON workflows use `response_format: json_object`, temperature 0.2, a 90 s timeo
 | `translate` | Each inject and role message, per recipient | English text, target language | Translation; names, zone codes and numbers kept. English targets skip the call |
 | `parse_reply` | Each player reply | System: role, language, allowed-action catalogue, other roles, gazetteer. Messages: **the player's conversation so far**, then the current digest + the new reply | `detected_language`, `translation_en`, `actions[]`, `messages[]` (to other roles), `clarification`, `summary` |
 | `master_prompt` | Director's AI prompt | System: full catalogue, roles, gazetteer. Messages: **the Director's conversation so far**, then the full digest + the instruction | `actions[]`, `injects[]` (drafts), `clarification`, `summary` |
-| `feedback` | After each decision on a player proposal | Decision facts (English) | 2–4 sentence EXCON reply in the player's language |
-| `situation_update` | After each turn, per player | Role digest + turn events | ≤ 120-word SITREP in the player's language |
+| `translate` | After each decision on a player proposal | Recorded decision facts (English) | Faithful translation of those facts |
+| `translate` | After each turn, per player | Deterministic summary of recorded state and events | Faithful translation, without operational additions |
 
 Grounding comes from `World::gazetteer()` (map and zone grid description, places with aliases, facilities, roads, resource meanings, reinforcement offers) and `World::digest(role)` (clock, weather, fire summary by zone, facilities, populated zones, roads, the role's resources, arrivals).
 
@@ -33,7 +33,7 @@ Grounding comes from `World::gazetteer()` (map and zone grid description, places
 
 - Only documented action types and shapes; only gazetteer names or zone codes.
 - Add actions only for what the player clearly ordered.
-- Ambiguous → no action + one clarification question in the player's language.
+- Ambiguous → no action + one English clarification draft for Master review.
 - Do not judge feasibility (the simulator does).
 - Feedback and SITREPs: facts from the data only, no advice.
 
@@ -66,3 +66,20 @@ Each player, and the Director, has one ongoing conversation with the AI (`Exerci
 - Live: `TTX_LIVE_LLM=1 cargo test -p llm --test live -- --nocapture` checks translation plus parsing of an evacuate/warn/message reply.
 
 Observed with `deepseek/deepseek-v4.1-flash`: about 5–15 s per parse. Italian and Armenian translations are good. Zone edges (`F4:N`), place names and role messages are extracted reliably, and vague orders ("send the crews over there") produce a clarification question.
+
+## Master control of operational suggestions
+
+Parsing never delivers operational messages. Role messages and clarification
+questions are stored as `communication_drafts`; scenario injects remain
+`inject_drafts`. The Master sees, edits, approves or rejects drafts alongside
+actions. Action-dependent communications are sent once after successful
+execution; approved communication-only proposals send immediately. Rejection,
+failed execution and rollback do not authorize delivery. Delivery records link
+the reviewed proposal to the resulting messages/injects.
+
+Feedback and end-of-turn summaries use deterministic recorded facts and the
+translation workflow. Its prompt forbids added facts, advice, decisions or
+changing proposed actions into completed actions; original English text remains
+available as evidence. Model failures fall back to the original facts. This is
+a model instruction, not a formal semantic guarantee; Master-reviewed operational
+drafts remain the control boundary for new operational content.
