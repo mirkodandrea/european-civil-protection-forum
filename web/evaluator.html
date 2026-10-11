@@ -6,6 +6,7 @@
 <header><h1>Evaluator · read-only</h1><span id="context" class="small"></span><span class="grow"></span><a href="#" id="export" style="color:white">Export full debrief</a></header>
 <main><section>
 <div class="panel"><h2>Authoritative situation</h2><div class="mapbox"><canvas id="map"></canvas></div><div id="stats" class="small"></div><div id="resources" class="small"></div></div>
+<div class="panel"><h2>Actual deployment travel</h2><div id="deployments"></div></div>
 <div class="panel"><h2>Participants</h2><div id="cards"></div></div>
 <div class="panel"><h2>Training design, paths and deviations</h2><div id="design"></div></div>
 <div class="panel"><h2>Training objectives</h2><div id="objectives"></div><h2>Reference plans and procedures</h2><div id="references"></div></div>
@@ -62,6 +63,7 @@ async function refresh() {
   $('context').textContent=`${access.id || 'Master preview'} · ${v.context.clock} · turn ${v.context.turn} · ${v.context.phase} / ${v.context.exercise_phase.replaceAll('_',' ')} · ${v.context.pending} awaiting Master/interpretation`;
   map.setView(state.world);$('stats').textContent=statsLine(v.context.stats);
   $('resources').innerHTML=`<details data-record="resources"><summary>Cumulative resource accounting</summary><pre>${esc(JSON.stringify({limits:v.resource_limits,ledger:v.resource_accounting},null,2))}</pre></details>`;
+  $('deployments').innerHTML=`<details data-record="deployments"><summary>${v.deployments.length} recorded deployment tasks</summary><pre>${esc(JSON.stringify(v.deployments,null,2))}</pre></details>`;
   $('cards').innerHTML=v.role_cards.map(c=>`<div class="card"><b>${esc(c.player.name)}</b><div class="small">Last inject ${c.last_inject ? `#${c.last_inject.inject_id} · ${esc(c.last_inject.clock)} · ${wall(c.last_inject.wall_ms)}` : 'none'}</div><div class="small">${c.awaiting_reply ? `Awaiting reply · ${((Date.now()-Number(c.last_inject.wall_ms))/1000).toFixed(0)} s wall since delivery` : `Last declaration: ${esc(c.last_reply?.status || 'none')}`}</div><div class="small">${Object.entries(c.counts).map(([k,n])=>`${esc(k)} ${n}`).join(' · ')}</div></div>`).join('');
   $('design').innerHTML=`<details data-record="design"><summary>Current path ${esc(v.training_design.current_path||'unselected')}</summary><pre>${esc(JSON.stringify(v.training_design,null,2))}</pre></details>`;
   $('objectives').innerHTML=v.objectives.map(o=>`<details data-record="objective-${esc(o.msel_id)}"><summary>${esc(o.msel_id)} · ${esc(o.title)}</summary><p>${esc(o.objective)}</p><p class="small">Planned turn ${o.planned_turn} · ${o.deliveries.length} actual deliveries</p>${o.deliveries.map(d=>`<p class="small">Inject #${d.data.inject_id} · ${esc(d.clock)} · recipients ${esc(d.data.recipients.join(', '))}</p>`).join('')}</details>`).join('');

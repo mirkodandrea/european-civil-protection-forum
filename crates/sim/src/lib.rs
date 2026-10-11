@@ -21,6 +21,8 @@ use serde::Serialize;
 
 pub mod command;
 pub mod digest;
+pub mod travel;
+pub use travel::{DeploymentTask,TaskStatus,TravelSetting};
 
 pub use command::{catalogue, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
 pub use fire::FireOptions;
@@ -169,6 +171,8 @@ pub struct ResourceEvent {
 /// Everything that changes, except the fire (which snapshots itself).
 #[derive(Debug, Clone)]
 pub struct Dyn {
+    pub travel_settings:BTreeMap<String,BTreeMap<String,TravelSetting>>,
+    pub tasks:Vec<DeploymentTask>,
     pub buildings: Vec<BuildingState>,
     pub roads: BTreeMap<String, RoadState>,
     pub lines: Vec<LineRec>,
@@ -243,12 +247,18 @@ impl World {
             .iter()
             .map(|r| (r.id.clone(), r.resources.iter().map(|(k, v)| (k.clone(), Pool { total: *v, used: 0 })).collect()))
             .collect();
+        let origin=scn.resolve_place("Valverde Town Hall").unwrap_or([scn.grid.width_m()*0.5,scn.grid.height_m()*0.5]);
+        let travel_settings=scn.roles.iter().map(|r|(r.id.clone(),scn.resource_types.iter().map(|resource|{
+          let speed_mps=match resource.id.as_str(){"air_tankers"=>90.0,"buses"=>8.0,_=>10.0};
+          (resource.id.clone(),TravelSetting {origin,speed_mps})
+        }).collect())).collect();
         let cache = Cache::build(&scn, &fire);
         Ok(World {
             scn,
             seed,
             fire,
             d: Dyn {
+                travel_settings, tasks:Vec::new(),
                 buildings,
                 roads,
                 lines: Vec::new(),
@@ -396,7 +406,10 @@ impl World {
         let mut pools = self.d.pools.clone();
         let mut requested: BTreeMap<String, u32> = BTreeMap::new();
         let mut returned: BTreeMap<u64, u32> = BTreeMap::new();
+        let mut evacuation_reserved=BTreeSet::new();
         let mut check = |cmd: &Command, actor: &Actor| {
+            let targets=self.evacuation_targets(cmd);
+            if matches!(actor,Actor::Role(_)) && targets.iter().any(|i|evacuation_reserved.contains(i)) {return Verdict::Rejected {reason:"evacuation targets reserved by another approved action".into()};}
             match cmd {
                 Command::RequestReinforcement { resource, qty } => {
                     if let Some(offer) = self.offer(resource) {
@@ -415,6 +428,7 @@ impl World {
             }
             let verdict = self.check(cmd, actor, &mut pools);
             if verdict.is_ok() {
+                if matches!(actor,Actor::Role(_)){evacuation_reserved.extend(targets);}
                 match cmd {
                     Command::RequestReinforcement { resource, qty } => *requested.entry(resource.clone()).or_default() += *qty,
                     Command::ReturnResource { allocation, qty } => *returned.entry(*allocation).or_default() += *qty,
@@ -463,6 +477,10 @@ impl World {
             }
             Ok(())
         };
+        if matches!(actor,Actor::Role(_)) {
+            let targets=self.evacuation_targets(cmd);
+            if !targets.is_empty() && self.d.tasks.iter().any(|task|matches!(task.status,TaskStatus::EnRoute|TaskStatus::Working) && self.evacuation_targets(&task.command).iter().any(|i|targets.contains(i))) {return Err("evacuation targets already assigned to a deployed task".into());}
+        }
         let mut notes = Vec::new();
         match cmd {
             Command::CutFireLine { from, to, along, width_m } => {
@@ -561,8 +579,16 @@ impl World {
                     return Err(format!("unknown building or zone \"{building}\""));
                 }
             }
+            Command::SetDeploymentTravel {role,resource,at,speed_mps}=>{
+                self.resolve_loc(at)?;
+                if !self.d.travel_settings.get(role).is_some_and(|r|r.contains_key(resource)) || !speed_mps.is_finite() || !(0.1..=300.0).contains(speed_mps) {return Err("unknown role/resource or travel speed outside 0.1–300 m/s".into());}
+            }
             Command::ReturnResource { allocation, qty } => {
                 let a = self.d.allocations.iter().find(|a| a.id == *allocation).ok_or_else(|| format!("unknown allocation {allocation}"))?;
+                if let Some(task)=self.d.tasks.iter().find(|task|task.allocations.contains(allocation)) {
+                    if task.status==TaskStatus::Working {return Err("units are performing the task; wait for completion".into());}
+                    if task.status==TaskStatus::EnRoute && *qty!=a.qty.saturating_sub(a.returned) {return Err("return all en-route units to cancel dispatch; partial cancellation is unsupported".into());}
+                }
                 if *qty == 0 || *qty > a.qty.saturating_sub(a.returned) { return Err("return quantity exceeds active allocation".into()); }
                 let p = pools.get_mut(&a.role).and_then(|p| p.get_mut(&a.resource)).ok_or("allocation pool missing")?;
                 if p.used < *qty { return Err("return exceeds deployed units".into()); }
@@ -631,9 +657,29 @@ impl World {
         let mut pools = before_pools.clone();
         let notes = self.check_inner(cmd, actor, &mut pools)?;
         self.d.pools = pools;
+        let t=self.time_s();
+        let deployed: Vec<(String, String, u32)> = self.d.pools.iter().flat_map(|(role, pools)| pools.iter().filter_map(|(resource, p)| {
+            let previous = before_pools.get(role).and_then(|p| p.get(resource)).map(|p| p.used).unwrap_or(0);
+            (p.used > previous).then(|| (role.clone(), resource.clone(), p.used - previous))
+        })).collect();
+        let mut allocation_ids=Vec::new();
+        for (role, resource, qty) in deployed {
+            let id = self.next_allocation_id;
+            self.next_allocation_id += 1;
+            allocation_ids.push(id);
+            self.d.allocations.push(ResourceAllocation { id, role: role.clone(), resource: resource.clone(), qty, returned: 0, command: cmd.clone(), deployed_at_s: t, last_return_at_s: None });
+            self.resource_event("deployed", Some(id), &role, &resource, qty as i64);
+        }
+        if let Actor::Role(role)=actor {
+            if !allocation_ids.is_empty() {if let Some(detail)=self.dispatch(cmd,role,allocation_ids) {let mut out=notes;out.push(detail);return Ok(out);}}
+        }
+        let mut out=notes;out.extend(self.apply_effect(cmd,actor)?);Ok(out)
+    }
+
+    fn apply_effect(&mut self,cmd:&Command,actor:&Actor)->Result<Vec<String>,String> {
         let by = actor.label().to_string();
         let t = self.time_s();
-        let mut out = notes;
+        let mut out = Vec::new();
         match cmd {
             Command::CutFireLine { from, to, along, width_m } => {
                 let (a, b) = self.line_endpoints(from, to, along)?;
@@ -765,7 +811,12 @@ impl World {
                 }
                 self.event("building_status", format!("Master set {}", cmd.describe().trim_start_matches("Set ")), None);
             }
+            Command::SetDeploymentTravel {role,resource,at,speed_mps}=>{
+                let origin=self.resolve_loc(at)?;self.d.travel_settings.get_mut(role).unwrap().insert(resource.clone(),TravelSetting {origin,speed_mps:*speed_mps});
+                self.event("deployment_travel_configured",cmd.describe(),None);
+            }
             Command::ReturnResource { allocation, qty } => {
+                if let Some(task)=self.d.tasks.iter_mut().find(|task|task.allocations.contains(allocation)&&task.status==TaskStatus::EnRoute) {task.status=TaskStatus::Cancelled;task.completed_s=Some(t);task.detail="EXCON cancelled deployment and confirmed units returned; no task effect applied".into();}
                 let a = self.d.allocations.iter_mut().find(|a| a.id == *allocation).unwrap();
                 a.returned += *qty;
                 a.last_return_at_s = Some(t);
@@ -783,16 +834,6 @@ impl World {
                 let ev = self.advance(*minutes as i64 * 60).map_err(|e| e.to_string())?;
                 out.push(format!("{} events", ev.len()));
             }
-        }
-        let deployed: Vec<(String, String, u32)> = self.d.pools.iter().flat_map(|(role, pools)| pools.iter().filter_map(|(resource, p)| {
-            let previous = before_pools.get(role).and_then(|p| p.get(resource)).map(|p| p.used).unwrap_or(0);
-            (p.used > previous).then(|| (role.clone(), resource.clone(), p.used - previous))
-        })).collect();
-        for (role, resource, qty) in deployed {
-            let id = self.next_allocation_id;
-            self.next_allocation_id += 1;
-            self.d.allocations.push(ResourceAllocation { id, role: role.clone(), resource: resource.clone(), qty, returned: 0, command: cmd.clone(), deployed_at_s: t, last_return_at_s: None });
-            self.resource_event("deployed", Some(id), &role, &resource, qty as i64);
         }
         Ok(out)
     }
@@ -834,6 +875,7 @@ impl World {
             self.step_buildings(dt as f32);
             self.step_roads();
             self.step_arrivals();
+            self.step_tasks();
             left -= dt;
         }
         Ok(self.d.events[first..].to_vec())

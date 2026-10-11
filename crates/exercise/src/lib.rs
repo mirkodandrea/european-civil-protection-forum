@@ -895,7 +895,7 @@ impl Exercise {
         }
         let all_ok = applied.iter().all(|a| a.ok);
         let pm = self.proposal_mut(pid)?;
-        pm.results = applied.iter().map(|a| format!("{}: {} ({})", a.action, if a.ok { "done" } else { "not executed" }, a.detail)).collect();
+        pm.results = applied.iter().map(|a| format!("{}: {} ({})", a.action, if a.ok { "executed / dispatched" } else { "not executed" }, a.detail)).collect();
         if p.resource_limit_draft.is_some(){pm.results.push("Master-approved resource limits applied".into());}
         pm.executions = executions;
         self.transition(pid, if all_ok { ProposalStatus::Applied } else { ProposalStatus::Failed }, MASTER, "Execution outcomes recorded")?;

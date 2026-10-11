@@ -93,6 +93,16 @@ pub fn draw(
         });
     });
 
+    egui::Area::new(egui::Id::new("deployments")).anchor(Align2::RIGHT_BOTTOM, [-12.0,-12.0]).show(ctx,|ui|{
+      panel.show(ui,|ui|{
+       ui.label(RichText::new("Approved deployments").color(Color32::WHITE).strong());
+       for (task,qty) in snap.deployments.iter().filter(|(t,q)|*q>0&&t.status!=sim::TaskStatus::Cancelled).take(12) {
+        let remaining=(task.arrival_s-snap.time_s).max(0);
+        ui.label(RichText::new(format!("#{} {} ×{} · {:?}{}",task.id,task.resource,qty,task.status,if task.status==sim::TaskStatus::EnRoute {format!(" · ETA {remaining}s")}else{String::new()})).color(Color32::WHITE));
+       }
+       ui.label(RichText::new("Orange travelling · cyan working · green completed · red failed").color(Color32::GRAY).size(11.0));
+      });
+    });
     // Map labels.
     let Ok((camera, gt)) = cam.get_single() else { return };
     let painter = ctx.layer_painter(egui::LayerId::background());
@@ -103,6 +113,9 @@ pub fn draw(
             painter.text(pos, Align2::CENTER_BOTTOM, text, FontId::proportional(size), color);
         }
     };
+    for (task,qty) in snap.deployments.iter().filter(|(t,q)|*q>0&&t.status!=sim::TaskStatus::Cancelled) {
+      label(task.position(snap.time_s),if task.resource=="air_tankers" {155.0}else{50.0},&format!("#{} {} ×{} · {:?}",task.id,task.resource,qty,task.status),13.0,Color32::from_rgb(255,230,130));
+    }
     for b in &s.buildings {
         if let Some(n) = &b.name {
             label(b.pos, 25.0, n, 15.0, Color32::WHITE);

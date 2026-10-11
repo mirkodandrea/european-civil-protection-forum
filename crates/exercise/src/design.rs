@@ -50,7 +50,7 @@ impl Exercise {
             Condition::BurnedAtMost {ha}=>(st.burned_ha<=*ha,json!({"burned_ha":st.burned_ha})),
             Condition::BurnedAtLeast {ha}=>(st.burned_ha>=*ha,json!({"burned_ha":st.burned_ha})),
             Condition::ExecutedAction {kind}=>{
-                let ids=self.proposals.iter().filter(|p|p.status!=crate::ProposalStatus::RolledBack && p.decision.as_ref().is_some_and(|d|d.approve) && p.executions.iter().any(|e|e.ok && e.command.kind()==kind)).map(|p|p.id).collect::<Vec<_>>();
+                let ids=self.proposals.iter().filter(|p|p.status!=crate::ProposalStatus::RolledBack && p.decision.as_ref().is_some_and(|d|d.approve) && p.executions.iter().any(|e|e.ok && e.command.kind()==kind && (e.allocations.is_empty() || self.world.d.tasks.iter().any(|task|task.allocations.iter().any(|id|e.allocations.contains(id))&&task.status==sim::TaskStatus::Completed)))).map(|p|p.id).collect::<Vec<_>>();
                 (!ids.is_empty(),json!({"approved_executed_proposals":ids}))
             },
         };
