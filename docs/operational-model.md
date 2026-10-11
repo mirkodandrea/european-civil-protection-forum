@@ -105,3 +105,38 @@ checks exercise terrain generation, package import, a Rust ensemble sweep and
 SVG atlas generation.
 
 Verified on this branch: 167 workspace tests pass. Native startup and the Master state API were exercised with the operational model; a 60 s advance completed successfully, and the 3D screenshot was inspected. A Factory landscape, a two-realization fire sweep and its SVG atlas were generated. The existing Rocca Ventosa package imported as 479 buildings, 70 roads and 1,600 aggregate occupants.
+
+
+## Browser playtest (2026-10-11)
+
+A single tester exercised Director, Mayor and Fire Commander through the browser
+in manual mode (no LLM calls), at 1440×1000 and 390×844. This checks functional
+usability; it does not establish usability for first-time human participants.
+
+- Sent an inject, selected Italian/English, submitted decisions with evidence,
+  edited actions, approved and separately executed them.
+- School evacuation correctly refused two buses for 120 people and accepted
+  three after EXCON adjusted inventory. The Northern Road then became cut by
+  fire: buses and an engine failed to reach the school. Nobody was counted as
+  evacuated. Ground crews using another route progressed from 34/120 m at
+  30 minutes to 94/120 m at 60 minutes.
+- Rolled back from 60 to 30 simulated minutes and confirmed the restored clock.
+  EXCON confirmed return of the failed bus allocation before reusing it.
+- Evacuated Valverde Hospital over the southern network: two packets of 50 and
+  40 people arrived at the sports centre; 90 evacuated, 90 sheltered, zero in
+  transit. Browsers produced no uncaught JavaScript errors in this flow.
+- Corrected mobile grid overflow, brought the live Director map before setup
+  panels, put proposal tabs first on phones, added workflow/empty-inbox guidance,
+  and made approval errors visible at the viewport. Proposal cards and player
+  orders now show current task outcomes alongside dispatch records. The command
+  catalogue now states the operational fire-line width default of 6 m.
+
+Remaining usability constraints: manual interpretation requires JSON and an
+experienced Director; choosing Italian does not localize all interface labels,
+and translation falls back to English without an LLM. Road fire closures still
+apply to the complete named road, even when only one segment burns. In the
+synthetic initial scenario this can isolate the school very early; validate
+scenario accessibility and timing before using it for a facilitated exercise.
+The playtest did not validate live AI interpretation or translation quality.
+
+Local screenshots and flow logs are in `runs/playtest/` (ignored Git output).

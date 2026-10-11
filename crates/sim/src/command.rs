@@ -309,7 +309,7 @@ pub fn catalogue(allowed: &[String]) -> String {
     let docs: &[(&str, &str)] = &[
         (
             "CutFireLine",
-            r#"{"type":"CutFireLine","from":LOC,"to":LOC}  or  {"type":"CutFireLine","along":"F3:S"}  — fuel break cut by ground crews (1 crew per 600 m). "along" = zone edge N/S/E/W. Optional "width_m" (default 40)."#,
+            r#"{"type":"CutFireLine","from":LOC,"to":LOC}  or  {"type":"CutFireLine","along":"F3:S"}  — fuel break cut by ground crews (1 crew per 600 m). "along" = zone edge N/S/E/W. Optional "width_m" (default 6 in the operational model, 40 in the legacy model)."#,
         ),
         (
             "WaterDrop",

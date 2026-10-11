@@ -52,7 +52,7 @@
       <label for="attachments">Supporting documents, maps or ordinances</label>
       <textarea id="attachments" placeholder="Optional: one Title | https://document-url per line"></textarea>
       <textarea id="reply" placeholder="Write your orders, requests or information in your own words…"></textarea>
-      <div class="row"><button id="send" class="primary" disabled>Send</button><span id="status" class="small muted"></span></div>
+      <div class="row"><button id="send" class="primary" disabled>Send</button><span id="status" class="small muted" role="status" aria-live="polite"></span></div>
     </div>
   </div>
   <div class="panel a-role">
@@ -116,10 +116,10 @@ async function refresh() {
     ? Object.entries(p.resources).map(([k, v]) => `${esc(stat.resource_types.find(r => r.id === k)?.name || k)}: <b>${p.resource_accounting[k]?.available ?? v.total - v.used}</b> available / ${v.total}<br><span class="muted">requested ${p.resource_accounting[k]?.requested ?? 0} · committed ${p.resource_accounting[k]?.committed ?? 0} · deployed ${v.used} · returned ${p.resource_accounting[k]?.returned ?? 0}</span>`).join('<br>')
     : '<span class="muted">No own resources — coordinate and request.</span>';
   $('res').innerHTML+=(p.deployments||[]).filter(d=>d.active_qty>0).map(d=>`<p class="small">Task #${d.task.id} · ${esc(d.task.resource)} ×${d.active_qty} · ${esc(d.task.status.replaceAll('_',' '))} · ${d.task.status==='en_route'?`arrival in ${Math.max(0,d.task.arrival_s-p.time_s)} simulated s`:esc(d.task.detail)}</p>`).join('');
-  $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span> · ${esc(x.declaration_kind.replaceAll('_', ' '))}${x.executions?.length ? `<div>${x.executions.map(e => `${e.ok ? 'Execution / dispatch' : 'Failed'} at ${e.t_s}s: ${esc(e.detail)}`).join('<br>')}</div>` : ''}</div>`).join('') || '<span class="muted">none yet</span>';
+  $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span> · ${esc(x.declaration_kind.replaceAll('_', ' '))}${x.executions?.length ? `<div>${x.executions.map(e => `${e.ok ? 'Execution / dispatch' : 'Failed'} at ${e.t_s}s: ${esc(e.detail)}`).join('<br>')}</div>` : ''}${(p.deployments||[]).filter(d=>d.task.allocations.some(id=>(x.executions||[]).some(e=>(e.allocations||[]).includes(id)))).map(d=>`<div><b>Current deployment:</b> ${esc(d.task.resource)} · <span class="${d.task.status==='failed'?'error':''}">${esc(d.task.status.replaceAll('_',' '))}</span> · ${esc(d.task.detail)}</div>`).join('')}</div>`).join('') || '<span class="muted">none yet</span>';
   $('inbox').innerHTML = p.inbox.map(m => m.kind === 'reply'
     ? `<div class="msg k-reply"><div class="meta">${kindBadge('reply')} you · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div><div class="text">${esc(m.text)}</div></div>`
-    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || '<p class="muted">Waiting for the exercise to start…</p>';
+    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || `<p class="muted">${p.phase==='briefing'?'Waiting for the exercise to start…':'Waiting for an inject from exercise control. Choose your language, then reply to a received inject with your decision basis.'}</p>`;
   if (p.inbox.length !== lastCount) { $('inbox').scrollTop = $('inbox').scrollHeight; lastCount = p.inbox.length; }
   const selected = $('replyto').value;
   const parents = p.inbox.filter(m => m.to === role && ['inject', 'clarification'].includes(m.kind));

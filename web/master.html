@@ -23,7 +23,7 @@
   <button id="end">End</button>
   <a href="#" id="debriefdownload" style="color:#fff">Debrief JSON</a>
 </header>
-<main class="cols">
+<main class="cols director">
   <section>
     <div class="panel">
       <h2>Time and exercise phase</h2>
@@ -41,7 +41,8 @@
 <div class="panel"><h2>Actual deployments</h2><div id="deployments"></div><p class="small">Staging bases and speeds are training assumptions. Use SetDeploymentTravel in Commands to configure future deployments. Operational scenarios use road routes, progressive crew work and finite water loads. Task effects wait for arrival.</p></div>
     <div class="panel"><h2>Training design and paths</h2><p class="small">Original design is editable during briefing only. Paths change only after explicit approval; adaptations preserve physical work.</p><textarea id="designjson">{"objectives":["Contain the fire through timely coordination"],"phases":{"early_warning":"Assess and mobilise","early_action":"Successful containment","escalation":"Fire exceeds local containment"},"decision_points":[{"id":"containment-check","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0}]},{"path":"escalating","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1}]}]}]}</textarea><button id="savedesign">Save original design</button><div id="pathoptions"></div><label>Transition rationale<input id="pathreason"></label><label><input type="checkbox" id="pathadaptation">Explicit Master adaptation when phase/conditions diverge</label><div id="designview" class="small"></div></div>
     <div class="panel"><h2>Physical intervention preview</h2><p class="small">Coordinates and widths/radii in metres; area in hectares. A zone is a whole grid square. Pause the clock to apply a reviewed preview or correct the latest intervention.</p><div id="physicalpreview"></div><input id="interventionreason" placeholder="Rationale for intervention"><button id="applypreview" disabled>Apply reviewed preview</button><input id="correctionreason" placeholder="Why the latest intervention needs correction"><button id="correctphysical" disabled>Correct latest intervention</button><div id="correctioninfo" class="small"></div></div>
-    <div class="panel">
+    <div class="panel" id="director-map">
+      <h2>Live situation map</h2>
       <div class="row" id="tools"></div>
       <div class="row small">
         <span id="toolhelp" class="muted"></span>
@@ -56,7 +57,6 @@
         <span><i style="background:#ff7a00"></i>damaged</span><span><i style="background:#000"></i>destroyed</span>
       </div>
       <div class="small" id="stats"></div>
-      <div class="small error" id="err"></div>
     </div>
     <div class="panel">
       <h2>Participant links</h2><div id="participantlinks" class="small"></div>
@@ -71,7 +71,8 @@
       <div id="pools" class="small"></div>
     </div>
   </section>
-  <section>
+  <section class="director-workspace">
+    <div class="panel director-guide"><h2>Exercise workflow</h2><div id="workflow" class="small"></div><button id="openinjects">Open injects</button> <a href="#director-map">Situation map</a></div>
     <div class="tabs" id="tabs"></div>
     <div id="tab-proposals" class="panel"></div>
     <div id="tab-injects" class="panel" hidden>
@@ -109,6 +110,7 @@
     </div>
   </section>
 </main>
+<div id="err" class="small error director-error" role="alert" aria-live="assertive"></div>
 <script type="module">
 import { api, live, esc, MapView, statsLine, kindBadge } from './common.js?v=role-access-2';
 
@@ -194,6 +196,9 @@ for (const [id, label] of TABS) {
   $('tabs').appendChild(b);
 }
 $('tb-proposals').classList.add('active');
+$('openinjects').onclick = () => $('tb-injects').click();
+// Keep the live map visible before exercise configuration.
+$('director-map').parentElement.prepend($('director-map'));
 
 // Inject form.
 $('irecip').innerHTML = `<label><input type="checkbox" value="all" checked> all</label>` +
@@ -240,6 +245,8 @@ function renderProposals() {
       }).join('');
       const communications = (p.communication_drafts || []).map(d => `<li>Draft ${esc(d.kind)} from ${esc(d.from)} → ${esc(d.to)}: ${esc(d.text_en)}</li>`).join('');
       const drafts = (p.inject_drafts || []).map(d => `<li>Inject “${esc(d.title)}” → ${esc((d.recipients || []).join(', '))}: ${esc(d.text)}</li>`).join('');
+      const allocations = (p.executions||[]).flatMap(e=>e.allocations||[]);
+      const taskOutcomes = (state.world.deployments||[]).filter(d=>d.task.allocations.some(id=>allocations.includes(id))).map(d=>`<p class="small"><b>Current deployment:</b> ${esc(d.task.resource)} · <span class="${d.task.status==='failed'?'error':''}">${esc(d.task.status.replaceAll('_',' '))}</span> · ${esc(d.task.detail)}</p>`).join('');
       const editable = open.includes(p.status);
       return `<div class="card">
         <div class="head"><div><span class="badge s-${p.status}">${p.status.replace('_', ' ')}</span><b>${esc(who)}</b> · ${esc(p.declaration_kind.replaceAll('_', ' '))} <span class="muted small">turn ${p.turn} · #${p.id}${p.inject_id ? ` · inject #${p.inject_id} · reply to #${p.reply_to}` : ''}</span></div></div>
@@ -252,6 +259,7 @@ function renderProposals() {
         ${p.resource_limit_draft ? `<div class="small"><b>Resource-limit recommendation (awaits Master approval):</b><pre>${esc(JSON.stringify(p.resource_limit_draft,null,2))}</pre></div>` : ''}
         ${p.clarification ? `<div class="small" style="color:var(--warn)">Draft clarification for Master review: ${esc(p.clarification)}</div>` : ''}
         ${p.results.length ? `<div class="small">${p.results.map(esc).join('<br>')}</div>` : ''}
+        ${taskOutcomes}
         ${p.history?.length ? `<details class="small"><summary>Declaration and status history</summary>${p.history.map(h => `<div>${esc(h.status)} · turn ${h.turn} · ${h.t_s}s · ${esc(h.actor)}: ${esc(h.note)}</div>`).join('')}</details>` : ''}
         ${p.decision ? `<div class="small muted">Master ${p.decision.approve ? 'approval' : 'rejection'} recorded at ${p.decision.t_s}s${p.decision.edited ? ' (actions edited)' : ''}</div>` : ''}
         ${p.master_note ? `<div class="small muted">Note: ${esc(p.master_note)}</div>` : ''}
@@ -266,6 +274,7 @@ function renderProposals() {
   $('tab-proposals').querySelectorAll('[data-execute]').forEach(b=>b.onclick=()=>api(`/api/master/proposals/${b.dataset.execute}/execute`,{}).catch(alertErr));
   $('tab-proposals').querySelectorAll('[data-approve],[data-reject]').forEach(b => b.onclick = async () => {
     const id = b.dataset.approve || b.dataset.reject;
+    $('err').textContent = '';
     const body = { approve: !!b.dataset.approve, note: $('note-' + id).value || null };
     const ed = $('edit-' + id);
     const proposal = master.proposals.find(p => p.id == id);
@@ -324,6 +333,9 @@ async function refresh() {
   $('clock').textContent = st.clock;
   $('weather').textContent = `wind ${w.weather.wind_dir_deg.toFixed(0)}° ${w.weather.wind_speed_kmh.toFixed(0)} km/h · moisture ${w.weather.moisture_pct.toFixed(0)}%`;
   $('llm').textContent = state.llm.available ? `AI: ${state.llm.model}` : 'AI: off';
+  $('workflow').textContent = state.phase==='briefing' ? 'Start the exercise, then send an inject to give participants a situation to act on.' : state.phase==='orders' ? `Send an inject → review player proposals → approve → execute now or resolve the turn. Approval reserves resources; execution dispatches them.${state.llm.available?'':' Manual mode: enter actions in Edit actions (JSON) before approving.'}` : state.phase==='resolving' ? 'Simulation is advancing. Follow arrivals and work in Actual deployments; the next turn opens when resolution finishes.' : 'Exercise ended. Download the debrief or roll back to a previous turn.';
+  $('psend').disabled = !state.llm.available;
+  $('psend').title = state.llm.available ? '' : 'AI is unavailable. Use player proposals with manual actions, or Commands.';
   $('start').hidden = state.phase !== 'briefing';
   $('resolve').disabled = state.phase !== 'orders';
   $('rollback').disabled = $('end').disabled = state.phase === 'resolving';
@@ -335,7 +347,7 @@ async function refresh() {
   map.setView(w);
   // Don't wipe what the Director is typing in a proposal card.
   const busy = $('tab-proposals').contains(document.activeElement) && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName);
-  const proposalKey=JSON.stringify(master.proposals);
+  const proposalKey=JSON.stringify([master.proposals,(state.world.deployments||[]).map(d=>[d.task.id,d.task.status,d.task.detail,d.active_qty])]);
   if (!busy && proposalKey!==renderedProposals) {
     const dirty=[...$('tab-proposals').querySelectorAll('textarea,input')].filter(t=>t.value!==t.defaultValue).map(t=>[t.id,t.value]);
     const openEdits = [...$('tab-proposals').querySelectorAll('details[open] textarea')].map(t => t.id);
