@@ -62,7 +62,12 @@ fn cell_colour(i: usize, base: [f32; 4], code: u8) -> [f32; 4] {
         3 => [0.52, 0.40, 0.24, 1.0],
         4 => [base[0] * 0.7, base[1] * 0.8, (base[2] + 0.35).min(1.0), 1.0],
         // Uncertainty halo: reached by some runs, below the cutoff.
-        5 => [base[0] * 0.6 + 0.4, base[1] * 0.75 + 0.1, base[2] * 0.6, 1.0],
+        5 => [
+            base[0] * 0.6 + 0.4,
+            base[1] * 0.75 + 0.1,
+            base[2] * 0.6,
+            1.0,
+        ],
         _ => base,
     }
 }
@@ -75,7 +80,12 @@ fn veg_colour(base: [f32; 4], code: u8) -> [f32; 4] {
     }
 }
 
-pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
+pub fn setup(
+    mut commands: Commands,
+    scn: Res<Scn>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
     let s = &scn.0;
     let g = s.grid;
     // Terrain.
@@ -85,7 +95,7 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
         for col in 0..g.cols {
             let c = Cell { row, col };
             pos.push(to_bevy(s, s.cell_centre(c), 0.0).to_array());
-            let [r, gg, b] = fuel_rgb(s.fuel_at(c));
+            let [r, gg, b] = fuel_rgb(visual_fuel(s, s.fuel_at(c)));
             // Slight shading noise from elevation keeps large patches from looking flat.
             let k = 0.94 + 0.06 * ((s.elevation_at(c) * 0.37).sin());
             base.push([r * k, gg * k, b * k, 1.0]);
@@ -99,7 +109,10 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
             idx.extend_from_slice(&[i, d, r, r, d, dr]);
         }
     }
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, base.clone());
     mesh.insert_indices(Indices::U32(idx));
@@ -107,21 +120,30 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
     let terrain = meshes.add(mesh);
     commands.spawn(PbrBundle {
         mesh: terrain.clone(),
-        material: mats.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() }),
+        material: mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.95,
+            ..default()
+        }),
         ..default()
     });
 
     // Vegetation, merged per chunk.
-    let veg_mat = mats.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    let veg_mat = mats.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.9,
+        ..default()
+    });
     let mut rng = ChaCha8Rng::seed_from_u64(11);
     let chunks_per_row = g.cols.div_ceil(CHUNK);
     for cr in 0..g.rows.div_ceil(CHUNK) {
         for cc in 0..chunks_per_row {
-            let (mut p, mut n, mut col, mut ix, mut cells) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            let (mut p, mut n, mut col, mut ix, mut cells) =
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
             for row in cr * CHUNK..((cr + 1) * CHUNK).min(g.rows) {
                 for c in cc * CHUNK..((cc + 1) * CHUNK).min(g.cols) {
                     let cell = Cell { row, col: c };
-                    let (name, density, height) = match s.fuel_at(cell) {
+                    let (name, density, height) = match visual_fuel(s, s.fuel_at(cell)) {
                         fuel::CONIFERS => ("pine", 0.55, 14.0),
                         fuel::BROADLEAVES | fuel::NON_FIRE_PRONE_FOREST => ("oak", 0.45, 11.0),
                         fuel::SHRUBS => ("bush", 0.35, 3.0),
@@ -132,7 +154,10 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
                         continue;
                     }
                     let centre = s.cell_centre(cell);
-                    let at = [centre[0] + rng.gen_range(-8.0..8.0), centre[1] + rng.gen_range(-8.0..8.0)];
+                    let at = [
+                        centre[0] + rng.gen_range(-8.0..8.0),
+                        centre[1] + rng.gen_range(-8.0..8.0),
+                    ];
                     let origin = to_bevy(s, at, -0.3);
                     let scale = height * rng.gen_range(0.75..1.3);
                     let rot = Quat::from_rotation_y(rng.gen_range(0.0..std::f32::consts::TAU));
@@ -140,7 +165,8 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
                     let off = p.len() as u32;
                     let ci = g.index(cell) as u32;
                     for (k, v) in m.positions.iter().enumerate() {
-                        let local = rot * (Vec3::from(*v) * Vec3::new(scale * 0.8, scale, scale * 0.8));
+                        let local =
+                            rot * (Vec3::from(*v) * Vec3::new(scale * 0.8, scale, scale * 0.8));
                         p.push((origin + local).to_array());
                         n.push((rot * Vec3::from(m.normals[k])).to_array());
                         col.push(m.colors[k]);
@@ -152,15 +178,27 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
             if p.is_empty() {
                 continue;
             }
-            let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+            let mut mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::default(),
+            );
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, p);
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, n);
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col.clone());
             mesh.insert_indices(Indices::U32(ix));
             let h = meshes.add(mesh);
             commands.spawn((
-                PbrBundle { mesh: h.clone(), material: veg_mat.clone(), ..default() },
-                VegChunk { mesh: h, cell: cells, base: col, chunk: cr * chunks_per_row + cc },
+                PbrBundle {
+                    mesh: h.clone(),
+                    material: veg_mat.clone(),
+                    ..default()
+                },
+                VegChunk {
+                    mesh: h,
+                    cell: cells,
+                    base: col,
+                    chunk: cr * chunks_per_row + cc,
+                },
             ));
         }
     }
@@ -177,12 +215,19 @@ fn chunk_of(s: &Scenario, i: usize) -> usize {
 /// flame-front orange, then a glowing ember bed, then dark red cooling to the
 /// scar colour at burn-out.
 pub fn burning_colour(age_s: f32) -> [f32; 4] {
-    let stops: [(f32, [f32; 3]); 4] = [(0.0, [1.0, 0.45, 0.08]), (240.0, [0.85, 0.18, 0.03]), (720.0, [0.35, 0.07, 0.02]), (fire::BURNOUT_S as f32, [0.02, 0.018, 0.016])];
+    let stops: [(f32, [f32; 3]); 4] = [
+        (0.0, [1.0, 0.45, 0.08]),
+        (240.0, [0.85, 0.18, 0.03]),
+        (720.0, [0.35, 0.07, 0.02]),
+        (fire::BURNOUT_S as f32, [0.02, 0.018, 0.016]),
+    ];
     let a = age_s.max(0.0);
     for w in stops.windows(2) {
         if a <= w[1].0 {
             let t = (a - w[0].0) / (w[1].0 - w[0].0);
-            let c: Vec<f32> = (0..3).map(|k| w[0].1[k] + (w[1].1[k] - w[0].1[k]) * t).collect();
+            let c: Vec<f32> = (0..3)
+                .map(|k| w[0].1[k] + (w[1].1[k] - w[0].1[k]) * t)
+                .collect();
             return [c[0], c[1], c[2], 1.0];
         }
     }
@@ -231,10 +276,19 @@ pub fn update(
         return;
     }
     // Vegetation: only chunks with changed cells.
-    let dirty: std::collections::HashSet<usize> = if frame.all_changed { chunks.iter().map(|c| c.chunk).collect() } else { frame.changed.iter().map(|&i| chunk_of(s, i)).collect() };
+    let dirty: std::collections::HashSet<usize> = if frame.all_changed {
+        chunks.iter().map(|c| c.chunk).collect()
+    } else {
+        frame.changed.iter().map(|&i| chunk_of(s, i)).collect()
+    };
     for ch in chunks.iter().filter(|c| dirty.contains(&c.chunk)) {
         if let Some(mesh) = meshes.get_mut(&ch.mesh) {
-            let colours: Vec<[f32; 4]> = ch.cell.iter().zip(&ch.base).map(|(ci, b)| veg_colour(*b, frame.cells[*ci as usize])).collect();
+            let colours: Vec<[f32; 4]> = ch
+                .cell
+                .iter()
+                .zip(&ch.base)
+                .map(|(ci, b)| veg_colour(*b, frame.cells[*ci as usize]))
+                .collect();
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
         }
     }
@@ -249,5 +303,26 @@ mod tests {
         assert!(fresh[0] + fresh[1] > old[0] + old[1]);
         assert_eq!(super::burning_colour(99_999.0)[0], 0.02);
         assert_ne!(super::scar_colour(1), super::scar_colour(2));
+    }
+}
+
+/// EU12 ids overlap legacy ids; rendering must interpret the scenario's table.
+fn visual_fuel(s: &Scenario, id: i32) -> i32 {
+    if s.fuel_definitions.is_empty() {
+        return id;
+    }
+    let Some(f) = s.fuel_definitions.iter().find(|f| f.id == id) else {
+        return fuel::NON_VEGETATED;
+    };
+    if !f.burn {
+        fuel::NON_VEGETATED
+    } else if f.name.contains("conifer") {
+        fuel::CONIFERS
+    } else if f.name.contains("broadleav") {
+        fuel::BROADLEAVES
+    } else if f.name.contains("shrub") {
+        fuel::SHRUBS
+    } else {
+        fuel::GRASSLAND
     }
 }

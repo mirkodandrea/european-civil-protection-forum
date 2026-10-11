@@ -82,7 +82,10 @@ pub struct FireOptions {
 
 impl Default for FireOptions {
     fn default() -> Self {
-        FireOptions { realizations: 32, cutoff: 0.5 }
+        FireOptions {
+            realizations: 32,
+            cutoff: 0.5,
+        }
     }
 }
 
@@ -107,6 +110,7 @@ pub struct FireSim {
     core: Propagator,
     grid: GridSpec,
     burnable: Vec<bool>,
+    cleared_fuel_code: i32,
     weather: WeatherSpec,
     time_s: i64,
     state: Vec<CellFire>,
@@ -138,14 +142,41 @@ impl FireSim {
 
     pub fn with_options(scn: &Scenario, seed: u64, options: FireOptions) -> Result<FireSim> {
         anyhow::ensure!(options.realizations >= 1, "need at least one realization");
-        anyhow::ensure!(options.cutoff > 0.0 && options.cutoff <= 1.0, "cutoff must be in (0, 1]");
+        anyhow::ensure!(
+            options.cutoff > 0.0 && options.cutoff <= 1.0,
+            "cutoff must be in (0, 1]"
+        );
         let grid = scn.grid;
         let veg = Grid2::from_vec(grid.rows, grid.cols, scn.fuel.clone());
-        let dem = Grid2::from_vec(grid.rows, grid.cols, scn.dem.iter().map(|&v| v as f64).collect());
+        let dem = Grid2::from_vec(
+            grid.rows,
+            grid.cols,
+            scn.dem.iter().map(|&v| v as f64).collect(),
+        );
         let mut config = PropagatorConfig::new(veg, dem);
         config.cellsize = grid.cellsize as f64;
         config.realizations = options.realizations;
-        config.do_spotting = false;
+        config.do_spotting = scn.operations.spotting;
+        if !scn.fuel_definitions.is_empty() {
+            let defs = scn
+                .fuel_definitions
+                .iter()
+                .map(|f| propagator_core::FuelDef {
+                    id: f.id,
+                    name: f.name.clone(),
+                    v0: f.v0,
+                    d0: f.d0,
+                    d1: f.d1,
+                    hhv: f.hhv,
+                    humidity: f.humidity,
+                    spotting: f.spotting,
+                    prob_ign_by_embers: f.prob_ign_by_embers,
+                    burn: f.burn,
+                    spread_probability: f.spread_probability.clone(),
+                })
+                .collect::<Vec<_>>();
+            config.fuels = Some(propagator_core::FuelSystem::from_defs(&defs)?);
+        }
         config.seed = Some(seed);
         config.oob_mode = OobMode::Ignore;
         config.n_threads = None; // realizations run in parallel; results do not depend on thread count
@@ -154,7 +185,23 @@ impl FireSim {
         let mut fire = FireSim {
             core,
             grid,
-            burnable: scn.fuel.iter().map(|&f| f != fuel::NON_VEGETATED).collect(),
+            cleared_fuel_code: scn
+                .fuel_definitions
+                .iter()
+                .find(|f| !f.burn)
+                .map(|f| f.id)
+                .unwrap_or(fuel::NON_VEGETATED),
+            burnable: scn
+                .fuel
+                .iter()
+                .map(|&f| {
+                    if scn.fuel_definitions.is_empty() {
+                        f != fuel::NON_VEGETATED && f != 0
+                    } else {
+                        scn.fuel_definitions.iter().any(|d| d.id == f && d.burn)
+                    }
+                })
+                .collect(),
             weather: scn.weather,
             time_s: 0,
             state: vec![CellFire::Unburnt; n],
@@ -171,7 +218,9 @@ impl FireSim {
             pending_moisture: None,
         };
         let bc = fire.weather_bc();
-        fire.core.set_boundary_conditions(bc).context("initial weather")?;
+        fire.core
+            .set_boundary_conditions(bc)
+            .context("initial weather")?;
         Ok(fire)
     }
 
@@ -209,17 +258,28 @@ impl FireSim {
         &self.ignited_at
     }
 
+    pub fn is_burnable(&self, c: Cell) -> bool {
+        self.burnable[self.grid.index(c)] && !self.cleared[self.grid.index(c)]
+    }
+
     pub fn cell_state(&self, c: Cell) -> CellFire {
         self.state[self.grid.index(c)]
     }
 
     pub fn burning_cells(&self) -> usize {
-        self.state.iter().filter(|s| **s == CellFire::Burning).count()
+        self.state
+            .iter()
+            .filter(|s| **s == CellFire::Burning)
+            .count()
     }
 
     /// Area burning or burnt, hectares.
     pub fn burned_area_ha(&self) -> f64 {
-        let n = self.state.iter().filter(|s| **s != CellFire::Unburnt).count();
+        let n = self
+            .state
+            .iter()
+            .filter(|s| **s != CellFire::Unburnt)
+            .count();
         n as f64 * (self.grid.cellsize as f64).powi(2) / 10_000.0
     }
 
@@ -229,30 +289,45 @@ impl FireSim {
             return None;
         }
         let (col, from_south) = ((p[0] / cs) as usize, (p[1] / cs) as usize);
-        (col < self.grid.cols && from_south < self.grid.rows)
-            .then(|| Cell { row: self.grid.rows - 1 - from_south, col })
+        (col < self.grid.cols && from_south < self.grid.rows).then(|| Cell {
+            row: self.grid.rows - 1 - from_south,
+            col,
+        })
     }
 
     fn centre(&self, c: Cell) -> Pos {
         let cs = self.grid.cellsize;
-        [(c.col as f32 + 0.5) * cs, ((self.grid.rows - 1 - c.row) as f32 + 0.5) * cs]
+        [
+            (c.col as f32 + 0.5) * cs,
+            ((self.grid.rows - 1 - c.row) as f32 + 0.5) * cs,
+        ]
     }
 
     /// All cells whose centre lies within `radius_m` of `p`.
     pub fn cells_in_radius(&self, p: Pos, radius_m: f32) -> Vec<Cell> {
         let cs = self.grid.cellsize;
         let r = (radius_m / cs).ceil() as i64 + 1;
-        let Some(c0) = self.cell_of([p[0].clamp(0.0, self.grid.width_m() - 1.0), p[1].clamp(0.0, self.grid.height_m() - 1.0)]) else {
+        let Some(c0) = self.cell_of([
+            p[0].clamp(0.0, self.grid.width_m() - 1.0),
+            p[1].clamp(0.0, self.grid.height_m() - 1.0),
+        ]) else {
             return Vec::new();
         };
         let mut out = Vec::new();
         for dr in -r..=r {
             for dc in -r..=r {
                 let (row, col) = (c0.row as i64 + dr, c0.col as i64 + dc);
-                if row < 0 || col < 0 || row >= self.grid.rows as i64 || col >= self.grid.cols as i64 {
+                if row < 0
+                    || col < 0
+                    || row >= self.grid.rows as i64
+                    || col >= self.grid.cols as i64
+                {
                     continue;
                 }
-                let c = Cell { row: row as usize, col: col as usize };
+                let c = Cell {
+                    row: row as usize,
+                    col: col as usize,
+                };
                 let q = self.centre(c);
                 if (q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) <= radius_m * radius_m {
                     out.push(c);
@@ -295,7 +370,12 @@ impl FireSim {
             })
             .map(|c| (c.row, c.col))
             .collect();
-        anyhow::ensure!(!cells.is_empty(), "no unburnt burnable fuel within {radius_m} m of ({:.0}, {:.0})", at[0], at[1]);
+        anyhow::ensure!(
+            !cells.is_empty(),
+            "no unburnt burnable fuel within {radius_m} m of ({:.0}, {:.0})",
+            at[0],
+            at[1]
+        );
         let n = cells.len();
         self.flush()?;
         // Shown burning at once; the core lights them at its next step.
@@ -363,14 +443,16 @@ impl FireSim {
 
     fn clear_cells(&mut self, cells: &[Cell], include_burning: bool) -> usize {
         let (rows, cols) = (self.grid.rows, self.grid.cols);
-        let g = self.pending_veg.get_or_insert_with(|| Grid2::filled(rows, cols, f64::NAN));
+        let g = self
+            .pending_veg
+            .get_or_insert_with(|| Grid2::filled(rows, cols, f64::NAN));
         let mut n = 0;
         for c in cells {
             let i = c.row * cols + c.col;
             if !self.burnable[i] || (!include_burning && self.state[i] != CellFire::Unburnt) {
                 continue;
             }
-            g.as_mut_slice()[i] = fuel::NON_VEGETATED as f64;
+            g.as_mut_slice()[i] = self.cleared_fuel_code as f64;
             if !self.cleared[i] {
                 self.cleared[i] = true;
                 n += 1;
@@ -383,7 +465,9 @@ impl FireSim {
     pub fn water_drop(&mut self, at: Pos, radius_m: f32, litres_per_m2: f32) -> usize {
         let cells = self.cells_in_radius(at, radius_m);
         let (rows, cols) = (self.grid.rows, self.grid.cols);
-        let g = self.pending_moisture.get_or_insert_with(|| Grid2::filled(rows, cols, 0.0));
+        let g = self
+            .pending_moisture
+            .get_or_insert_with(|| Grid2::filled(rows, cols, 0.0));
         let add = litres_per_m2 * MOISTURE_POINTS_PER_LITRE;
         let mut n = 0;
         for c in cells {
@@ -402,7 +486,9 @@ impl FireSim {
     pub fn set_weather(&mut self, weather: WeatherSpec) -> Result<()> {
         self.weather = weather;
         let bc = self.weather_bc();
-        self.core.set_boundary_conditions(bc).context("updating weather")
+        self.core
+            .set_boundary_conditions(bc)
+            .context("updating weather")
     }
 
     fn weather_bc(&self) -> BoundaryConditions {
@@ -425,7 +511,9 @@ impl FireSim {
             additional_moisture: self.pending_moisture.take(),
             ..self.weather_bc()
         };
-        self.core.set_boundary_conditions(bc).context("applying interventions")
+        self.core
+            .set_boundary_conditions(bc)
+            .context("applying interventions")
     }
 
     /// Advance simulated time by `seconds`.
@@ -434,7 +522,9 @@ impl FireSim {
             return Ok(());
         }
         self.flush()?;
-        self.core.step_window(seconds).context("stepping fire core")?;
+        self.core
+            .step_window(seconds)
+            .context("stepping fire core")?;
         self.time_s += seconds;
         let factor = (1.0 - MOISTURE_DECAY_PER_MIN).powf(seconds as f32 / 60.0);
         for v in &mut self.added_moisture {
@@ -449,8 +539,14 @@ impl FireSim {
     fn refresh(&mut self) -> Result<()> {
         self.last_refresh_s = self.time_s;
         let fire = self.core.get_fire().context("reading fire state")?;
-        let arrival = self.core.get_arrival_time().context("reading arrival time")?;
-        let fli = self.core.get_fireline_int().context("reading fireline intensity")?;
+        let arrival = self
+            .core
+            .get_arrival_time()
+            .context("reading arrival time")?;
+        let fli = self
+            .core
+            .get_fireline_int()
+            .context("reading fireline intensity")?;
         let masks: Vec<&[u8]> = fire.iter().map(|g| g.as_slice()).collect();
         let arrivals: Vec<&[i32]> = arrival.iter().map(|g| g.as_slice()).collect();
         let flis: Vec<&[f32]> = fli.iter().map(|g| g.as_slice()).collect();
@@ -460,12 +556,19 @@ impl FireSim {
         for i in 0..self.state.len() {
             let reached = masks.iter().filter(|m| m[i] != 0).count();
             if reached > 0 {
-                let sum: f32 = (0..r).filter(|&j| masks[j][i] != 0).map(|j| flis[j][i]).sum();
+                let sum: f32 = (0..r)
+                    .filter(|&j| masks[j][i] != 0)
+                    .map(|j| flis[j][i])
+                    .sum();
                 self.intensity[i] = sum / reached as f32;
             }
             // A cleared cell has no fuel; the core may still light it from an
             // ignition event scheduled before the clearing. That is not a fire.
-            self.probability[i] = if self.cleared[i] && self.ignited_at[i] == i32::MIN { 0.0 } else { reached as f32 / r as f32 };
+            self.probability[i] = if self.cleared[i] && self.ignited_at[i] == i32::MIN {
+                0.0
+            } else {
+                reached as f32 / r as f32
+            };
             if self.ignited_at[i] == i32::MIN {
                 if reached < k || self.cleared[i] {
                     continue;
@@ -473,7 +576,8 @@ impl FireSim {
                 // Quantile arrival: the k-th earliest among the realizations
                 // that reached the cell (later ones cannot move it earlier).
                 self.scratch.clear();
-                self.scratch.extend((0..r).filter(|&j| masks[j][i] != 0).map(|j| arrivals[j][i]));
+                self.scratch
+                    .extend((0..r).filter(|&j| masks[j][i] != 0).map(|j| arrivals[j][i]));
                 let (_, kth, _) = self.scratch.select_nth_unstable(k - 1);
                 self.ignited_at[i] = (*kth).min(now);
             }

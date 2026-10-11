@@ -20,3 +20,9 @@ Blender coordinates are metres, Z up, front -Y; baked meshes use Y up and front 
 People and suppression models bake neutral vertex tones so the existing status materials stay legible. Cars retain colored details. Vegetation retains species palettes and authored crown shading; bark masks distinguish stems from leaves. Plant meshes are welded, limited to 120 vertices / 160 triangles per archetype, and merged into existing spatial chunks so burning and culling keep working. Grass remains procedural.
 
 Triangle budgets: pedestrian 356, firefighter 388, car 712, fire engine 1,688, pine/oak 152 each, bush 100. More detailed vegetation increases triangle counts versus the former procedural models; draw-call batching and the existing browser density reduction are preserved.
+
+## Additional urban kit
+
+`town.json` is adapted from `/Users/mirko/dev/experiments/propagator_abm/assets/models/town.json` (EUPL-1.2). School, town hall, fuel station and industrial buildings use these landmark meshes; other building kinds retain their blocks and all status colors come from simulation state. Meshes use metres, Y up, and RGB vertex colors converted to RGBA by the loader.
+
+The reproducible generator is `scripts/build_town_models.py`; run it with Blender from the repository root. It also writes the editable `.blend` and a preview.

@@ -42,7 +42,10 @@ struct Noise {
 impl Noise {
     fn new(rng: &mut ChaCha8Rng) -> Noise {
         let n = 64;
-        Noise { lattice: (0..n * n).map(|_| rng.gen::<f32>()).collect(), n }
+        Noise {
+            lattice: (0..n * n).map(|_| rng.gen::<f32>()).collect(),
+            n,
+        }
     }
 
     fn sample(&self, x: f32, y: f32) -> f32 {
@@ -86,13 +89,20 @@ pub fn generate(seed: u64) -> Scenario {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let terrain_noise = Noise::new(&mut rng);
     let fuel_noise = Noise::new(&mut rng);
-    let grid = GridSpec { rows: ROWS, cols: COLS, cellsize: CELL };
+    let grid = GridSpec {
+        rows: ROWS,
+        cols: COLS,
+        cellsize: CELL,
+    };
 
     let mut dem = vec![0.0f32; grid.len()];
     let mut fuel = vec![GRASSLAND; grid.len()];
     for row in 0..ROWS {
         for col in 0..COLS {
-            let p = [(col as f32 + 0.5) * CELL, ((ROWS - 1 - row) as f32 + 0.5) * CELL];
+            let p = [
+                (col as f32 + 0.5) * CELL,
+                ((ROWS - 1 - row) as f32 + 0.5) * CELL,
+            ];
             let i = row * COLS + col;
 
             // Terrain: valley floor rising to a ridge in the north, Pine Hill on top.
@@ -139,7 +149,15 @@ pub fn generate(seed: u64) -> Scenario {
     }
 
     let mut buildings = Vec::new();
-    fn add(v: &mut Vec<Building>, kind: BuildingKind, name: Option<&str>, pos: Pos, size: [f32; 2], occupants: u32, shelter: u32) {
+    fn add(
+        v: &mut Vec<Building>,
+        kind: BuildingKind,
+        name: Option<&str>,
+        pos: Pos,
+        size: [f32; 2],
+        occupants: u32,
+        shelter: u32,
+    ) {
         let id = v.len() as u32 + 1;
         v.push(Building {
             id,
@@ -154,12 +172,60 @@ pub fn generate(seed: u64) -> Scenario {
     }
 
     // Named facilities first, so their ids are stable across seeds.
-    add(&mut buildings, BuildingKind::School, Some("Pineta Primary School"), [2760.0, 2210.0], [40.0, 24.0], 120, 0);
-    add(&mut buildings, BuildingKind::FuelStation, Some("Pineta Fuel Station"), [2470.0, 2020.0], [24.0, 16.0], 4, 0);
-    add(&mut buildings, BuildingKind::TownHall, Some("Valverde Town Hall"), [1600.0, 1330.0], [30.0, 24.0], 40, 0);
-    add(&mut buildings, BuildingKind::Hospital, Some("Valverde Hospital"), [1440.0, 1160.0], [50.0, 30.0], 90, 0);
-    add(&mut buildings, BuildingKind::SportsCentre, Some("Valverde Sports Centre"), [1830.0, 1150.0], [50.0, 36.0], 0, 400);
-    add(&mut buildings, BuildingKind::Industrial, Some("Valverde Timber Mill"), [2150.0, 1650.0], [60.0, 30.0], 25, 0);
+    add(
+        &mut buildings,
+        BuildingKind::School,
+        Some("Pineta Primary School"),
+        [2760.0, 2210.0],
+        [40.0, 24.0],
+        120,
+        0,
+    );
+    add(
+        &mut buildings,
+        BuildingKind::FuelStation,
+        Some("Pineta Fuel Station"),
+        [2470.0, 2020.0],
+        [24.0, 16.0],
+        4,
+        0,
+    );
+    add(
+        &mut buildings,
+        BuildingKind::TownHall,
+        Some("Valverde Town Hall"),
+        [1600.0, 1330.0],
+        [30.0, 24.0],
+        40,
+        0,
+    );
+    add(
+        &mut buildings,
+        BuildingKind::Hospital,
+        Some("Valverde Hospital"),
+        [1440.0, 1160.0],
+        [50.0, 30.0],
+        90,
+        0,
+    );
+    add(
+        &mut buildings,
+        BuildingKind::SportsCentre,
+        Some("Valverde Sports Centre"),
+        [1830.0, 1150.0],
+        [50.0, 36.0],
+        0,
+        400,
+    );
+    add(
+        &mut buildings,
+        BuildingKind::Industrial,
+        Some("Valverde Timber Mill"),
+        [2150.0, 1650.0],
+        [60.0, 30.0],
+        25,
+        0,
+    );
 
     let taken: Vec<Pos> = buildings.iter().map(|b| b.pos).collect();
     let clear_of_facilities = |p: Pos| taken.iter().all(|t| dist(*t, p) > 45.0);
@@ -173,7 +239,10 @@ pub fn generate(seed: u64) -> Scenario {
         while x < VALVERDE[0] + VALVERDE_R {
             let j = jitter(&mut rng);
             let p = [x + j[0], y + j[1]];
-            if dist(p, VALVERDE) < VALVERDE_R - 30.0 && clear_of_facilities(p) && rng.gen::<f32>() < 0.8 {
+            if dist(p, VALVERDE) < VALVERDE_R - 30.0
+                && clear_of_facilities(p)
+                && rng.gen::<f32>() < 0.8
+            {
                 houses.push(p);
             }
             x += 55.0;
@@ -203,20 +272,49 @@ pub fn generate(seed: u64) -> Scenario {
     }
     for p in houses {
         let occ = rng.gen_range(1..=5);
-        add(&mut buildings, BuildingKind::House, None, p, [14.0, 12.0], occ, 0);
+        add(
+            &mut buildings,
+            BuildingKind::House,
+            None,
+            p,
+            [14.0, 12.0],
+            occ,
+            0,
+        );
     }
 
     let sectors = vec![
-        Sector { id: "pineta".into(), name: "Pineta".into(), bounds: [2450.0, 1950.0, 3200.0, 2600.0] },
-        Sector { id: "valverde".into(), name: "Valverde".into(), bounds: [1100.0, 850.0, 2150.0, 1750.0] },
-        Sector { id: "north_forest".into(), name: "North Forest".into(), bounds: [0.0, 2600.0, 4000.0, 4000.0] },
-        Sector { id: "east_farmland".into(), name: "Eastern Farmland".into(), bounds: [2150.0, 0.0, 4000.0, 2600.0] },
-        Sector { id: "west_plain".into(), name: "Western Plain".into(), bounds: [0.0, 0.0, 4000.0, 4000.0] },
+        Sector {
+            id: "pineta".into(),
+            name: "Pineta".into(),
+            bounds: [2450.0, 1950.0, 3200.0, 2600.0],
+        },
+        Sector {
+            id: "valverde".into(),
+            name: "Valverde".into(),
+            bounds: [1100.0, 850.0, 2150.0, 1750.0],
+        },
+        Sector {
+            id: "north_forest".into(),
+            name: "North Forest".into(),
+            bounds: [0.0, 2600.0, 4000.0, 4000.0],
+        },
+        Sector {
+            id: "east_farmland".into(),
+            name: "Eastern Farmland".into(),
+            bounds: [2150.0, 0.0, 4000.0, 2600.0],
+        },
+        Sector {
+            id: "west_plain".into(),
+            name: "Western Plain".into(),
+            bounds: [0.0, 0.0, 4000.0, 4000.0],
+        },
     ];
 
     // Every building sits on a non-burnable cell: houses never burn in the CA
     // (they are threatened by exposure instead, see `sim::buildings`).
     let mut scn = Scenario {
+        operations: Default::default(), communication_sites: vec![], fuel_definitions: vec![],
         id: "synthetic_valley".into(),
         name: "Valverde valley (synthetic)".into(),
         description: "Synthetic 4 x 4 km wildland-urban-interface valley: forested ridge, the village of Pineta on the forest edge with its primary school and fuel station, the town of Valverde with hospital and sports centre, farmland and a river. A wildfire is burning on Pine Hill under a north-easterly wind.".into(),
@@ -238,7 +336,10 @@ pub fn generate(seed: u64) -> Scenario {
     };
     for i in 0..scn.buildings.len() {
         let p = scn.buildings[i].pos;
-        scn.buildings[i].sector = scn.sector_at(p).map(|s| s.id.clone()).unwrap_or_else(|| "west_plain".into());
+        scn.buildings[i].sector = scn
+            .sector_at(p)
+            .map(|s| s.id.clone())
+            .unwrap_or_else(|| "west_plain".into());
         if let Some(c) = scn.cell_of(p) {
             let idx = scn.grid.index(c);
             scn.fuel[idx] = NON_VEGETATED;
@@ -248,12 +349,59 @@ pub fn generate(seed: u64) -> Scenario {
 }
 
 fn roads() -> Vec<Road> {
-    let road = |id: &str, name: &str, pts: &[Pos]| Road { id: id.into(), name: name.into(), points: pts.to_vec() };
+    let road = |id: &str, name: &str, pts: &[Pos]| Road {
+        oneway: false,
+        class: if id == "ridge_track" {
+            "track"
+        } else {
+            "residential"
+        }
+        .into(),
+        drivable: id != "ridge_track",
+        id: id.into(),
+        name: name.into(),
+        points: pts.to_vec(),
+    };
     vec![
-        road("sp1", "SP1 Main Road", &[[0.0, 1300.0], [1200.0, 1300.0], [1600.0, 1300.0], [2000.0, 1350.0], [3000.0, 1420.0], [4000.0, 1500.0]]),
-        road("north_road", "Northern Road", &[[1600.0, 1300.0], [2000.0, 1600.0], [2450.0, 2000.0], [2800.0, 2250.0], [3100.0, 2700.0], [3300.0, 3400.0]]),
-        road("ridge_track", "Ridge Track", &[[2000.0, 3300.0], [2800.0, 3150.0], [3600.0, 3300.0], [4000.0, 3250.0]]),
-        road("south_road", "Southern Road", &[[1600.0, 1300.0], [1500.0, 800.0], [1400.0, 0.0]]),
+        road(
+            "sp1",
+            "SP1 Main Road",
+            &[
+                [0.0, 1300.0],
+                [1200.0, 1300.0],
+                [1600.0, 1300.0],
+                [2000.0, 1350.0],
+                [3000.0, 1420.0],
+                [4000.0, 1500.0],
+            ],
+        ),
+        road(
+            "north_road",
+            "Northern Road",
+            &[
+                [1600.0, 1300.0],
+                [2000.0, 1600.0],
+                [2450.0, 2000.0],
+                [2800.0, 2250.0],
+                [3100.0, 2700.0],
+                [3300.0, 3400.0],
+            ],
+        ),
+        road(
+            "ridge_track",
+            "Ridge Track",
+            &[
+                [2000.0, 3300.0],
+                [2800.0, 3150.0],
+                [3600.0, 3300.0],
+                [4000.0, 3250.0],
+            ],
+        ),
+        road(
+            "south_road",
+            "Southern Road",
+            &[[1600.0, 1300.0], [1500.0, 800.0], [1400.0, 0.0]],
+        ),
     ]
 }
 
@@ -265,31 +413,89 @@ fn places() -> Vec<Place> {
     };
     vec![
         place("Pine Hill", &["Monte Pino", "Collina dei Pini"], PINE_HILL),
-        place("North Ridge", &["Cresta Nord", "the ridge"], [2800.0, 3500.0]),
+        place(
+            "North Ridge",
+            &["Cresta Nord", "the ridge"],
+            [2800.0, 3500.0],
+        ),
         place("Pineta", &["Pineta village", "the village"], PINETA),
         place("Valverde", &["Valverde town", "the town"], VALVERDE),
-        place("Pineta north edge", &["north of Pineta", "margine nord di Pineta"], [2800.0, 2480.0]),
-        place("Pineta east edge", &["east of Pineta", "margine est di Pineta"], [3030.0, 2250.0]),
+        place(
+            "Pineta north edge",
+            &["north of Pineta", "margine nord di Pineta"],
+            [2800.0, 2480.0],
+        ),
+        place(
+            "Pineta east edge",
+            &["east of Pineta", "margine est di Pineta"],
+            [3030.0, 2250.0],
+        ),
         place("Pineta west edge", &["west of Pineta"], [2570.0, 2300.0]),
-        place("Northern Road junction", &["junction", "incrocio"], [2450.0, 2000.0]),
-        place("Forest edge east", &["eastern forest edge"], [3400.0, 2500.0]),
-        place("Forest edge west", &["western forest edge"], [2200.0, 2500.0]),
-        place("River Lenta", &["the river", "fiume Lenta"], [2000.0, 520.0]),
+        place(
+            "Northern Road junction",
+            &["junction", "incrocio"],
+            [2450.0, 2000.0],
+        ),
+        place(
+            "Forest edge east",
+            &["eastern forest edge"],
+            [3400.0, 2500.0],
+        ),
+        place(
+            "Forest edge west",
+            &["western forest edge"],
+            [2200.0, 2500.0],
+        ),
+        place(
+            "River Lenta",
+            &["the river", "fiume Lenta"],
+            [2000.0, 520.0],
+        ),
     ]
 }
 
 fn resource_types() -> Vec<ResourceType> {
-    let rt = |id: &str, name: &str, d: &str| ResourceType { id: id.into(), name: name.into(), description: d.into() };
+    let rt = |id: &str, name: &str, d: &str| ResourceType {
+        id: id.into(),
+        name: name.into(),
+        description: d.into(),
+    };
     vec![
-        rt("ground_crews", "Ground crews", "Each crew can cut up to 600 m of fire line (fuel break) per turn."),
-        rt("air_tankers", "Air tankers", "Each air tanker makes one water drop (about 60 m radius) per turn."),
-        rt("buses", "Buses", "50 seats each; needed to evacuate schools and hospitals. Committed for the turn."),
-        rt("police_patrols", "Police patrols", "Each patrol can close one road to civilian traffic per turn."),
+        rt(
+            "engines",
+            "Road engines",
+            "2,500 L tank; 60 m hose reach; refills at the staging base.",
+        ),
+        rt(
+            "ground_crews",
+            "Ground crews",
+            "Each crew can cut up to 600 m of fire line (fuel break) per turn.",
+        ),
+        rt(
+            "air_tankers",
+            "Air tankers",
+            "Each air tanker makes one water drop (about 60 m radius) per turn.",
+        ),
+        rt(
+            "buses",
+            "Buses",
+            "50 seats each; needed to evacuate schools and hospitals. Committed for the turn.",
+        ),
+        rt(
+            "police_patrols",
+            "Police patrols",
+            "Each patrol can close one road to civilian traffic per turn.",
+        ),
     ]
 }
 
 fn roles() -> Vec<Role> {
-    let res = |pairs: &[(&str, u32)]| pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect::<BTreeMap<_, _>>();
+    let res = |pairs: &[(&str, u32)]| {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect::<BTreeMap<_, _>>()
+    };
     let acts = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     vec![
         Role {
@@ -307,8 +513,8 @@ fn roles() -> Vec<Role> {
             level: "local".into(),
             language: "en".into(),
             description: "Commands firefighting: fire lines (fuel breaks) with ground crews, water drops with air tankers.".into(),
-            allowed_actions: acts(&["CutFireLine", "WaterDrop"]),
-            resources: res(&[("ground_crews", 3), ("air_tankers", 1)]),
+            allowed_actions: acts(&["CutFireLine", "WaterDrop", "DeployEngine"]),
+            resources: res(&[("ground_crews", 3), ("air_tankers", 1), ("engines", 2)]),
         },
         Role {
             id: "regional_cp".into(),
@@ -331,23 +537,38 @@ fn reinforcements() -> Vec<ReinforcementOffer> {
         assigned_to: to.into(),
     };
     vec![
-        r("ground_crews", 3, 60, "Regional fire service", "fire_commander"),
-        r("air_tankers", 2, 120, "International assistance (UCPM / rescEU)", "fire_commander"),
+        r(
+            "ground_crews",
+            3,
+            60,
+            "Regional fire service",
+            "fire_commander",
+        ),
+        r(
+            "air_tankers",
+            2,
+            120,
+            "International assistance (UCPM / rescEU)",
+            "fire_commander",
+        ),
         r("buses", 4, 30, "Regional transport company", "mayor"),
         r("police_patrols", 2, 30, "Regional police", "mayor"),
     ]
 }
 
 fn msel() -> Vec<InjectTemplate> {
-    let inj = |id: &str, turn, title: &str, sender: &str, to: &[&str], text: &str, objective: &str| InjectTemplate {
-        id: id.into(),
-        turn,
-        title: title.into(),
-        sender: sender.into(),
-        recipients: to.iter().map(|s| s.to_string()).collect(),
-        text: text.into(),
-        objective: objective.into(),
-    };
+    let inj =
+        |id: &str, turn, title: &str, sender: &str, to: &[&str], text: &str, objective: &str| {
+            InjectTemplate {
+                id: id.into(),
+                turn,
+                title: title.into(),
+                sender: sender.into(),
+                recipients: to.iter().map(|s| s.to_string()).collect(),
+                text: text.into(),
+                objective: objective.into(),
+            }
+        };
     vec![
         inj("I-01", 1, "Fire reported on Pine Hill", "112 Dispatch", &["all"],
             "13:00 – Multiple calls report a wildfire on Pine Hill, in the North Forest about 600 m north-east of Pineta. Wind from the north-east at 45 km/h, very dry vegetation. The fire is estimated at 5 hectares and spreading south-west.",
@@ -394,7 +615,10 @@ mod tests {
         let s = generate(DEFAULT_SEED);
         s.check().unwrap();
         assert!(s.buildings.len() >= 260, "{} buildings", s.buildings.len());
-        assert!(s.buildings.iter().any(|b| b.kind == BuildingKind::School && b.sector == "pineta"));
+        assert!(s
+            .buildings
+            .iter()
+            .any(|b| b.kind == BuildingKind::School && b.sector == "pineta"));
         assert!(s.buildings.iter().any(|b| b.shelter_capacity > 0));
         assert_eq!(s.roles.len(), 3);
     }
@@ -439,6 +663,8 @@ mod tests {
         let c = Cell { row: 10, col: 150 };
         assert_eq!(s.cell_of(s.cell_centre(c)), Some(c));
         // Row 0 is the north edge.
-        assert!(s.cell_centre(Cell { row: 0, col: 0 })[1] > s.cell_centre(Cell { row: 199, col: 0 })[1]);
+        assert!(
+            s.cell_centre(Cell { row: 0, col: 0 })[1] > s.cell_centre(Cell { row: 199, col: 0 })[1]
+        );
     }
 }

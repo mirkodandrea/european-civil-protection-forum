@@ -21,12 +21,12 @@ use bevy_egui::EguiPlugin;
 use exercise::Exercise;
 
 mod camera;
+mod deployments;
 mod flames;
 mod frame;
 mod hud;
 mod models;
 mod objects;
-mod deployments;
 mod terrain;
 
 pub use frame::Frame;
@@ -60,7 +60,8 @@ pub struct Cue {
 /// Everything the renderer draws, copied from the exercise.
 #[derive(Resource, Default)]
 pub struct Snapshot {
-    pub deployments:Vec<(sim::DeploymentTask,u32)>,
+    pub deployments: Vec<(sim::DeploymentTask, u32)>,
+    pub traffic: Vec<(scenario::Pos, u32, bool)>,
     pub generation: u64,
     pub turn: u32,
     pub phase: String,
@@ -96,7 +97,10 @@ pub struct Scn(pub Arc<scenario::Scenario>);
 
 /// Open the window and run until it is closed.
 pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
-    let scn = ex.lock().map(|e| e.world.scn.clone()).expect("exercise lock");
+    let scn = ex
+        .lock()
+        .map(|e| e.world.scn.clone())
+        .expect("exercise lock");
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -115,13 +119,27 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .add_plugins(flames::FlamesPlugin)
         .insert_resource(ClearColor(camera::SKY))
         // Sky-tinted fill light; the sun does the modelling.
-        .insert_resource(AmbientLight { color: Color::srgb(0.70, 0.78, 0.95), brightness: 140.0 })
+        .insert_resource(AmbientLight {
+            color: Color::srgb(0.70, 0.78, 0.95),
+            brightness: 140.0,
+        })
         .insert_resource(Shared(ex))
         .insert_resource(ServerPort(port))
         .insert_resource(Scn(scn))
-        .insert_resource(Snapshot { llm_model, ..default() })
+        .insert_resource(Snapshot {
+            llm_model,
+            ..default()
+        })
         .init_resource::<Frame>()
-        .add_systems(Startup, (camera::setup, terrain::setup, objects::setup, deployments::setup))
+        .add_systems(
+            Startup,
+            (
+                camera::setup,
+                terrain::setup,
+                objects::setup,
+                deployments::setup,
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -148,7 +166,18 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
         return;
     }
     let w = &ex.world;
-    snap.deployments=w.d.tasks.iter().map(|task|(task.clone(),w.task_active_qty(task))).collect();
+    snap.traffic =
+        w.d.traffic
+            .vehicles
+            .iter()
+            .filter(|v| v.departed && !v.completed)
+            .map(|v| (w.traffic_position(v, w.time_s()), v.people, v.at_risk))
+            .collect();
+    snap.deployments =
+        w.d.tasks
+            .iter()
+            .map(|task| (task.clone(), w.task_active_qty(task)))
+            .collect();
     snap.generation = ex.generation;
     snap.turn = ex.turn;
     snap.phase = format!("{:?}", ex.phase).to_lowercase();
@@ -177,23 +206,36 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
     snap.arrival = w.fire.arrival_times().to_vec();
     snap.intensity = w.fire.intensity().to_vec();
     snap.probability = w.fire.probability().to_vec();
-    snap.buildings = w
-        .d
-        .buildings
+    snap.buildings =
+        w.d.buildings
+            .iter()
+            .map(|b| BuildingDraw {
+                damage: match b.damage {
+                    sim::Damage::Intact => 0,
+                    sim::Damage::Damaged => 1,
+                    sim::Damage::Destroyed => 2,
+                },
+                threatened: b.threatened,
+                evacuating: b.evac_done_at.is_some(),
+                empty_evacuated: b.people_inside == 0 && b.evacuated > 0,
+            })
+            .collect();
+    snap.roads = w
+        .scn
+        .roads
         .iter()
-        .map(|b| BuildingDraw {
-            damage: match b.damage {
-                sim::Damage::Intact => 0,
-                sim::Damage::Damaged => 1,
-                sim::Damage::Destroyed => 2,
-            },
-            threatened: b.threatened,
-            evacuating: b.evac_done_at.is_some(),
-            empty_evacuated: b.people_inside == 0 && b.evacuated > 0,
+        .map(|r| {
+            w.d.roads
+                .get(&r.id)
+                .map(|s| (s.closed, s.cut_by_fire))
+                .unwrap_or_default()
         })
         .collect();
-    snap.roads = w.scn.roads.iter().map(|r| w.d.roads.get(&r.id).map(|s| (s.closed, s.cut_by_fire)).unwrap_or_default()).collect();
-    snap.lines = w.d.lines.iter().map(|l| (l.from, l.to, l.width_m)).collect();
+    snap.lines =
+        w.d.lines
+            .iter()
+            .map(|l| (l.from, l.to, l.width_m))
+            .collect();
     snap.drops = w.d.drops.iter().map(|d| (d.at, d.radius_m)).collect();
     snap.warned = w.d.warned.iter().cloned().collect();
     snap.feed = ex
@@ -221,22 +263,37 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
 /// Where an order acts, and how big an area it covers.
 fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f32)> {
     use sim::{Area, Command as C};
-    let zone = |z: &str| w.zone_code(z).and_then(|c| w.scn.zone_centre(&c)).map(|p| (p, 300.0));
+    let zone = |z: &str| {
+        w.zone_code(z)
+            .and_then(|c| w.scn.zone_centre(&c))
+            .map(|p| (p, 300.0))
+    };
     let building = |b: &str| w.find_building(b).map(|i| (w.scn.buildings[i].pos, 160.0));
     match cmd {
-        C::CutFireLine { from, to, along, .. } => {
+        C::CutFireLine {
+            from, to, along, ..
+        } => {
             let (a, b) = match along {
                 Some(code) => w.scn.zone_edge(code)?,
-                None => (w.resolve_loc(from.as_ref()?).ok()?, w.resolve_loc(to.as_ref()?).ok()?),
+                None => (
+                    w.resolve_loc(from.as_ref()?).ok()?,
+                    w.resolve_loc(to.as_ref()?).ok()?,
+                ),
             };
             let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
             Some(([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], len / 2.0 + 80.0))
         }
-        C::WaterDrop { at } | C::Ignite { at, .. } => w.resolve_loc(at).ok().map(|p| (p, 180.0)),
+        C::DeployEngine { at } | C::WaterDrop { at } | C::Ignite { at, .. } => {
+            w.resolve_loc(at).ok().map(|p| (p, 180.0))
+        }
         C::EvacuateZone { zone: z, .. } | C::IssueWarning { zone: z } => zone(z),
         C::EvacuateBuilding { building: b, .. } | C::OpenShelter { building: b } => building(b),
         C::SetBuildingStatus { building: b, .. } => building(b).or_else(|| zone(b)),
-        C::CloseRoad { road } | C::ReopenRoad { road } => w.find_road(road).and_then(|id| w.scn.road(&id)).and_then(|r| r.points.get(r.points.len() / 2).copied()).map(|p| (p, 350.0)),
+        C::CloseRoad { road } | C::ReopenRoad { road } => w
+            .find_road(road)
+            .and_then(|id| w.scn.road(&id))
+            .and_then(|r| r.points.get(r.points.len() / 2).copied())
+            .map(|p| (p, 350.0)),
         C::Extinguish { area } => match area {
             Area::Named(n) => zone(n).or_else(|| w.scn.resolve_place(n).map(|p| (p, 250.0))),
             Area::Circle { at, radius_m } => w.resolve_loc(at).ok().map(|p| (p, *radius_m)),
@@ -286,14 +343,32 @@ fn cue_for(ex: &Exercise, e: &exercise::LogEntry) -> Option<Cue> {
     let w = &ex.world;
     let d = &e.data;
     let cmds_cue = |cmds: &[sim::Command], label: String, hold: f32| {
-        cmds.iter().find_map(|c| command_place(w, c)).map(|(pos, radius_m)| Cue { pos, radius_m, hold_s: hold, label })
+        cmds.iter()
+            .find_map(|c| command_place(w, c))
+            .map(|(pos, radius_m)| Cue {
+                pos,
+                radius_m,
+                hold_s: hold,
+                label,
+            })
     };
     match e.kind.as_str() {
         "inject_sent" => {
             let title = d["title"].as_str().unwrap_or_default();
-            let text = ex.messages.iter().rev().find(|m| m.title.as_deref() == Some(title)).map(|m| m.text_en.clone()).unwrap_or_default();
+            let text = ex
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.title.as_deref() == Some(title))
+                .map(|m| m.text_en.clone())
+                .unwrap_or_default();
             let (pos, radius_m) = named_place(w, &format!("{title} {text}"))?;
-            Some(Cue { pos, radius_m, hold_s: 6.0, label: format!("inject: {title}") })
+            Some(Cue {
+                pos,
+                radius_m,
+                hold_s: 6.0,
+                label: format!("inject: {title}"),
+            })
         }
         "proposal_parsed" => {
             let cmds: Vec<sim::Command> = serde_json::from_value(d["commands"].clone()).ok()?;
@@ -315,18 +390,47 @@ fn cue_for(ex: &Exercise, e: &exercise::LogEntry) -> Option<Cue> {
 fn feed_line(e: &exercise::LogEntry) -> Option<String> {
     let d = &e.data;
     let s = match e.kind.as_str() {
-        "inject_sent" => format!("INJECT  {} -> {}", d["title"].as_str()?, d["recipients"].as_array()?.iter().filter_map(|r| r.as_str()).collect::<Vec<_>>().join(", ")),
-        "proposal_decided" if d["approve"].as_bool()? => format!("APPROVED  {}", d["facts"].as_str()?.lines().next()?.trim_start_matches("APPROVED: ")),
+        "inject_sent" => format!(
+            "INJECT  {} -> {}",
+            d["title"].as_str()?,
+            d["recipients"]
+                .as_array()?
+                .iter()
+                .filter_map(|r| r.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        "proposal_decided" if d["approve"].as_bool()? => format!(
+            "APPROVED  {}",
+            d["facts"]
+                .as_str()?
+                .lines()
+                .next()?
+                .trim_start_matches("APPROVED: ")
+        ),
         "proposal_decided" => "REJECTED  a proposal".to_string(),
-        "master_command" => format!("DIRECTOR  {}", serde_json::from_value::<sim::Command>(d["command"].clone()).ok()?.describe()),
+        "master_command" => format!(
+            "DIRECTOR  {}",
+            serde_json::from_value::<sim::Command>(d["command"].clone())
+                .ok()?
+                .describe()
+        ),
         "turn_resolving" => format!("TURN {} SIMULATING  ({} min)", d["turn"], d["minutes"]),
         "turn_resolved" => format!("TURN {} RESOLVED  ({} min)", d["turn"], d["minutes"]),
         // The English summary, not the raw reply: the HUD font has no Armenian, Georgian… glyphs.
-        "proposal_parsed" if e.actor != exercise::MASTER => format!("ORDERS  {}: {}", e.actor, truncate(d["summary"].as_str().filter(|s| !s.is_empty())?, 90)),
+        "proposal_parsed" if e.actor != exercise::MASTER => format!(
+            "ORDERS  {}: {}",
+            e.actor,
+            truncate(d["summary"].as_str().filter(|s| !s.is_empty())?, 90)
+        ),
         "rollback" => format!("ROLLBACK to turn {}", d["to_turn"]),
         _ => return None,
     };
-    Some(format!("{}  {}", &e.clock[e.clock.len().saturating_sub(5)..], s))
+    Some(format!(
+        "{}  {}",
+        &e.clock[e.clock.len().saturating_sub(5)..],
+        s
+    ))
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -348,7 +452,10 @@ fn screenshot(
     *tick += 1;
     let mut target = None;
     if keys.just_pressed(KeyCode::KeyP) {
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         target = Some(format!("runs/screenshot-{stamp}.png"));
     } else if (*tick).is_multiple_of(30) {
         if let Ok(path) = std::fs::read_to_string("runs/shot.req") {
@@ -356,7 +463,9 @@ fn screenshot(
             target = Some(path.trim().to_string());
         }
     }
-    let (Some(path), Ok(window)) = (target, windows.get_single()) else { return };
+    let (Some(path), Ok(window)) = (target, windows.get_single()) else {
+        return;
+    };
     let _ = std::fs::create_dir_all("runs");
     if let Err(e) = shots.save_screenshot_to_disk(window, &path) {
         eprintln!("screenshot failed: {e}");
@@ -382,11 +491,29 @@ fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Record
     let _ = std::fs::create_dir_all("runs/rec");
     let size = format!("{width}x{height}");
     let mut child = Command::new("ffmpeg")
-        .args(["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", if bgra { "bgra" } else { "rgba" }, "-s", &size])
+        .args([
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            if bgra { "bgra" } else { "rgba" },
+            "-s",
+            &size,
+        ])
         // Real capture times as timestamps: a variable-rate stream that stays
         // in sync with the browser recording whatever the frame pacing.
         .args(["-use_wallclock_as_timestamps", "1", "-i", "-"])
-        .args(["-c:v", "h264_videotoolbox", "-b:v", "12M", "-pix_fmt", "yuv420p", "runs/rec/sim.mkv"])
+        .args([
+            "-c:v",
+            "h264_videotoolbox",
+            "-b:v",
+            "12M",
+            "-pix_fmt",
+            "yuv420p",
+            "runs/rec/sim.mkv",
+        ])
         .stdin(Stdio::piped())
         .spawn()?;
     let mut stdin = child.stdin.take().expect("ffmpeg stdin");
@@ -396,7 +523,10 @@ fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Record
         let mut first = true;
         for frame in rx {
             if first {
-                let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
                 let _ = std::fs::write("runs/rec/sim_start_ms.txt", ms.to_string());
                 first = false;
             }
@@ -407,12 +537,20 @@ fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Record
         drop(stdin);
         let _ = child.wait();
     });
-    Ok(Recorder { tx: Some(tx), writer: Some(writer), sent: 0, dropped: 0 })
+    Ok(Recorder {
+        tx: Some(tx),
+        writer: Some(writer),
+        sent: 0,
+        dropped: 0,
+    })
 }
 
 impl Drop for Recorder {
     fn drop(&mut self) {
-        eprintln!("recording: {} frames sent to the encoder, {} dropped", self.sent, self.dropped);
+        eprintln!(
+            "recording: {} frames sent to the encoder, {} dropped",
+            self.sent, self.dropped
+        );
         self.tx.take();
         if let Some(w) = self.writer.take() {
             let _ = w.join();
@@ -460,7 +598,9 @@ fn record(
     if !*on || !(*frame_no).is_multiple_of(RECORD_EVERY) {
         return;
     }
-    let Ok(window) = windows.get_single() else { return };
+    let Ok(window) = windows.get_single() else {
+        return;
+    };
     let slot = slot.clone();
     let _ = shots.take_screenshot(window, move |img| {
         let Ok(mut guard) = slot.lock() else { return };
@@ -468,7 +608,11 @@ fn record(
             return;
         }
         if guard.1.is_none() {
-            let bgra = matches!(img.texture_descriptor.format, bevy::render::render_resource::TextureFormat::Bgra8Unorm | bevy::render::render_resource::TextureFormat::Bgra8UnormSrgb);
+            let bgra = matches!(
+                img.texture_descriptor.format,
+                bevy::render::render_resource::TextureFormat::Bgra8Unorm
+                    | bevy::render::render_resource::TextureFormat::Bgra8UnormSrgb
+            );
             match start_recorder(img.width(), img.height(), bgra) {
                 Ok(r) => guard.1 = Some(r),
                 Err(e) => {

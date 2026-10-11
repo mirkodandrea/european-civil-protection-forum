@@ -61,6 +61,15 @@ Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the
 
 Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The synthetic scenario is (re)generated with `cargo run -p scenario --bin gen-scenario`.
 
+## Operational model from propagator_abm
+
+`cargo run --release -p app -- --operational-model` enables road routing,
+progressive fire-line construction, engines with finite tanks and refills,
+finite aircraft drops, evacuation queues, intensity-based exposure and
+communication outages. Existing scenarios keep their calibrated rules unless
+this mode is enabled. See [operational model and Scenario Factory](docs/operational-model.md)
+for commands, parameters, EU12 package import and reproducible fire atlases.
+
 ## Playing a turn
 
 1. **Director**: *Start exercise*, then send MSEL injects (*Injects* tab) or custom ones. Each player receives them translated.

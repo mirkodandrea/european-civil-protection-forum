@@ -37,9 +37,20 @@ pub struct Palette {
 #[derive(Resource)]
 pub struct ShowGrid(pub bool);
 
-pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
+pub fn setup(
+    mut commands: Commands,
+    scn: Res<Scn>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
     let s = &scn.0;
-    let mut solid = |r, g, b| mats.add(StandardMaterial { base_color: Color::srgb(r, g, b), perceptual_roughness: 0.8, ..default() });
+    let mut solid = |r, g, b| {
+        mats.add(StandardMaterial {
+            base_color: Color::srgb(r, g, b),
+            perceptual_roughness: 0.8,
+            ..default()
+        })
+    };
     let pal = Palette {
         house: solid(0.86, 0.83, 0.77),
         facility: solid(0.55, 0.62, 0.80),
@@ -51,7 +62,11 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
         road: solid(0.28, 0.28, 0.30),
         road_closed: solid(1.0, 0.55, 0.0),
         road_cut: solid(0.85, 0.08, 0.08),
-        line: mats.add(StandardMaterial { base_color: Color::srgb(1.0, 0.9, 0.1), unlit: true, ..default() }),
+        line: mats.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.9, 0.1),
+            unlit: true,
+            ..default()
+        }),
     };
     for (i, b) in s.buildings.iter().enumerate() {
         let height = match b.kind {
@@ -60,18 +75,72 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, mut meshes: ResMut<Assets<Me
             _ => 12.0,
         } * EXAGGERATION;
         let base = to_bevy(s, b.pos, 0.0);
+        let landmark = match b.kind {
+            BuildingKind::School => Some("school"),
+            BuildingKind::TownHall => Some("townhall"),
+            BuildingKind::FuelStation => Some("fuel"),
+            BuildingKind::Industrial => Some("industrial"),
+            _ => None,
+        }
+        .and_then(crate::models::urban_model);
+        let (mesh, transform) = if let Some(model) = landmark {
+            let mut mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::default(),
+            );
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, model.positions.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, model.normals.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, model.colors.clone());
+            mesh.insert_indices(Indices::U32(model.indices.clone()));
+            let bounds = [0, 1, 2].map(|axis| {
+                model
+                    .positions
+                    .iter()
+                    .map(|p| p[axis])
+                    .fold(f32::NEG_INFINITY, f32::max)
+                    - model
+                        .positions
+                        .iter()
+                        .map(|p| p[axis])
+                        .fold(f32::INFINITY, f32::min)
+            });
+            (
+                mesh,
+                Transform::from_translation(base).with_scale(Vec3::new(
+                    b.size[0] / bounds[0].max(1.0),
+                    height / bounds[1].max(1.0),
+                    b.size[1] / bounds[2].max(1.0),
+                )),
+            )
+        } else {
+            (
+                Mesh::from(Cuboid::new(b.size[0], height, b.size[1])),
+                Transform::from_translation(base + Vec3::Y * (height * 0.5 - 1.0)),
+            )
+        };
         commands.spawn((
             PbrBundle {
-                mesh: meshes.add(Cuboid::new(b.size[0], height, b.size[1])),
-                material: if b.name.is_some() { pal.facility.clone() } else { pal.house.clone() },
-                transform: Transform::from_translation(base + Vec3::Y * (height * 0.5 - 1.0)),
+                mesh: meshes.add(mesh),
+                material: if b.name.is_some() {
+                    pal.facility.clone()
+                } else {
+                    pal.house.clone()
+                },
+                transform,
                 ..default()
             },
             BuildingTag(i),
         ));
     }
     for (i, r) in s.roads.iter().enumerate() {
-        commands.spawn((PbrBundle { mesh: meshes.add(ribbon(s, &r.points, 9.0, 1.2)), material: pal.road.clone(), ..default() }, RoadTag(i)));
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(ribbon(s, &r.points, 9.0, 1.2)),
+                material: pal.road.clone(),
+                ..default()
+            },
+            RoadTag(i),
+        ));
     }
     commands.insert_resource(pal);
     commands.insert_resource(ShowGrid(true));
@@ -94,7 +163,11 @@ fn ribbon(s: &Scenario, pts: &[Pos], width: f32, lift: f32) -> Mesh {
     }
     let (mut p, mut n, mut ix) = (Vec::new(), Vec::new(), Vec::new());
     for (k, q) in samples.iter().enumerate() {
-        let next = samples.get(k + 1).or(samples.get(k.wrapping_sub(1))).copied().unwrap_or(*q);
+        let next = samples
+            .get(k + 1)
+            .or(samples.get(k.wrapping_sub(1)))
+            .copied()
+            .unwrap_or(*q);
         let (mut dx, mut dy) = (next[0] - q[0], next[1] - q[1]);
         if k + 1 == samples.len() {
             (dx, dy) = (-dx, -dy);
@@ -110,7 +183,10 @@ fn ribbon(s: &Scenario, pts: &[Pos], width: f32, lift: f32) -> Mesh {
             ix.extend_from_slice(&[o, o + 1, o + 2, o + 1, o + 3, o + 2]);
         }
     }
-    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut m = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p);
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, n);
     m.insert_indices(Indices::U32(ix));
@@ -139,10 +215,12 @@ pub fn update(
     }
     // Water drops and the zone grid as gizmos (cheap, redrawn every frame).
     for (at, r) in &snap.drops {
-        let pts: Vec<Vec3> = (0..=40).map(|k| {
-            let a = k as f32 / 40.0 * std::f32::consts::TAU;
-            to_bevy(s, [at[0] + r * a.cos(), at[1] + r * a.sin()], 4.0)
-        }).collect();
+        let pts: Vec<Vec3> = (0..=40)
+            .map(|k| {
+                let a = k as f32 / 40.0 * std::f32::consts::TAU;
+                to_bevy(s, [at[0] + r * a.cos(), at[1] + r * a.sin()], 4.0)
+            })
+            .collect();
         gizmos.linestrip(pts, Color::srgb(0.2, 0.55, 1.0));
     }
     if grid.0 {
@@ -151,20 +229,39 @@ pub fn update(
         let (w, h) = (s.grid.width_m(), s.grid.height_m());
         for c in 0..=z.cols {
             let x = (c as f32 * z.size_m).min(w - 1.0);
-            gizmos.linestrip((0..=80).map(|k| to_bevy(s, [x, k as f32 / 80.0 * h], 3.0)), Color::srgba(1.0, 1.0, 1.0, 0.35));
+            gizmos.linestrip(
+                (0..=80).map(|k| to_bevy(s, [x, k as f32 / 80.0 * h], 3.0)),
+                Color::srgba(1.0, 1.0, 1.0, 0.35),
+            );
         }
         for r in 0..=z.rows {
             let y = (r as f32 * z.size_m).min(h - 1.0);
-            gizmos.linestrip((0..=80).map(|k| to_bevy(s, [k as f32 / 80.0 * w, y], 3.0)), Color::srgba(1.0, 1.0, 1.0, 0.35));
+            gizmos.linestrip(
+                (0..=80).map(|k| to_bevy(s, [k as f32 / 80.0 * w, y], 3.0)),
+                Color::srgba(1.0, 1.0, 1.0, 0.35),
+            );
         }
         for name in &warned {
             if let Some(b) = s.zone_bounds(name) {
-                let ring = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]];
+                let ring = [
+                    [b[0], b[1]],
+                    [b[2], b[1]],
+                    [b[2], b[3]],
+                    [b[0], b[3]],
+                    [b[0], b[1]],
+                ];
                 let mut pts = Vec::new();
                 for wv in ring.windows(2) {
                     for k in 0..=20 {
                         let t = k as f32 / 20.0;
-                        pts.push(to_bevy(s, [wv[0][0] + (wv[1][0] - wv[0][0]) * t, wv[0][1] + (wv[1][1] - wv[0][1]) * t], 6.0));
+                        pts.push(to_bevy(
+                            s,
+                            [
+                                wv[0][0] + (wv[1][0] - wv[0][0]) * t,
+                                wv[0][1] + (wv[1][1] - wv[0][1]) * t,
+                            ],
+                            6.0,
+                        ));
                     }
                 }
                 gizmos.linestrip(pts, Color::srgb(1.0, 0.8, 0.0));
@@ -177,7 +274,9 @@ pub fn update(
     }
     // Building materials.
     for (tag, mut mat) in buildings.iter_mut() {
-        let Some(st) = snap.buildings.get(tag.0) else { continue };
+        let Some(st) = snap.buildings.get(tag.0) else {
+            continue;
+        };
         let named = s.buildings[tag.0].name.is_some();
         let want = if st.damage == 2 {
             &pal.destroyed
@@ -200,7 +299,13 @@ pub fn update(
     }
     for (tag, mut mat) in roads.iter_mut() {
         let (closed, cut) = snap.roads.get(tag.0).copied().unwrap_or_default();
-        let want = if cut { &pal.road_cut } else if closed { &pal.road_closed } else { &pal.road };
+        let want = if cut {
+            &pal.road_cut
+        } else if closed {
+            &pal.road_closed
+        } else {
+            &pal.road
+        };
         if *mat != *want {
             *mat = want.clone();
         }
@@ -211,7 +316,14 @@ pub fn update(
             commands.entity(e).despawn();
         }
         for (a, b, w) in &snap.lines {
-            commands.spawn((PbrBundle { mesh: meshes.add(ribbon(s, &[*a, *b], *w * 0.6, 2.0)), material: pal.line.clone(), ..default() }, LineLayer));
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(ribbon(s, &[*a, *b], *w * 0.6, 2.0)),
+                    material: pal.line.clone(),
+                    ..default()
+                },
+                LineLayer,
+            ));
         }
         seen.1 = snap.lines.len();
     }

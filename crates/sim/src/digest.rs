@@ -57,7 +57,9 @@ impl World {
         // Houses aggregated by zone.
         let mut zones: std::collections::BTreeMap<String, [u32; 5]> = Default::default();
         for (b, st) in self.scn.buildings.iter().zip(&self.d.buildings) {
-            let Some(z) = self.scn.zone_of(b.pos) else { continue };
+            let Some(z) = self.scn.zone_of(b.pos) else {
+                continue;
+            };
             let e = zones.entry(z).or_default();
             e[0] += 1;
             e[1] += st.people_inside;
@@ -162,6 +164,10 @@ impl World {
             })
             .collect();
         json!({
+            "operations":self.scn.operations,
+            "traffic":self.traffic_view(),
+            "communication_sites":self.d.hazard.sites,
+            "pending_warnings":self.d.hazard.pending_warnings,
             "deployments":self.deployment_view(),
             "travel_settings":self.d.travel_settings,
             "stats": self.stats(),

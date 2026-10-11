@@ -44,3 +44,11 @@ echo "$PWD/runs/x.png" > runs/shot.req     # simulator window screenshot (or pre
 python3 scripts/record/readme_demo.py      # refresh the docs/demo.md timeline/outcome from the recording
 devtunnel host -p 8080                     # private tunnel for phone play (play.html)
 ```
+
+## Operational model (ABM-derived)
+
+- `--operational-model` or scenario `operations` opts into road routes, progressive suppression, aggregate vehicle traffic, intensity exposure and communications. Legacy scenarios retain the calibrated rules. Spotting is explicitly authored and defaults off.
+- The graph is static geometry; mutable routes, work, water, queues, site failures and pending warnings live in `sim::Dyn` for rollback. Keep all model decisions in `sim`; Bevy only draws snapshots.
+- `DeployEngine` needs an approved role allocation. Ground routes obey fire cuts; civilian traffic also obeys police closures. No path means waiting/failure, never a straight-line fallback.
+- EU12 ids differ from legacy ids: use scenario fuel definitions for burnability, fuel removal and rendering.
+- Scenario Factory port and import commands, provenance, training assumptions and verification: `docs/operational-model.md`.

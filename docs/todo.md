@@ -18,7 +18,7 @@ Priority order proposed in [`specs/README.md`](specs/README.md); the pilot's mus
 
 ## Later (from the v0.2 draft)
 
-- Agents: civilians, ground crews and vehicles (ABM from `propagator_abm`), traffic on the road network
+- Individual civilian behavior and richer operational calibration. Aggregate evacuation traffic, routed deployments, progressive crews and engines are available in the [operational model](operational-model.md).
 - L6/L7 AI workflows (inject suggestions, debrief narrative; L7 is folded into spec 09)
 - A real scenario for the Forum (the synthetic Valverde valley stands in)
 - Role/permission editing in the UI

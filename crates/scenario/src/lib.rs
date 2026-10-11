@@ -18,6 +18,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod factory;
 pub mod synthetic;
 
 /// Fuel codes of the fire core's legacy 7-class table.
@@ -45,6 +46,56 @@ pub mod fuel {
     }
 }
 
+fn yes() -> bool {
+    true
+}
+fn default_road_class() -> String {
+    "residential".into()
+}
+
+/// Opt-in operational assumptions. Old scenario packages retain calibrated rules.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Operations {
+    pub road_routing: bool,
+    pub progressive_suppression: bool,
+    pub traffic: bool,
+    pub intensity_exposure: bool,
+    pub communications: bool,
+    pub spotting: bool,
+}
+impl Operations {
+    pub fn enhanced() -> Self {
+        Self {
+            road_routing: true,
+            progressive_suppression: true,
+            traffic: true,
+            intensity_exposure: true,
+            communications: true,
+            spotting: false,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommunicationSite {
+    pub id: String,
+    pub pos: Pos,
+    pub radius_m: f32,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FuelDefinition {
+    pub id: i32,
+    pub name: String,
+    pub v0: f64,
+    pub d0: f64,
+    pub d1: f64,
+    pub hhv: f64,
+    pub humidity: Option<f64>,
+    pub spotting: bool,
+    pub prob_ign_by_embers: f64,
+    pub burn: bool,
+    pub spread_probability: Vec<(i32, f64)>,
+}
 /// A position in the world frame, metres.
 pub type Pos = [f32; 2];
 
@@ -134,6 +185,12 @@ pub struct Building {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Road {
+    #[serde(default)]
+    pub oneway: bool,
+    #[serde(default = "default_road_class")]
+    pub class: String,
+    #[serde(default = "yes")]
+    pub drivable: bool,
     pub id: String,
     pub name: String,
     pub points: Vec<Pos>,
@@ -149,10 +206,16 @@ pub struct Sector {
 
 impl Sector {
     pub fn contains(&self, p: Pos) -> bool {
-        p[0] >= self.bounds[0] && p[0] < self.bounds[2] && p[1] >= self.bounds[1] && p[1] < self.bounds[3]
+        p[0] >= self.bounds[0]
+            && p[0] < self.bounds[2]
+            && p[1] >= self.bounds[1]
+            && p[1] < self.bounds[3]
     }
     pub fn centre(&self) -> Pos {
-        [(self.bounds[0] + self.bounds[2]) * 0.5, (self.bounds[1] + self.bounds[3]) * 0.5]
+        [
+            (self.bounds[0] + self.bounds[2]) * 0.5,
+            (self.bounds[1] + self.bounds[3]) * 0.5,
+        ]
     }
 }
 
@@ -174,7 +237,10 @@ impl ZoneGrid {
 
     /// All zone names, row by row from the north-west corner.
     pub fn names(&self) -> Vec<String> {
-        (0..self.rows).flat_map(|r| (0..self.cols).map(move |c| (c, r))).map(|(c, r)| self.name(c, r)).collect()
+        (0..self.rows)
+            .flat_map(|r| (0..self.cols).map(move |c| (c, r)))
+            .map(|(c, r)| self.name(c, r))
+            .collect()
     }
 
     /// The zone containing `p`, if inside the grid.
@@ -189,7 +255,11 @@ impl ZoneGrid {
 
     /// `(col, row)` of a zone name such as `"c3"` or `"C 3"`.
     pub fn parse(&self, name: &str) -> Option<(usize, usize)> {
-        let key: String = name.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
+        let key: String = name
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .to_uppercase();
         let mut chars = key.chars();
         let letter = chars.next()?;
         if !letter.is_ascii_uppercase() {
@@ -283,6 +353,12 @@ pub struct InjectTemplate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
+    #[serde(default)]
+    pub operations: Operations,
+    #[serde(default)]
+    pub communication_sites: Vec<CommunicationSite>,
+    #[serde(default)]
+    pub fuel_definitions: Vec<FuelDefinition>,
     pub id: String,
     pub name: String,
     pub description: String,
@@ -307,10 +383,33 @@ pub struct Scenario {
 }
 
 impl Scenario {
+    /// Enable the enhanced training model, adding engine capability to the
+    /// synthetic Fire Commander when loading an older scenario package.
+    pub fn enable_operational_model(&mut self) {
+        let spotting = self.operations.spotting;
+        self.operations = Operations::enhanced();
+        self.operations.spotting = spotting;
+        if let Some(role) = self.roles.iter_mut().find(|r| r.id == "fire_commander") {
+            role.resources.entry("engines".into()).or_insert(2);
+            if !role.allowed_actions.iter().any(|a| a == "DeployEngine") {
+                role.allowed_actions.push("DeployEngine".into());
+            }
+            if !self.resource_types.iter().any(|r| r.id == "engines") {
+                self.resource_types.push(ResourceType {
+                    id: "engines".into(),
+                    name: "Road engines".into(),
+                    description: "2,500 L training engine; 60 m hose reach; refills at staging"
+                        .into(),
+                });
+            }
+        }
+    }
     pub fn load(path: impl AsRef<Path>) -> Result<Scenario> {
         let path = path.as_ref();
-        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let scn: Scenario = serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let scn: Scenario =
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         scn.check()?;
         Ok(scn)
     }
@@ -320,23 +419,84 @@ impl Scenario {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_string(self)?).with_context(|| format!("writing {}", path.display()))
+        std::fs::write(path, serde_json::to_string(self)?)
+            .with_context(|| format!("writing {}", path.display()))
     }
 
     /// Internal consistency: raster sizes, unique ids, references.
     pub fn check(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.grid.rows > 0
+                && self.grid.cols > 0
+                && self.grid.cellsize.is_finite()
+                && self.grid.cellsize > 0.0,
+            "invalid grid"
+        );
         let n = self.grid.len();
-        anyhow::ensure!(self.fuel.len() == n, "fuel raster has {} cells, grid needs {n}", self.fuel.len());
-        anyhow::ensure!(self.dem.len() == n, "dem raster has {} cells, grid needs {n}", self.dem.len());
+        anyhow::ensure!(self.dem.iter().all(|x| x.is_finite()), "non-finite terrain");
+        for site in &self.communication_sites {
+            anyhow::ensure!(
+                self.cell_of(site.pos).is_some()
+                    && site.radius_m.is_finite()
+                    && site.radius_m > 0.0,
+                "invalid communication site {}",
+                site.id
+            );
+        }
+        for road in &self.roads {
+            anyhow::ensure!(
+                road.points.len() >= 2
+                    && road.points.iter().all(|p| p.iter().all(|x| x.is_finite())),
+                "invalid road {}",
+                road.id
+            );
+        }
+        anyhow::ensure!(
+            self.fuel.len() == n,
+            "fuel raster has {} cells, grid needs {n}",
+            self.fuel.len()
+        );
+        anyhow::ensure!(
+            self.dem.len() == n,
+            "dem raster has {} cells, grid needs {n}",
+            self.dem.len()
+        );
+        let building_ids = self
+            .buildings
+            .iter()
+            .map(|b| b.id)
+            .collect::<std::collections::BTreeSet<_>>();
+        let road_ids = self
+            .roads
+            .iter()
+            .map(|r| &r.id)
+            .collect::<std::collections::BTreeSet<_>>();
+        anyhow::ensure!(
+            building_ids.len() == self.buildings.len() && road_ids.len() == self.roads.len(),
+            "duplicate building or road id"
+        );
         for b in &self.buildings {
-            anyhow::ensure!(self.sector(&b.sector).is_some(), "building {} in unknown sector {}", b.id, b.sector);
+            anyhow::ensure!(
+                self.sector(&b.sector).is_some(),
+                "building {} in unknown sector {}",
+                b.id,
+                b.sector
+            );
         }
         for r in &self.reinforcements {
-            anyhow::ensure!(self.role(&r.assigned_to).is_some(), "reinforcement assigned to unknown role {}", r.assigned_to);
+            anyhow::ensure!(
+                self.role(&r.assigned_to).is_some(),
+                "reinforcement assigned to unknown role {}",
+                r.assigned_to
+            );
         }
         for i in &self.msel {
             for rcp in &i.recipients {
-                anyhow::ensure!(rcp == "all" || self.role(rcp).is_some(), "inject {} to unknown role {rcp}", i.id);
+                anyhow::ensure!(
+                    rcp == "all" || self.role(rcp).is_some(),
+                    "inject {} to unknown role {rcp}",
+                    i.id
+                );
             }
         }
         Ok(())
@@ -372,7 +532,8 @@ impl Scenario {
     }
 
     pub fn zone_centre(&self, name: &str) -> Option<Pos> {
-        self.zone_bounds(name).map(|b| [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5])
+        self.zone_bounds(name)
+            .map(|b| [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5])
     }
 
     pub fn cell_of(&self, p: Pos) -> Option<Cell> {
@@ -385,12 +546,18 @@ impl Scenario {
         if col >= self.grid.cols || from_south >= self.grid.rows {
             return None;
         }
-        Some(Cell { row: self.grid.rows - 1 - from_south, col })
+        Some(Cell {
+            row: self.grid.rows - 1 - from_south,
+            col,
+        })
     }
 
     pub fn cell_centre(&self, c: Cell) -> Pos {
         let cs = self.grid.cellsize;
-        [(c.col as f32 + 0.5) * cs, ((self.grid.rows - 1 - c.row) as f32 + 0.5) * cs]
+        [
+            (c.col as f32 + 0.5) * cs,
+            ((self.grid.rows - 1 - c.row) as f32 + 0.5) * cs,
+        ]
     }
 
     pub fn fuel_at(&self, c: Cell) -> i32 {
@@ -402,7 +569,13 @@ impl Scenario {
     }
 
     pub fn is_burnable(&self, c: Cell) -> bool {
-        self.fuel_at(c) != fuel::NON_VEGETATED
+        if self.fuel_definitions.is_empty() {
+            self.fuel_at(c) != fuel::NON_VEGETATED && self.fuel_at(c) != 0
+        } else {
+            self.fuel_definitions
+                .iter()
+                .any(|f| f.id == self.fuel_at(c) && f.burn)
+        }
     }
 
     /// Resolve a free-form name against named places, facilities, sectors and
@@ -442,7 +615,10 @@ impl Scenario {
 /// Lower-case, alphanumerics only — so "Pineta Primary School", "pineta
 /// primary-school" and "PINETA  PRIMARY SCHOOL" all match.
 pub fn normalise(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
 }
 
 /// Format an exercise clock value (`start_clock_s + t`) as `Day N HH:MM`.
@@ -464,7 +640,11 @@ mod tests {
 
     #[test]
     fn zone_grid_names_and_bounds() {
-        let z = ZoneGrid { cols: 8, rows: 8, size_m: 500.0 };
+        let z = ZoneGrid {
+            cols: 8,
+            rows: 8,
+            size_m: 500.0,
+        };
         assert_eq!(z.name(0, 0), "A1");
         assert_eq!(z.parse("c 3"), Some((2, 2)));
         assert_eq!(z.parse("I1"), None);
@@ -474,12 +654,18 @@ mod tests {
         assert_eq!(z.zone_of([3990.0, 10.0], 4000.0).as_deref(), Some("H8"));
         assert_eq!(z.bounds("A1", 4000.0), Some([0.0, 3500.0, 500.0, 4000.0]));
         assert_eq!(z.names().len(), 64);
-        assert_eq!(z.edge("A1:S", 4000.0), Some(([0.0, 3500.0], [500.0, 3500.0])));
+        assert_eq!(
+            z.edge("A1:S", 4000.0),
+            Some(([0.0, 3500.0], [500.0, 3500.0]))
+        );
         assert_eq!(z.edge("A1:X", 4000.0), None);
     }
 
     #[test]
     fn normalise_ignores_case_and_punctuation() {
-        assert_eq!(normalise("Pineta Primary-School"), normalise("pineta primary school"));
+        assert_eq!(
+            normalise("Pineta Primary-School"),
+            normalise("pineta primary school")
+        );
     }
 }
