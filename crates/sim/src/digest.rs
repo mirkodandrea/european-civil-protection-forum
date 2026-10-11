@@ -162,6 +162,8 @@ impl World {
             })
             .collect();
         json!({
+            "deployments":self.deployment_view(),
+            "travel_settings":self.d.travel_settings,
             "stats": self.stats(),
             "weather": self.fire.weather(),
             "ensemble": self.fire.options(),

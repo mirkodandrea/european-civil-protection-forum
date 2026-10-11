@@ -405,3 +405,64 @@ If the exercise has progressed, issue a new explicit corrective command instead.
 Reports of unexpectedly excessive fire/extinguishing areas are observations: the
 geometry/actual-cell previews make their scale reproducible without assuming a
 confirmed propagation defect.
+
+## Deployed-team travel
+
+Approved role actions that actually consume ground crews, air tankers, buses or
+police patrols now dispatch a `DeploymentTask` when executed (explicitly or during
+turn resolution). Approval alone creates no task or 3D marker. Resources are
+allocated once at departure and remain deployed through travel, work and subsequent
+turns/phases until EXCON confirms their return. `ProposalStatus::Applied` means the
+command executed/dispatched, **not** that its delayed physical task finished.
+Execution detail explicitly says when the units were dispatched and their arrival.
+
+World views, Master/evaluator/debrief and each player's own-role view expose
+`deployments`: each record has `task`, `position_m` and `active_qty`. Task fields
+include allocation IDs, role/resource/quantity, command, origin/target, speed,
+departure/expected arrival, actual arrival/completion, status and outcome detail.
+Statuses: `en_route`, `working`, `completed`, `failed`, `cancelled`. Arrival is
+`departed_s + max(1, ceil(distance_m / speed_mps))`; position interpolates between
+origin and target using **simulation time only**. Pausing the clock freezes movement.
+One-second physics steps process arrival exactly at its simulated timestamp.
+
+Fire lines clear fuel and water drops wet fuel only on arrival. Bus-assisted
+building/zone evacuation starts its existing warned/unwarned loading/evacuation
+interval on arrival, then remains `working` until those buildings finish leaving.
+Patrols close their assigned road on arrival. Non-resource actions (warnings,
+shelters, ordinary unassisted evacuation) retain their existing immediate timing.
+Physical feasibility is checked again at arrival. A failed task is recorded and its
+units stay deployed until return; an arrival failure cannot claim completed work.
+Duplicate evacuation targets are reserved in approved batches and active tasks.
+Decision-point execution conditions require completed deployment tasks, not dispatch.
+
+Travel is an explicit **training abstraction**: straight-line constant speed, with
+no road routing, congestion, terrain speed or air-weather model. Default staging
+base is Valverde Town Hall when present, otherwise the map centre. Ground crews and
+patrols use 10 m/s, buses 8 m/s and air tankers 90 m/s. EXCON can configure future
+role/resource travel through a Master command:
+
+```json
+{"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":"Valverde Town Hall","speed_mps":10}
+```
+
+Locations use normal `LOC` validation and speeds must be finite 0.1–300 m/s.
+Changing settings does not teleport or reschedule tasks already underway. Settings
+and tasks are snapshotted with physical/resource state. Rollback restores travel
+and quantities; existing proposal/resource history remains recorded and identities
+are never reused.
+
+`ReturnResource` of **all** units from an en-route allocation cancels its dispatch
+and applies no physical task effect. Partial en-route cancellation is rejected;
+units actively working on an evacuation cannot be returned until completion.
+Completed/failed tasks allow normal returns, including partial returns; completed
+physical work remains effective. EXCON confirmation records the return; return
+travel itself is not simulated. Master interventions create no role allocation or
+moving team and remain immediate physical changes, reviewed through previews.
+
+The 3D view uses group vehicle symbols with resource/quantity/task labels: orange
+travelling, cyan working, green completed, red failed. Group positions, ETA, status
+and quantities are copied from the authoritative world. Ground symbols follow
+terrain elevation; air-tanker symbols use a display altitude of 120 m above terrain.
+Symbol size/altitude are visual conventions, not physics. Cancelled/fully returned
+units disappear, and rollback removes/restores markers with the restored state.
+The renderer never advances a task or infers deployment from pending proposals.

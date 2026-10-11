@@ -71,6 +71,8 @@ fn school_evacuation_needs_buses_and_takes_time() {
     w.apply(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }, &Actor::Master).unwrap();
     w.apply(&c, &role("mayor")).unwrap();
     assert_eq!(w.d.pools["mayor"]["buses"].used, 3);
+    assert!(w.d.buildings[i].evac_done_at.is_none(),"buses are still travelling");
+    w.advance(w.d.tasks[0].arrival_s-w.time_s()).unwrap();
     assert!(w.d.buildings[i].evac_done_at.is_some());
     w.advance(10 * 60).unwrap();
     assert_eq!(w.d.buildings[i].evacuated, 0, "school emptied too fast");
@@ -183,6 +185,8 @@ fn allocations_persist_and_returns_cannot_duplicate_or_undo_physical_work() {
     let cmd = Command::CutFireLine { from: None, to: None, along: Some("G3:S".into()), width_m: None };
     w.apply(&cmd, &role("fire_commander")).unwrap();
     let allocation = w.d.allocations[0].id;
+    assert!(w.d.lines.is_empty(),"travel has not completed");
+    w.advance(w.d.tasks[0].arrival_s-w.time_s()).unwrap();
     let line_count = w.d.lines.len();
     assert_eq!(w.d.allocations[0].qty, 1);
     let deployed = w.snapshot();
@@ -240,4 +244,65 @@ fn physical_geometry_reports_area_units_and_rejects_invalid_ignition_scale() {
  let zone=w.scn.zone_bounds("F4").unwrap();
  let area=(zone[2]-zone[0])*(zone[3]-zone[1])/10000.0;
  assert_eq!(w.command_geometry(&Command::Extinguish {area:Area::Named("F4".into())})["nominal_area_ha"],serde_json::json!(area));
+}
+
+#[test]
+fn deployed_travel_waits_for_arrival_and_remains_consistent_with_resources() {
+ let mut w=world();
+ w.apply(&Command::SetDeploymentTravel {role:"fire_commander".into(),resource:"ground_crews".into(),at:Loc::Point{x:1000.0,y:1000.0},speed_mps:10.0},&Actor::Master).unwrap();
+ let cmd=Command::CutFireLine {from:Some(Loc::Point{x:2000.0,y:1000.0}),to:Some(Loc::Point{x:2500.0,y:1000.0}),along:None,width_m:None};
+ w.apply(&cmd,&role("fire_commander")).unwrap();
+ let task=w.d.tasks[0].clone();
+ assert_eq!((task.departed_s,task.arrival_s),(0,100));
+ assert_eq!(task.status,sim::TaskStatus::EnRoute);
+ assert!(w.d.lines.is_empty());assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used,1);
+ w.advance(50).unwrap();assert_eq!(task.position(w.time_s()),[1500.0,1000.0]);assert!(w.d.lines.is_empty());
+ // Changing future staging settings cannot teleport an already dispatched task.
+ w.apply(&Command::SetDeploymentTravel {role:"fire_commander".into(),resource:"ground_crews".into(),at:Loc::Named("Pine Hill".into()),speed_mps:100.0},&Actor::Master).unwrap();
+ w.advance(49).unwrap();assert!(w.d.lines.is_empty());
+ w.advance(1).unwrap();assert_eq!(w.d.lines.len(),1);assert_eq!(w.d.lines[0].by,"fire_commander");
+ assert_eq!(w.d.tasks[0].arrived_s,Some(100));assert_eq!(w.d.tasks[0].completed_s,Some(100));assert_eq!(w.d.tasks[0].status,sim::TaskStatus::Completed);
+ assert_eq!(w.d.allocations.len(),1);assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used,1);
+ w.advance(10).unwrap();assert_eq!(w.d.lines.len(),1,"arrival cannot apply twice");
+ w.apply(&Command::ReturnResource {allocation:task.id,qty:1},&Actor::Master).unwrap();
+ assert_eq!(w.task_active_qty(&w.d.tasks[0]),0);assert_eq!(w.d.lines.len(),1,"return keeps completed work");
+}
+
+#[test]
+fn cancelling_enroute_deployment_releases_units_without_applying_task() {
+ let mut w=world();
+ let cmd=Command::CutFireLine {from:Some(Loc::Point{x:1000.0,y:2000.0}),to:Some(Loc::Point{x:2100.0,y:2000.0}),along:None,width_m:None};
+ w.apply(&cmd,&role("fire_commander")).unwrap();let task=w.d.tasks[0].clone();
+ assert_eq!(task.qty,2);
+ assert!(w.apply(&Command::ReturnResource {allocation:task.id,qty:1},&Actor::Master).is_err());
+ let checkpoint=w.snapshot();
+ w.apply(&Command::ReturnResource {allocation:task.id,qty:2},&Actor::Master).unwrap();
+ assert_eq!(w.d.tasks[0].status,sim::TaskStatus::Cancelled);assert_eq!(w.d.pools["fire_commander"]["ground_crews"].used,0);
+ w.advance(task.arrival_s+1).unwrap();assert!(w.d.lines.is_empty());
+ w.restore(&checkpoint).unwrap();assert_eq!(w.d.tasks[0].status,sim::TaskStatus::EnRoute);assert_eq!(w.task_active_qty(&w.d.tasks[0]),2);
+ w.advance(task.arrival_s).unwrap();assert_eq!(w.d.lines.len(),1);
+}
+
+#[test]
+fn task_arrival_failure_and_evacuation_working_state_are_truthful() {
+ let mut w=world();w.apply(&Command::AdjustResource {role:"mayor".into(),resource:"buses".into(),delta:1},&Actor::Master).unwrap();
+ let cmd=Command::EvacuateBuilding {building:"Pineta Primary School".into(),destination:None};w.apply(&cmd,&role("mayor")).unwrap();let task=w.d.tasks[0].clone();
+ assert!(w.apply(&cmd,&role("mayor")).is_err(),"duplicate dispatch refused");
+ w.advance(task.arrival_s).unwrap();assert_eq!(w.d.tasks[0].status,sim::TaskStatus::Working);
+ assert!(w.apply(&Command::ReturnResource {allocation:task.id,qty:3},&Actor::Master).is_err());
+ w.advance(30*60).unwrap();assert_eq!(w.d.tasks[0].status,sim::TaskStatus::Completed);assert_eq!(w.d.tasks[0].completed_s,Some(task.arrival_s+30*60));
+ let mut failed=world();failed.apply(&Command::AdjustResource {role:"mayor".into(),resource:"buses".into(),delta:1},&Actor::Master).unwrap();failed.apply(&cmd,&role("mayor")).unwrap();let due=failed.d.tasks[0].arrival_s;
+ failed.apply(&Command::SetBuildingStatus {building:"Pineta Primary School".into(),damage:None,evacuated:Some(true)},&Actor::Master).unwrap();failed.advance(due).unwrap();assert_eq!(failed.d.tasks[0].status,sim::TaskStatus::Failed);
+ assert_eq!(failed.d.pools["mayor"]["buses"].used,3,"failed task requires explicit return");
+}
+
+#[test]
+fn tanker_and_patrol_effects_begin_on_arrival_without_double_allocation() {
+ let mut w=world();
+ let drop=Command::WaterDrop {at:Loc::Named("G3".into())};
+ w.apply(&drop,&role("fire_commander")).unwrap();assert!(w.d.drops.is_empty());let due=w.d.tasks[0].arrival_s;
+ w.advance(due).unwrap();assert_eq!(w.d.drops.len(),1);assert_eq!(w.d.tasks[0].status,sim::TaskStatus::Completed);assert_eq!(w.d.drops[0].by,"fire_commander");assert_eq!(w.d.allocations.len(),1);
+ let road=w.scn.roads[0].id.clone();w.apply(&Command::CloseRoad {road:road.clone()},&role("mayor")).unwrap();assert!(!w.d.roads[&road].closed);
+ let due=w.d.tasks[1].arrival_s;w.advance(due-w.time_s()).unwrap();assert!(w.d.roads[&road].closed);assert_eq!(w.d.tasks[1].status,sim::TaskStatus::Completed);assert_eq!(w.d.pools["mayor"]["police_patrols"].used,1);
+ let mut direct=world();direct.apply(&drop,&Actor::Master).unwrap();assert_eq!(direct.d.drops.len(),1);assert!(direct.d.tasks.is_empty());assert!(direct.d.allocations.is_empty(),"EXCON intervention cannot fabricate deployed teams");
 }

@@ -26,6 +26,7 @@ mod frame;
 mod hud;
 mod models;
 mod objects;
+mod deployments;
 mod terrain;
 
 pub use frame::Frame;
@@ -59,6 +60,7 @@ pub struct Cue {
 /// Everything the renderer draws, copied from the exercise.
 #[derive(Resource, Default)]
 pub struct Snapshot {
+    pub deployments:Vec<(sim::DeploymentTask,u32)>,
     pub generation: u64,
     pub turn: u32,
     pub phase: String,
@@ -119,7 +121,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .insert_resource(Scn(scn))
         .insert_resource(Snapshot { llm_model, ..default() })
         .init_resource::<Frame>()
-        .add_systems(Startup, (camera::setup, terrain::setup, objects::setup))
+        .add_systems(Startup, (camera::setup, terrain::setup, objects::setup, deployments::setup))
         .add_systems(
             Update,
             (
@@ -127,6 +129,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
                 frame::update.after(sync),
                 terrain::update.after(frame::update),
                 objects::update.after(frame::update),
+                deployments::update.after(frame::update),
                 camera::control.after(frame::update),
                 camera::fire_lights.after(frame::update),
                 hud::draw.after(frame::update),
@@ -145,6 +148,7 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
         return;
     }
     let w = &ex.world;
+    snap.deployments=w.d.tasks.iter().map(|task|(task.clone(),w.task_active_qty(task))).collect();
     snap.generation = ex.generation;
     snap.turn = ex.turn;
     snap.phase = format!("{:?}", ex.phase).to_lowercase();

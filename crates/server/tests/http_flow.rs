@@ -685,3 +685,34 @@ async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_
  assert_eq!(call(&app,"POST","/api/master/correct-intervention",Some(json!({"reason":"Too late"}))).await.0,StatusCode::BAD_REQUEST);
  assert_eq!(call_key(&app,"POST","/api/master/preview",Some(json!({"commands":cmds})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn only_executed_approved_deployments_move_and_player_sees_only_own_tasks() {
+ let app=app().await;
+ call(&app,"POST","/api/master/start",None).await;
+ call(&app,"POST","/api/master/command",Some(json!({"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":{"x":1000,"y":1000},"speed_mps":10}))).await;
+ let parent=reply_parent(&app,"fire_commander").await;
+ let (_,declared)=call(&app,"POST","/api/player/fire_commander/reply",Some(json!({"text":"Cut a line","reply_to":parent}))).await;let pid=declared["proposal"].as_u64().unwrap();
+ eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
+ assert_eq!(call(&app,"GET","/api/state",None).await.1["world"]["deployments"],json!([]));
+ call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"commands":[{"type":"CutFireLine","from":{"x":2000,"y":1000},"to":{"x":2500,"y":1000}}]}))).await;
+ assert_eq!(call(&app,"GET","/api/state",None).await.1["world"]["deployments"],json!([]),"approval does not dispatch");
+ call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await;
+ let (_,player)=call_key(&app,"GET","/api/player/fire_commander",None,Some("test-fire")).await;
+ assert_eq!(player["deployments"][0]["task"]["status"],"en_route");
+ assert_eq!(player["deployments"][0]["position_m"],json!([1000.0,1000.0]));
+ assert_eq!(player["resource_accounting"]["ground_crews"]["deployed"],1);
+ assert_eq!(call_key(&app,"GET","/api/player/mayor",None,Some("test-mayor")).await.1["deployments"],json!([]));
+ call(&app,"POST","/api/master/command",Some(json!({"type":"AdvanceTime","minutes":1}))).await;
+ let (_,moved)=call(&app,"GET","/api/player/fire_commander",None).await;
+ assert_eq!(moved["deployments"][0]["position_m"],json!([1600.0,1000.0]));
+ assert_eq!(moved["deployments"][0]["task"]["status"],"en_route");
+ call(&app,"POST","/api/master/command",Some(json!({"type":"AdvanceTime","minutes":1}))).await;
+ let (_,arrived)=call_key(&app,"GET","/api/evaluator?role=fire_commander",None,Some("test-eval-one")).await;
+ assert_eq!(arrived["deployments"][0]["task"]["arrived_s"],100);
+ assert_eq!(arrived["deployments"][0]["task"]["status"],"completed");
+ assert_eq!(arrived["deployments"][0]["active_qty"],1);
+ assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::BAD_REQUEST);
+ call(&app,"POST","/api/master/rollback",Some(json!({"turn":1}))).await;
+ assert_eq!(call(&app,"GET","/api/state",None).await.1["world"]["deployments"],json!([]),"rollback removes actual deployments but retains audit");
+}

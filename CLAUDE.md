@@ -9,7 +9,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | Simulator | Rust + Bevy 0.14 (+ bevy_egui 0.28), from scratch; `propagator-core` vendored from `~/dev/experiments/propagator_abm` |
 | Game | Turn-based. Master omnipotent (GUI tools, AI prompts, commands by code). Every player action needs Master approval |
 | People | Not modelled individually: buildings have occupant counts |
-| Suppression | Fire lines and water drops act directly; no simulated teams |
+| Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. Master interventions act directly. See docs/api.md. |
 | Places | Named places, zone codes of an 8×8 grid (`F4`), zone edges (`F4:N`), or coordinates |
 | LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash`, key in `.env`; must degrade gracefully |
 | Scenario | Synthetic "Valverde valley" for now |

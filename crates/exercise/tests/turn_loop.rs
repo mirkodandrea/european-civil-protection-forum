@@ -132,7 +132,7 @@ fn llm_failure_leaves_proposal_for_manual_entry() {
     ex.decide(pid, Decision { approve: true, commands: Some(cmds), note: None }).unwrap();
     let r = ex.resolve_turn(None).unwrap();
     assert!(r.applied[0].ok);
-    assert!(ex.world.stats().line_km > 0.4);
+    assert!(ex.world.stats().line_km>0.4);
 }
 
 #[test]
@@ -203,9 +203,10 @@ fn resolution_steps_second_by_second() {
 
     ex.begin_resolution(Some(5)).unwrap();
     assert_eq!(ex.phase, Phase::Resolving);
-    // Approved actions are applied at the start of the resolution.
+    // Approved resource actions dispatch at resolution start; effect waits for arrival.
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Applied);
-    assert!(ex.world.stats().line_km > 0.4);
+    assert_eq!(ex.world.stats().line_km,0.0);
+    assert_eq!(ex.world.d.tasks[0].status,sim::TaskStatus::EnRoute);
     // Nothing else may happen while the turn is being simulated.
     assert!(reply(&mut ex, "mayor", "evacuate").is_err());
     assert!(ex.begin_resolution(None).is_err());
@@ -225,6 +226,8 @@ fn resolution_steps_second_by_second() {
         }
     }
     assert_eq!(steps * STEP_S, 300);
+    assert!(ex.world.stats().line_km>0.4);
+    assert_eq!(ex.world.d.tasks[0].status,sim::TaskStatus::Completed);
     let r = ex.finish_resolution().unwrap();
     assert_eq!((r.from_s, r.to_s), (0, 300));
     assert_eq!(ex.phase, Phase::Orders);
@@ -551,6 +554,8 @@ fn total_and_phase_limits_count_deployed_and_committed_units_across_phases() {
     assert_eq!(ex.exercise_phase,ExercisePhase::EarlyAction);
     let too_small:ResourceLimits=serde_json::from_value(json!({"total":{"ground_crews":1}})).unwrap();
     assert!(ex.set_resource_limits(too_small,"Reduce cap",None).is_err());assert_eq!(ex.resource_limits,limits);
+    let arrival=ex.world.d.tasks.iter().map(|task|task.arrival_s).max().unwrap();
+    ex.direct_command(&Command::AdvanceTime {minutes:((arrival+59)/60) as u32}).unwrap();
     let allocation=ex.world.d.allocations[0].id;
     ex.direct_command(&Command::ReturnResource{allocation,qty:1}).unwrap();
     ex.set_exercise_phase(ExercisePhase::Escalation,"One crew actually returned").unwrap();
