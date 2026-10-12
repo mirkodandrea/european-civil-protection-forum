@@ -3,7 +3,7 @@
 //! ```text
 //! ttx [--scenario data/scenarios/synthetic_valley.json] [--seed 1]
 //!     [--port 8080] [--web web] [--headless]
-//!     [--realizations 32] [--cutoff 0.5]
+//!     [--realizations 32] [--cutoff 0.5] [--operational-model]
 //! ```
 //!
 //! Loads `.env` (OPENROUTER_API_KEY, optional OPENROUTER_MODEL), builds the
@@ -24,6 +24,7 @@ struct Args {
     headless: bool,
     realizations: usize,
     cutoff: f32,
+    operational_model: bool,
 }
 
 fn args() -> Result<Args> {
@@ -35,6 +36,7 @@ fn args() -> Result<Args> {
         headless: false,
         realizations: 32,
         cutoff: 0.5,
+        operational_model: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -44,11 +46,12 @@ fn args() -> Result<Args> {
             "--seed" => a.seed = val()?.parse()?,
             "--port" => a.port = val()?.parse()?,
             "--web" => a.web = PathBuf::from(val()?),
+            "--operational-model" => a.operational_model = true,
             "--headless" => a.headless = true,
             "--realizations" => a.realizations = val()?.parse()?,
             "--cutoff" => a.cutoff = val()?.parse()?,
             "-h" | "--help" => {
-                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5]");
+                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model]");
                 std::process::exit(0);
             }
             other => anyhow::bail!("unknown argument {other}"),
@@ -60,24 +63,48 @@ fn args() -> Result<Args> {
 fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn,naga=warn,bevy_render=warn".into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,wgpu=warn,naga=warn,bevy_render=warn".into()),
+        )
         .init();
     let a = args()?;
 
-    let scn = if a.scenario.exists() {
+    let mut scn = if a.scenario.exists() {
         scenario::Scenario::load(&a.scenario)?
     } else {
-        tracing::info!("{} not found: generating the synthetic scenario", a.scenario.display());
+        tracing::info!(
+            "{} not found: generating the synthetic scenario",
+            a.scenario.display()
+        );
         let s = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
         s.save(&a.scenario)?;
         s
     };
-    let world = sim::World::with_options(Arc::new(scn), a.seed, sim::FireOptions { realizations: a.realizations, cutoff: a.cutoff })?;
-    tracing::info!("fire: {}-run Monte Carlo ensemble, cutoff {}", a.realizations, a.cutoff);
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+    if a.operational_model {
+        scn.enable_operational_model();
+    }
+    let world = sim::World::with_options(
+        Arc::new(scn),
+        a.seed,
+        sim::FireOptions {
+            realizations: a.realizations,
+            cutoff: a.cutoff,
+        },
+    )?;
+    tracing::info!(
+        "fire: {}-run Monte Carlo ensemble, cutoff {}",
+        a.realizations,
+        a.cutoff
+    );
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
     let log = PathBuf::from("runs").join(format!("run-{stamp}.jsonl"));
     tracing::info!("event log: {}", log.display());
-    let ex = Arc::new(Mutex::new(exercise::Exercise::new(world).with_log_file(log)));
+    let ex = Arc::new(Mutex::new(
+        exercise::Exercise::new(world).with_log_file(log),
+    ));
 
     let llm = llm::Llm::from_env();
     if llm.is_available() {
@@ -93,15 +120,21 @@ fn main() -> Result<()> {
         return rt.block_on(server::serve(ex, llm, a.web, addr));
     }
 
-    let model = if llm.is_available() { llm.model() } else { "off".to_string() };
+    let model = if llm.is_available() {
+        llm.model()
+    } else {
+        "off".to_string()
+    };
     let server_ex = ex.clone();
     let web = a.web.clone();
-    std::thread::Builder::new().name("ttx-server".into()).spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        if let Err(e) = rt.block_on(server::serve(server_ex, llm, web, addr)) {
-            tracing::error!("server stopped: {e}");
-        }
-    })?;
+    std::thread::Builder::new()
+        .name("ttx-server".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            if let Err(e) = rt.block_on(server::serve(server_ex, llm, web, addr)) {
+                tracing::error!("server stopped: {e}");
+            }
+        })?;
     #[cfg(feature = "viz")]
     viz::run(ex, a.port, model);
     Ok(())

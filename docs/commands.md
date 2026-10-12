@@ -53,3 +53,7 @@ The Master may also issue any player action; the Master is not bound by resource
 - `{"verdict":"rejected","reason":"..."}`, for example `"moving 120 people without cars needs 3 buses, only 2 currently available"`.
 
 The check covers role authority, resources (after earlier commands in the batch and already-approved proposals), place resolution, capacities and value ranges. Verdicts are computed when a proposal is parsed, again when the Master decides, and again at resolution.
+
+## Operational engines
+
+`DeployEngine` takes `at` in the usual location syntax and consumes one `engines` unit from the approved role. It requires the operational model and a reachable drivable-road post within 60 m hose reach. The engine pumps from a finite 2,500 L tank, refills at staging, and withdraws when unsafe. It does not bypass Master approval. See [operational assumptions](operational-model.md).

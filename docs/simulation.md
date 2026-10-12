@@ -1,5 +1,9 @@
 # Simulation model (v0.1)
 
+This page describes the calibrated legacy model. The opt-in
+[operational model](operational-model.md) adds road routing, progressive
+suppression, finite water loads, traffic, intensity-based exposure and outages.
+
 Deliberately simple around a real fire core: no individual people, no suppression teams. Fire lines and drops take effect directly.
 
 ## Fire (`crates/fire`)
