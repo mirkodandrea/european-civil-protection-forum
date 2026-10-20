@@ -11,8 +11,8 @@
 //! every step bumps `generation`, so this renderer shows the fire, the
 //! buildings and the counters as they change.
 //!
-//! Vegetation meshes (pine, oak, bush) are the Blender bakes from
-//! `propagator_abm` (`assets/models/meshes.json`).
+//! Vegetation, landmarks and articulated unit bakes come from `propagator_abm`;
+//! the latest PBR transfer is recorded in `assets/models/pbr-provenance.json`.
 
 use std::sync::{Arc, Mutex};
 
@@ -20,13 +20,22 @@ use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 use exercise::Exercise;
 
+mod architecture;
+mod bench;
 mod camera;
 mod deployments;
+mod fire_shader;
+mod fire_textures;
 mod flames;
 mod frame;
 mod hud;
+mod materials;
 mod models;
 mod objects;
+mod quality;
+mod sky;
+mod sky_light;
+mod snapshot;
 mod terrain;
 
 pub use frame::Frame;
@@ -77,6 +86,7 @@ pub struct Snapshot {
     pub probability: Vec<f32>,
     pub buildings: Vec<BuildingDraw>,
     pub roads: Vec<(bool, bool)>,
+    pub road_segments: Vec<(usize, scenario::Pos, scenario::Pos, bool, bool)>,
     pub lines: Vec<(scenario::Pos, scenario::Pos, f32)>,
     pub drops: Vec<(scenario::Pos, f32)>,
     pub warned: Vec<String>,
@@ -101,13 +111,22 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .lock()
         .map(|e| e.world.scn.clone())
         .expect("exercise lock");
+    let quality = quality::Quality::from_env();
+    let capture = std::env::var("TTX_SNAPSHOT").is_ok();
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "PPRD East TTX — simulator".into(),
-                        resolution: (1600., 900.).into(),
+                        visible: !capture,
+                        focused: !capture,
+                        resolution: snapshot::resolution(),
+                        present_mode: if snapshot::bench_s().is_some() {
+                            bevy::window::PresentMode::AutoNoVsync
+                        } else {
+                            bevy::window::PresentMode::AutoVsync
+                        },
                         ..default()
                     }),
                     ..default()
@@ -117,6 +136,25 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         )
         .add_plugins(EguiPlugin)
         .add_plugins(flames::FlamesPlugin)
+        .add_plugins(materials::MaterialsPlugin)
+        .add_plugins(sky::SkyPlugin)
+        .add_plugins(snapshot::SnapshotPlugin)
+        .insert_resource(if capture {
+            bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(
+                1.0 / 60.0,
+            ))
+        } else {
+            bevy::time::TimeUpdateStrategy::Automatic
+        })
+        .insert_resource(if quality.name == "low" {
+            Msaa::Off
+        } else {
+            Msaa::Sample4
+        })
+        .insert_resource(bevy::pbr::DirectionalLightShadowMap {
+            size: if quality.name == "high" { 4096 } else { 2048 },
+        })
+        .insert_resource(quality)
         .insert_resource(ClearColor(camera::SKY))
         // Sky-tinted fill light; the sun does the modelling.
         .insert_resource(AmbientLight {
@@ -153,6 +191,9 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
                 hud::draw.after(frame::update),
                 screenshot,
                 record,
+                snapshot::hold.after(camera::control).after(sync),
+                snapshot::capture.after(snapshot::hold),
+                terrain::lod,
             ),
         )
         .run();
@@ -229,6 +270,22 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
                 .get(&r.id)
                 .map(|s| (s.closed, s.cut_by_fire))
                 .unwrap_or_default()
+        })
+        .collect();
+    snap.road_segments = w
+        .network
+        .segments()
+        .into_iter()
+        .filter_map(|segment| {
+            let i = w.scn.roads.iter().position(|r| r.id == segment.road)?;
+            let st = w.d.roads.get(&segment.road)?;
+            let cut = st
+                .fire_closed_links
+                .as_ref()
+                .map_or(st.cut_by_fire, |links| {
+                    segment.links.iter().any(|id| links.contains(id))
+                });
+            Some((i, segment.from, segment.to, st.closed, cut))
         })
         .collect();
     snap.lines =
@@ -449,6 +506,9 @@ fn screenshot(
     mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
     mut tick: Local<u32>,
 ) {
+    if std::env::var_os("TTX_SNAPSHOT").is_some() {
+        return;
+    }
     *tick += 1;
     let mut target = None;
     if keys.just_pressed(KeyCode::KeyP) {
@@ -574,6 +634,9 @@ fn record(
     mut state: Local<(u32, bool, f32)>,
     slot: Local<RecSlot>,
 ) {
+    if std::env::var_os("TTX_SNAPSHOT").is_some() {
+        return;
+    }
     let (frame_no, on, check) = &mut *state;
     let t = time.elapsed_seconds();
     if t >= *check {

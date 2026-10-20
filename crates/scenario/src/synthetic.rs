@@ -161,6 +161,7 @@ pub fn generate(seed: u64) -> Scenario {
         let id = v.len() as u32 + 1;
         v.push(Building {
             id,
+            visual_kind: None,
             kind,
             name: name.map(str::to_string),
             pos,
@@ -314,6 +315,7 @@ pub fn generate(seed: u64) -> Scenario {
     // Every building sits on a non-burnable cell: houses never burn in the CA
     // (they are threatened by exposure instead, see `sim::buildings`).
     let mut scn = Scenario {
+        tactical_policy: Default::default(),
         operations: Default::default(), communication_sites: vec![], fuel_definitions: vec![],
         id: "synthetic_valley".into(),
         name: "Valverde valley (synthetic)".into(),
@@ -321,6 +323,7 @@ pub fn generate(seed: u64) -> Scenario {
         grid,
         fuel,
         dem,
+        render_terrain: None,
         start_clock_s: 13 * 3600,
         weather: WeatherSpec { wind_dir_deg: 45.0, wind_speed_kmh: 45.0, moisture_pct: 4.0 },
         initial_ignitions: vec![IgnitionSpec { at: IGNITION, radius_m: 120.0 }],

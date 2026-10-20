@@ -1,0 +1,5 @@
+scenario,variant,strategy,seeds,runs,mean_ha_avoided,min_ha_avoided,max_ha_avoided,sample_sd_ha_avoided,mean_evacuated,rejected_orders
+wind_shift,resume_off,no_action,1 2 3,3,0.0,0.0,0.0,0.0,0,0
+wind_shift,resume_off,paired_engines,1 2 3,3,0.14666666666666664,0.0,0.28000000000000025,0.14047538337136994,0,0
+wind_shift,resume_on,no_action,1 2 3,3,0.0,0.0,0.0,0.0,0,0
+wind_shift,resume_on,paired_engines,1 2 3,3,0.14666666666666664,0.0,0.28000000000000025,0.14047538337136994,0,0

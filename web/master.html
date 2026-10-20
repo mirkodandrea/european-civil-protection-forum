@@ -37,6 +37,7 @@
       <p class="small muted">Physics and arrivals advance with this clock. Turns group declarations and approvals; phase changes preserve accumulated state. Turn resolution has a separate duration and playback speed and pauses this clock.</p>
       <div id="schedulelist" class="small"></div>
     </div>
+<div class="panel" id="forecast-review"></div>
 <div class="panel"><h2>Operational model</h2><div id="operationalState"></div></div>
 <div class="panel"><h2>Actual deployments</h2><div id="deployments"></div><p class="small">Staging bases and speeds are training assumptions. Use SetDeploymentTravel in Commands to configure future deployments. Operational scenarios use road routes, progressive crew work and finite water loads. Task effects wait for arrival.</p></div>
     <div class="panel"><h2>Training design and paths</h2><p class="small">Original design is editable during briefing only. Paths change only after explicit approval; adaptations preserve physical work.</p><textarea id="designjson">{"objectives":["Contain the fire through timely coordination"],"phases":{"early_warning":"Assess and mobilise","early_action":"Successful containment","escalation":"Fire exceeds local containment"},"decision_points":[{"id":"containment-check","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0}]},{"path":"escalating","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1}]}]}]}</textarea><button id="savedesign">Save original design</button><div id="pathoptions"></div><label>Transition rationale<input id="pathreason"></label><label><input type="checkbox" id="pathadaptation">Explicit Master adaptation when phase/conditions diverge</label><div id="designview" class="small"></div></div>
@@ -113,6 +114,7 @@
 <div id="err" class="small error director-error" role="alert" aria-live="assertive"></div>
 <script type="module">
 import { api, live, esc, MapView, statsLine, kindBadge } from './common.js?v=role-access-2';
+import { forecastPanel } from './forecast.js';
 
 const $ = id => document.getElementById(id);
 const stat = await api('/api/static');
@@ -125,6 +127,7 @@ $('debriefdownload').onclick = async e => {
   try { const data = await api('/api/debrief'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'})); const a = document.createElement('a'); a.href = url; a.download = 'debrief.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alertErr(e); }
 };
 let state = null, master = null, tool = 'none', renderedProposals='', renderedMsel='';
+const forecastReview = forecastPanel($('forecast-review'),stat,()=>state);
 
 const TOOLS = [
   ['none', 'Inspect', 'Hover to read zone and coordinates.'],
@@ -303,6 +306,7 @@ function renderProposals() {
 
 async function refresh() {
   [state, master] = await Promise.all([api('/api/state'), api('/api/master')]);
+  forecastReview.refresh();
   const w = state.world, st = w.stats;
   if(document.activeElement!==$('resourcelimits') && $('resourcelimits').value===$('resourcelimits').defaultValue){$('resourcelimits').value=JSON.stringify(state.resource_limits,null,2);$('resourcelimits').defaultValue=$('resourcelimits').value;}
   $('timecontext').textContent=`${state.exercise_phase.replaceAll('_',' ')} · real time ${new Date(Number(state.wall_ms)).toLocaleTimeString()} · simulation ${st.clock} · ${state.clock_control.running ? 'running' : 'paused'} at ${state.clock_control.ratio} simulated s / real s${state.clock_control.lag_s>1?` · catching up ${state.clock_control.lag_s} simulated s`:""}`;

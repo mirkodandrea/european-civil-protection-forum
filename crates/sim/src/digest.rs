@@ -77,7 +77,7 @@ impl World {
             .iter()
             .map(|r| {
                 let st = &self.d.roads[&r.id];
-                json!({"id": r.id, "name": r.name, "closed": st.closed, "cut_by_fire": st.cut_by_fire})
+                json!({"id": r.id, "name": r.name, "closed": st.closed, "cut_by_fire": st.cut_by_fire, "fire_closed_links": st.fire_closed_links})
             })
             .collect();
         let pools: Value = match role {
@@ -165,6 +165,7 @@ impl World {
             .collect();
         json!({
             "operations":self.scn.operations,
+            "tactical_policy":self.scn.tactical_policy,
             "traffic":self.traffic_view(),
             "communication_sites":self.d.hazard.sites,
             "pending_warnings":self.d.hazard.pending_warnings,
@@ -200,6 +201,7 @@ impl World {
             "fuel": base64::engine::general_purpose::STANDARD.encode(fuel),
             "buildings": self.scn.buildings,
             "roads": self.scn.roads,
+            "road_segments": self.network.segments(),
             "places": self.scn.places,
             "roles": self.scn.roles,
             "resource_types": self.scn.resource_types,

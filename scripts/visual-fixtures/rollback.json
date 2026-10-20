@@ -1,0 +1,19 @@
+{
+  "minutes": 3,
+  "commands": [],
+  "role_orders": [
+    {
+      "role": "fire_commander",
+      "commands": [
+        {
+          "type": "DeployEngine",
+          "at": {
+            "x": 2450,
+            "y": 2000
+          }
+        }
+      ]
+    }
+  ],
+  "rollback_to": 1
+}

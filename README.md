@@ -70,6 +70,25 @@ communication outages. Existing scenarios keep their calibrated rules unless
 this mode is enabled. See [operational model and Scenario Factory](docs/operational-model.md)
 for commands, parameters, EU12 package import and reproducible fire atlases.
 
+The updated operational model adds segment-local fire closures, terrain-aware
+travel and queue delays, and local execution policies inside an approved mission.
+The renderer defaults to a stable, readable projector profile (`TTX_QUALITY=projector`;
+also `low` and `high`). EXCON can compute private forecast drafts and publish reviewed
+products to selected roles. See [implementation and verification](docs/operational-upgrade.md),
+[graphics and invisible snapshots](docs/graphics.md), and the
+[paired operational laboratory](docs/operational-lab.md).
+
+The native big screen now uses the latest source PBR pipeline: separate terrain,
+foliage and structure materials, GPU vegetation burning, sky reflections and
+articulated engine/tanker/firefighter models. Houses have detailed roofs and
+facades, and imported open spaces retain their original visual category. The
+browser retains its 2D operational map. `sh scripts/qa/pbr.sh` captures the
+native renderer invisibly and checks for shader errors before visual review.
+The game flame ribbons, smoke/ember shaders and ground glow are integrated too.
+`python3 scripts/snapshot.py --out runs/new --spec 'name=fire,t=30,at=fire,ui=0,marks=0'`
+prepares a batch of real exercise states, saves PNGs and an HTML review report;
+`--bench 3` adds CPU/render/GPU measurements. See the graphics guide for keys.
+
 ## Playing a turn
 
 1. **Director**: *Start exercise*, then send MSEL injects (*Injects* tab) or custom ones. Each player receives them translated.
@@ -105,7 +124,7 @@ crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, 
 crates/app              the `ttx` binary
 web/                    Master, player, all-roles (play.html) and landing pages (plain HTML/JS, no build step)
 scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)
-assets/models           Blender vegetation meshes (from propagator_abm)
+assets/models           Blender vegetation, town and articulated PBR unit bakes
 data/scenarios          generated scenario JSON
 docs/                   architecture, API, commands, simulation, LLM, scenario docs; media/ demo video
 runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
@@ -114,7 +133,7 @@ runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
 ## Tests
 
 ```bash
-cargo test --release --workspace                 # 104 tests, headless, mock LLM
+cargo test --release --workspace                 # 199 tests incl. doctest; headless, mock LLM
 TTX_LIVE_LLM=1 cargo test -p llm --test live -- --nocapture   # real OpenRouter call
 ```
 
@@ -126,6 +145,9 @@ The server tests play the whole Master ↔ player ↔ LLM loop over HTTP with a 
 - [docs/api.md](docs/api.md): HTTP/WebSocket API (drive everything by code)
 - [docs/commands.md](docs/commands.md): the command catalogue and location syntax
 - [docs/simulation.md](docs/simulation.md): fire, buildings, evacuation, resources, calibration
+- [docs/lessons-from-propagator-abm.md](docs/lessons-from-propagator-abm.md): comparison with current Roccavento, proposed graphics and simulation improvements for the TTX
+- [docs/operational-upgrade.md](docs/operational-upgrade.md): implemented transfer, configuration, forecast review, verification and limits
+- [docs/ttx-skills.md](docs/ttx-skills.md): ten adapted project skills and their provenance
 - [docs/llm.md](docs/llm.md): LLM workflows, prompts, guardrails, fallback
 - [docs/scenario.md](docs/scenario.md): the synthetic scenario, roles, MSEL, how to make another
 - [docs/demo.md](docs/demo.md): the demo video described: incident, roles, timeline, players' words, outcome

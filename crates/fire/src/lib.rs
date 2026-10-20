@@ -38,6 +38,8 @@ use propagator_core::{
 use scenario::{fuel, Cell, GridSpec, Pos, Scenario, WeatherSpec};
 use serde::Serialize;
 
+pub mod forecast;
+
 /// Percentage points of fuel moisture per litre per square metre. Fine fuel
 /// load ~1 kg/m², about a third of a drop reaches it: 1 L/m² ≈ 30 points.
 /// The core's moisture of extinction is 30 points.

@@ -2,6 +2,19 @@
 
 What is not built yet. The difference between the code and the specs, item by item, is in [`gaps.md`](gaps.md). The v0.3 items have their own draft specs in [`specs/`](specs/README.md), with priorities and dependencies.
 
+## Operational update (2026-10-20)
+
+The Roccavento transfer is implemented: segment routing, consistent travel times,
+bounded local unit policies, reviewable forecasts, projector graphics, invisible
+fixtures, a paired laboratory and ten adapted skills. Current configuration and
+verified limits are in [operational-upgrade.md](operational-upgrade.md).
+
+Pilot checks still needed: scenario-specific tactical calibration, actual projector
+contrast/FPS, real participant usability, and operational review of authored rates
+and danger thresholds. Synthetic comparisons have mixed outcomes and do not establish
+universal superiority of autonomous execution. Node-based behavior authoring and
+bot participants remain separate possible extensions.
+
 ## Planned for v0.3 (pilot session and after)
 
 Priority order proposed in [`specs/README.md`](specs/README.md); the pilot's must-have is player chat with inject forwarding.

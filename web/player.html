@@ -134,7 +134,7 @@ async function refresh() {
   $('basiskind').onchange = showSelected;
   $('basis').oninput = showSelected;
   showSelected();
-  map.setView(p.map);
+  map.setView({...p.map, deployments: p.deployments || []});
   $('stats').textContent = p.map.last_observation_s === null ? 'No map report received yet.' : `${p.map.cells.length} reported cells · ${p.map.reported_locations.length} reported locations · latest observation ${p.map.last_observation_clock}`;
 }
 live(() => refresh().catch(e => { $('status').textContent = e.message; }));

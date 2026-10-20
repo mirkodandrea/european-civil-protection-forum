@@ -1,0 +1,1801 @@
+{
+  "scenarios": [
+    {
+      "name": "synthetic_valley",
+      "path": "../../data/scenarios/synthetic_valley.json"
+    }
+  ],
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "duration_s": 7200,
+  "sample_s": 60,
+  "realizations": 8,
+  "cutoff": 0.5,
+  "variants": [
+    {
+      "name": "legacy",
+      "operational": false
+    },
+    {
+      "name": "operational",
+      "operational": true
+    }
+  ],
+  "strategies": [
+    {
+      "name": "early_attack",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": {
+              "x": 3050,
+              "y": 2650
+            },
+            "to": {
+              "x": 3300,
+              "y": 2650
+            },
+            "width_m": 6
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "fire_commander",
+          "command": {
+            "type": "WaterDrop",
+            "at": {
+              "x": 3150,
+              "y": 2650
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "structure_defence",
+      "orders": [
+        {
+          "at_s": 300,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": "Pineta north edge",
+            "to": "Pineta east edge",
+            "width_m": 6
+          }
+        },
+        {
+          "at_s": 300,
+          "actor": "fire_commander",
+          "command": {
+            "type": "WaterDrop",
+            "at": "Pineta north edge"
+          }
+        }
+      ]
+    },
+    {
+      "name": "early_evacuation",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "OpenShelter",
+            "building": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "IssueWarning",
+            "zone": "F4"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "regional_cp",
+          "command": {
+            "type": "RequestReinforcement",
+            "resource": "buses",
+            "qty": 1
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#99",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#100",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#101",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#102",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#103",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#104",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#105",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#106",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#107",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#108",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#109",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#110",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#111",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#112",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#113",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#114",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#115",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#116",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#117",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#118",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#119",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#120",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#121",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#122",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#123",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#124",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#125",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#126",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#127",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#128",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#129",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#130",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#131",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#132",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#133",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#134",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#135",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#136",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#137",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#138",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#139",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#140",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#141",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1860,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Pineta Primary School",
+            "destination": "Valverde Sports Centre"
+          }
+        }
+      ]
+    },
+    {
+      "name": "late_evacuation",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "OpenShelter",
+            "building": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "regional_cp",
+          "command": {
+            "type": "RequestReinforcement",
+            "resource": "buses",
+            "qty": 1
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#99",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#100",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#101",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#102",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#103",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#104",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#105",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#106",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#107",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#108",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#109",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#110",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#111",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#112",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#113",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#114",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#115",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#116",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#117",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#118",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#119",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#120",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#121",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#122",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#123",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#124",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#125",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#126",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#127",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#128",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#129",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#130",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#131",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#132",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#133",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#134",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#135",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#136",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#137",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#138",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#139",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#140",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1800,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#141",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1860,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Pineta Primary School",
+            "destination": "Valverde Sports Centre"
+          }
+        }
+      ]
+    },
+    {
+      "name": "combined",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "OpenShelter",
+            "building": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "IssueWarning",
+            "zone": "F4"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": "Pineta north edge",
+            "to": "Pineta east edge",
+            "width_m": 6
+          }
+        },
+        {
+          "at_s": 300,
+          "actor": "fire_commander",
+          "command": {
+            "type": "WaterDrop",
+            "at": "Pineta north edge"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "regional_cp",
+          "command": {
+            "type": "RequestReinforcement",
+            "resource": "buses",
+            "qty": 1
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#99",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#100",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#101",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#102",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#103",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#104",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#105",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#106",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#107",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#108",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#109",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#110",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#111",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#112",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#113",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#114",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#115",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#116",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#117",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#118",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#119",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#120",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#121",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#122",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#123",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#124",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#125",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#126",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#127",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#128",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#129",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#130",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#131",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#132",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#133",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#134",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#135",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#136",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#137",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#138",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#139",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#140",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 60,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#141",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 1860,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Pineta Primary School",
+            "destination": "Valverde Sports Centre"
+          }
+        }
+      ]
+    },
+    {
+      "name": "inverted_priorities",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": "Valverde",
+            "to": "Valverde Sports Centre",
+            "width_m": 6
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "OpenShelter",
+            "building": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "regional_cp",
+          "command": {
+            "type": "RequestReinforcement",
+            "resource": "buses",
+            "qty": 1
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#99",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#100",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#101",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#102",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#103",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#104",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#105",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#106",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#107",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#108",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#109",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#110",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#111",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#112",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#113",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#114",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#115",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#116",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#117",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#118",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#119",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#120",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#121",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#122",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#123",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#124",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#125",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#126",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#127",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#128",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#129",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#130",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#131",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#132",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#133",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#134",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#135",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#136",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#137",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#138",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#139",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#140",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "#141",
+            "destination": "Valverde Sports Centre"
+          }
+        },
+        {
+          "at_s": 3600,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Pineta Primary School",
+            "destination": "Valverde Sports Centre"
+          }
+        }
+      ]
+    }
+  ],
+  "injects": []
+}

@@ -4,3 +4,5 @@
 /target
 node_modules/
 scripts/record/.cache/
+
+__pycache__/

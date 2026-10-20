@@ -106,6 +106,81 @@ fn main() -> Result<()> {
         exercise::Exercise::new(world).with_log_file(log),
     ));
 
+    // Reproducible visual fixtures go through the same Director authority and
+    // exercise turn resolution as the console. No renderer-only invented state.
+    // TTX_SNAPSHOT_SPEC points to {"commands":[...],"minutes":30}.
+    if std::env::var("TTX_SNAPSHOT").is_ok() {
+        if let Ok(path) = std::env::var("TTX_SNAPSHOT_SPEC") {
+            let spec: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+            let commands: Vec<sim::Command> = serde_json::from_value(
+                spec.get("commands")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            )?;
+            let mut exercise = ex.lock().expect("exercise lock");
+            exercise.start()?;
+            for command in commands {
+                exercise.direct_command(&command)?;
+            }
+            for order in spec["role_orders"].as_array().into_iter().flatten() {
+                let role = order["role"]
+                    .as_str()
+                    .context("role_orders requires role")?;
+                exercise.set_language(role, "en")?;
+                let message = exercise.send_inject(
+                    None,
+                    "Visual fixture",
+                    "EXCON",
+                    &[role.into()],
+                    "Reproducible visual inspection order",
+                    &std::collections::BTreeMap::new(),
+                )?[0];
+                let proposal = exercise.player_reply(
+                    role,
+                    "Execute fixture order",
+                    message,
+                    exercise::DecisionEvidence::judgment("Controlled visual regression fixture"),
+                )?;
+                exercise.attach_parse(
+                    proposal,
+                    exercise::ParsedInput {
+                        resource_limit_draft: None,
+                        communication_drafts: vec![],
+                        language: "en".into(),
+                        translation_en: "Execute fixture order".into(),
+                        actions: order["commands"]
+                            .as_array()
+                            .context("role_orders requires commands array")?
+                            .clone(),
+                        clarification: None,
+                        summary: "Visual fixture deployment".into(),
+                        inject_drafts: vec![],
+                    },
+                )?;
+                exercise.decide(
+                    proposal,
+                    exercise::Decision {
+                        approve: true,
+                        ..Default::default()
+                    },
+                )?;
+                exercise.execute_approved(proposal)?;
+            }
+            if let Some(minutes) = spec["minutes"].as_u64() {
+                exercise.resolve_turn(Some(u32::try_from(minutes)?))?;
+            }
+            if let Some(turn) = spec["rollback_to"].as_u64() {
+                exercise.rollback(u32::try_from(turn)?)?;
+            }
+        }
+    }
+
+    #[cfg(feature = "viz")]
+    if std::env::var("TTX_SNAPSHOT").is_ok() {
+        viz::run(ex, a.port, "offline visual fixture".into());
+        return Ok(());
+    }
+
     let llm = llm::Llm::from_env();
     if llm.is_available() {
         tracing::info!("LLM: OpenRouter, model {}", llm.model());

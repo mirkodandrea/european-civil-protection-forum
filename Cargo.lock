@@ -185,6 +185,7 @@ dependencies = [
  "exercise",
  "llm",
  "scenario",
+ "serde_json",
  "server",
  "sim",
  "tokio",
@@ -1965,6 +1966,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "fire",
  "scenario",
  "serde",
  "serde_json",
@@ -4401,6 +4403,7 @@ dependencies = [
  "anyhow",
  "axum",
  "exercise",
+ "fire",
  "futures",
  "http-body-util",
  "llm",
@@ -5173,6 +5176,7 @@ dependencies = [
  "scenario",
  "serde_json",
  "sim",
+ "wgpu",
 ]
 
 [[package]]

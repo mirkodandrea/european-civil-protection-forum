@@ -13,7 +13,7 @@
 //! is eased, so cuts are glides; any manual input hands control back to the
 //! user for 15 s.
 //!
-//! **Lighting**: a warm, low sun with cascaded shadows, sky-tinted ambient
+//! **Lighting**: a clock-driven sun with cascaded shadows, image-based sky
 //! light, distance fog in the sky colour, HDR with bloom (the additive flames
 //! glow), and a pool of flickering point lights placed on the hottest parts
 //! of the fire so it lights the terrain around it.
@@ -93,45 +93,116 @@ fn smooth_damp3(current: Vec3, target: Vec3, vel: &mut Vec3, smooth_time: f32, d
 pub struct FireLight(usize);
 
 fn home(scn: &scenario::Scenario) -> Orbit {
-    let auto = ["TTX_ORBIT", "TTX_CINEMATIC"].iter().any(|k| std::env::var(k).is_ok_and(|v| v == "1"));
+    let auto = std::env::var("TTX_SNAPSHOT").is_err()
+        && ["TTX_ORBIT", "TTX_CINEMATIC"]
+            .iter()
+            .any(|k| std::env::var(k).is_ok_and(|v| v == "1"));
     // TTX_CAM="x,y,distance,yaw,pitch" (world metres, radians) sets the start view.
-    let v: Vec<f32> = std::env::var("TTX_CAM").ok().map(|s| s.split(',').filter_map(|t| t.trim().parse().ok()).collect()).unwrap_or_default();
-    if v.len() == 5 {
-        return Orbit { focus: to_bevy(scn, [v[0], v[1]], 0.0), dist: v[2], yaw: v[3], pitch: v[4], auto };
+    let v: Vec<f32> = std::env::var("TTX_CAM")
+        .ok()
+        .map(|s| s.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    if v.len() == 5 && v.iter().all(|v| v.is_finite()) {
+        return Orbit {
+            focus: to_bevy(scn, [v[0], v[1]], 0.0),
+            dist: v[2].clamp(150.0, 15000.0),
+            yaw: v[3],
+            pitch: v[4].clamp(0.12, 1.45),
+            auto,
+        };
     }
-    Orbit { focus: to_bevy(scn, [2600.0, 2250.0], 0.0), yaw: 0.6, pitch: 0.62, dist: 2600.0, auto }
+    Orbit {
+        focus: to_bevy(scn, [2600.0, 2250.0], 0.0),
+        yaw: 0.6,
+        pitch: 0.62,
+        dist: 2600.0,
+        auto,
+    }
 }
 
-pub fn setup(mut commands: Commands, scn: Res<Scn>) {
+pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality::Quality>) {
     let o = home(&scn.0);
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera3dBundle {
-            camera: Camera { hdr: true, ..default() },
-            tonemapping: Tonemapping::AcesFitted,
+            camera: Camera {
+                hdr: true,
+                ..default()
+            },
+            tonemapping: Tonemapping::TonyMcMapface,
+            color_grading: {
+                use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+                let mut g = ColorGrading::with_identical_sections(
+                    ColorGradingGlobal {
+                        post_saturation: 1.05,
+                        ..default()
+                    },
+                    ColorGradingSection::default(),
+                );
+                g.midtones.contrast = 1.1;
+                g
+            },
+            projection: PerspectiveProjection {
+                far: 40000.0,
+                ..default()
+            }
+            .into(),
             transform: place(&o),
             ..default()
         },
-        BloomSettings { intensity: 0.22, ..BloomSettings::NATURAL },
+        BloomSettings {
+            intensity: quality.bloom,
+            ..BloomSettings::NATURAL
+        },
         FogSettings {
             color: SKY,
             // Warm light scattering towards the sun.
             directional_light_color: Color::srgba(1.0, 0.86, 0.66, 0.35),
             directional_light_exponent: 24.0,
-            falloff: FogFalloff::from_visibility_colors(22000.0, Color::srgb(0.62, 0.68, 0.78), Color::srgb(0.95, 0.80, 0.62)),
+            falloff: FogFalloff::from_visibility_colors(
+                22000.0,
+                Color::srgb(0.62, 0.68, 0.78),
+                Color::srgb(0.95, 0.80, 0.62),
+            ),
         },
     ));
-    // A low, warm late-afternoon sun from the west-south-west (~20° up) with
-    // cascaded shadows: long shading on the ridges gives the valley relief.
-    commands.spawn(DirectionalLightBundle {
-        directional_light: DirectionalLight { illuminance: 12_000.0, color: Color::srgb(1.0, 0.9, 0.76), shadows_enabled: true, ..default() },
-        transform: Transform::from_xyz(-1.4, 0.55, 0.5).looking_at(Vec3::ZERO, Vec3::Y),
-        cascade_shadow_config: CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: 50.0, maximum_distance: 6000.0, first_cascade_far_bound: 900.0, overlap_proportion: 0.2 }.into(),
-        ..default()
-    });
-    for k in 0..FIRE_LIGHTS {
+    if quality.name == "low" {
+        camera.insert(bevy::core_pipeline::smaa::SmaaSettings {
+            preset: bevy::core_pipeline::smaa::SmaaPreset::Medium,
+        });
+    }
+    // The procedural sky updates sunlight from the scenario clock.
+    commands.spawn((
+        DirectionalLightBundle {
+            directional_light: DirectionalLight {
+                illuminance: 12_000.0,
+                color: Color::srgb(1.0, 0.9, 0.76),
+                shadows_enabled: quality.shadows,
+                ..default()
+            },
+            transform: Transform::from_xyz(-1.4, 0.55, 0.5).looking_at(Vec3::ZERO, Vec3::Y),
+            cascade_shadow_config: CascadeShadowConfigBuilder {
+                num_cascades: 4,
+                minimum_distance: 0.1,
+                maximum_distance: 6000.0,
+                first_cascade_far_bound: 300.0,
+                overlap_proportion: 0.2,
+            }
+            .into(),
+            ..default()
+        },
+        crate::sky::Sun,
+    ));
+    for k in 0..quality.fire_lights.min(FIRE_LIGHTS) {
         commands.spawn((
             PointLightBundle {
-                point_light: PointLight { color: Color::srgb(1.0, 0.5, 0.16), intensity: 0.0, range: 1000.0, radius: 30.0, shadows_enabled: false, ..default() },
+                point_light: PointLight {
+                    color: Color::srgb(1.0, 0.5, 0.16),
+                    intensity: 0.0,
+                    range: 1000.0,
+                    radius: 30.0,
+                    shadows_enabled: false,
+                    ..default()
+                },
                 transform: Transform::from_xyz(0.0, -1000.0, 0.0),
                 ..default()
             },
@@ -142,8 +213,12 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>) {
     commands.insert_resource(Director::default());
 }
 
-fn place(o: &Orbit) -> Transform {
-    let dir = Vec3::new(o.yaw.sin() * o.pitch.cos(), o.pitch.sin(), o.yaw.cos() * o.pitch.cos());
+pub(super) fn place(o: &Orbit) -> Transform {
+    let dir = Vec3::new(
+        o.yaw.sin() * o.pitch.cos(),
+        o.pitch.sin(),
+        o.yaw.cos() * o.pitch.cos(),
+    );
     Transform::from_translation(o.focus + dir * o.dist).looking_at(o.focus, Vec3::Y)
 }
 
@@ -152,19 +227,40 @@ fn place(o: &Orbit) -> Transform {
 /// flickering front alone would make the camera twitch.
 pub fn fire_extent(scn: &scenario::Scenario, cells: &[u8]) -> Option<(scenario::Pos, f32)> {
     let cols = scn.grid.cols;
-    let pts: Vec<scenario::Pos> = cells.iter().enumerate().filter(|(_, c)| **c == 1 || **c == 2).map(|(i, _)| scn.cell_centre(scenario::Cell { row: i / cols, col: i % cols })).collect();
+    let pts: Vec<scenario::Pos> = cells
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c == 1 || **c == 2)
+        .map(|(i, _)| {
+            scn.cell_centre(scenario::Cell {
+                row: i / cols,
+                col: i % cols,
+            })
+        })
+        .collect();
     if pts.is_empty() {
         return None;
     }
     let n = pts.len() as f32;
-    let c = [pts.iter().map(|p| p[0]).sum::<f32>() / n, pts.iter().map(|p| p[1]).sum::<f32>() / n];
-    let r = pts.iter().map(|p| ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt()).fold(0.0, f32::max);
+    let c = [
+        pts.iter().map(|p| p[0]).sum::<f32>() / n,
+        pts.iter().map(|p| p[1]).sum::<f32>() / n,
+    ];
+    let r = pts
+        .iter()
+        .map(|p| ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt())
+        .fold(0.0, f32::max);
     Some((c, r.max(100.0)))
 }
 
 /// Framing for a cue: a push-in on its location, sized to what it covers.
 fn shot_for(scn: &scenario::Scenario, cue: &Cue, pitch: f32) -> Shot {
-    Shot { focus: to_bevy(scn, cue.pos, 0.0), dist: (cue.radius_m * 3.2).clamp(650.0, 2600.0), pitch: pitch.clamp(0.42, 0.7), drift: 0.035 }
+    Shot {
+        focus: to_bevy(scn, cue.pos, 0.0),
+        dist: (cue.radius_m * 3.2).clamp(650.0, 2600.0),
+        pitch: pitch.clamp(0.42, 0.7),
+        drift: 0.035,
+    }
 }
 
 fn ease(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
@@ -199,7 +295,9 @@ pub fn control(
             o.pitch = (o.pitch + delta.y * 0.004).clamp(0.12, 1.45);
             manual = true;
         }
-        if (buttons.pressed(MouseButton::Right) || buttons.pressed(MouseButton::Middle)) && delta != Vec2::ZERO {
+        if (buttons.pressed(MouseButton::Right) || buttons.pressed(MouseButton::Middle))
+            && delta != Vec2::ZERO
+        {
             let right = Vec3::new(o.yaw.cos(), 0.0, -o.yaw.sin());
             let fwd = Vec3::new(-o.yaw.sin(), 0.0, -o.yaw.cos());
             let k = o.dist * 0.0015;
@@ -214,14 +312,19 @@ pub fn control(
     if manual {
         dir.manual_until = now + 15.0;
     }
-    if keys.just_pressed(KeyCode::KeyA) {
+    if !egui.ctx_mut().wants_keyboard_input() && keys.just_pressed(KeyCode::KeyA) {
         o.auto = !o.auto;
     }
-    if keys.just_pressed(KeyCode::KeyR) {
-        *o = Orbit { auto: o.auto, ..home(s) };
+    if !egui.ctx_mut().wants_keyboard_input()
+        && (keys.just_pressed(KeyCode::KeyR) || keys.just_pressed(KeyCode::Home))
+    {
+        *o = Orbit {
+            auto: o.auto,
+            ..home(s)
+        };
     }
     let fire = fire_extent(s, &frame.cells);
-    if keys.just_pressed(KeyCode::KeyF) {
+    if !egui.ctx_mut().wants_keyboard_input() && keys.just_pressed(KeyCode::KeyF) {
         if let Some((c, r)) = fire {
             o.focus = to_bevy(s, c, 0.0);
             o.dist = (r * 3.0).clamp(600.0, 3000.0);
@@ -246,8 +349,16 @@ pub fn control(
         // Fire tracking target, smoothed so a flickering front does not shake the camera.
         if let Some((c, r)) = fire {
             let target = to_bevy(s, c, 0.0);
-            dir.fire_focus = Some(dir.fire_focus.map_or(target, |f| f.lerp(target, (dt / 4.0).min(1.0))));
-            dir.fire_dist = ease(dir.fire_dist.max(1100.0), (r * 3.0).clamp(1100.0, 3800.0), dt, 5.0);
+            dir.fire_focus = Some(
+                dir.fire_focus
+                    .map_or(target, |f| f.lerp(target, (dt / 4.0).min(1.0))),
+            );
+            dir.fire_dist = ease(
+                dir.fire_dist.max(1100.0),
+                (r * 3.0).clamp(1100.0, 3800.0),
+                dt,
+                5.0,
+            );
         }
         // Pick the shot.
         let shot_done = dir.current.is_none_or(|(_, t0, d)| now - t0 > d);
@@ -255,7 +366,12 @@ pub fn control(
             // Between turns the fire is the story.
             dir.current = None;
             dir.queue.clear();
-            Shot { focus: dir.fire_focus.unwrap_or(o.focus), dist: dir.fire_dist.max(1100.0), pitch: 0.72, drift: 0.06 }
+            Shot {
+                focus: dir.fire_focus.unwrap_or(o.focus),
+                dist: dir.fire_dist.max(1100.0),
+                pitch: 0.72,
+                drift: 0.06,
+            }
         } else {
             if shot_done {
                 dir.current = None;
@@ -274,7 +390,11 @@ pub fn control(
                 }
                 // Establishing: wide, around the fire (or the valley), slow orbit.
                 None => Shot {
-                    focus: dir.fire_focus.map_or(to_bevy(s, [2600.0, 2250.0], 0.0), |f| f.lerp(to_bevy(s, [2400.0, 2000.0], 0.0), 0.35)),
+                    focus: dir
+                        .fire_focus
+                        .map_or(to_bevy(s, [2600.0, 2250.0], 0.0), |f| {
+                            f.lerp(to_bevy(s, [2400.0, 2000.0], 0.0), 0.35)
+                        }),
                     dist: 2500.0,
                     pitch: 0.6,
                     drift: 0.03,
@@ -285,7 +405,13 @@ pub fn control(
         let (mut vf, mut vd, mut vp) = (dir.v_focus, dir.v_dist, dir.v_pitch);
         o.focus = smooth_damp3(o.focus, shot.focus, &mut vf, smooth, dt);
         o.dist = smooth_damp(o.dist, shot.dist, &mut vd, smooth * 1.3, dt);
-        o.pitch = smooth_damp(o.pitch, (shot.pitch + dir.pitch_boost).min(1.3), &mut vp, smooth * 1.6, dt);
+        o.pitch = smooth_damp(
+            o.pitch,
+            (shot.pitch + dir.pitch_boost).min(1.3),
+            &mut vp,
+            smooth * 1.6,
+            dt,
+        );
         (dir.v_focus, dir.v_dist, dir.v_pitch) = (vf, vd, vp);
         o.yaw += shot.drift * dt;
     }
@@ -296,7 +422,8 @@ pub fn control(
         let clearance = (0..=8)
             .map(|k| {
                 let p = t.translation.lerp(o.focus, k as f32 / 10.0);
-                let ground = crate::frame::height_at(s, crate::frame::to_world(s, p)) * crate::frame::EXAGGERATION;
+                let ground = crate::frame::height_at(s, crate::frame::to_world(s, p))
+                    * crate::frame::EXAGGERATION;
                 p.y - ground
             })
             .fold(f32::MAX, f32::min);
@@ -307,13 +434,29 @@ pub fn control(
             dir.pitch_boost = (dir.pitch_boost - dt * 0.04).max(0.0);
         }
     }
+    // Keep manual and scripted views above terrain too.
+    let candidate = place(&o).translation;
+    let ground = crate::frame::height_at(s, crate::frame::to_world(s, candidate))
+        * crate::frame::EXAGGERATION;
+    if candidate.y < ground + 30.0 {
+        o.pitch = ((ground + 30.0 - o.focus.y) / o.dist)
+            .clamp(0.0, 0.99)
+            .asin()
+            .max(o.pitch);
+    }
     if let Ok(mut t) = cam.get_single_mut() {
         *t = place(&o);
     }
 }
 
 /// Put the fire lights on the hottest 200 m bins of the burning area.
-pub fn fire_lights(scn: Res<Scn>, snap: Res<Snapshot>, frame: Res<Frame>, time: Res<Time>, mut lights: Query<(&FireLight, &mut PointLight, &mut Transform)>) {
+pub fn fire_lights(
+    scn: Res<Scn>,
+    snap: Res<Snapshot>,
+    frame: Res<Frame>,
+    time: Res<Time>,
+    mut lights: Query<(&FireLight, &mut PointLight, &mut Transform)>,
+) {
     let s = &scn.0;
     if frame.cells.len() != s.grid.len() || snap.intensity.len() != s.grid.len() {
         return;
@@ -327,7 +470,10 @@ pub fn fire_lights(scn: Res<Scn>, snap: Res<Snapshot>, frame: Res<Frame>, time: 
         if *c != 1 {
             continue;
         }
-        let p = s.cell_centre(scenario::Cell { row: i / cols, col: i % cols });
+        let p = s.cell_centre(scenario::Cell {
+            row: i / cols,
+            col: i % cols,
+        });
         let b = ((p[1] / bin) as usize).min(nb - 1) * nb + ((p[0] / bin) as usize).min(nb - 1);
         let w = snap.intensity[i].max(200.0);
         heat[b] += w;
@@ -342,7 +488,10 @@ pub fn fire_lights(scn: Res<Scn>, snap: Res<Snapshot>, frame: Res<Frame>, time: 
             Some(&b) => {
                 let p = [sum[b][0] / heat[b], sum[b][1] / heat[b]];
                 tf.translation = to_bevy(s, p, 25.0);
-                let flicker = 0.8 + 0.2 * (t * 7.0 + light.0 as f32 * 1.7).sin() * (t * 3.1 + light.0 as f32).cos();
+                let flicker = 0.8
+                    + 0.2
+                        * (t * 7.0 + light.0 as f32 * 1.7).sin()
+                        * (t * 3.1 + light.0 as f32).cos();
                 // Bright enough to read against daylight on the ground around the fire.
                 pl.intensity = (heat[b] * 9000.0).clamp(2.0e7, 6.0e8) * flicker;
             }

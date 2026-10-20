@@ -466,3 +466,46 @@ terrain elevation; air-tanker symbols use a display altitude of 120 m above terr
 Symbol size/altitude are visual conventions, not physics. Cancelled/fully returned
 units disappear, and rollback removes/restores markers with the restored state.
 The renderer never advances a task or infers deployment from pending proposals.
+
+## Reviewed forecast products
+
+Both endpoints require the Master key. Players and evaluators cannot compute or
+publish a forecast. `POST /api/master/forecast` accepts this body (all fields
+optional):
+
+```json
+{"seed":1,"members":4,"horizons_s":[3600,10800],"direction_spread_deg":10,"speed_spread_fraction":0.1,"bulletin":[]}
+```
+
+`members` is 1–16 weather groups, each retaining the live core's realization
+count. Horizons must increase, with 1–4 values between 1 and 21600 seconds.
+Direction spread is 0–90 degrees and speed spread 0–0.9. A bulletin is at most
+eight increasing entries `{"after_s":3600,"weather":{"wind_dir_deg":45,
+"wind_speed_kmh":35,"moisture_pct":8}}`; it is explicitly provided by EXCON,
+not inferred from future injects. Weather values must be finite, speed 0–200
+km/h and moisture 0–100%. Excessive grid×realization×group workloads are refused.
+
+The result is `{id,generation,forecast,review_required:true}`. `forecast` contains
+`issued_s`, grid, full input spec, realization count, assumptions and
+`horizons:[{after_s,probability}]` in north-first row-major order. Existing
+interventions persist, future squad work is excluded. Computing does not mutate
+the live world. One worker runs at a time (429 otherwise); a changed exercise
+generation invalidates its result (409). Pause a running clock first.
+
+After reviewing the draft, call `POST /api/master/forecast/publish`:
+
+```json
+{"id":"DRAFT_ID","generation":42,"roles":["mayor"],"source":"Reviewed meteorological bulletin and projection assumptions"}
+```
+
+A nonempty source up to 2000 characters and known recipients are required.
+Publication rechecks the generation and records messages, map observations and
+a `forecast_published` event. Only chosen roles receive the product in
+`map.forecast_products`; no authoritative raster or unreviewed draft is added
+to other roles' maps. The latest reviewed product is shown, with issue time and
+future horizon separate from observations of current fire. Rollback clears
+products from the previous timeline while retaining their audit history.
+
+Drafts are in-memory and bounded to eight per generation. Published products
+remain in delivered knowledge and debrief evidence; this does not add general
+session restart/persistence. Unknown JSON fields and malformed bounds are refused.

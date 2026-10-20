@@ -63,6 +63,10 @@ pub struct Operations {
     pub intensity_exposure: bool,
     pub communications: bool,
     pub spotting: bool,
+    pub segment_fire_closures: bool,
+    pub terrain_travel: bool,
+    pub emergency_congestion: bool,
+    pub local_autonomy: bool,
 }
 impl Operations {
     pub fn enhanced() -> Self {
@@ -73,6 +77,43 @@ impl Operations {
             intensity_exposure: true,
             communications: true,
             spotting: false,
+            segment_fire_closures: true,
+            terrain_travel: true,
+            emergency_congestion: true,
+            local_autonomy: true,
+        }
+    }
+}
+
+/// Authored training assumptions for execution within an approved engine mission.
+/// Distances are metres, rates use simulated seconds; these are not safety guidance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TacticalPolicy {
+    pub version: String,
+    pub sector_radius_m: f32,
+    pub hose_reach_m: f32,
+    pub wet_limit_pts: f32,
+    pub reassess_s: i64,
+    pub parking_danger: f32,
+    pub work_danger: f32,
+    pub share_work: bool,
+    pub resume_after_withdrawal: bool,
+    pub regroup_s: i64,
+}
+impl Default for TacticalPolicy {
+    fn default() -> Self {
+        Self {
+            version: "ttx-local-v1".into(),
+            sector_radius_m: 300.0,
+            hose_reach_m: 60.0,
+            wet_limit_pts: 30.0,
+            reassess_s: 60,
+            parking_danger: 0.10,
+            work_danger: 0.35,
+            share_work: true,
+            resume_after_withdrawal: true,
+            regroup_s: 60,
         }
     }
 }
@@ -169,6 +210,10 @@ impl BuildingKind {
 pub struct Building {
     pub id: u32,
     pub kind: BuildingKind,
+    /// Source artwork category, retained by the Factory importer. Presentation
+    /// only: does not grant capacity, affect exposure, or change operational kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_kind: Option<String>,
     /// Named facilities carry a name and are addressable from the gazetteer.
     #[serde(default)]
     pub name: Option<String>,
@@ -351,8 +396,21 @@ pub struct InjectTemplate {
     pub objective: String,
 }
 
+/// Optional supplied visual heightfield, sampled at grid nodes (row 0 north).
+/// Rendering only: routing, slope, fire and exposure continue using `dem`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderTerrain {
+    pub rows: usize,
+    pub cols: usize,
+    pub posting_m: f32,
+    pub world_size_m: [f32; 2],
+    pub elev: Vec<f32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
+    #[serde(default)]
+    pub tactical_policy: TacticalPolicy,
     #[serde(default)]
     pub operations: Operations,
     #[serde(default)]
@@ -367,6 +425,8 @@ pub struct Scenario {
     pub fuel: Vec<i32>,
     /// Row-major elevation, metres.
     pub dem: Vec<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_terrain: Option<RenderTerrain>,
     /// Exercise clock at t = 0, seconds since Day 1 00:00.
     pub start_clock_s: i64,
     pub weather: WeatherSpec,
@@ -425,6 +485,24 @@ impl Scenario {
 
     /// Internal consistency: raster sizes, unique ids, references.
     pub fn check(&self) -> Result<()> {
+        let p = &self.tactical_policy;
+        anyhow::ensure!(
+            !p.version.trim().is_empty()
+                && p.version.len() <= 100
+                && p.sector_radius_m.is_finite()
+                && (0.0..=2000.0).contains(&p.sector_radius_m)
+                && p.hose_reach_m.is_finite()
+                && (1.0..=300.0).contains(&p.hose_reach_m)
+                && p.wet_limit_pts.is_finite()
+                && (1.0..=100.0).contains(&p.wet_limit_pts)
+                && (1..=3600).contains(&p.reassess_s)
+                && (0..=3600).contains(&p.regroup_s)
+                && p.parking_danger.is_finite()
+                && p.work_danger.is_finite()
+                && (0.0..=1.0).contains(&p.parking_danger)
+                && (p.parking_danger..=1.0).contains(&p.work_danger),
+            "invalid tactical policy"
+        );
         anyhow::ensure!(
             self.grid.rows > 0
                 && self.grid.cols > 0
@@ -432,6 +510,17 @@ impl Scenario {
                 && self.grid.cellsize > 0.0,
             "invalid grid"
         );
+        if let Some(t) = &self.render_terrain {
+            anyhow::ensure!(t.rows >= 2 && t.cols >= 2 && t.rows.checked_mul(t.cols).is_some_and(|n| n <= 4_194_304 && n == t.elev.len())
+                && t.posting_m.is_finite() && t.posting_m > 0.0 && t.posting_m <= self.grid.cellsize
+                && t.elev.iter().all(|h|h.is_finite())
+                && t.world_size_m.iter().all(|v|v.is_finite() && *v>0.0)
+                && (t.world_size_m[0]-self.grid.width_m()).abs()<0.1
+                && (t.world_size_m[1]-self.grid.height_m()).abs()<0.1
+                && ((t.cols-1) as f32*t.posting_m-t.world_size_m[0]).abs()<0.1
+                && ((t.rows-1) as f32*t.posting_m-t.world_size_m[1]).abs()<0.1,
+                "visual terrain must be finite, <=4M nodes, no coarser than physics and cover exactly the scenario extent");
+        }
         let n = self.grid.len();
         anyhow::ensure!(self.dem.iter().all(|x| x.is_finite()), "non-finite terrain");
         for site in &self.communication_sites {
@@ -630,7 +719,43 @@ pub fn format_clock(clock_s: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn visual_category_is_optional_and_does_not_replace_operational_kind() {
+        let legacy = serde_json::json!({"id":1,"kind":"sports_centre","name":"Assembly",
+            "pos":[20.,20.],"size":[30.,30.],"occupants":0,"sector":"a","shelter_capacity":100});
+        let b: super::Building = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(b.visual_kind.is_none());
+        assert_eq!(serde_json::to_value(&b).unwrap(), legacy);
+        let mut authored = legacy;
+        authored["visual_kind"] = serde_json::json!("assembly");
+        let b: super::Building = serde_json::from_value(authored.clone()).unwrap();
+        assert_eq!(b.kind, super::BuildingKind::SportsCentre);
+        assert_eq!(b.shelter_capacity, 100);
+        assert!(!b.kind.needs_transport());
+        assert_eq!(serde_json::to_value(&b).unwrap(), authored);
+    }
+
     use super::*;
+
+    #[test]
+    fn supplied_visual_terrain_is_separate_and_validated() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        let original = s.dem.clone();
+        s.render_terrain = Some(RenderTerrain {
+            rows: 401,
+            cols: 401,
+            posting_m: 10.0,
+            world_size_m: [4000.0, 4000.0],
+            elev: vec![123.0; 401 * 401],
+        });
+        s.check().unwrap();
+        assert_eq!(s.dem, original);
+        s.render_terrain.as_mut().unwrap().world_size_m[0] = 3990.0;
+        assert!(s.check().is_err());
+        s.render_terrain.as_mut().unwrap().world_size_m[0] = 4000.0;
+        s.render_terrain.as_mut().unwrap().elev[10] = f32::NAN;
+        assert!(s.check().is_err());
+    }
 
     #[test]
     fn clock_format() {

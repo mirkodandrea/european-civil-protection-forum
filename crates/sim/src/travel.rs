@@ -17,6 +17,7 @@ pub enum TaskStatus {
     Working,
     Refilling,
     Withdrawing,
+    Suspended,
     Completed,
     Failed,
     Cancelled,
@@ -46,15 +47,21 @@ pub struct DeploymentTask {
     pub used_water_l: f32,
     pub last_work_s: i64,
     pub refill_done_s: Option<i64>,
+    /// Approved target, independent of a local work post or refill location.
+    pub mission_centre: Pos,
+    pub policy_version: String,
+    pub policy_reason: String,
+    pub last_policy_s: i64,
+    pub regroup_until_s: Option<i64>,
 }
 impl DeploymentTask {
     pub fn position(&self, t: i64) -> Pos {
         if self.status == TaskStatus::Working {
             if let Some(to) = self.work_to {
                 return interpolate(
-                    self.target,
+                    self.mission_centre,
                     to,
-                    (self.work_m / distance(self.target, to).max(0.01)).clamp(0.0, 1.0),
+                    (self.work_m / distance(self.mission_centre, to).max(0.01)).clamp(0.0, 1.0),
                 );
             }
         }
@@ -74,6 +81,226 @@ impl DeploymentTask {
     }
 }
 impl World {
+    pub fn engine_hose_reach_m(&self) -> f32 {
+        if self.scn.operations.local_autonomy {
+            self.scn.tactical_policy.hose_reach_m
+        } else {
+            60.0
+        }
+    }
+    /// Bake current queues into this trip once: the ETA and interpolation then
+    /// use exactly the same leg speeds, independent of render/update cadence.
+    fn operational_route(
+        &self,
+        from: Pos,
+        to: Pos,
+        states: &std::collections::BTreeMap<String, crate::RoadState>,
+        civilian: bool,
+        walk: bool,
+        speed_mps: f32,
+    ) -> Option<Route> {
+        let mut route = self.network.route(from, to, states, civilian, walk)?;
+        if self.scn.operations.emergency_congestion && !civilian && !walk {
+            self.d.traffic.delay_route(&mut route, speed_mps);
+        }
+        Some(route)
+    }
+
+    /// Deterministic local execution only. Never invents orders or allocations.
+    fn step_local_policies(&mut self) {
+        if !self.scn.operations.local_autonomy
+            || !self.scn.operations.progressive_suppression
+            || !self.scn.operations.road_routing
+        {
+            return;
+        }
+        let t = self.time_s();
+        let p = self.scn.tactical_policy.clone();
+        for i in 0..self.d.tasks.len() {
+            let task = self.d.tasks[i].clone();
+            if matches!(task.command, Command::CutFireLine { .. })
+                && task.status == TaskStatus::Suspended
+                && self.task_active_qty(&task) > 0
+                && t - task.last_policy_s >= p.reassess_s
+            {
+                self.d.tasks[i].last_policy_s = t;
+                let Some(end) = task.work_to else { continue };
+                let length = distance(task.mission_centre, end);
+                if task.work_m >= length {
+                    continue;
+                }
+                let at = interpolate(task.mission_centre, end, task.work_m / length.max(0.01));
+                let current = task.position(t);
+                if self.d.hazard.at(at).danger >= p.work_danger
+                    || self.d.hazard.at(current).danger >= p.work_danger
+                {
+                    continue;
+                }
+                if let Some(route) =
+                    self.operational_route(current, at, &self.d.roads, false, true, task.speed_mps)
+                {
+                    let reason =
+                        "Safe route to unfinished approved line; resuming at earned progress";
+                    let q = &mut self.d.tasks[i];
+                    q.origin = current;
+                    q.target = at;
+                    q.departed_s = t;
+                    q.arrival_s = t + route.seconds(q.speed_mps).ceil().max(1.0) as i64;
+                    q.route = Some(route);
+                    q.route_checked_s = t;
+                    q.status = TaskStatus::EnRoute;
+                    q.refill_done_s = None;
+                    q.regroup_until_s = None;
+                    q.policy_version = p.version.clone();
+                    q.policy_reason = reason.into();
+                    q.detail = reason.into();
+                    self.event(
+                        "deployment_policy",
+                        format!("Task #{} [{}]: {reason}", task.id, p.version),
+                        self.scn.zone_of(at),
+                    );
+                }
+                continue;
+            }
+            if !matches!(task.command, Command::DeployEngine { .. })
+                || !matches!(task.status, TaskStatus::Working | TaskStatus::Suspended)
+                || self.task_active_qty(&task) == 0
+                || t - task.last_policy_s < p.reassess_s
+            {
+                continue;
+            }
+            self.d.tasks[i].last_policy_s = t;
+            let current = task.position(t);
+            if self.d.hazard.at(current).danger >= p.work_danger {
+                continue;
+            }
+            let others = self
+                .d
+                .tasks
+                .iter()
+                .filter(|o| {
+                    o.id != task.id
+                        && o.resource == "engines"
+                        && self.task_active_qty(o) > 0
+                        && matches!(o.status, TaskStatus::Working | TaskStatus::EnRoute)
+                })
+                .map(|o| o.target)
+                .collect::<Vec<_>>();
+            let work = self
+                .fire
+                .state()
+                .iter()
+                .enumerate()
+                .filter_map(|(j, s)| {
+                    let cell = scenario::Cell {
+                        row: j / self.scn.grid.cols,
+                        col: j % self.scn.grid.cols,
+                    };
+                    let at = self.scn.cell_centre(cell);
+                    (*s == fire::CellFire::Unburnt
+                        && self.fire.is_burnable(cell)
+                        && self.fire.added_moisture()[j] < p.wet_limit_pts
+                        && distance(at, task.mission_centre) <= p.sector_radius_m + p.hose_reach_m
+                        && (!p.share_work
+                            || others.iter().all(|o| distance(*o, at) > p.hose_reach_m)))
+                    .then(|| (at, self.d.hazard.at(at).danger))
+                })
+                .filter(|(_, v)| *v > 0.0)
+                .collect::<Vec<_>>();
+            let score = |at: Pos| -> f32 {
+                work.iter()
+                    .filter(|(q, _)| distance(at, *q) <= p.hose_reach_m)
+                    .map(|(_, v)| *v)
+                    .sum()
+            };
+            if task.status == TaskStatus::Working && score(current) > 0.0 {
+                self.d.tasks[i].policy_reason =
+                    "Useful unsaturated work remains at current post".into();
+                continue;
+            }
+            let mut best: Option<(f32, f32, Pos, Route)> = None;
+            for segment in self.network.segments() {
+                let n = (distance(segment.from, segment.to) / self.scn.grid.cellsize)
+                    .ceil()
+                    .max(1.0) as usize;
+                for k in 0..=n {
+                    let at = interpolate(segment.from, segment.to, k as f32 / n as f32);
+                    if distance(at, task.mission_centre) > p.sector_radius_m
+                        || distance(at, current) < 5.0
+                        || self.d.hazard.at(at).danger >= p.parking_danger
+                    {
+                        continue;
+                    }
+                    let utility = score(at);
+                    if utility <= 0.0 {
+                        continue;
+                    }
+                    let Some(route) = self.operational_route(
+                        current,
+                        at,
+                        &self.d.roads,
+                        false,
+                        false,
+                        task.speed_mps,
+                    ) else {
+                        continue;
+                    };
+                    // A vehicle may access the road at its start, but may not
+                    // leave it to reach a local work post.
+                    if route
+                        .legs
+                        .last()
+                        .is_some_and(|l| l.road.is_none() && l.length_m > 0.01)
+                    {
+                        continue;
+                    }
+                    let seconds = route.seconds(task.speed_mps);
+                    if best.as_ref().is_none_or(|(v, s, _, _)| {
+                        utility > *v + 0.0001 || ((utility - *v).abs() < 0.0001 && seconds < *s)
+                    }) {
+                        best = Some((utility, seconds, at, route));
+                    }
+                }
+            }
+            if let Some((_, seconds, at, route)) = best {
+                let regroup = if task.status == TaskStatus::Working {
+                    p.regroup_s
+                } else {
+                    0
+                };
+                let reason = if task.status == TaskStatus::Suspended {
+                    "Safe reachable work available; resuming approved mission"
+                } else {
+                    "Current post exhausted or reserved; regrouping for work inside approved sector"
+                };
+                let q = &mut self.d.tasks[i];
+                q.origin = current;
+                q.target = at;
+                q.route = Some(route);
+                q.departed_s = t + regroup;
+                q.arrival_s = q.departed_s + seconds.ceil().max(1.0) as i64;
+                q.regroup_until_s = Some(q.departed_s);
+                q.status = TaskStatus::EnRoute;
+                q.refill_done_s = None;
+                q.last_work_s = q.arrival_s;
+                q.route_checked_s = t;
+                q.policy_reason = reason.into();
+                q.detail = reason.into();
+                self.event(
+                    "deployment_policy",
+                    format!(
+                        "Task #{} [{}]: {}; destination {:.0},{:.0}; regroup {} s",
+                        task.id, p.version, reason, at[0], at[1], regroup
+                    ),
+                    self.scn.zone_of(at),
+                );
+            } else {
+                self.d.tasks[i].policy_reason =
+                    "Waiting: no safe reachable unreserved work inside approved sector".into();
+                self.d.tasks[i].detail = self.d.tasks[i].policy_reason.clone();
+            }
+        }
+    }
     pub(crate) fn evacuation_targets(&self, cmd: &Command) -> Vec<usize> {
         match cmd {
             Command::EvacuateZone { zone, .. } => self
@@ -119,12 +346,13 @@ impl World {
             .find(|a| allocations.contains(&a.id))?;
         let setting = self.d.travel_settings.get(role)?.get(&a.resource)?;
         let mut route = if self.scn.operations.road_routing && a.resource != "air_tankers" {
-            self.network.route(
+            self.operational_route(
                 setting.origin,
                 target,
                 &self.d.roads,
                 false,
                 a.resource == "ground_crews",
+                setting.speed_mps,
             )
         } else {
             None
@@ -183,6 +411,15 @@ impl World {
             used_water_l: 0.0,
             last_work_s: departed_s,
             refill_done_s: None,
+            mission_centre: self.travel_target(cmd).unwrap_or(target),
+            policy_version: if self.scn.operations.local_autonomy {
+                self.scn.tactical_policy.version.clone()
+            } else {
+                "fixed-post-v1".into()
+            },
+            policy_reason: "Executing approved mission".into(),
+            last_policy_s: departed_s,
+            regroup_until_s: None,
         };
         let detail = task.detail.clone();
         self.d.tasks.push(task);
@@ -196,6 +433,12 @@ impl World {
     fn end_task(&mut self, i: usize, status: TaskStatus, detail: String) {
         let t = self.time_s();
         let task = &mut self.d.tasks[i];
+        let at = task.position(t);
+        task.origin = at;
+        task.target = at;
+        task.route = None;
+        task.departed_s = t;
+        task.arrival_s = t;
         task.status = status;
         task.completed_s = Some(t);
         task.detail = detail.clone();
@@ -212,12 +455,13 @@ impl World {
         let current = task.position(t);
         let base = self.d.travel_settings[&task.role][&task.resource].origin;
         let route = if self.scn.operations.road_routing && task.resource != "air_tankers" {
-            self.network.route(
+            self.operational_route(
                 current,
                 base,
                 &self.d.roads,
                 false,
                 task.resource == "ground_crews",
+                task.speed_mps,
             )
         } else {
             None
@@ -233,17 +477,35 @@ impl World {
         let task = &mut self.d.tasks[i];
         task.origin = current;
         task.target = base;
-        task.departed_s = t;
-        task.arrival_s = t + route
-            .as_ref()
-            .map(|r| r.seconds(task.speed_mps))
-            .unwrap_or(distance(current, base) / task.speed_mps)
-            .ceil()
-            .max(1.0) as i64;
+        let regroup = if self.scn.operations.local_autonomy && task.resource == "ground_crews" {
+            self.scn.tactical_policy.regroup_s
+        } else {
+            0
+        };
+        task.departed_s = t + regroup;
+        task.regroup_until_s = (regroup > 0).then_some(task.departed_s);
+        task.arrival_s = task.departed_s
+            + route
+                .as_ref()
+                .map(|r| r.seconds(task.speed_mps))
+                .unwrap_or(distance(current, base) / task.speed_mps)
+                .ceil()
+                .max(1.0) as i64;
         task.route = route;
         task.status = status;
         task.refill_done_s =
             Some(task.arrival_s + if task.resource == "engines" { 150 } else { 90 });
+        task.policy_version = if self.scn.operations.local_autonomy {
+            self.scn.tactical_policy.version.clone()
+        } else {
+            "fixed-post-v1".into()
+        };
+        task.policy_reason = if status == TaskStatus::Withdrawing {
+            "Safety threshold exceeded; returning by a physical safe route"
+        } else {
+            "Consumables exhausted; returning physically for replenishment"
+        }
+        .into();
         task.detail = if status == TaskStatus::Withdrawing {
             "Withdrawing for safety"
         } else {
@@ -251,12 +513,101 @@ impl World {
         }
         .into();
     }
+    /// Check only the untravelled route. Geometry behind a unit cannot strand it.
+    /// Called each simulated second; path search happens only after a new blockage.
+    fn check_task_route(&mut self, i: usize) -> bool {
+        let t = self.time_s();
+        let task = self.d.tasks[i].clone();
+        if !self.scn.operations.road_routing
+            || task.resource == "air_tankers"
+            || !matches!(
+                task.status,
+                TaskStatus::EnRoute | TaskStatus::Refilling | TaskStatus::Withdrawing
+            )
+            || t > task.arrival_s
+        {
+            return false;
+        }
+        let Some(route) = &task.route else {
+            return false;
+        };
+        // A closure is acted on before earning this second of movement.
+        let checked_at = (t - 1).max(task.departed_s);
+        let mut elapsed = (checked_at - task.departed_s).max(0) as f32;
+        let mut remaining = Route::default();
+        for leg in &route.legs {
+            let duration = leg.length_m / leg.speed_mps.min(task.speed_mps).max(0.01);
+            if elapsed >= duration {
+                elapsed -= duration;
+                continue;
+            }
+            let mut leg = leg.clone();
+            leg.from = interpolate(leg.from, leg.to, elapsed / duration.max(0.001));
+            leg.length_m = distance(leg.from, leg.to);
+            remaining.legs.push(leg);
+            elapsed = 0.0;
+        }
+        if self.network.route_open(&remaining, &self.d.roads, false) {
+            return false;
+        }
+        let current = task.position(checked_at);
+        self.d.tasks[i].route_checked_s = t;
+        if let Some(route) = self.operational_route(
+            current,
+            task.target,
+            &self.d.roads,
+            false,
+            task.resource == "ground_crews",
+            task.speed_mps,
+        ) {
+            let q = &mut self.d.tasks[i];
+            let refill = q.refill_done_s.map(|done| done - q.arrival_s);
+            q.origin = current;
+            q.departed_s = t.max(task.departed_s);
+            q.arrival_s = q.departed_s + route.seconds(q.speed_mps).ceil().max(1.0) as i64;
+            q.refill_done_s = refill.map(|duration| q.arrival_s + duration);
+            q.route = Some(route);
+            q.regroup_until_s = (q.departed_s > t).then_some(q.departed_s);
+            q.policy_reason = "Untravelled road cut by fire; rerouted from current position".into();
+            q.detail = q.policy_reason.clone();
+            self.event(
+                "deployment_rerouted",
+                format!(
+                    "Task #{} [{}]: return/mission route changed around fire",
+                    task.id, task.policy_version
+                ),
+                self.scn.zone_of(current),
+            );
+        } else {
+            let q = &mut self.d.tasks[i];
+            q.origin = current;
+            q.target = current;
+            q.route = None;
+            q.departed_s = t;
+            q.arrival_s = t;
+            q.refill_done_s = None;
+            q.policy_reason = "No safe remaining route; stopped at last reached position".into();
+            self.end_task(
+                i,
+                TaskStatus::Failed,
+                format!(
+                    "No safe remaining route [{}]: route cut by fire; unit stranded",
+                    task.policy_version
+                ),
+            );
+        }
+        true
+    }
     pub(crate) fn step_tasks(&mut self) {
         let t = self.time_s();
+        self.step_local_policies();
         for i in 0..self.d.tasks.len() {
             let task = self.d.tasks[i].clone();
             let qty = self.task_active_qty(&task);
             if qty == 0 {
+                continue;
+            }
+            if self.check_task_route(i) {
                 continue;
             }
             if matches!(task.status, TaskStatus::Refilling | TaskStatus::Withdrawing) {
@@ -264,7 +615,29 @@ impl World {
                     continue;
                 }
                 if task.status == TaskStatus::Withdrawing {
-                    self.end_task(i, TaskStatus::Failed, "Safety withdrawal complete".into());
+                    if self.scn.operations.local_autonomy
+                        && self.scn.tactical_policy.resume_after_withdrawal
+                        && matches!(
+                            task.command,
+                            Command::DeployEngine { .. } | Command::CutFireLine { .. }
+                        )
+                    {
+                        self.d.tasks[i].status = TaskStatus::Suspended;
+                        self.d.tasks[i].last_policy_s = t;
+                        self.d.tasks[i].policy_reason =
+                            "At staging; mission suspended pending safe reachable work".into();
+                        self.d.tasks[i].detail = self.d.tasks[i].policy_reason.clone();
+                        self.event(
+                            "deployment_suspended",
+                            format!(
+                                "Task #{}: safety withdrawal complete; allocation retained",
+                                task.id
+                            ),
+                            None,
+                        );
+                    } else {
+                        self.end_task(i, TaskStatus::Failed, "Safety withdrawal complete".into());
+                    }
                     continue;
                 }
                 self.d.tasks[i].water_l = if task.resource == "engines" {
@@ -275,12 +648,18 @@ impl World {
                 if task.resource == "engines" {
                     let mut at = self.travel_target(&task.command).unwrap();
                     let origin = task.target;
-                    let mut route = self.network.route(origin, at, &self.d.roads, false, false);
+                    let mut route = self.operational_route(
+                        origin,
+                        at,
+                        &self.d.roads,
+                        false,
+                        false,
+                        task.speed_mps,
+                    );
                     if let Some(r) = route.as_mut() {
-                        if r.legs
-                            .last()
-                            .is_some_and(|l| l.road.is_none() && l.length_m > 60.0)
-                        {
+                        if r.legs.last().is_some_and(|l| {
+                            l.road.is_none() && l.length_m > self.engine_hose_reach_m()
+                        }) {
                             self.end_task(
                                 i,
                                 TaskStatus::Failed,
@@ -317,43 +696,6 @@ impl World {
                 continue;
             }
             if task.status == TaskStatus::EnRoute {
-                if self.scn.operations.road_routing
-                    && task.resource != "air_tankers"
-                    && t - task.route_checked_s >= 30
-                {
-                    self.d.tasks[i].route_checked_s = t;
-                    if task.route.as_ref().is_some_and(|r| {
-                        r.legs.iter().any(|l| {
-                            l.road
-                                .as_ref()
-                                .is_some_and(|id| self.d.roads[id].cut_by_fire)
-                        })
-                    }) {
-                        let current = task.position(t);
-                        let route = self.network.route(
-                            current,
-                            task.target,
-                            &self.d.roads,
-                            false,
-                            task.resource == "ground_crews",
-                        );
-                        if let Some(route) = route {
-                            let q = &mut self.d.tasks[i];
-                            q.arrival_s = t + route.seconds(q.speed_mps).ceil() as i64;
-                            q.origin = current;
-                            q.departed_s = t;
-                            q.route = Some(route);
-                            q.detail = "Rerouted around fire-cut road".into();
-                        } else {
-                            self.end_task(
-                                i,
-                                TaskStatus::Failed,
-                                "Route cut by fire; target unreachable".into(),
-                            );
-                        }
-                        continue;
-                    }
-                }
                 if t < task.arrival_s {
                     continue;
                 }
@@ -374,7 +716,12 @@ impl World {
                     } else {
                         task.target
                     };
-                    if self.d.hazard.at(work_position).danger >= 0.35 {
+                    let limit = if self.scn.operations.local_autonomy {
+                        self.scn.tactical_policy.work_danger
+                    } else {
+                        0.35
+                    };
+                    if self.d.hazard.at(work_position).danger >= limit {
                         self.return_to_base(i, TaskStatus::Withdrawing);
                     } else {
                         self.d.tasks[i].status = TaskStatus::Working;
@@ -454,7 +801,12 @@ impl World {
                 }
                 continue;
             }
-            if self.d.hazard.at(task.target).danger >= 0.35 {
+            let limit = if self.scn.operations.local_autonomy {
+                self.scn.tactical_policy.work_danger
+            } else {
+                0.35
+            };
+            if self.d.hazard.at(task.position(t)).danger >= limit {
                 self.return_to_base(i, TaskStatus::Withdrawing);
                 continue;
             }
@@ -522,8 +874,18 @@ impl World {
                                 row: c / self.scn.grid.cols,
                                 col: c % self.scn.grid.cols,
                             });
-                            (self.fire.added_moisture()[c] < 30.0
-                                && distance(p, task.target) <= 60.0
+                            (self.fire.added_moisture()[c]
+                                < if self.scn.operations.local_autonomy {
+                                    self.scn.tactical_policy.wet_limit_pts
+                                } else {
+                                    30.0
+                                }
+                                && distance(p, task.target)
+                                    <= if self.scn.operations.local_autonomy {
+                                        self.scn.tactical_policy.hose_reach_m
+                                    } else {
+                                        60.0
+                                    }
                                 && self.fire.is_burnable(scenario::Cell {
                                     row: c / self.scn.grid.cols,
                                     col: c % self.scn.grid.cols,
@@ -535,12 +897,25 @@ impl World {
                     if candidates.is_empty() {
                         continue;
                     }
-                    let litres = (400.0 / 60.0 * elapsed).min(task.water_l);
+                    let budget = (400.0 / 60.0 * elapsed).min(task.water_l);
                     let radius = self.scn.grid.cellsize * 0.45;
-                    let density =
-                        litres / (candidates.len() as f32 * std::f32::consts::PI * radius.powi(2));
+                    let area = std::f32::consts::PI * radius.powi(2);
+                    let per_cell = budget / candidates.len() as f32;
+                    let mut litres = 0.0;
                     for p in candidates {
-                        self.fire.water_drop(p, radius, density);
+                        let available = if self.scn.operations.local_autonomy {
+                            let cell = self.scn.cell_of(p).unwrap();
+                            (self.scn.tactical_policy.wet_limit_pts
+                                - self.fire.added_moisture()[self.scn.grid.index(cell)])
+                            .max(0.0)
+                                / fire::MOISTURE_POINTS_PER_LITRE
+                                * area
+                        } else {
+                            per_cell
+                        };
+                        let delivered = per_cell.min(available);
+                        self.fire.water_drop(p, radius, delivered / area);
+                        litres += delivered;
                     }
                     self.d.tasks[i].water_l -= litres;
                     self.d.tasks[i].used_water_l += litres;

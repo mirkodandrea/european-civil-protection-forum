@@ -29,6 +29,7 @@ use tokio::sync::watch;
 pub mod flow;
 pub mod access;
 mod assessment;
+mod forecast;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -37,6 +38,8 @@ pub struct AppState {
     pub access: Arc<Access>,
     generation: watch::Receiver<u64>,
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
+    forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
+    forecast_slot: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -68,13 +71,15 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
-    let state = AppState { ex, llm, generation: rx, access: Arc::new(access), assessments: Default::default() };
+    let state = AppState { ex, llm, generation: rx, access: Arc::new(access), assessments: Default::default(), forecasts: Default::default(), forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)) };
     tokio::spawn(flow::run_clock(state.clone()));
     let api = Router::new()
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
         .route("/api/access", get(get_access))
         .route("/api/master/access", get(get_access_links))
         .route("/api/master/knowledge", post(post_knowledge))
+        .route("/api/master/forecast", post(forecast::compute))
+        .route("/api/master/forecast/publish", post(forecast::publish))
         .route("/api/master/references", post(post_references))
         .route("/api/master/resource-limits", post(post_resource_limits))
         .route("/api/master/clock", post(post_clock))

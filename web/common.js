@@ -158,6 +158,32 @@ export class MapView {
       label(ctx, 'Reported fire', x + 9 * dpr, y, dpr);
     }
 
+    // Forecast products are independent of the observed fire raster. Only the
+    // reviewed products supplied in this authorized view are drawn.
+    const forecast = (v?.forecast_products || []).at(-1);
+    if (forecast?.horizons) {
+      const cols = this.s.grid.cols, rows = this.s.grid.rows, cell = this.s.grid.cellsize * k;
+      forecast.horizons.forEach((horizon, index) => {
+        const probability = horizon.probability;
+        if (!Array.isArray(probability) || probability.length !== rows * cols) return;
+        ctx.strokeStyle = index === 0 ? '#713b72' : '#9d5576';
+        ctx.lineWidth = 2*dpr; ctx.setLineDash(index === 0 ? [8*dpr,4*dpr] : [3*dpr,4*dpr]);
+        ctx.beginPath();
+        const reached = i => i >= 0 && i < probability.length && probability[i] >= 0.5;
+        for (let row=0;row<rows;row++) for (let col=0;col<cols;col++) {
+          const i=row*cols+col; if (!reached(i)) continue;
+          const x=col*cell, y=row*cell;
+          if (col===0 || !reached(i-1)) {ctx.moveTo(x,y);ctx.lineTo(x,y+cell);}
+          if (col===cols-1 || !reached(i+1)) {ctx.moveTo(x+cell,y);ctx.lineTo(x+cell,y+cell);}
+          if (row===0 || !reached(i-cols)) {ctx.moveTo(x,y);ctx.lineTo(x+cell,y);}
+          if (row===rows-1 || !reached(i+cols)) {ctx.moveTo(x,y+cell);ctx.lineTo(x+cell,y+cell);}
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      });
+      ctx.font=`${11*dpr}px system-ui`;
+      label(ctx,`EXCON forecast · ${forecast.horizons.map(h=>`+${h.after_s/60} min`).join(' / ')} · ≥50% · issued ${forecast.issued_s}s`,8*dpr,18*dpr,dpr);
+    }
+
     // Zone grid.
     const z = this.s.zones;
     ctx.strokeStyle = 'rgba(0,0,0,0.25)';
@@ -174,16 +200,27 @@ export class MapView {
       ctx.fillText(name, c * z.size_m * k + 4 * dpr, r * z.size_m * k + 13 * dpr);
     }
 
-    // Roads.
+    // Roads retain their geometry and class beneath local status overlays.
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const trace = points => { ctx.beginPath(); points.forEach((p, i) => { const [x, y] = this.px(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); };
+    const markedRoads = new Set();
     for (const road of this.s.roads) {
-      const st = v && v.roads[road.id];
-      ctx.strokeStyle = st && st.cut_by_fire ? '#c00' : st && st.closed ? '#e08000' : '#fff';
-      ctx.lineWidth = 3 * dpr;
-      ctx.setLineDash(st && st.closed ? [6 * dpr, 4 * dpr] : []);
-      ctx.beginPath();
-      road.points.forEach((p, i) => { const [x, y] = this.px(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.stroke();
-      ctx.setLineDash([]);
+      const st = v?.roads?.[road.id];
+      const width = (road.drivable === false ? 1.5 : 3) * dpr;
+      trace(road.points); ctx.strokeStyle = '#29363d'; ctx.lineWidth = width + 2 * dpr; ctx.stroke();
+      trace(road.points); ctx.strokeStyle = road.drivable === false ? '#ba9f79' : '#e6e4d8'; ctx.lineWidth = width; ctx.stroke();
+      const segments = (this.s.road_segments || []).filter(segment => segment.road === road.id);
+      const stretches = segments.length ? segments : [{from:road.points[0],to:road.points.at(-1),points:road.points}];
+      for (const segment of stretches) {
+        const cut = st && (st.fire_closed_links == null ? st.cut_by_fire : (segment.links || []).some(id => st.fire_closed_links.includes(id)));
+        if (!cut && !st?.closed) continue;
+        trace(segment.points || [segment.from, segment.to]); ctx.strokeStyle = cut ? '#b72e26' : '#b87512';
+        ctx.lineWidth = width + dpr; ctx.setLineDash(cut ? [] : [7*dpr,4*dpr]); ctx.stroke(); ctx.setLineDash([]);
+        if (!markedRoads.has(road.id)) {
+          const [x,y] = this.px(segment.from); label(ctx,cut ? '× FIRE CUT' : '— POLICE CLOSED',x,y-5*dpr,dpr);
+          markedRoads.add(road.id);
+        }
+      }
     }
 
     // Buildings.
@@ -217,6 +254,22 @@ export class MapView {
         ctx.strokeStyle = '#1e90ff'; ctx.lineWidth = 2 * dpr;
         ctx.beginPath(); ctx.arc(x, y, d.radius_m * k, 0, Math.PI * 2); ctx.stroke();
       }
+    }
+
+    // Draw only deployment observations supplied by the authorized map view.
+    // Player maps remain filtered by the server; never fetch global state here.
+    for (const deployment of v?.deployments || []) {
+      const task = deployment.task;
+      if (!task || !deployment.position_m || deployment.active_qty === 0 || task.status === 'cancelled') continue;
+      const [x,y] = this.px(deployment.position_m);
+      const color = task.status === 'working' ? '#008c9e' : task.status === 'completed' ? '#247d42' : task.status === 'failed' ? '#b72e26' : '#ad6912';
+      ctx.fillStyle=color; ctx.strokeStyle='#112632'; ctx.lineWidth=2*dpr;
+      ctx.fillRect(x-5*dpr,y-4*dpr,10*dpr,8*dpr); ctx.strokeRect(x-5*dpr,y-4*dpr,10*dpr,8*dpr);
+      if (['en_route','withdrawing','refilling'].includes(task.status) && task.target) {
+        const [tx,ty]=this.px(task.target); ctx.strokeStyle=color; ctx.lineWidth=2*dpr;
+        ctx.beginPath(); ctx.moveTo(tx,ty-6*dpr); ctx.lineTo(tx+6*dpr,ty); ctx.lineTo(tx,ty+6*dpr); ctx.lineTo(tx-6*dpr,ty); ctx.closePath();ctx.stroke();
+      }
+      label(ctx,`#${task.id} ${task.status.replaceAll('_',' ')}`,x+8*dpr,y-5*dpr,dpr);
     }
 
     // Named facilities and places.

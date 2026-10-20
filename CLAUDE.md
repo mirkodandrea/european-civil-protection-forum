@@ -52,3 +52,30 @@ devtunnel host -p 8080                     # private tunnel for phone play (play
 - `DeployEngine` needs an approved role allocation. Ground routes obey fire cuts; civilian traffic also obeys police closures. No path means waiting/failure, never a straight-line fallback.
 - EU12 ids differ from legacy ids: use scenario fuel definitions for burnability, fuel removal and rendering.
 - Scenario Factory port and import commands, provenance, training assumptions and verification: `docs/operational-model.md`.
+
+## Roccavento lessons update (2026-10-20)
+
+- Reusable skills: `docs/ttx-skills.md`, under `.claude/skills/`. Read relevant ones;
+  explicit user authorization takes precedence over source-game checkpoints.
+- Current transfer and limits: `docs/operational-upgrade.md`. Segment closures,
+  terrain travel, emergency queue delay and local autonomy are enabled by
+  `--operational-model`, independently configurable in scenario `operations`.
+- Keep approved mission centre separate from current post/base. Local policies
+  never grant resources or change approved fire-line endpoints. Suspended tasks
+  retain physical allocations and respect confirmed returns.
+- Forecasts are private EXCON drafts computed from owned checkpoints outside the
+  exercise mutex. Publish only after review to selected roles; reject obsolete
+  generations and invalidate role products on rollback.
+- `scripts/lab/run.sh SUITE NEW_OUTPUT` runs paired seeds through real commands;
+  `scripts/lab/generate_cases.py NEW_DIRECTORY` creates explicit synthetic fixtures.
+- `TTX_QUALITY=projector|low|high` changes presentation only. Invisible fixtures:
+  `docs/graphics.md`, `scripts/snapshot.sh`, `TTX_SNAPSHOT_SPEC`. Never start the
+  live HTTP/LLM path when generating a snapshot. Inspect every generated image.
+- Avoid formatting unrelated modules: use scoped rustfmt with `skip_children=true`.
+
+
+- Batch visual states: `scripts/snapshot.py --out NEW_DIRECTORY --spec 'name=fire,t=30,at=fire,ui=0,marks=0'`.
+  Each process uses real fixture approvals, no HTTP/LLM; names cannot reuse stale PNGs.
+  Angles in this batch format are degrees; legacy `TTX_CAM` stays radians.
+  `--bench 3` freezes animation after settling and reports wall/CPU/render/GPU samples.
+  Read `docs/graphics.md`; hidden-window FPS is not an interactive projector guarantee.

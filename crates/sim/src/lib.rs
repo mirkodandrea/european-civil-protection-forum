@@ -121,6 +121,9 @@ pub struct BuildingState {
 pub struct RoadState {
     pub closed: bool,
     pub cut_by_fire: bool,
+    /// None uses legacy whole-road closure; Some stores stable directed link ids.
+    /// Closures persist until scenario reset/rollback; no automatic reopening assumption.
+    pub fire_closed_links: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -262,6 +265,7 @@ impl World {
                     RoadState {
                         closed: false,
                         cut_by_fire: false,
+                        fire_closed_links: scn.operations.segment_fire_closures.then(Vec::new),
                     },
                 )
             })
@@ -786,10 +790,10 @@ impl World {
                             && route
                                 .legs
                                 .last()
-                                .is_some_and(|l| l.road.is_none() && l.length_m > 60.0)
+                                .is_some_and(|l| l.road.is_none() && l.length_m > self.engine_hose_reach_m())
                         {
                             return Err(
-                                "engine target exceeds 60 m hose reach from a drivable road".into(),
+                                format!("engine target exceeds {:.0} m hose reach from a drivable road",self.engine_hose_reach_m()),
                             );
                         }
                     }
@@ -1737,6 +1741,40 @@ impl World {
 
     fn step_roads(&mut self) {
         if self.scn.operations.road_routing && self.d.hazard.updated_s != self.time_s() {
+            return;
+        }
+        if self.scn.operations.segment_fire_closures {
+            let mut cuts = Vec::new();
+            for segment in self.network.segments() {
+                let n = (network::distance(segment.from, segment.to)
+                    / (self.scn.grid.cellsize * 0.5))
+                    .ceil()
+                    .max(1.0) as usize;
+                let unsafe_segment = (0..=n).any(|i| {
+                    let p = network::interpolate(segment.from, segment.to, i as f32 / n as f32);
+                    self.d.hazard.at(p).danger >= 0.55
+                        || self.scn.cell_of(p).is_some_and(|c| {
+                            self.fire.state()[self.scn.grid.index(c)] == CellFire::Burning
+                        })
+                });
+                if unsafe_segment {
+                    let state = self.d.roads.get_mut(&segment.road).unwrap();
+                    let links = state.fire_closed_links.get_or_insert_with(Vec::new);
+                    if !links.contains(&segment.links[0]) {
+                        links.extend(segment.links);
+                        links.sort_unstable();
+                        state.cut_by_fire = true;
+                        cuts.push(segment);
+                    }
+                }
+            }
+            for segment in cuts {
+                self.event(
+                    "road_segment_cut",
+                    format!("{} links {:?} cut by fire", segment.road, segment.links),
+                    self.scn.zone_of(segment.from),
+                );
+            }
             return;
         }
         let state = self.fire.state();

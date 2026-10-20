@@ -56,7 +56,7 @@ pub enum Command {
     WaterDrop {
         at: Loc,
     },
-    /// Station a road engine; pumps, refills and retreats on the simulation clock.
+    /// Approve a road-engine mission; local posts stay within the authored sector.
     DeployEngine {
         at: Loc,
     },
@@ -370,7 +370,7 @@ pub fn catalogue(allowed: &[String]) -> String {
         ),
         (
             "DeployEngine",
-            r#"{"type":"DeployEngine","at":LOC} — deploy a road engine (operational model only)."#,
+            r#"{"type":"DeployEngine","at":LOC} — deploy a road engine (operational model only); with local autonomy, at is the approved sector centre and local moves are bounded by the scenario tactical policy."#,
         ),
         (
             "AdvanceTime",

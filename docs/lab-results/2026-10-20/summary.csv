@@ -1,0 +1,7 @@
+scenario,variant,strategy,seeds,runs,mean_ha_avoided,min_ha_avoided,max_ha_avoided,sample_sd_ha_avoided,mean_evacuated,rejected_orders
+synthetic_valley,operational_base,no_action,1 2 3,3,0.0,0.0,0.0,0.0,0,0
+synthetic_valley,operational_base,combined,1 2 3,3,0.07999999999999947,0.0,0.16000000000000014,0.08000000000000007,251,0
+synthetic_valley,operational_base,coordinated_engines,1 2 3,3,0.0,0.0,0.0,0.0,0,0
+synthetic_valley,operational_improved,no_action,1 2 3,3,0.0,0.0,0.0,0.0,0,0
+synthetic_valley,operational_improved,combined,1 2 3,3,0.07999999999999947,0.0,0.16000000000000014,0.08000000000000007,251,0
+synthetic_valley,operational_improved,coordinated_engines,1 2 3,3,0.0,0.0,0.0,0.0,0,0

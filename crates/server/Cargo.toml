@@ -8,6 +8,7 @@ description = "HTTP + WebSocket server for the Master and player UIs, and the LL
 [dependencies]
 scenario.workspace = true
 sim.workspace = true
+fire.workspace = true
 exercise.workspace = true
 llm.workspace = true
 serde.workspace = true

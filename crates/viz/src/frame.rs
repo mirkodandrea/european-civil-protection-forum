@@ -14,15 +14,32 @@ pub const EXAGGERATION: f32 = 1.3;
 
 pub fn to_bevy(scn: &Scenario, p: Pos, lift: f32) -> Vec3 {
     let h = height_at(scn, p) * EXAGGERATION + lift;
-    Vec3::new(p[0] - scn.grid.width_m() * 0.5, h, -(p[1] - scn.grid.height_m() * 0.5))
+    Vec3::new(
+        p[0] - scn.grid.width_m() * 0.5,
+        h,
+        -(p[1] - scn.grid.height_m() * 0.5),
+    )
 }
 
 pub fn to_world(scn: &Scenario, v: Vec3) -> Pos {
-    [v.x + scn.grid.width_m() * 0.5, -v.z + scn.grid.height_m() * 0.5]
+    [
+        v.x + scn.grid.width_m() * 0.5,
+        -v.z + scn.grid.height_m() * 0.5,
+    ]
 }
 
 /// Bilinear elevation at a world position, metres (not exaggerated).
 pub fn height_at(scn: &Scenario, p: Pos) -> f32 {
+    if let Some(t) = &scn.render_terrain {
+        let x = (p[0] / t.posting_m).clamp(0.0, (t.cols - 1) as f32);
+        let y = ((t.world_size_m[1] - p[1]) / t.posting_m).clamp(0.0, (t.rows - 1) as f32);
+        let (c, r) = (x.floor() as usize, y.floor() as usize);
+        let (c1, r1) = ((c + 1).min(t.cols - 1), (r + 1).min(t.rows - 1));
+        let (u, v) = (x - c as f32, y - r as f32);
+        let a = t.elev[r * t.cols + c] * (1.0 - u) + t.elev[r * t.cols + c1] * u;
+        let b = t.elev[r1 * t.cols + c] * (1.0 - u) + t.elev[r1 * t.cols + c1] * u;
+        return a * (1.0 - v) + b * v;
+    }
     let g = scn.grid;
     let fx = (p[0] / g.cellsize - 0.5).clamp(0.0, (g.cols - 1) as f32);
     let fy = ((g.height_m() - p[1]) / g.cellsize - 0.5).clamp(0.0, (g.rows - 1) as f32);
@@ -54,7 +71,13 @@ pub fn update(snap: Res<Snapshot>, scn: Res<Scn>, mut frame: ResMut<Frame>) {
         return;
     }
     frame.all_changed = frame.cells.len() != n;
-    frame.changed = if frame.all_changed { Vec::new() } else { (0..n).filter(|&i| frame.cells[i] != snap.cells[i]).collect() };
+    frame.changed = if frame.all_changed {
+        Vec::new()
+    } else {
+        (0..n)
+            .filter(|&i| frame.cells[i] != snap.cells[i])
+            .collect()
+    };
     frame.cells = snap.cells.clone();
     frame.display_s = snap.time_s;
 }
@@ -71,6 +94,24 @@ mod tests {
         let back = to_world(&scn, v);
         assert!((back[0] - p[0]).abs() < 1e-3 && (back[1] - p[1]).abs() < 1e-3);
         assert!(to_bevy(&scn, [0.0, 3999.0], 0.0).z < to_bevy(&scn, [0.0, 1.0], 0.0).z);
+    }
+
+    #[test]
+    fn supplied_visual_nodes_are_north_first_and_leave_physics_unchanged() {
+        let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+        let physical = scn.dem.clone();
+        // A deliberately tiny planar fixture verifies node rather than cell sampling.
+        scn.render_terrain = Some(scenario::RenderTerrain {
+            rows: 2,
+            cols: 2,
+            posting_m: 4000.0,
+            world_size_m: [4000.0, 4000.0],
+            elev: vec![10.0, 20.0, 30.0, 40.0],
+        });
+        assert_eq!(height_at(&scn, [0.0, 4000.0]), 10.0);
+        assert_eq!(height_at(&scn, [4000.0, 0.0]), 40.0);
+        assert_eq!(height_at(&scn, [2000.0, 2000.0]), 25.0);
+        assert_eq!(scn.dem, physical);
     }
 
     #[test]

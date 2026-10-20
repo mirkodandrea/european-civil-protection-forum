@@ -21,11 +21,11 @@ model on an older Valverde package.
 | Feature | Operational behavior |
 |---|---|
 | Ground travel | Routes follow a welded metric graph, road classes, one-way rules and drivable/foot-only access. Shared vertices connect; geometric crossings alone do not. Maximum speed remains configurable with `SetDeploymentTravel`. |
-| Road restrictions | Police closures bind civilian traffic. Emergency vehicles can pass closures, but not roads made unsafe by fire. Ground tasks recheck routes every 30 simulated seconds. Unreachable deployments fail rather than travelling straight across the map. |
+| Road restrictions | Police closures bind civilian traffic. Emergency vehicles can pass closures, but not roads made unsafe by fire. With segment closures enabled, fire cuts affect only unsafe graph links. Ground tasks check the untravelled route every simulated second and search again only when a link ahead becomes blocked; cuts behind the unit do not force a detour. Unreachable deployments fail rather than travelling straight across the map. |
 | Crew work | Line length is earned at 120 m/h per active crew for a 6 m width, scaled inversely by requested width. Default operational width is 6 m. Fuel removal advances in fire-cell-sized increments; the last fragment is applied on completion. Partial confirmed returns reduce production; full confirmed returns cancel subsequent work. |
-| Road engines | `{"type":"DeployEngine","at":"Pineta Primary School"}` stations an engine on a drivable road within 60 m hose reach of the requested target. Its 2,500 L tank pumps at 400 L/min onto exposed, unburnt fuel below 30 added moisture points. It returns to the staging base for a 150 s refill and resumes its post when reachable. Staging bases are training refill locations. |
+| Road engines | `{"type":"DeployEngine","at":"Pineta Primary School"}` stations an engine on a drivable road within 60 m hose reach of the requested target. Its 2,500 L tank pumps at 400 L/min onto exposed, unburnt fuel below 30 added moisture points. It returns to the staging base for a 150 s refill and resumes its post when reachable. With local autonomy, the requested target also defines the approved sector centre (default radius 300 m); the unit can regroup and move to useful unreserved fuel inside it. Only delivered water is charged, capped at the authored moisture target. Staging bases are training refill locations. |
 | Aircraft | One approved `WaterDrop` is one 6,137 L drop over the existing 60 m-radius footprint. Dispatch includes 25 minutes of response time. The aircraft returns to staging and replenishes for 90 s; the task completes then. Another drop requires another approved order and available inventory; it does not repeat autonomously. |
-| Safety | Ground work stops at danger 0.35. Units withdraw toward staging; if the return route is unavailable, the deployment reports failure. Crew position follows its earned line progress. |
+| Safety | Ground work stops at danger 0.35. Units withdraw toward staging; if the return route is unavailable, the deployment reports failure at its last physical position. With local autonomy and resumption enabled, engines and incomplete fire-line crews suspend at staging and may resume the same approved mission when safe. Crew position follows earned progress on the original approved line; partial confirmed returns reduce later production. |
 | Evacuation | Existing warning-dependent preparation times remain. Occupants then leave in aggregate packets (4 seats for cars, 50 for transport-dependent facilities). Counts become evacuated and sheltered on arrival, rather than when the preparation timer expires. |
 | Traffic | Directed links have FIFO order, length-based storage (7.5 m per vehicle), road-class discharge capacity and free-flow travel time. A link cannot discharge into full downstream storage. Closed roads cause waiting or rerouting; unsafe routes expose occupants instead of silently counting them safe. |
 | Destinations | Explicit shelters reserve capacity across active and approved evacuations. A closed shelter makes evacuees wait until it opens. Without an explicit destination, vehicles choose reachable open shelters or safe road exits at the map boundary. No reachable destination means people remain in the building. |
@@ -104,7 +104,7 @@ warning failure, safety withdrawal, determinism and rollback. Factory smoke
 checks exercise terrain generation, package import, a Rust ensemble sweep and
 SVG atlas generation.
 
-Verified on this branch: 167 workspace tests pass. Native startup and the Master state API were exercised with the operational model; a 60 s advance completed successfully, and the 3D screenshot was inspected. A Factory landscape, a two-realization fire sweep and its SVG atlas were generated. The existing Rocca Ventosa package imported as 479 buildings, 70 roads and 1,600 aggregate occupants.
+The original port was verified with 167 workspace tests. The 2026-10-20 update passes 199 tests (including one documentation test); see [implemented changes and verification](operational-upgrade.md). Native startup and the Master state API were exercised with the operational model; a 60 s advance completed successfully, and the 3D screenshot was inspected. A Factory landscape, a two-realization fire sweep and its SVG atlas were generated. The existing Rocca Ventosa package imported as 479 buildings, 70 roads and 1,600 aggregate occupants.
 
 
 ## Browser playtest (2026-10-11)
@@ -133,8 +133,7 @@ usability; it does not establish usability for first-time human participants.
 
 Remaining usability constraints: manual interpretation requires JSON and an
 experienced Director; choosing Italian does not localize all interface labels,
-and translation falls back to English without an LLM. Road fire closures still
-apply to the complete named road, even when only one segment burns. In the
+and translation falls back to English without an LLM. That playtest used whole-road fire closures. The updated operational model supports segment-local closures; the historical closure behavior remains when the new option is disabled. In the
 synthetic initial scenario this can isolate the school very early; validate
 scenario accessibility and timing before using it for a facilitated exercise.
 The playtest did not validate live AI interpretation or translation quality.

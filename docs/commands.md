@@ -57,3 +57,5 @@ The check covers role authority, resources (after earlier commands in the batch 
 ## Operational engines
 
 `DeployEngine` takes `at` in the usual location syntax and consumes one `engines` unit from the approved role. It requires the operational model and a reachable drivable-road post within 60 m hose reach. The engine pumps from a finite 2,500 L tank, refills at staging, and withdraws when unsafe. It does not bypass Master approval. See [operational assumptions](operational-model.md).
+
+With `operations.local_autonomy`, `DeployEngine.at` is also the approved sector centre. The engine may relocate on roads within `tactical_policy.sector_radius_m` (default 300 m), while water reach remains separately limited (default 60 m). The task records its mission centre, current post, policy reason and version. Refilling always involves physical travel to staging. Suspended engines and unfinished fire-line crews retain their allocation and may resume the same approved mission when safe; confirmed resource returns cannot create extra units.

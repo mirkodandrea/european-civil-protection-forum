@@ -66,6 +66,15 @@ struct Edge {
     speed: f32,
     lanes: u32,
     flow: f32,
+    travel_factor: f32,
+}
+/// Stable link geometry; closure state lives in Dyn and is restored on rollback.
+#[derive(Debug, Clone, Serialize)]
+pub struct RoadSegment {
+    pub road: String,
+    pub links: [usize; 2],
+    pub from: Pos,
+    pub to: Pos,
 }
 #[derive(Debug, Default)]
 pub struct Network {
@@ -99,7 +108,7 @@ impl Network {
                 "track" | "path" => (3.0, 1, 100.0),
                 _ => (8.3, 1, 800.0),
             };
-            for pair in road.points.windows(2) {
+            for (segment, pair) in road.points.windows(2).enumerate() {
                 if distance(pair[0], pair[1]) < 0.05 {
                     continue;
                 }
@@ -125,6 +134,28 @@ impl Network {
                     speed,
                     lanes,
                     flow: flow / 3600.0,
+                    travel_factor: if s.operations.terrain_travel {
+                        let elevation = |p| s.cell_of(p).map(|c| s.elevation_at(c)).unwrap_or(0.0);
+                        let grade = (elevation(pair[1]) - elevation(pair[0])).abs()
+                            / distance(pair[0], pair[1]);
+                        // Scenario assumptions, deliberately conservative; not validated vehicle physics.
+                        let grade_factor = 1.0 / (1.0 + 4.0 * grade.min(0.5));
+                        let curve_factor = if segment > 0 {
+                            let prev = road.points[segment - 1];
+                            let u = [pair[0][0] - prev[0], pair[0][1] - prev[1]];
+                            let v = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+                            let cosine = ((u[0] * v[0] + u[1] * v[1])
+                                / (distance(prev, pair[0]) * distance(pair[0], pair[1]))
+                                    .max(0.001))
+                            .clamp(-1.0, 1.0);
+                            1.0 - 0.45 * (cosine.acos() / std::f32::consts::PI)
+                        } else {
+                            1.0
+                        };
+                        grade_factor * curve_factor
+                    } else {
+                        1.0
+                    },
                 });
                 net.adj[a].push((b, id));
                 if !road.oneway {
@@ -134,11 +165,27 @@ impl Network {
         }
         net
     }
-    fn open(edge: &Edge, states: &BTreeMap<String, RoadState>, civilian: bool, walk: bool) -> bool {
+    fn open(
+        &self,
+        id: usize,
+        states: &BTreeMap<String, RoadState>,
+        civilian: bool,
+        walk: bool,
+    ) -> bool {
+        let edge = &self.edges[id];
         (walk || edge.drivable)
-            && states
-                .get(&edge.road)
-                .is_some_and(|s| !s.cut_by_fire && (!civilian || !s.closed))
+            && states.get(&edge.road).is_some_and(|s| {
+                let fire_cut = s
+                    .fire_closed_links
+                    .as_ref()
+                    .map(|links| {
+                        (links.is_empty() && s.cut_by_fire)
+                            || links.contains(&(id * 2))
+                            || links.contains(&(id * 2 + 1))
+                    })
+                    .unwrap_or(s.cut_by_fire);
+                !fire_cut && (!civilian || !s.closed)
+            })
     }
     fn anchors(
         &self,
@@ -152,7 +199,6 @@ impl Network {
             .edges
             .iter()
             .enumerate()
-            .filter(|(_, e)| Self::open(e, states, civilian, walk))
             .filter_map(|(i, e)| {
                 let a = self.nodes[e.a];
                 let b = self.nodes[e.b];
@@ -167,9 +213,14 @@ impl Network {
         anchors.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
         if let Some(first) = anchors.first() {
             let nearest = first.2;
-            anchors.retain(|a| a.2 <= nearest + 1.0);
+            // A position on the network must stay on that network: do not
+            // turn an interrupted road into an off-road shortcut.
+            if nearest <= 1.0 {
+                anchors.retain(|a| a.2 <= nearest + 1.0);
+            }
         }
-        anchors.truncate(8);
+        anchors.retain(|a| self.open(a.0, states, civilian, walk));
+        // Off-road access may choose a slightly farther reachable component.
         anchors
     }
     fn leg(&self, id: usize, a: Pos, b: Pos, walk: bool) -> Leg {
@@ -184,7 +235,7 @@ impl Network {
             road: Some(e.road.clone()),
             link: Some(id * 2 + reverse as usize),
             length_m: distance(a, b),
-            speed_mps: if walk { 3.0 } else { e.speed },
+            speed_mps: if walk { 3.0 } else { e.speed * e.travel_factor },
             storage: ((full * e.lanes as f32 / 7.5).floor() as u32).max(1),
             flow_per_s: e.flow * e.lanes as f32,
         }
@@ -200,6 +251,49 @@ impl Network {
             storage: u32::MAX,
             flow_per_s: 1.0,
         }
+    }
+    pub fn segments(&self) -> Vec<RoadSegment> {
+        self.edges
+            .iter()
+            .enumerate()
+            .map(|(id, e)| RoadSegment {
+                road: e.road.clone(),
+                links: [id * 2, id * 2 + 1],
+                from: self.nodes[e.a],
+                to: self.nodes[e.b],
+            })
+            .collect()
+    }
+    pub fn leg_open(
+        &self,
+        leg: &Leg,
+        states: &BTreeMap<String, RoadState>,
+        civilian: bool,
+    ) -> bool {
+        leg.road.as_ref().is_none_or(|road| {
+            states.get(road).is_some_and(|s| {
+                (!civilian || !s.closed)
+                    && !s
+                        .fire_closed_links
+                        .as_ref()
+                        .map(|links| {
+                            (links.is_empty() && s.cut_by_fire)
+                                || leg.link.is_some_and(|id| links.contains(&id))
+                        })
+                        .unwrap_or(s.cut_by_fire)
+            })
+        })
+    }
+    pub fn route_open(
+        &self,
+        route: &Route,
+        states: &BTreeMap<String, RoadState>,
+        civilian: bool,
+    ) -> bool {
+        route
+            .legs
+            .iter()
+            .all(|l| self.leg_open(l, states, civilian))
     }
     pub fn route(
         &self,
@@ -227,7 +321,10 @@ impl Network {
                 if se.oneway && n == se.a && distance(*sq, self.nodes[n]) > 0.01 {
                     continue;
                 }
-                let cost = sa / 3.0 + distance(*sq, self.nodes[n]) / se.speed;
+                let cost = Self::access(from, *sq, walk).length_m
+                    / Self::access(from, *sq, walk).speed_mps
+                    + self.leg(*si, *sq, self.nodes[n], walk).length_m
+                        / self.leg(*si, *sq, self.nodes[n], walk).speed_mps;
                 costs[n] = cost;
                 heap.push(Visit(cost, n));
             }
@@ -237,12 +334,12 @@ impl Network {
                 }
                 for &(next, eid) in &self.adj[n] {
                     let e = &self.edges[eid];
-                    if !Self::open(e, states, civilian, walk) {
+                    if !self.open(eid, states, civilian, walk) {
                         continue;
                     }
                     let c = cost
                         + distance(self.nodes[n], self.nodes[next])
-                            / if walk { 3.0 } else { e.speed };
+                            / if walk { 3.0 } else { e.speed * e.travel_factor };
                     if c < costs[next] {
                         costs[next] = c;
                         prev[next] = Some((n, eid));
@@ -260,7 +357,9 @@ impl Network {
                             >= 0.0)
                 {
                     candidates.push((
-                        sa / 3.0 + distance(*sq, *eq) / se.speed + ea / 3.0,
+                        sa / if walk { 1.1 } else { 3.0 }
+                            + distance(*sq, *eq) / self.leg(*si, *sq, *eq, walk).speed_mps
+                            + ea / if walk { 1.1 } else { 3.0 },
                         vec![self.leg(*si, *sq, *eq, walk)],
                     ));
                 }
@@ -271,7 +370,10 @@ impl Network {
                     if !costs[n].is_finite() {
                         continue;
                     }
-                    let cost = costs[n] + distance(self.nodes[n], *eq) / ee.speed + ea / 3.0;
+                    let cost = costs[n]
+                        + distance(self.nodes[n], *eq)
+                            / self.leg(*ei, self.nodes[n], *eq, walk).speed_mps
+                        + ea / if walk { 1.1 } else { 3.0 };
                     let mut path = vec![];
                     let mut cur = n;
                     while let Some((p, id)) = prev[cur] {

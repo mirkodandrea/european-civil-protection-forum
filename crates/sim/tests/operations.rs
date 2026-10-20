@@ -35,6 +35,7 @@ fn scene() -> scenario::Scenario {
     };
     s.buildings = vec![
         Building {
+            visual_kind: None,
             id: 1,
             kind: BuildingKind::House,
             name: Some("Homes".into()),
@@ -45,6 +46,7 @@ fn scene() -> scenario::Scenario {
             shelter_capacity: 0,
         },
         Building {
+            visual_kind: None,
             id: 2,
             kind: BuildingKind::SportsCentre,
             name: Some("Shelter".into()),
