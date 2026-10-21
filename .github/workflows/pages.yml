@@ -57,17 +57,17 @@ jobs:
           TTX_STANDALONE_FILE: _site/index.html
         run: node scripts/qa/standalone.cjs
       - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
         uses: actions/configure-pages@v5
       - name: Upload the tested Pages site
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
         uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
   deploy:
     name: Publish on GitHub Pages
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
     needs: build
     runs-on: ubuntu-24.04
     permissions:

@@ -95,19 +95,25 @@ La directory pubblicata contiene soltanto `index.html` (copia del singolo
 registrazioni o risultati di esercitazioni. L’app non carica asset da percorsi
 assoluti e funziona anche nel sottopercorso di un sito Pages di progetto.
 
-Quando si decide di pubblicare:
+Pages deve essere disponibile per il repository: l’attivazione sul repository
+privato attuale è stata rifiutata da GitHub con HTTP 422 (piano non compatibile).
+La visibilità del repository non è stata modificata. Occorre scegliere tra un
+repository pubblico dedicato all’hosting dell’app, rendere pubblico questo
+repository o usare un piano che supporti Pages per repository privati.
+
+Quando Pages è disponibile:
 
 1. In **Settings → Pages → Build and deployment → Source** selezionare
    **GitHub Actions**.
-2. Portare le modifiche su `main`: il job di deploy parte soltanto dopo build
-   e fixture riuscite. Le pull request eseguono la verifica senza pubblicare.
+2. Portare le modifiche su `dev`: il job di deploy parte soltanto dopo build
+   e fixture riuscite. Le pull request e i push su `main` eseguono la verifica senza pubblicare.
 3. Il sito previsto per questo repository è
    `https://mirkodandrea.github.io/european-civil-protection-forum/`.
 
 Configurazione basata sul [workflow Pages ufficiale GitHub](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
-La preparazione locale non modifica le impostazioni del repository remoto e non
-esegue commit, push o deploy. La prima esecuzione su runner Linux resta da verificare
-su GitHub; il collaudo locale non certifica un’esecuzione remota mai avvenuta.
+La prima build CI su Linux (`63c5133`, run `39660240943`) ha completato
+con successo test nativi, build WASM e fixture Chromium offline. Il deploy
+è abilitato soltanto per `dev`, dopo gli stessi controlli.
 
 Per ripetere localmente il collaudo sul file predisposto per Pages:
 
