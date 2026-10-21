@@ -72,13 +72,13 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   await player.locator('#private-preparation').filter({hasText:'Assistente non disponibile'}).waitFor();
   assert(!(await api('/api/master')).messages.some(m=>m.original==='Issue a warning for F4.'),'failed preparation is still private');
   await player.locator('#confirm-prepared').click();
-  await master.locator('[data-view="review"]').click();
-  await master.locator('[data-commands]').waitFor();
-  await master.locator('[data-commands]').fill('[{"type":"IssueWarning","zone":"F4"}]');
-  await master.screenshot({path:path.join(out,'excon-review.png'),fullPage:true});
-  await master.locator('[data-approve]').click();
-  await master.locator('#proposals').filter({hasText:'Approvata'}).waitFor();
-  await master.locator('[data-view="chat"]').click();
+  await master.locator('[data-contact="mayor"]').click();
+  await master.locator('#messages [data-proposal]').filter({hasText:'Avvisare la popolazione'}).waitFor();
+  assert.equal(await master.locator('#messages [data-proposal] textarea').count(),0,'action inspection is readable, not raw JSON');
+  await master.locator('#messages [data-proposal] [data-field="zone"]').fill('F4');
+  await master.screenshot({path:path.join(out,'excon-chat-action-review.png'),fullPage:true});
+  await master.locator('#messages [data-approve]').click();
+  await master.locator('#messages [data-proposal]').filter({hasText:'Approvata'}).waitFor();
   await master.locator('#messages').filter({hasText:'Issue a warning'}).waitFor();
   await master.screenshot({path:path.join(out,'excon-chat.png'),fullPage:true});
   // Direct contact, same message visible in both inboxes, no implicit order.
@@ -124,7 +124,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   assert.equal(await tablet.locator('#text').inputValue(),'Draft on tablet','draft survives rotation and map switching');
   await tablet.screenshot({path:path.join(out,'player-tablet-reduced-viewport.png')});
   await tablet.close();
-  // Time stays fixed through all chat, review and map publication.
+  // Time stays fixed through all chat, action review and map publication.
   let state=await api('/api/state');assert.equal(state.turn,1);assert.equal(state.clock_control.running,false);
   const before=state.world.stats.t_s;
   await master.locator('#minutes').fill('1');await master.locator('#resolve').click();

@@ -11,7 +11,7 @@ cargo run --release -p app -- --headless
 ```
 
 Aprire il link EXCON stampato all'avvio. `master.html` presenta conversazioni per
-player, invio degli inject nella stessa conversazione, mappa completa e revisione azioni; `player.html` presenta conversazioni con
+player, invio degli inject nella stessa conversazione, mappa completa e revisione delle azioni direttamente nella conversazione; `player.html` presenta conversazioni con
 EXCON e gli altri ruoli e una mappa tattica. `play.html` apre EXCON, senza iframe che
 impersonano i player. I link individuali si trovano nella tab mappa di EXCON.
 `advanced.html` conserva la console precedente per forecast, interventi, rollback, debrief e altri strumenti non ancora riprogettati.
@@ -91,7 +91,7 @@ Il runner browser usa Playwright già previsto dal recorder, un server temporane
 Chrome headless, senza LLM esterno né finestre in primo piano. Se si condivide un
 target o un'installazione Playwright esterna, impostare `TTX_BINARY` e
 `TTX_PLAYWRIGHT` con percorsi assoluti. `TTX_QA_PORT` cambia la porta (default 8097).
-Le fixture passano dalle vere API: inject, chat, comando IssueWarning revisionato,
+Le fixture passano dalle vere API: inject, chat, comando IssueWarning revisionato dentro la chat,
 rapporto cartografico e risoluzione. Immagini desktop/mobile e manifest rimangono in
 `runs/chat-interface-review/` e vanno ispezionati.
 
@@ -102,8 +102,7 @@ Non sono ancora presenti gruppi, allegati nella chat, inoltro inject, associazio
 manuale della risposta a uno specifico messaggio, ricevute server di lettura,
 ordinamento garantito di invii simultanei durante traduzioni, salvataggio dei draft
 tra ricaricamenti o ripresa completa della sessione dopo riavvio del processo.
-I badge di lettura sono locali alla pagina. La revisione espone ancora JSON per
-l'editing e l'interpretazione AI usa il modello configurato esistente.
+I badge di lettura sono locali alla pagina. La revisione EXCON è incorporata nella conversazione del player: azioni e parametri sono presentati con etichette leggibili e modificabili; l'interpretazione AI usa il modello configurato esistente.
 Il recorder della vecchia interfaccia richiede un adattamento; il runner forecast
 continua a verificare la console conservata in `advanced.html`.
 
