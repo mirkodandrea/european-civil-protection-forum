@@ -1,8 +1,7 @@
 # Emergency simulation models
 
 Blender mesh bakes and generators transferred from `propagator_abm` under the
-existing EUPL-1.2 attribution. The latest transfer is recorded in
-`pbr-provenance.json`, including uncommitted source changes and input hashes.
+existing EUPL-1.2 attribution.
 
 - `emergency_assets.blend`: seven named collections (pedestrian, firefighter, car, fire_engine, pine, oak, bush). Each collection is authored at the origin; isolate a collection to edit it.
 - `meshes.json`: baked positions, normals, vertex colors, triangle indices and bark masks, embedded in the native and web game.
@@ -54,7 +53,6 @@ firefighter bodies and their wheel, beacon, propeller and limb parts. Their
 for the structure shader. This is a material identifier, not transparency.
 Each `rig` gives its authored pivot, axis, animation kind and phase. Preserve
 these fields when editing/regenerating; RGB-only loading loses the PBR response.
-The source commit and exact dirty input hashes are in `pbr-provenance.json`.
 Use Blender in background mode with the generator to rebuild the assets.
 The TTX uses metre-authored meshes with presentation magnification, as described
 in `docs/graphics.md`. Physical allocations and movement remain in `sim`.

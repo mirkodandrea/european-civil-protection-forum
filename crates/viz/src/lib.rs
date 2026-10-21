@@ -11,8 +11,8 @@
 //! every step bumps `generation`, so this renderer shows the fire, the
 //! buildings and the counters as they change.
 //!
-//! Vegetation, landmarks and articulated unit bakes come from `propagator_abm`;
-//! the latest PBR transfer is recorded in `assets/models/pbr-provenance.json`.
+//! Vegetation, landmarks and articulated unit bakes come from `propagator_abm`
+//! under EUPL-1.2.
 
 use std::sync::{Arc, Mutex};
 

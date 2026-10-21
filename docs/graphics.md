@@ -2,8 +2,7 @@
 
 The renderer reads snapshots and never makes model decisions. The native
 pipeline now uses the latest `propagator_abm` PBR materials, including the source
-working-tree changes to sky reflections and unit finishes. Input revision and
-SHA-256 hashes are in `assets/models/pbr-provenance.json`.
+working-tree changes to sky reflections and unit finishes (EUPL-1.2).
 
 Terrain has its own PBR material: procedural dry meadow, ground colour and
 surface normals, signed-distance asphalt/tracks, kerbs and rock strata on steep
@@ -68,8 +67,7 @@ Projector/low sample every second/fourth supplied mesh node. Buildings, roads,
 camera and shading share the continuous visual height sampler.
 
 The camera is stable by default. Manual navigation is adapted from Roccavento's
-`crates/game/src/kiosk/view.rs` (EUPL-1.2; source revision and input hashes in
-`assets/models/pbr-provenance.json`):
+`crates/game/src/kiosk/view.rs` (EUPL-1.2):
 
 - Left-drag or middle-drag pans; right-drag or Shift-left-drag rotates.
 - Wheel and trackpad pinch zoom exponentially; trackpad rotation changes heading.
@@ -154,8 +152,7 @@ release build and six GPU regression captures inspected at 3200×1800 on Apple
 M4 Pro / macOS 26.6.2, plus a high-profile 1601×1601-node imported visual DEM.
 The capture logs contain no shader/GPU errors. These are appearance and
 regression checks; interactive frame times on the EXCON projector machine have
-not been measured. Captures: `runs/pbr-review/verified/`; source inputs and
-licence: `assets/models/pbr-provenance.json`.
+not been measured. Captures: `runs/pbr-review/verified/`.
 
 
 ## Flame renderer transferred from the latest game
@@ -163,8 +160,7 @@ licence: `assets/models/pbr-provenance.json`.
 `fire_shader.rs`, `fire_textures.rs` and the flame, smoke, fire-ground and
 scene-light shaders now use the actual game code. `flames.rs` uses its
 seven-segment travelling-wave ribbons, procedural masks, round cooling embers,
-CPU-evaluated puff fog and ground glow/ash treatment. The source inputs' hashes
-and fire revision are recorded in `pbr-provenance.json`.
+CPU-evaluated puff fog and ground glow/ash treatment.
 
 The TTX keeps ensemble intensity/probability, its existing flaming lifetime and
 wind tilt. The optional cell display clips ground heat to confirmed burning/burnt

@@ -42,8 +42,7 @@ non richiesti. Verificare API e comandi nel repo prima di usarli.
 
 ## Pipeline PBR trasferita il 2026-10-20
 
-Leggere `docs/graphics.md` e `assets/models/pbr-provenance.json` prima di cambiare
-materiali o bakes. Il renderer usa materiali distinti per terreno, foglie e
+Leggere `docs/graphics.md` prima di cambiare materiali o bakes. Il renderer usa materiali distinti per terreno, foglie e
 strutture; non basta modificare `StandardMaterial` o copiare un asset per portarne
 la resa. Nei modelli `units.json`, preservare `surfaces` nell'alpha dei colori e
 `rig` nei figli: vetro, gomma, vernice e tessuti hanno risposte diverse. La base
