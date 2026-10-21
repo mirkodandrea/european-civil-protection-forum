@@ -6,3 +6,4 @@ node_modules/
 scripts/record/.cache/
 
 __pycache__/
+.worktrees/chat-interface
