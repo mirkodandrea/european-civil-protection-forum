@@ -279,7 +279,7 @@ visibilità cresce per evitare che i bordi quadrati dei chunk taglino i boschi.
 
 La regressione verifica continuità, normalizzazione, determinismo e assenza di
 mutazione del combustibile. Ispezionate cinque viste in
-`runs/valverde-final/`, con profilo projector, 1600×1000, Apple M4 Pro.
-La panoramica di 2 s ha raccolto 110 frame e 17 campioni GPU: media GPU 16,3 ms,
-p95 17,2 ms. La finestra invisibile e il laboratorio headless concorrente non
+`runs/valverde-delivery-review/`, con profilo projector, 1600×1000, Apple M4 Pro.
+La panoramica di 2 s ha raccolto 55 frame e 16 campioni GPU: media GPU 34,7 ms,
+p95 39,9 ms. La finestra invisibile e il laboratorio headless concorrente non
 sono una misura di fluidità interattiva o una garanzia per il proiettore.
