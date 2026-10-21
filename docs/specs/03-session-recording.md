@@ -11,7 +11,7 @@ Everything that happens in a session is stored, including the text of every conv
 2. Events recorded, each with wall clock, simulated clock, turn, actor and actor kind (`master | player | bot | evaluator | system`):
    - messages with full text: original, translation, English pivot, languages, status transitions (spec 02), chat threads and forwards (spec 05);
    - every LLM call: task, model, system prompt, messages, raw response, parsed result, latency, token counts, errors, fallbacks used;
-   - conversation entries of each player and of the Director, complete (not the 60-entry window used for prompts);
+   - conversation entries of each player and of the EXCON, complete (not the 60-entry window used for prompts);
    - proposals, decisions, edited commands, validation results, applied actions, master notes;
    - sim commands and the events they caused, turn start/resolve/end, time settings, jumps (spec 04);
    - presence: joins, leaves, language changes, message reads, evaluator notes (spec 08);

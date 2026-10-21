@@ -5,17 +5,17 @@ Evaluators follow the exercise live from their own devices, in their own languag
 
 ## Today
 Issue #15 delivers `evaluator.html` with three independent read-only capability
-keys, Master-information visibility, role cards, inject/reply/decision/execution
+keys, EXCON-information visibility, role cards, inject/reply/decision/execution
 chains, attachments, training objectives, reference library, evidence filters,
 paged timeline and full debrief export. Server authorization rejects every
 mutation from evaluator keys. Recorded delivery/reply/decision clocks support
-response and Master-queue durations; unrecorded read/send times are not inferred.
+response and EXCON-queue durations; unrecorded read/send times are not inferred.
 The broader requirements below also describe future evaluator translation,
 notes and extended metrics. Advanced AI assessment is tracked separately in #17.
 
 ## Requirements
 1. **Evaluator role**: read-only, a token like the players', with its own language, chosen at join and changeable. It cannot change anything (server refuses every POST except notes and language).
-2. **Context panel**: clock, turn, phase, weather, fire summary (zones burning, area, buildings and people at risk), current turn's title, objectives and planned injects (spec 07), what is pending with the Master.
+2. **Context panel**: clock, turn, phase, weather, fire summary (zones burning, area, buildings and people at risk), current turn's title, objectives and planned injects (spec 07), what is pending with the EXCON.
 3. **Role cards**, one per player: the last inject received and when; **time since delivery** (a running timer until answered); status of the last reply (interpreting, waiting, decided); counts of replies, proposals approved/edited/rejected, clarifications, chat messages, forwards; last action.
 4. **Live timeline**, filterable by role, kind and turn, showing each event with both clocks (wall and simulated) and, for messages, the text in the evaluator's language with a toggle to the original.
 5. **Chains**: inject → (forward) → reply → proposal → decision → consequence (turn report). Clicking a card opens its chain.
@@ -23,11 +23,11 @@ notes and extended metrics. Advanced AI assessment is tracked separately in #17.
    - `T_deliver` = delivered − sent (the translation delay, spec 02);
    - `T_read` = read − delivered;
    - `T_reply` = reply sent − delivered;
-   - `T_decision` = Master decision − reply sent (the Master's queue time);
+   - `T_decision` = EXCON decision − reply sent (the EXCON's queue time);
    - both wall and simulated clocks, and against the turn's `response_deadline_s` when set.
 7. **Objectives view**: for each objective, the injects meant to test it, the expected response, and what actually happened, with an evaluator tick or note.
-8. **Notes**: an evaluator writes timestamped notes, optionally tied to a role, event or objective. They are stored in the log (spec 03) and included in the export. They are visible only to evaluators and the Master.
-9. **Language**: everything the evaluator reads that came from players or the Master (messages, replies, proposals, feedback, chat) is translated on demand to their language, cached per (event, language), never blocking the dashboard. The interface texts are localised (English and Italian first).
+8. **Notes**: an evaluator writes timestamped notes, optionally tied to a role, event or objective. They are stored in the log (spec 03) and included in the export. They are visible only to evaluators and the EXCON.
+9. **Language**: everything the evaluator reads that came from players or the EXCON (messages, replies, proposals, feedback, chat) is translated on demand to their language, cached per (event, language), never blocking the dashboard. The interface texts are localised (English and Italian first).
 10. **Chat visibility**: evaluators see all threads. The join screen tells players (spec 05).
 11. Works on a laptop and a tablet; updates within 1 s of the event (spec §9), 3 evaluators at once.
 
@@ -51,4 +51,4 @@ Depends on 01, 02, 03 (and 05, 07 for threads, objectives). Extended by 09 (AI a
 ## Open questions
 - For the pilot, is a read-only view of the exported log enough, with the dashboard following?
 - Which metrics does the PPRD methodology require exactly? Adjust the definitions above to the evaluation grid.
-- Do evaluators need to see the Master's private notes and AI prompts, or only player-side events?
+- Do evaluators need to see the EXCON's private notes and AI prompts, or only player-side events?

@@ -7,7 +7,7 @@
 set -euo pipefail
 B="${1:-http://localhost:8080}/api"
 H='content-type: application/json'
-: "${TTX_MASTER_KEY:?Set TTX_MASTER_KEY to the Director access key printed at startup}"
+: "${TTX_MASTER_KEY:?Set TTX_MASTER_KEY to the EXCON access key printed at startup}"
 A="Authorization: Bearer $TTX_MASTER_KEY"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 post() { curl -sf -H "$A" -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
@@ -37,7 +37,7 @@ reply mayor "{\"text\":\"Diramate subito l'allerta alla popolazione della zona F
 reply fire_commander '{"text":"Two crews cut a fire line along the northern edge of zone F4 to protect Pineta; the third crew cuts from Pineta east edge to Forest edge east. Air tanker: one drop on Pineta north edge. Tell regional civil protection we may need reinforcements soon."}'
 wait_parsed
 
-echo "== Director prompt: one more bus for the mayor"
+echo "== EXCON prompt: one more bus for the mayor"
 post /master/prompt '{"text":"The regional transport company makes one extra bus available to the mayor right now. Send the mayor a short inject from the Regional transport company confirming it."}'
 wait_parsed
 for id in $(curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(str(p["id"]) for p in sorted(d["proposals"], key=lambda p: p["source"]["kind"]!="master") if p["status"]=="pending"))'); do

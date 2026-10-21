@@ -1,4 +1,4 @@
-//! HTTP + WebSocket server: the Master and player web UIs, and a JSON API
+//! HTTP + WebSocket server: the EXCON and player web UIs, and a JSON API
 //! that also lets scripts drive the exercise directly ("by code").
 //!
 //! Shared state is one `Arc<Mutex<Exercise>>` (also read by the Bevy
@@ -126,8 +126,8 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
 pub async fn serve(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: PathBuf, addr: std::net::SocketAddr) -> anyhow::Result<()> {
     let (app, state) = router(ex, llm, Some(web_dir));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!("Master access: http://localhost:{}/play.html?token={}", addr.port(), state.access.master);
-    tracing::info!("web UI on http://{addr}; distribute individual player links from the Master console");
+    println!("EXCON access: http://localhost:{}/play.html?token={}", addr.port(), state.access.master);
+    tracing::info!("web UI on http://{addr}; distribute individual player links from the EXCON console");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -463,7 +463,7 @@ async fn post_preview_apply(State(s):State<AppState>,Json(b):Json<PreviewApplyBo
  Ok(Json(json!({"results":results})))
 }
 
-/// One command or a list, applied immediately as the Master.
+/// One command or a list, applied immediately as the EXCON.
 async fn post_command(State(s): State<AppState>, Json(body): Json<Value>) -> ApiResult {
     let list = match body {
         Value::Array(a) => a,

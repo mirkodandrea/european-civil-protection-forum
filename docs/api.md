@@ -1,16 +1,16 @@
 # HTTP / WebSocket API
 
-Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`, and `scripts/record/session.js`, which drives the UIs themselves in a browser). JSON in, JSON out. Errors are `400 {"error": "..."}`. Requests require a per-run access key (`Authorization: Bearer KEY`). Missing/invalid keys return 401; keys for a different role or a Master-only endpoint return 403. `/api/health` is the public readiness endpoint.
+Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`, and `scripts/record/session.js`, which drives the UIs themselves in a browser). JSON in, JSON out. Errors are `400 {"error": "..."}`. Requests require a per-run access key (`Authorization: Bearer KEY`). Missing/invalid keys return 401; keys for a different role or a EXCON-only endpoint return 403. `/api/health` is the public readiness endpoint.
 
 ## Reads
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/static` | Master scenario: grid, zones, base64 fuel raster, buildings, roads, places, roles, resource types, reinforcement offers, `msel`; player keys receive only base geography and their own role |
+| GET | `/api/static` | EXCON scenario: grid, zones, base64 fuel raster, buildings, roads, places, roles, resource types, reinforcement offers, `msel`; player keys receive only base geography and their own role |
 | GET | `/api/state` | `turn`, `phase` (`briefing` / `orders` / `resolving` / `debrief`), `turn_minutes`, `speed`, `resolving` (`{turn, from_s, to_s, minutes}` while a turn is being simulated), `generation`, `last_turn`, `players`, `sent_injects`, `llm`, and `world` (stats, weather, `ensemble` `{realizations, cutoff}`, base64 fire raster, building states, roads, fire lines, drops, warned zones, shelters, resource pools, arrivals, burning zones) |
 | GET | `/api/master` | All proposals, all messages, last 300 log entries, full digest |
 | GET | `/api/player/{role}` | The player, role, turn, phase, clock, inbox, own resources, own proposals, reported `map`, linked `knowledge_events` |
-| GET | `/api/catalogue` | Command kinds, the Master-only list, catalogue documentation, roles |
+| GET | `/api/catalogue` | Command kinds, the EXCON-only list, catalogue documentation, roles |
 | GET | `/api/debrief` | Stats, proposals, messages, full log |
 | GET | `/ws` | WebSocket (key in `?token=KEY`); pushes `{"generation": n}` whenever anything changes |
 
@@ -23,7 +23,7 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 | POST | `/api/player/{role}/reply` | `{"text": "...", "reply_to": message_id, "evidence": {"basis":{"kind":"plan", "reference":"..."}, "attachments":[]}}` → `{"proposal": id}`; parsed asynchronously by the LLM |
 | POST | `/api/player/{role}/language` | `{"language": "it"}` |
 
-## Director
+## EXCON
 
 | Method | Path | Body / effect |
 |---|---|---|
@@ -32,7 +32,7 @@ Fire raster: one byte per cell, row 0 at the north edge, codes `0` unburnt, `1` 
 | POST | `/api/master/msel/{id}/send` | Sends an MSEL inject |
 | POST | `/api/master/prompt` | `{"text": "..."}` → proposal with commands and/or inject drafts (AI) |
 | POST | `/api/master/proposals/{id}/decide` | `{"approve": bool, "commands"?: [...], "note"?: "..."}`; `commands` replaces the proposal's actions (edit); feasibility is re-checked |
-| POST | `/api/master/command` | One command or a list, applied immediately as the Master → per-command results |
+| POST | `/api/master/command` | One command or a list, applied immediately as the EXCON → per-command results |
 | POST | `/api/master/resolve` | `{"minutes"?: 30}` → applies approved actions, then simulates the turn live in 1-second steps (phase `resolving`, observable through `/api/state` and `/ws`). The response comes when the turn ends: turn report (applied actions, events) |
 | POST | `/api/master/rollback` | `{"turn": n}` |
 | POST | `/api/master/end` | Debrief phase |
@@ -79,33 +79,33 @@ A reply must reference an inject or clarification delivered to that player.
 Missing references return 422; unknown references or another role's messages
 return 400 without creating a declaration. Obtain the actual message ID from
 `GET /api/player/{role}` before composing; the example ID above is illustrative.
-Master and debrief records retain the full thread across turns and rollbacks.
+EXCON and debrief records retain the full thread across turns and rollbacks.
 
 ## Declaration, approval and execution evidence
 
 Replies may set `declaration_kind` to `request` or `proposed_decision` (default).
 Declarations are recorded immediately before AI processing. `parsing` means
-awaiting interpretation, `pending` means awaiting exercise control, and
+awaiting interpretation, `pending` means awaiting EXCON, and
 `approved` means queued for resolution; none of these statuses imply execution.
-The Master can reject during parsing or supply edited commands manually. Late
+The EXCON can reject during parsing or supply edited commands manually. Late
 AI results cannot overwrite decisions or revive rolled-back proposals.
 
 Approval requires an open turn and feasible commands. Invalid AI actions require
-an explicit edit. A proposal's `decision` retains the Master identity, approval,
+an explicit edit. A proposal's `decision` retains the EXCON identity, approval,
 original/effective commands, edit flag, note, turn and timestamps. `history` is
 append-only. `executions` retain each attempted command, actual success/failure,
 reason and timestamps. Failed commands produce `failed`, rather than claiming
 execution. Repeated decision/resolution requests cannot execute a proposal twice.
-Rollback marks proposals undone while retaining their evidence. Direct Master
+Rollback marks proposals undone while retaining their evidence. Direct EXCON
 commands carry `direct_excon_intervention` origin; approved player actions and
-Master suggestions have distinct origins in execution records.
+EXCON suggestions have distinct origins in execution records.
 
 ## Review operational AI communications
 
 AI role messages and clarification questions are `communication_drafts` on the
-proposal. They are not delivered during parsing. Master decision requests may
+proposal. They are not delivered during parsing. EXCON decision requests may
 replace `communication_drafts` (each has `to`, `from`, `kind`, `title`, `text_en`)
-and Master proposals' `inject_drafts` before approving. Only `role_message` and
+and EXCON proposals' `inject_drafts` before approving. Only `role_message` and
 `clarification` communication kinds are accepted; recipients and sender origin
 are validated. Empty arrays remove drafts.
 
@@ -147,19 +147,19 @@ Reply `evidence` is required. Its `basis` has `kind` (`procedure`, `plan`, or
 the operational rationale. Optional `attachments` contain `title` and an HTTP(S)
 `url`, linking documents, maps or ordinances. Invalid bases and unsafe URL schemes
 are rejected before recording a declaration. Evidence stays attached to proposals,
-approval/execution history and debrief records; the Master interface displays the
+approval/execution history and debrief records; the EXCON interface displays the
 basis and supporting links. Maximums: 2000 characters of basis, 20 links, 200
 characters per title and 4000 characters per URL.
 
 ## Role access and map information
 
-At startup the server prints a fresh Master link containing a random access key.
-The Master console exposes individual player links (`GET /api/master/access`).
+At startup the server prints a fresh EXCON link containing a random access key.
+The EXCON console exposes individual player links (`GET /api/master/access`).
 Distribute each role's link to its participant. The all-roles console is a
-privileged Director/demo interface. Keys change on restart. Browser pages remove
+privileged EXCON/demo interface. Keys change on restart. Browser pages remove
 the key from the address bar after storing it in session storage; scripts use the
-Bearer header. Player keys cannot read `/api/state`, Master records, the command
-catalogue, debriefs, other inboxes, or mutate Master state. `/api/access` identifies
+Bearer header. Player keys cannot read `/api/state`, EXCON records, the command
+catalogue, debriefs, other inboxes, or mutate EXCON state. `/api/access` identifies
 the current key. WebSocket query parameters such as `role` do not change identity.
 
 Base geography (fuel, grid, named places, building footprints and roads) is
@@ -184,18 +184,18 @@ or erase a player's acquired information; EXCON sends correction reports.
 `POST /api/master/knowledge` records acquired information:
 `{"role":"mayor","source":"Field team report","observation":{...}}`.
 Alternatively, `{"role":"mayor","source":"Reviewed aerial survey","current_perimeter":true}`
-explicitly discloses a full current raster snapshot. This Master-only choice is
+explicitly discloses a full current raster snapshot. This EXCON-only choice is
 also available beside the custom inject form. Subsequent simulation changes stay
 undisclosed until another report. Debriefs retain the linked acquisition evidence.
 
 ## Read-only evaluators
 
-Three independent evaluator keys are generated per run. The Master obtains their
+Three independent evaluator keys are generated per run. The EXCON obtains their
 links from `/api/master/access`. `GET /api/access` identifies the evaluator. Each
-key permits read-only Master information (`/api/static`, `/api/state`,
+key permits read-only EXCON information (`/api/static`, `/api/state`,
 `/api/master`, `/api/catalogue`, `/api/debrief`, `/api/evaluator`,
 `/api/evaluator/assessment`, and `/ws`). Every
-POST is denied, including player replies/languages, reference changes and Master
+POST is denied, including player replies/languages, reference changes and EXCON
 controls. Evaluators cannot retrieve participant access keys. The page has no
 exercise action controls and supports multiple concurrent evaluators.
 
@@ -210,7 +210,7 @@ apply to each event's own turn/phase. `offset` defaults to 0 and `limit` to 200
 The full debrief export retains all evidence, including rolled-back executions.
 
 Response metrics are computed from the delivered parent message, declaration's
-first history entry, and Master decision: `reply_delay_wall_ms`,
+first history entry, and EXCON decision: `reply_delay_wall_ms`,
 `reply_delay_sim_s`, `master_queue_wall_ms`, and `master_queue_sim_s`. Missing events
 produce null metrics; read/open times and translation-send latency are not inferred.
 Wall durations are elapsed milliseconds; simulated durations follow the recorded
@@ -218,7 +218,7 @@ simulation clock and can reflect rollback. Role cards count actual recorded
 approvals/edits/rejections/executions. Training objectives come from scenario MSEL
 entries; actual delivery IDs connect them to communication chains.
 
-The Master can publish a reference library through `POST /api/master/references`
+The EXCON can publish a reference library through `POST /api/master/references`
 with `{"references":[{"basis":{"kind":"plan","reference":"Plan title/section"},
 "attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}]}`.
 Plan/procedure references and links use decision-evidence validation and are
@@ -300,7 +300,7 @@ schedules and delivery message IDs are retained in the debrief.
 `POST /api/master/proposals/{id}/execute` explicitly executes already-approved
 orders within the open turn without resolving it. Unapproved/previously executed
 proposals fail. Commands are revalidated by the world and actual outcomes are
-recorded. Approved orders otherwise execute at turn resolution. The Master UI
+recorded. Approved orders otherwise execute at turn resolution. The EXCON UI
 provides separate approval, execution, clock, phase and scheduling controls.
 
 ## Total and per-training-phase resource limits
@@ -321,19 +321,19 @@ an effective action. Inventory adjustments also respect approved reservations.
 A snapshot rollback that would restore deployment above current policy fails until
 EXCON reviews the limits. Policy changes remain independent of physical rollback
 and have before/after, rationale, approver, proposal ID and phase/time evidence.
-Master physical interventions remain explicit EXCON simulation interventions;
+EXCON physical interventions remain explicit EXCON simulation interventions;
 they do not pretend to allocate operational teams. Resource-using role actions
 are the allocations subject to inventory and deployment caps.
 
 Accounting additionally separates `inventory_available`, `effective_capacity`,
 `total_limit`, `phase_limit` and actual deployable `available` from requested,
-committed, deployed and returned quantities. Current policy appears in Master,
+committed, deployed and returned quantities. Current policy appears in EXCON,
 evaluator and debrief views; players see their own deployable accounting.
 
-The Master AI may return a `resource_limits` recommendation (complete configuration).
+The EXCON AI may return a `resource_limits` recommendation (complete configuration).
 It stays in `resource_limit_draft` and has no operational effect while pending or
-rejected. The Master can edit it using proposal decide body `resource_limits` and
-then explicitly approve it. Only Master-origin proposals can recommend policy.
+rejected. The EXCON can edit it using proposal decide body `resource_limits` and
+then explicitly approve it. Only EXCON-origin proposals can recommend policy.
 Actual application and the approved configuration are recorded separately from
 the original draft; malformed recommendations can always be rejected. Limits-only
 proposals require the same approval as physical commands or communications.
@@ -349,18 +349,18 @@ Before starting, `POST /api/master/design` sets an original design:
 The design is fixed after start. Conditions are conjunctive: `burning_at_most`,
 `burning_at_least` (`cells`), `burned_at_most`, `burned_at_least` (`ha`) and
 `executed_action` (`kind`). Execution conditions require successful recorded
-execution with Master approval, excluding rolled-back proposals. Approval alone
+execution with EXCON approval, excluding rolled-back proposals. Approval alone
 is insufficient. Actual burning/burned thresholds describe the current world.
 `POST /api/master/path` takes `point`, `path`, `reason` and optional `adaptation`.
 A phase/condition mismatch requires `adaptation:true` plus rationale. Resource caps
 for the destination phase still apply. Transitions retain physical work, record
 observations and approval, and never automatically restore fire to force escalation.
-Master/evaluator/debrief views expose the immutable design, current path, live
+EXCON/evaluator/debrief views expose the immutable design, current path, live
 conditions and append-only transition/deviation history. Direct phase changes
-remain explicit Master decisions with rationale and separate phase history.
-Master AI context includes this design, path history, recorded decisions and current
+remain explicit EXCON decisions with rationale and separate phase history.
+EXCON AI context includes this design, path history, recorded decisions and current
 physics/resources. Prompts require flagging unplanned divergence in the summary;
-flagged Master suggestions need a nonempty approval note. These semantic flags
+flagged EXCON suggestions need a nonempty approval note. These semantic flags
 remain model interpretations; authoritative path checks use actual recorded state.
 
 `POST /api/master/preview` with `{"commands":[COMMAND,...]}` applies up to 20 commands
@@ -368,9 +368,9 @@ on a disposable snapshot with the same fire options. It returns generation, befo
 after stats, resolved geometry, per-command results and limitations. The live world
 and log are unchanged. Preview is immediate raster effects, not a forecast. Weather
 changes affect stochastic future spread over time, not the existing perimeter.
-`AdvanceTime` is excluded; use the controlled clock. Master map tools and JSON
+`AdvanceTime` is excluded; use the controlled clock. EXCON map tools and JSON
 commands show this preview before the separate apply action. Physical commands in
-Master AI proposals require preview, then a second approval click; optional
+EXCON AI proposals require preview, then a second approval click; optional
 `preview_generation` on the decision endpoint rejects stale reviewed approvals. `POST
 /api/master/preview/apply` takes the same `commands`, the preview `generation` and
 `reason`; it requires a paused simulation and rejects stale generations. Results
@@ -399,7 +399,7 @@ simulation and absolutely no intervening recorded change. Thus it cannot erase
 subsequent player execution, simulation progress or decisions. For a multi-command
 batch only the last physical intervention may be corrected; earlier effects remain.
 The original command and separate correction with before/after stats, rationale,
-Master identity and original log sequence remain in the audit trail. Checkpoint
+EXCON identity and original log sequence remain in the audit trail. Checkpoint
 restore reseeds future ensemble spread, explicitly disclosed in preview and log.
 If the exercise has progressed, issue a new explicit corrective command instead.
 Reports of unexpectedly excessive fire/extinguishing areas are observations: the
@@ -416,7 +416,7 @@ turns/phases until EXCON confirms their return. `ProposalStatus::Applied` means 
 command executed/dispatched, **not** that its delayed physical task finished.
 Execution detail explicitly says when the units were dispatched and their arrival.
 
-World views, Master/evaluator/debrief and each player's own-role view expose
+World views, EXCON/evaluator/debrief and each player's own-role view expose
 `deployments`: each record has `task`, `position_m` and `active_qty`. Task fields
 include allocation IDs, role/resource/quantity, command, origin/target, speed,
 departure/expected arrival, actual arrival/completion, status and outcome detail.
@@ -439,7 +439,7 @@ Travel is an explicit **training abstraction**: straight-line constant speed, wi
 no road routing, congestion, terrain speed or air-weather model. Default staging
 base is Valverde Town Hall when present, otherwise the map centre. Ground crews and
 patrols use 10 m/s, buses 8 m/s and air tankers 90 m/s. EXCON can configure future
-role/resource travel through a Master command:
+role/resource travel through a EXCON command:
 
 ```json
 {"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":"Valverde Town Hall","speed_mps":10}
@@ -456,7 +456,7 @@ and applies no physical task effect. Partial en-route cancellation is rejected;
 units actively working on an evacuation cannot be returned until completion.
 Completed/failed tasks allow normal returns, including partial returns; completed
 physical work remains effective. EXCON confirmation records the return; return
-travel itself is not simulated. Master interventions create no role allocation or
+travel itself is not simulated. EXCON interventions create no role allocation or
 moving team and remain immediate physical changes, reviewed through previews.
 
 The 3D view uses group vehicle symbols with resource/quantity/task labels: orange
@@ -469,7 +469,7 @@ The renderer never advances a task or infers deployment from pending proposals.
 
 ## Reviewed forecast products
 
-Both endpoints require the Master key. Players and evaluators cannot compute or
+Both endpoints require the EXCON key. Players and evaluators cannot compute or
 publish a forecast. `POST /api/master/forecast` accepts this body (all fields
 optional):
 

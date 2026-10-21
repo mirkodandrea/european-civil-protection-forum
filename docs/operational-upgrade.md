@@ -72,7 +72,7 @@ sicurezza o produttività validate sul campo.
 
 ## Previsioni revisionate
 
-La console Master contiene **Forecast review**. Fermare il clock, scegliere
+La console EXCON contiene **Forecast review**. Fermare il clock, scegliere
 gruppi meteo, orizzonti ed eventuale bollettino; calcolare la bozza; esaminare
 assunzioni e contorni; selezionare destinatari e fonte della revisione;
 pubblicare. Le mappe dei partecipanti mostrano soltanto i prodotti ricevuti.

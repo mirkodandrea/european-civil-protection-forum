@@ -3,7 +3,7 @@ name = "llm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "LLM gateway (OpenRouter, mock for tests) and the TTX prompt workflows: translation, reply parsing, Master prompts, feedback, situation updates"
+description = "LLM gateway (OpenRouter, mock for tests) and the TTX prompt workflows: translation, reply parsing, EXCON prompts, feedback, situation updates"
 
 [dependencies]
 serde.workspace = true

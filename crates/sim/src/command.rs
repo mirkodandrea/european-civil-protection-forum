@@ -1,7 +1,7 @@
 //! The command catalogue: every change to the world is one of these.
 //!
-//! The same JSON shape is produced by the LLM (from player replies and Master
-//! prompts), by the Master GUI forms, and by scripts calling the HTTP API
+//! The same JSON shape is produced by the LLM (from player replies and EXCON
+//! prompts), by the EXCON GUI forms, and by scripts calling the HTTP API
 //! directly — commands can always be driven "by code", no LLM needed.
 //!
 //! Locations accept, interchangeably:
@@ -92,7 +92,7 @@ pub enum Command {
         qty: u32,
     },
 
-    // ---- Master only ----
+    // ---- EXCON only ----
     Ignite {
         at: Loc,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,7 +201,7 @@ impl Command {
         MASTER_ONLY.contains(&self.kind())
     }
 
-    /// One-line English description, for logs, the Master queue and debrief.
+    /// One-line English description, for logs, the EXCON queue and debrief.
     pub fn describe(&self) -> String {
         fn loc(l: &Loc) -> String {
             match l {

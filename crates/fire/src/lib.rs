@@ -21,7 +21,7 @@
 //! | Ignition | `ignitions` | lights a patch |
 //! | Fire line (fuel break) | `vegetation_changes` → non-vegetated | the front cannot cross cleared cells |
 //! | Water drop | `additional_moisture` | wets fuel ahead of the front; decays 1 %/min |
-//! | Extinguish (Master) | `vegetation_changes` → non-vegetated over the area | nothing in the area can burn again; burning cells there are shown as burnt |
+//! | Extinguish (EXCON) | `vegetation_changes` → non-vegetated over the area | nothing in the area can burn again; burning cells there are shown as burnt |
 //! | Weather | `wind_dir`, `wind_speed`, `moisture` | from the next event on |
 //!
 //! Two things learnt the hard way in `propagator_abm` and kept here:
@@ -128,7 +128,7 @@ pub struct FireSim {
     last_refresh_s: i64,
     /// Cells turned into fuel breaks.
     cleared: Vec<bool>,
-    /// Cells put out by the Master; drawn as burnt.
+    /// Cells put out by the EXCON; drawn as burnt.
     extinguished: Vec<bool>,
     added_moisture: Vec<f32>,
     /// Pending boundary-condition edits, flushed at the start of `advance`.
@@ -417,7 +417,7 @@ impl FireSim {
         out
     }
 
-    /// Put the fire out over a disc (Master power). Returns burning cells put out.
+    /// Put the fire out over a disc (EXCON power). Returns burning cells put out.
     pub fn extinguish(&mut self, at: Pos, radius_m: f32) -> usize {
         let cells = self.cells_in_radius(at, radius_m);
         self.extinguish_cells(&cells)

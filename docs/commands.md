@@ -1,6 +1,6 @@
 # Command catalogue
 
-Every change to the world is a `sim::Command` (`crates/sim/src/command.rs`). The LLM produces the same JSON shapes, and so do the Master map tools and scripts (`POST /api/master/command`). The live documentation is at `GET /api/catalogue`.
+Every change to the world is a `sim::Command` (`crates/sim/src/command.rs`). The LLM produces the same JSON shapes, and so do the EXCON map tools and scripts (`POST /api/master/command`). The live documentation is at `GET /api/catalogue`.
 
 ## Locations
 
@@ -31,7 +31,7 @@ Each role's `allowed_actions` in the scenario decides which of these it may use.
 | OpenShelter | `{"type":"OpenShelter","building":"Valverde Sports Centre"}` | Building must have shelter capacity and be intact |
 | RequestReinforcement | `{"type":"RequestReinforcement","resource":"air_tankers","qty":2}` | Limited by the scenario's offer; arrives after its delay, assigned to the offer's role |
 
-## Master only
+## EXCON only
 
 | Command | JSON |
 |---|---|
@@ -43,7 +43,7 @@ Each role's `allowed_actions` in the scenario decides which of these it may use.
 | ReturnResource | `{"type":"ReturnResource","allocation":1,"qty":1}` (EXCON confirms a partial/full return from a recorded allocation) |
 | AdvanceTime | `{"type":"AdvanceTime","minutes":60}` (time jump outside the turn loop) |
 
-The Master may also issue any player action; the Master is not bound by resources or role authority.
+The EXCON may also issue any player action; the EXCON is not bound by resources or role authority.
 
 ## Validation
 
@@ -52,10 +52,10 @@ The Master may also issue any player action; the Master is not bound by resource
 - `{"verdict":"ok","notes":[...]}`, for example `"500 m line, 1 crew(s)"` or `"3 bus(es) for 120 people"`;
 - `{"verdict":"rejected","reason":"..."}`, for example `"moving 120 people without cars needs 3 buses, only 2 currently available"`.
 
-The check covers role authority, resources (after earlier commands in the batch and already-approved proposals), place resolution, capacities and value ranges. Verdicts are computed when a proposal is parsed, again when the Master decides, and again at resolution.
+The check covers role authority, resources (after earlier commands in the batch and already-approved proposals), place resolution, capacities and value ranges. Verdicts are computed when a proposal is parsed, again when the EXCON decides, and again at resolution.
 
 ## Operational engines
 
-`DeployEngine` takes `at` in the usual location syntax and consumes one `engines` unit from the approved role. It requires the operational model and a reachable drivable-road post within 60 m hose reach. The engine pumps from a finite 2,500 L tank, refills at staging, and withdraws when unsafe. It does not bypass Master approval. See [operational assumptions](operational-model.md).
+`DeployEngine` takes `at` in the usual location syntax and consumes one `engines` unit from the approved role. It requires the operational model and a reachable drivable-road post within 60 m hose reach. The engine pumps from a finite 2,500 L tank, refills at staging, and withdraws when unsafe. It does not bypass EXCON approval. See [operational assumptions](operational-model.md).
 
 With `operations.local_autonomy`, `DeployEngine.at` is also the approved sector centre. The engine may relocate on roads within `tactical_policy.sector_radius_m` (default 300 m), while water reach remains separately limited (default 60 m). The task records its mission centre, current post, policy reason and version. Refilling always involves physical travel to staging. Suspended engines and unfinished fire-line crews retain their allocation and may resume the same approved mission when safe; confirmed resource returns cannot create extra units.

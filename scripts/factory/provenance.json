@@ -1,0 +1,10 @@
+{
+  "project": "/Users/mirko/dev/experiments/propagator_abm",
+  "revision": "48acd1c4d660468d67f5e5e05de731ad3a5ac309",
+  "license": "EUPL-1.2",
+  "files": {
+    "tools/factory/strade.py": "bbb7a5e8e6a7092d23405ae72c89e7ed3c92533f3d3de40176a786ab6bafcba3",
+    "tools/factory/borghi.py": "34c180c82f0491473c8795abc775ec43ec9bdca4c5117ef7f70c908c29cb03ec"
+  },
+  "adaptation": "Pure road-routing, crossing and footprint helpers. TTX recipe and validation are local; no game scoring or policies."
+}

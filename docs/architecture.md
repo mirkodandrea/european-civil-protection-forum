@@ -90,8 +90,8 @@ sequenceDiagram
 
 `Briefing → start → Orders → Resolving (second by second) → Orders … → end → Debrief`.
 
-- Player actions approved during a turn are **applied together at resolution**. The turn is then **simulated live**: the phase becomes `resolving`, and a server task (`flow::run_resolution`) calls `Exercise::step_resolution(1 s)` until Δt (default 30 min) has elapsed. It takes the lock once per simulated second and keeps the simulation clock at `speed` simulated seconds per real second (0 = as fast as possible, ~0.45 s for a 30-minute turn). Every step bumps `generation`, so the renderer redraws continuously and the WebSocket feed (throttled to 4 Hz) makes browsers re-fetch at a coarser rate. `finish_resolution` then logs the turn, snapshots it and opens the next one. Player replies, rollback and End are refused while a turn is resolving. Director commands and injects still work.
-- Master actions (map tools, commands by code, approved AI prompts) **apply immediately**.
+- Player actions approved during a turn are **applied together at resolution**. The turn is then **simulated live**: the phase becomes `resolving`, and a server task (`flow::run_resolution`) calls `Exercise::step_resolution(1 s)` until Δt (default 30 min) has elapsed. It takes the lock once per simulated second and keeps the simulation clock at `speed` simulated seconds per real second (0 = as fast as possible, ~0.45 s for a 30-minute turn). Every step bumps `generation`, so the renderer redraws continuously and the WebSocket feed (throttled to 4 Hz) makes browsers re-fetch at a coarser rate. `finish_resolution` then logs the turn, snapshots it and opens the next one. Player replies, rollback and End are refused while a turn is resolving. EXCON commands and injects still work.
+- EXCON actions (map tools, commands by code, approved AI prompts) **apply immediately**.
 - Resources are per turn: usage resets when a turn opens. Approved but not yet applied actions already hold resources, so a second drop by the only air tanker is rejected.
 - A snapshot is taken at the start of every turn. **Rollback** restores the world and marks later proposals as `rolled_back`; messages stay as history.
 - `AdvanceTime` skips time outside the turn loop (time jumps).
@@ -103,7 +103,7 @@ sequenceDiagram
 | Free text never touches the simulation | `llm` only returns JSON; `exercise::attach_parse` deserialises into `Command`s; unknown shapes go into `invalid` |
 | AI understands, rules decide | `World::validate_batch`: role authority, resource pools (including already-approved actions), place resolution, capacities |
 | No guessing | Prompt rule plus the `clarification` path; unknown places are rejected (`unknown place "…"`) |
-| Master authority | Every player proposal needs approval; Master prompts are proposals too |
+| EXCON authority | Every player proposal needs approval; EXCON prompts are proposals too |
 | Graceful degradation | `Llm::off()`: English injects, `parse_failed` leaves the proposal for manual entry; tested in `server/tests/http_flow.rs::works_without_llm` |
 | Traceability | Every inject, message, proposal, decision, command and turn is in the log with wall clock, sim clock and turn |
 
@@ -134,6 +134,6 @@ The demo video ([`docs/media/ttx_demo.mp4`](media/ttx_demo.mp4)) is produced by 
 
 ## Camera and lighting (`crates/viz/src/camera.rs`)
 
-- **Director.** `sync` turns new log entries into camera cues (`Snapshot::cues`): an inject naming a facility, place or zone; a parsed proposal; an approved proposal; a Director command. Each cue becomes a shot of that location sized to what it covers (a fire line, a zone, a building), with a slow push-in, held for 5–6 s. While a turn is simulated the camera follows the burning front (smoothed centroid, distance growing with the fire's extent, slow orbit). Otherwise it holds a wide establishing orbit. All parameters are eased; the camera rises if terrain would block the view; manual input takes over for 15 s.
+- **EXCON.** `sync` turns new log entries into camera cues (`Snapshot::cues`): an inject naming a facility, place or zone; a parsed proposal; an approved proposal; a EXCON command. Each cue becomes a shot of that location sized to what it covers (a fire line, a zone, a building), with a slow push-in, held for 5–6 s. While a turn is simulated the camera follows the burning front (smoothed centroid, distance growing with the fire's extent, slow orbit). Otherwise it holds a wide establishing orbit. All parameters are eased; the camera rises if terrain would block the view; manual input takes over for 15 s.
 - **Smoothing.** Focus, distance and pitch follow their targets through critically damped springs (continuous velocity, no overshoot). The fire target is the whole fire area (burning and burnt), which grows steadily. Terrain clearance raises the pitch through a slow boost with hysteresis, so there is no oscillation.
 - **Lighting.** A low (~20°), warm late-afternoon sun with cascaded shadows, weak sky-tinted ambient light for contrast, distance fog with sun scattering, ACES tone mapping, HDR + bloom (the additive flames glow), and 8 flickering point lights (up to 6·10⁸ lm) on the hottest 200 m bins of the fire, bright enough to light the ground in daylight. Smoke, flames and sparks cast no shadows.

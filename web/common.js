@@ -17,7 +17,7 @@ export async function api(path, body, method) {
   }
   let r = await fetch(path, opts);
   if (r.status === 401) {
-    const key = prompt('Enter the access key supplied by the exercise Director. Each player has a separate role key.');
+    const key = prompt('Enter the access key supplied by the exercise EXCON. Each player has a separate role key.');
     if (key) { sessionStorage.setItem(accessStore, key.trim()); opts.headers.Authorization = `Bearer ${accessToken()}`; r = await fetch(path, opts); }
   }
   const j = await r.json().catch(() => ({}));

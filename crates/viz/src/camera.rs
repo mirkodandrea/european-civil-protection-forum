@@ -6,7 +6,7 @@
 //! **The director** (on with `TTX_ORBIT=1` / `TTX_CINEMATIC=1`, or `A`) frames
 //! shots from what happens in the exercise ([`crate::Snapshot::cues`]):
 //! an inject that names a place, a player's proposal, an approved order or a
-//! Director command each get a short shot of their location (a slow push-in
+//! EXCON command each get a short shot of their location (a slow push-in
 //! with a little drift). While a turn is being simulated it follows the fire:
 //! the camera tracks the burning front and widens as the fire grows, orbiting
 //! slowly. Between events it holds a wide establishing orbit. Every parameter

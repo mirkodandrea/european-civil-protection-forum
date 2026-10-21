@@ -1,7 +1,7 @@
 //! `ttx` — the whole exercise in one process.
 //!
 //! ```text
-//! ttx [--scenario data/scenarios/synthetic_valley.json] [--seed 1]
+//! ttx [--scenario data/scenarios/valverde_factory.json] [--seed 1]
 //!     [--port 8080] [--web web] [--headless]
 //!     [--realizations 32] [--cutoff 0.5] [--operational-model]
 //! ```
@@ -29,7 +29,7 @@ struct Args {
 
 fn args() -> Result<Args> {
     let mut a = Args {
-        scenario: PathBuf::from("data/scenarios/synthetic_valley.json"),
+        scenario: PathBuf::from("data/scenarios/valverde_factory.json"),
         seed: 1,
         port: 8080,
         web: PathBuf::from("web"),
@@ -70,6 +70,10 @@ fn main() -> Result<()> {
         .init();
     let a = args()?;
 
+    anyhow::ensure!(
+        a.scenario.exists() || a.scenario != PathBuf::from("data/scenarios/valverde_factory.json"),
+        "default landscape is missing; regenerate with python3 scripts/scenario_factory.py landscape"
+    );
     let mut scn = if a.scenario.exists() {
         scenario::Scenario::load(&a.scenario)?
     } else {
@@ -106,7 +110,7 @@ fn main() -> Result<()> {
         exercise::Exercise::new(world).with_log_file(log),
     ));
 
-    // Reproducible visual fixtures go through the same Director authority and
+    // Reproducible visual fixtures go through the same EXCON authority and
     // exercise turn resolution as the console. No renderer-only invented state.
     // TTX_SNAPSHOT_SPEC points to {"commands":[...],"minutes":30}.
     if std::env::var("TTX_SNAPSHOT").is_ok() {

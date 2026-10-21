@@ -10,9 +10,9 @@ cargo run -p scenario --bin gen-scenario -- --operational-model --out runs/opera
 cargo run --release -p app -- --scenario runs/operational_valley.json
 ```
 
-All changes remain behind Master-approved commands and the existing role/resource
-checks. The Master can still draw direct fire lines and drops. `DeployEngine`
-requires a role allocation; it is not an unconstrained Master effect. Missing
+All changes remain behind EXCON-approved commands and the existing role/resource
+checks. The EXCON can still draw direct fire lines and drops. `DeployEngine`
+requires a role allocation; it is not an unconstrained EXCON effect. Missing
 engine capability is added to the synthetic Fire Commander when enabling the
 model on an older Valverde package.
 
@@ -36,9 +36,9 @@ Every subsystem uses the one-second `World::advance` clock. Routes, work progres
 consumables, queues, reservations, site failures and delayed warnings are included
 in world snapshots. The legacy path remains covered by the existing tests.
 
-The Master state API now contains `operations`, `traffic`, `communication_sites`
+The EXCON state API now contains `operations`, `traffic`, `communication_sites`
 and `pending_warnings`. Deployments carry routes, work progress, water consumption
-and replenishment timestamps. The Master console shows operational counters;
+and replenishment timestamps. The EXCON console shows operational counters;
 the big-screen view draws routes, moving evacuation packets and urban landmarks.
 Role APIs continue to expose only their authorized state.
 
@@ -87,8 +87,10 @@ building occupant counts; missing building references fail import. Roads retain
 classes, one-way flags and driving restrictions. TTX roles/resources are supplied
 as editable templates. Original game-specific MSEL, AI behavior and scoring are
 not transplanted; imported scenarios have no initial fire until one is authored.
-Render terrain remains the fire DEM; the ABM package's separate fine terrain
-and detailed individual-person behavior are outside this integration.
+The importer also retains the optional separate `render_terrain` visual DEM;
+the physical DEM remains authoritative. Individual-person behavior is outside
+this integration. The populated TTX landscape can now be regenerated locally;
+see [landscape generation](landscape-generation.md).
 
 ## Verification
 
@@ -104,12 +106,12 @@ warning failure, safety withdrawal, determinism and rollback. Factory smoke
 checks exercise terrain generation, package import, a Rust ensemble sweep and
 SVG atlas generation.
 
-The original port was verified with 167 workspace tests. The 2026-10-20 update passes 199 tests (including one documentation test); see [implemented changes and verification](operational-upgrade.md). Native startup and the Master state API were exercised with the operational model; a 60 s advance completed successfully, and the 3D screenshot was inspected. A Factory landscape, a two-realization fire sweep and its SVG atlas were generated. The existing Rocca Ventosa package imported as 479 buildings, 70 roads and 1,600 aggregate occupants.
+The original port was verified with 167 workspace tests. The 2026-10-20 update passes 199 tests (including one documentation test); see [implemented changes and verification](operational-upgrade.md). Native startup and the EXCON state API were exercised with the operational model; a 60 s advance completed successfully, and the 3D screenshot was inspected. A Factory landscape, a two-realization fire sweep and its SVG atlas were generated. The existing Rocca Ventosa package imported as 479 buildings, 70 roads and 1,600 aggregate occupants.
 
 
 ## Browser playtest (2026-10-11)
 
-A single tester exercised Director, Mayor and Fire Commander through the browser
+A single tester exercised EXCON, Mayor and Fire Commander through the browser
 in manual mode (no LLM calls), at 1440×1000 and 390×844. This checks functional
 usability; it does not establish usability for first-time human participants.
 
@@ -125,14 +127,14 @@ usability; it does not establish usability for first-time human participants.
 - Evacuated Valverde Hospital over the southern network: two packets of 50 and
   40 people arrived at the sports centre; 90 evacuated, 90 sheltered, zero in
   transit. Browsers produced no uncaught JavaScript errors in this flow.
-- Corrected mobile grid overflow, brought the live Director map before setup
+- Corrected mobile grid overflow, brought the live EXCON map before setup
   panels, put proposal tabs first on phones, added workflow/empty-inbox guidance,
   and made approval errors visible at the viewport. Proposal cards and player
   orders now show current task outcomes alongside dispatch records. The command
   catalogue now states the operational fire-line width default of 6 m.
 
 Remaining usability constraints: manual interpretation requires JSON and an
-experienced Director; choosing Italian does not localize all interface labels,
+experienced EXCON; choosing Italian does not localize all interface labels,
 and translation falls back to English without an LLM. That playtest used whole-road fire closures. The updated operational model supports segment-local closures; the historical closure behavior remains when the new option is disabled. In the
 synthetic initial scenario this can isolate the school very early; validate
 scenario accessibility and timing before using it for a facilitated exercise.

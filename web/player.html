@@ -29,7 +29,7 @@
   <div class="a-inbox">
     <div class="panel" id="languagejoin">
       <h2>Choose your language</h2>
-      <p class="small">New incoming messages are translated into your chosen language. Write replies in that language; the Master sees your original words and the English interpretation. Earlier messages keep their delivery language. If translation is unavailable, messages use English.</p>
+      <p class="small">New incoming messages are translated into your chosen language. Write replies in that language; the EXCON sees your original words and the English interpretation. Earlier messages keep their delivery language. If translation is unavailable, messages use English.</p>
       <label for="joinlang">Language for this role</label>
       <select id="joinlang"></select>
       <button id="confirmlang" class="primary" disabled>Confirm language</button>
@@ -42,7 +42,7 @@
     <div class="panel">
       <h2 id="replyh">Your decision</h2>
       <label for="declarationkind">Declaration</label>
-      <select id="declarationkind"><option value="proposed_decision">Proposed decision — requires Master approval</option><option value="request">Request — requires exercise control response</option></select>
+      <select id="declarationkind"><option value="proposed_decision">Proposed decision — requires EXCON approval</option><option value="request">Request — requires EXCON response</option></select>
       <label for="replyto">Reply to inject or clarification</label>
       <select id="replyto"></select>
       <div id="selectedinject" class="small muted"></div>
@@ -84,7 +84,7 @@ $('confirmlang').onclick = async () => {
 $('lang').onchange = () => api(`/api/player/${role}/language`, { language: $('lang').value }).then(refresh).catch(e => { $('status').textContent = e.message; });
 // On a phone the map sits on top: keep it to ~40% of the screen height.
 const map = new MapView($('map'), stat, { maxHeight: Math.round(window.innerHeight * 0.42) });
-const STATUS = { parsing: 'being read…', pending: 'awaiting exercise control', needs_clarification: 'question asked', approved: 'approved – awaiting EXCON execution or turn resolution', rejected: 'not approved', applied: 'executed / dispatched', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
+const STATUS = { parsing: 'being read…', pending: 'awaiting EXCON', needs_clarification: 'question asked', approved: 'approved – awaiting EXCON execution or turn resolution', rejected: 'not approved', applied: 'executed / dispatched', failed: 'could not be executed', rolled_back: 'undone (rollback)' };
 let lastCount = 0;
 
 $('send').onclick = async () => {
@@ -119,7 +119,7 @@ async function refresh() {
   $('props').innerHTML = p.proposals.slice().reverse().slice(0, 6).map(x => `<div>“${esc(x.original.slice(0, 80))}” — <span class="badge s-${x.status}">${esc(STATUS[x.status] || x.status)}</span> · ${esc(x.declaration_kind.replaceAll('_', ' '))}${x.executions?.length ? `<div>${x.executions.map(e => `${e.ok ? 'Execution / dispatch' : 'Failed'} at ${e.t_s}s: ${esc(e.detail)}`).join('<br>')}</div>` : ''}${(p.deployments||[]).filter(d=>d.task.allocations.some(id=>(x.executions||[]).some(e=>(e.allocations||[]).includes(id)))).map(d=>`<div><b>Current deployment:</b> ${esc(d.task.resource)} · <span class="${d.task.status==='failed'?'error':''}">${esc(d.task.status.replaceAll('_',' '))}</span> · ${esc(d.task.detail)}</div>`).join('')}</div>`).join('') || '<span class="muted">none yet</span>';
   $('inbox').innerHTML = p.inbox.map(m => m.kind === 'reply'
     ? `<div class="msg k-reply"><div class="meta">${kindBadge('reply')} you · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div><div class="text">${esc(m.text)}</div></div>`
-    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || `<p class="muted">${p.phase==='briefing'?'Waiting for the exercise to start…':'Waiting for an inject from exercise control. Choose your language, then reply to a received inject with your decision basis.'}</p>`;
+    : `<div class="msg k-${m.kind}"><div class="meta">${kindBadge(m.kind)} ${esc(m.from === 'master' ? 'EXCON' : m.from)} · ${esc(m.clock)} · inject #${m.inject_id ?? '–'} · ${esc(m.from)} → ${esc(m.to)}</div>${m.title ? `<b>${esc(m.title)}</b>` : ''}<div class="text">${esc(m.text)}</div></div>`).join('') || `<p class="muted">${p.phase==='briefing'?'Waiting for the exercise to start…':'Waiting for an inject from EXCON. Choose your language, then reply to a received inject with your decision basis.'}</p>`;
   if (p.inbox.length !== lastCount) { $('inbox').scrollTop = $('inbox').scrollHeight; lastCount = p.inbox.length; }
   const selected = $('replyto').value;
   const parents = p.inbox.filter(m => m.to === role && ['inject', 'clarification'].includes(m.kind));

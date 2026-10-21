@@ -50,7 +50,7 @@ fn full_turn_inject_reply_approve_resolve() {
     assert!(p.verdicts[0].is_ok());
     assert!(!p.verdicts[1].is_ok(), "F4 evacuation needs 3 buses: {:?}", p.verdicts[1]);
 
-    // The Master edits: keep the warning, evacuate the school by bus instead... still 3 buses; give one more bus first.
+    // The EXCON edits: keep the warning, evacuate the school by bus instead... still 3 buses; give one more bus first.
     ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }).unwrap();
     let edited = vec![
         Command::IssueWarning { zone: "F4".into() },

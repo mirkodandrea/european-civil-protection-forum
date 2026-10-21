@@ -3,7 +3,7 @@ name = "exercise"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Turn-based exercise engine: phases, injects, inboxes, proposals and Master approval, rollback, event log. No LLM, no HTTP."
+description = "Turn-based exercise engine: phases, injects, inboxes, proposals and EXCON approval, rollback, event log. No LLM, no HTTP."
 
 [dependencies]
 scenario.workspace = true

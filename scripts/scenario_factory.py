@@ -114,6 +114,14 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('nature'); p.add_argument('--candidate', choices=['t1','t2','t3','t4'], default='t4')
     p.add_argument('--seed', type=int); p.add_argument('--output', type=Path, default=ROOT/'runs/factory/nature'); p.set_defaults(run=nature)
+    def landscape(args):
+        from factory.valverde import landscape as run
+        run(args)
+    p = sub.add_parser('landscape', help='Regenerate the populated TTX valley')
+    p.add_argument('--template', type=Path, default=ROOT/'data/scenarios/synthetic_valley.json')
+    p.add_argument('--seed', type=int, default=11)
+    p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/valverde_factory.json')
+    p.set_defaults(run=landscape)
     p = sub.add_parser('sweep'); p.add_argument('scenario', type=Path); p.add_argument('--ignitions', type=Path)
     p.add_argument('--output', type=Path, default=ROOT/'runs/factory/sweep')
     p.add_argument('--seeds', nargs='+', type=int, default=[1,2,3]); p.add_argument('--winds', nargs='+', type=int, default=list(range(0,360,45)))

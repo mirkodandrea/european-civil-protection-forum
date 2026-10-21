@@ -8,7 +8,7 @@ const cwd=path.resolve(__dirname,'../..');
  let output='',key;
  const ready=new Promise((resolve,reject)=>{
   const timer=setTimeout(()=>reject(Error('server start timeout')),15000);
-  const read=data=>{output+=data;const m=output.match(/Master access:.*token=([a-f0-9]+)/);if(m){key=m[1];clearTimeout(timer);resolve();}};
+  const read=data=>{output+=data;const m=output.match(/EXCON access:.*token=([a-f0-9]+)/);if(m){key=m[1];clearTimeout(timer);resolve();}};
   child.stdout.on('data',read);child.stderr.on('data',read);child.on('exit',code=>reject(Error('server exited '+code)));
  });
  let browser;

@@ -20,7 +20,7 @@ Deliberately simple around a real fire core: no individual people, no suppressio
 | Ignition | `ignitions`; at least 40 m radius, because single cells fizzle about 20 % of the time. Cells show as burning immediately |
 | Fire line | `vegetation_changes` → non-vegetated along a band (default 40 m wide). Acts only on unburnt fuel |
 | Water drop | `additional_moisture`: 1.2 L/m² × 30 points per L/m² = +36 points (extinction is 30), decaying 1 %/min |
-| Extinguish (Master) | Burning cells in the area are shown as burnt, and the area's fuel is cleared so nothing there burns again |
+| Extinguish (EXCON) | Burning cells in the area are shown as burnt, and the area's fuel is cleared so nothing there burns again |
 
 - Two traps inherited from `propagator_abm` are handled: `vegetation_changes` is NaN-sparse (every non-NaN cell *sets* the fuel), and cells the core lights after being cleared (from ignition events scheduled earlier) are ignored.
 - **Snapshots**: the core checkpoint plus our layers. A restore reseeds deterministically.
@@ -65,10 +65,10 @@ A turn advances in **1-second steps** (`exercise::STEP_S`, `sim::SUBSTEP_S`). Ea
 | One simulated hour at 1 s steps | ~0.16 s | ~0.8 s |
 | A 30-minute turn at maximum speed (server) | — | ~0.45 s |
 
-The Director's **speed** (simulated seconds per real second; 0 = maximum) only sets how the turn is spread over wall-clock time.
+The EXCON's **speed** (simulated seconds per real second; 0 = maximum) only sets how the turn is spread over wall-clock time.
 
 ## Known simplifications
 
 - The thresholded ensemble is not one physically possible fire (it can have small gaps), and at a 0.5 cutoff it underplays rare extreme runs. That's fine for a table-top exercise; use `--cutoff 0.25` for a more pessimistic fire.
-- No spotting, no smoke, no crews on the ground, no traffic or congestion, no infrastructure cascade model. The Master applies cascades with `SetBuildingStatus` and injects.
+- No spotting, no smoke, no crews on the ground, no traffic or congestion, no infrastructure cascade model. The EXCON applies cascades with `SetBuildingStatus` and injects.
 - Time jumps run the model forward. A 7-day jump means running 7 days of fire, which is fast (seconds), but the fire does not stop on its own.

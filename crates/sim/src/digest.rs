@@ -33,7 +33,7 @@ pub struct BuildingView {
 
 impl World {
     /// Compact JSON describing the situation, for an LLM prompt. `role`
-    /// restricts resources to that role; `None` is the Master's full view.
+    /// restricts resources to that role; `None` is the EXCON's full view.
     pub fn digest(&self, role: Option<&str>) -> Value {
         let s = self.stats();
         let w = self.fire.weather();

@@ -6,7 +6,7 @@
 //! other requests are never blocked by a slow model.
 //!
 //! Every workflow has a no-LLM fallback: English text, or a proposal left for
-//! the Master to fill in by hand.
+//! the EXCON to fill in by hand.
 
 use std::collections::BTreeMap;
 
@@ -119,7 +119,7 @@ pub async fn process_reply(state: AppState, pid: u64) {
     }
 }
 
-/// Interpret a Master prompt (runs the LLM; call it spawned).
+/// Interpret a EXCON prompt (runs the LLM; call it spawned).
 pub async fn process_master_prompt(state: AppState, pid: u64) {
     let (catalogue, roles, gazetteer, digest, history, prompt) = {
         let ex = state.lock();
@@ -136,7 +136,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
     let r = state.llm.master_prompt(llm::tasks::MasterInput { catalogue: &catalogue, roles: &roles, gazetteer: &gazetteer, digest: &digest, history: &history, prompt: &prompt }).await;
     let mut ex = state.lock();
     let clock = ex.world.clock();
-    ex.converse(exercise::MASTER, "user", format!("[{clock}] DIRECTOR:\n{prompt}"));
+    ex.converse(exercise::MASTER, "user", format!("[{clock}] EXCON:\n{prompt}"));
     if let Ok(p) = &r {
         ex.converse(exercise::MASTER, "assistant", assistant_turn(p));
     }
@@ -163,7 +163,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
     }
 }
 
-/// Feedback to a player after a Master decision (translated, or English).
+/// Feedback to a player after a EXCON decision (translated, or English).
 pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: String) {
     let lang = state.lock().language_of(&role);
     let text = if state.llm.is_available() {
@@ -208,7 +208,7 @@ pub async fn send_drafts(state: &AppState, pid: u64) {
 pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
     let per_role = {
         let ex = state.lock();
-        ex.players.values().map(|p| (p.role.clone(), p.language.clone(), format!("{} — Turn resolved. Your resource ledger and reviewed orders are updated. Map reports retain their observation time; await new information from exercise control.", ex.world.clock()))).collect::<Vec<_>>()
+        ex.players.values().map(|p| (p.role.clone(), p.language.clone(), format!("{} — Turn resolved. Your resource ledger and reviewed orders are updated. Map reports retain their observation time; await new information from EXCON.", ex.world.clock()))).collect::<Vec<_>>()
     };
     for (role, lang, facts) in per_role {
         let text = if state.llm.is_available() { state.llm.translate(&facts, &lang).await.unwrap_or_else(|_| facts.clone()) } else { facts.clone() };
@@ -221,7 +221,7 @@ pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
 /// (throttled to 4 Hz) tells browsers to re-fetch.
 ///
 /// `speed` is simulated seconds per wall-clock second: the loop keeps the
-/// simulation clock on that schedule (re-anchoring if the Director changes
+/// simulation clock on that schedule (re-anchoring if the EXCON changes
 /// it mid-turn). 0 runs as fast as the model computes (~0.4 s for a
 /// 30-minute turn with the default 32-run ensemble).
 pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {

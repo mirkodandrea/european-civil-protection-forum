@@ -2,7 +2,7 @@
 //!
 //! [`Llm`] is the only thing in the system that talks to a model. It never
 //! touches the simulation: every workflow returns text or *candidate* actions
-//! (plain JSON), which the exercise validates and the Master approves.
+//! (plain JSON), which the exercise validates and the EXCON approves.
 //!
 //! Backends:
 //! - **OpenRouter** (`OPENROUTER_API_KEY`, optional `OPENROUTER_MODEL`,

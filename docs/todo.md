@@ -25,7 +25,7 @@ Priority order proposed in [`specs/README.md`](specs/README.md); the pilot's mus
 4. [1-to-1 player chat with auto-translation; forwarding injects](specs/05-player-chat-forward.md)
 5. [Restart and resume a session](specs/06-session-restart.md)
 6. [Time compression per turn, time jumps](specs/04-time-compression.md)
-7. [Master pre-authors turns; editor and generation](specs/07-turn-authoring.md)
+7. [EXCON pre-authors turns; editor and generation](specs/07-turn-authoring.md)
 8. [Live evaluator dashboard in the evaluator's language](specs/08-evaluator-dashboard.md)
 9. [AI players; AI assessment of the exercise](specs/09-ai-players.md)
 

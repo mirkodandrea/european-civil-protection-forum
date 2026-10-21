@@ -384,7 +384,7 @@ pub struct ReinforcementOffer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectTemplate {
     pub id: String,
-    /// Suggested turn (the Master decides when to send).
+    /// Suggested turn (the EXCON decides when to send).
     pub turn: u32,
     pub title: String,
     /// The simulated sender (e.g. "112 Dispatch", "ERCC").

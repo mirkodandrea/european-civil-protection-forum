@@ -151,14 +151,12 @@ pub fn setup(
             for row in cr * CHUNK..((cr + 1) * CHUNK).min(g.rows) {
                 for c in cc * CHUNK..((cc + 1) * CHUNK).min(g.cols) {
                     let cell = Cell { row, col: c };
-                    let (name, density, height) = match visual_fuel(s, s.fuel_at(cell)) {
-                        fuel::CONIFERS => ("pine", 2.8, 14.0),
-                        fuel::BROADLEAVES | fuel::NON_FIRE_PRONE_FOREST => ("oak", 2.5, 11.0),
-                        fuel::SHRUBS => ("bush", 4.5, 3.0),
-                        fuel::AGRO_FORESTRY => ("olive", 0.7, 8.0),
-                        _ => continue,
-                    };
-                    let expected = density * quality.vegetation * (g.cellsize / 20.).powi(2);
+                    // The model owner remains this exact cell. Only static
+                    // visual cover is reconstructed at each candidate position.
+                    if visual_fuel(s, s.fuel_at(cell)) == fuel::NON_VEGETATED {
+                        continue;
+                    }
+                    let expected = 4.5 * quality.vegetation * (g.cellsize / 20.).powi(2);
                     let count = expected.floor() as usize
                         + usize::from(rng.gen::<f32>() < expected.fract());
                     for _ in 0..count {
@@ -167,6 +165,27 @@ pub fn setup(
                             centre[0] + rng.gen_range(-g.cellsize * 0.48..g.cellsize * 0.48),
                             centre[1] + rng.gen_range(-g.cellsize * 0.48..g.cellsize * 0.48),
                         ];
+                        let cover = cover_at(s, at);
+                        let mut draw = rng.gen::<f32>() * 4.5;
+                        let mut species = None;
+                        for (i, (name, density, height)) in [
+                            ("pine", 2.8, 14.),
+                            ("oak", 2.5, 11.),
+                            ("bush", 4.5, 3.),
+                            ("olive", 0.7, 8.),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            draw -= cover[i] * density;
+                            if draw < 0. {
+                                species = Some((name, height));
+                                break;
+                            }
+                        }
+                        let Some((name, height)) = species else {
+                            continue;
+                        };
                         // Keep road surfaces readable; visual thinning only.
                         if s.roads.iter().any(|r| {
                             r.points.windows(2).any(|w| {
@@ -371,9 +390,9 @@ fn ground_images(
     let mut normals = Vec::new();
     for row in 0..g.rows {
         for col in 0..g.cols {
-            let f = visual_fuel(s, s.fuel_at(Cell { row, col }));
-            let meadow = matches!(f, fuel::GRASSLAND | fuel::SHRUBS | fuel::AGRO_FORESTRY);
-            grass.extend_from_slice(&[if meadow { 220 } else { 30 }, 0, 0, 255]);
+            let cover = cover_at(s, s.cell_centre(Cell { row, col }));
+            let meadow = (cover[2] + cover[3] + cover[4]).clamp(0., 1.);
+            grass.extend_from_slice(&[(30. + 190. * meadow) as u8, 0, 0, 255]);
         }
     }
     // Normals are sampled at the supplied visual DEM resolution, independently
@@ -382,7 +401,10 @@ fn ground_images(
         .render_terrain
         .as_ref()
         .map(|t| (t.rows, t.cols))
-        .unwrap_or((g.rows, g.cols));
+        .unwrap_or((
+            (g.height_m() / 5.).ceil() as usize,
+            (g.width_m() / 5.).ceil() as usize,
+        ));
     for row in 0..rows {
         for col in 0..cols {
             let at = s
@@ -394,20 +416,27 @@ fn ground_images(
                         t.world_size_m[1] - row as f32 * t.posting_m,
                     ]
                 })
-                .unwrap_or_else(|| s.cell_centre(Cell { row, col }));
-            let cell = s
-                .cell_of([
-                    at[0].clamp(0., g.width_m() - 0.01),
-                    at[1].clamp(0., g.height_m() - 0.01),
-                ])
-                .unwrap();
-            let f = visual_fuel(s, s.fuel_at(cell));
-            let soil = match f {
-                fuel::NON_VEGETATED => [0.56, 0.53, 0.46],
-                fuel::CONIFERS => [0.29, 0.31, 0.21],
-                fuel::BROADLEAVES => [0.37, 0.37, 0.25],
-                _ => [0.53, 0.49, 0.34],
-            };
+                .unwrap_or_else(|| {
+                    [
+                        (col as f32 + 0.5) * g.width_m() / cols as f32,
+                        g.height_m() - (row as f32 + 0.5) * g.height_m() / rows as f32,
+                    ]
+                });
+            let cover = cover_at(s, at);
+            let palette = [
+                [0.29, 0.31, 0.21],
+                [0.37, 0.37, 0.25],
+                [0.53, 0.49, 0.34],
+                [0.48, 0.48, 0.31],
+                [0.53, 0.49, 0.34],
+                [0.56, 0.53, 0.46],
+            ];
+            let mut soil = [0.; 3];
+            for (weight, colour) in cover.into_iter().zip(palette) {
+                for axis in 0..3 {
+                    soil[axis] += weight * colour[axis];
+                }
+            }
             let h = crate::frame::height_at(s, at);
             let k = 0.94 + 0.06 * (h * 0.037 + at[0] * 0.003).sin();
             colours.extend(soil.map(|v| (v * k * 255.).clamp(0., 255.) as u8));
@@ -511,6 +540,40 @@ fn ground_images(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn visual_cover_is_continuous_normalized_and_keeps_model_fuels() {
+        let mut s = scenario::synthetic::generate(7);
+        for row in 0..s.grid.rows {
+            for col in 0..s.grid.cols {
+                s.fuel[row * s.grid.cols + col] = if col < s.grid.cols / 2 {
+                    scenario::fuel::CONIFERS
+                } else {
+                    scenario::fuel::GRASSLAND
+                };
+            }
+        }
+        let original = s.fuel.clone();
+        let left = super::cover_at(&s, [1999., 2000.]);
+        let right = super::cover_at(&s, [2001., 2000.]);
+        assert!(left[0] > 0.1 && left[0] < 0.9);
+        assert!((left[0] - right[0]).abs() < 0.12);
+        for at in [
+            [0., 0.],
+            [4000., 4000.],
+            [100., 2000.],
+            [3900., 2000.],
+            [2000., 2000.],
+        ] {
+            let a = super::cover_at(&s, at);
+            assert_eq!(a, super::cover_at(&s, at));
+            assert!((a.iter().sum::<f32>() - 1.).abs() < 1e-5);
+            assert!(a.iter().all(|v| *v >= 0. && *v <= 1.00001));
+        }
+        assert!((super::cover_at(&s, [100., 2000.])[0] - 1.).abs() < 1e-5);
+        assert!((super::cover_at(&s, [3900., 2000.])[4] - 1.).abs() < 1e-5);
+        assert_eq!(s.fuel, original);
+    }
+
+    #[test]
     fn gpu_state_distinguishes_actual_fire_halo_clearing_and_rollback() {
         assert_eq!(super::plant_state(5, 10.), 0); // uncertainty is not ignition
         assert_eq!(super::plant_state(1, 0.), 1);
@@ -533,6 +596,53 @@ mod tests {
             3721.
         );
     }
+}
+
+/// Continuous, static visual cover. The physical fuel raster is never changed.
+/// A small smooth warp removes grid-aligned edges; a five-tap reconstruction
+/// softens category changes across about two cells, without filtering fire state.
+fn cover_at(s: &Scenario, p: scenario::Pos) -> [f32; 6] {
+    let cell = s.grid.cellsize;
+    let warp = [
+        (p[1] / 47.).sin() * (p[0] / 83.).cos() * cell * 0.28,
+        (p[0] / 59.).sin() * (p[1] / 97.).cos() * cell * 0.28,
+    ];
+    let mut cover = [0.; 6];
+    for (dx, dy, weight) in [
+        (0., 0., 0.4),
+        (-0.65, 0., 0.15),
+        (0.65, 0., 0.15),
+        (0., -0.65, 0.15),
+        (0., 0.65, 0.15),
+    ] {
+        let x = ((p[0] + warp[0]) / cell - 0.5 + dx).clamp(0., (s.grid.cols - 1) as f32);
+        let y = ((s.grid.height_m() - p[1] - warp[1]) / cell - 0.5 + dy)
+            .clamp(0., (s.grid.rows - 1) as f32);
+        let (c, r) = (x.floor() as usize, y.floor() as usize);
+        let ease = |v: f32| v * v * (3. - 2. * v);
+        let (u, v) = (ease(x - c as f32), ease(y - r as f32));
+        for (rr, cc, w) in [
+            (r, c, (1. - u) * (1. - v)),
+            (r, (c + 1).min(s.grid.cols - 1), u * (1. - v)),
+            ((r + 1).min(s.grid.rows - 1), c, (1. - u) * v),
+            (
+                (r + 1).min(s.grid.rows - 1),
+                (c + 1).min(s.grid.cols - 1),
+                u * v,
+            ),
+        ] {
+            let category = match visual_fuel(s, s.fuel_at(Cell { row: rr, col: cc })) {
+                fuel::CONIFERS => 0,
+                fuel::BROADLEAVES | fuel::NON_FIRE_PRONE_FOREST => 1,
+                fuel::SHRUBS => 2,
+                fuel::AGRO_FORESTRY => 3,
+                fuel::NON_VEGETATED => 5,
+                _ => 4,
+            };
+            cover[category] += weight * w;
+        }
+    }
+    cover
 }
 
 /// EU12 ids overlap legacy ids; rendering must interpret the scenario's table.
@@ -564,7 +674,10 @@ pub fn lod(
 ) {
     let Ok(cam) = cam.get_single() else { return };
     for (chunk, mut visible) in &mut chunks {
-        *visible = if cam.translation.distance(chunk.centre) < quality.vegetation_distance {
+        // Overview altitude expands the draw radius so a whole-map view does
+        // not reveal square chunk cutoffs through the middle of a forest.
+        let range = quality.vegetation_distance.max(cam.translation.y * 3.0);
+        *visible = if cam.translation.distance(chunk.centre) < range + 360. {
             Visibility::Inherited
         } else {
             Visibility::Hidden

@@ -16,7 +16,7 @@ The next milestone is a **pilot session**, and **player chat with inject forward
 | 2 | [05](05-player-chat-forward.md) | 1-to-1 player chat with auto-translation; forwarding injects | M/L | 01, 02, 03 |
 | 2 | [06](06-session-restart.md) | Restart and resume a session | M | 03 |
 | 2 | [04](04-time-compression.md) | Time compression per turn, time jumps | S | – |
-| 3 | [07](07-turn-authoring.md) | Master pre-authors turns; editor and generation | L | 04 |
+| 3 | [07](07-turn-authoring.md) | EXCON pre-authors turns; editor and generation | L | 04 |
 | 4 | [08](08-evaluator-dashboard.md) | Live evaluator dashboard in the evaluator's language | L | 01, 02, 03 |
 | 4 | [09](09-ai-players.md) | AI players; AI assessment of the exercise | L | 03, 07 |
 
@@ -48,5 +48,5 @@ flowchart LR
 ## Assumptions to confirm
 
 - Item 3 of the request ("player basati su AI con valutazione dell'excon (compreso contesto)") is read as **two** things: AI players, and an AI assessment of how the exercise is going, with its context. Both are in spec 09.
-- "Evaluators" are a new read-only role type with its own language, not Master or players.
-- Chat is free of Master approval, because it has no simulation effect. Orders still have to go through the reply box and the approval queue (spec 05).
+- "Evaluators" are a new read-only role type with its own language, not EXCON or players.
+- Chat is free of EXCON approval, because it has no simulation effect. Orders still have to go through the reply box and the approval queue (spec 05).

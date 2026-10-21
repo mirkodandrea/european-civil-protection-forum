@@ -13,11 +13,11 @@ The pace of simulated time is set in advance and can be changed for each turn, i
 
 ## Requirements
 1. Defaults live in the game file (spec 07) as `default_turn_minutes` and `default_speed`, and each turn plan may override `minutes`, `speed` and `jump`.
-2. The Master can change all of these for the next resolution from the console, before pressing resolve, and the change is logged with the reason (free text, optional).
+2. The EXCON can change all of these for the next resolution from the console, before pressing resolve, and the change is logged with the reason (free text, optional).
 3. A jump has a mode:
    - `simulate`: run the model forward at maximum speed (as `AdvanceTime` does now). The big screen shows a "+6 h" banner and the ticker summarises what happened; the camera follows the fire at the end.
    - `checkpoint`: load a prepared state (spec 06 snapshot), for large skips such as Day 3 → Day 10.
-4. During a jump, no player actions are applied silently. Approved actions apply at the start, as for any turn, and the Master is warned if a long jump is chosen while proposals are pending.
+4. During a jump, no player actions are applied silently. Approved actions apply at the start, as for any turn, and the EXCON is warned if a long jump is chosen while proposals are pending.
 5. Players see the clock and the elapsed time in the situation update ("Since your last turn: 6 h 00"). The situation update (L5) is written for the whole jump, not per minute.
 6. Limits: a jump above a configured maximum (default 24 simulated hours) asks for confirmation, because of the compute time (resolving 1 h must take ≤ 10 s, spec §9).
 
@@ -28,7 +28,7 @@ The pace of simulated time is set in advance and can be changed for each turn, i
 
 ## Tests
 - The fire result of a 6 h jump at speed 0 equals six 1 h turns (extends the existing step-size test).
-- The settings from a turn plan are applied, and a Master override wins and is logged.
+- The settings from a turn plan are applied, and a EXCON override wins and is logged.
 - The `checkpoint` mode restores the given snapshot and the clock jumps.
 
 ## Depends on / used by

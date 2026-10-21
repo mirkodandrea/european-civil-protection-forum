@@ -3,7 +3,7 @@ name = "server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "HTTP + WebSocket server for the Master and player UIs, and the LLM orchestration of the turn loop"
+description = "HTTP + WebSocket server for the EXCON and player UIs, and the LLM orchestration of the turn loop"
 
 [dependencies]
 scenario.workspace = true

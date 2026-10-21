@@ -1,7 +1,7 @@
 # 01 — Dedicated translation model
 
 ## Goal
-Translate with a model chosen for translation, called through OpenRouter, instead of the general model (`deepseek/deepseek-v4.1-flash`) that also parses replies and answers Master prompts, covering the PPRD East languages.
+Translate with a model chosen for translation, called through OpenRouter, instead of the general model (`deepseek/deepseek-v4.1-flash`) that also parses replies and answers EXCON prompts, covering the PPRD East languages.
 
 ## Today
 `llm::tasks::translate` uses the single `Llm` client and model from `OPENROUTER_MODEL`. English targets skip the call. Quality is good for Italian and Armenian, but the model is shared with slow JSON tasks (5–15 s) and every task competes for the same latency and cost budget.
@@ -9,7 +9,7 @@ Translate with a model chosen for translation, called through OpenRouter, instea
 ## Requirements
 1. A separate model setting for translation, in `.env`: `OPENROUTER_TRANSLATION_MODEL` (falls back to `OPENROUTER_MODEL` if unset). Same key and base URL.
 2. All translation goes through one entry point, so every feature (injects, replies, feedback, chat, forwards, dashboard) uses the same model and glossary. Today this means `translate`; feedback, SITREP and the AI answers that are written directly in the player's language stay with the general model, because they are generation, not translation.
-3. Any language pair, not only English ↔ X. Player-to-player text (spec 05) goes source → target directly, and `text_en` is kept as the pivot for the log and for the Master.
+3. Any language pair, not only English ↔ X. Player-to-player text (spec 05) goes source → target directly, and `text_en` is kept as the pivot for the log and for the EXCON.
 4. Names, zone codes (`F4`, `F4:N`), place names and numbers are preserved exactly.
 5. Failure: on timeout or error, retry once, then use the general model, then deliver the English text flagged `translation_failed` (spec 02).
 6. Languages: the PPRD East languages — **Armenian (hy), Georgian (ka), Azerbaijani (az), Romanian for Moldova (ro), Ukrainian (uk)**, plus **Russian (ru)** as a common working language, **Italian (it)** and English. Belarusian is not covered (PPRD East 3 activities with Belarus are suspended, to be confirmed). The model must be good on all of them, so the weakest language decides, not the average.
@@ -46,7 +46,7 @@ Findings:
 - **The current default, `deepseek/deepseek-v4.1-flash`, is the weak point for Armenian** (3.0/2.9, half the calls failed) and is slow (4.4 s). The Armenian player in the demo worked only because the answers came from a cassette.
 - **`google/gemini-3.1-flash-lite` is the best all-round: 4.6–5.0 in every language, about 1 s per call, and zone codes and names kept in 99%.** It is cheap enough for chat, where every message is a call.
 - `openai/gpt-5.6-luna` is nearly as good, keeps everything (100%), but is slower (2.7 s). It is the fallback, on a different provider, so an outage at one does not stop translation.
-- Caveats: a single LLM judge (Sonnet 5, a model of another family than the candidates, but not a human); 10 short phrases per language, no long injects; Belarusian and other languages not tested. The Master's partners who read these languages should review a sample (a checklist in the pilot) before the Forum. Re-run the script when models change: `python3 scripts/bench_translation.py` (raw output in `runs/bench_translation.json`, git-ignored).
+- Caveats: a single LLM judge (Sonnet 5, a model of another family than the candidates, but not a human); 10 short phrases per language, no long injects; Belarusian and other languages not tested. The EXCON's partners who read these languages should review a sample (a checklist in the pilot) before the Forum. Re-run the script when models change: `python3 scripts/bench_translation.py` (raw output in `runs/bench_translation.json`, git-ignored).
 
 Decision (to confirm): `OPENROUTER_TRANSLATION_MODEL=google/gemini-3.1-flash-lite`, fallback `openai/gpt-5.6-luna`, then the general model, then English.
 

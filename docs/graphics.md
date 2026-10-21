@@ -260,3 +260,26 @@ burned and 23 damaged buildings. No shader/GPU errors were logged. Local review:
 `runs/upscale-final/report.html`, compared with `runs/upscale-cells/`. The
 one-second high-profile benchmark is a harness smoke test, not a performance
 improvement claim or projector qualification.
+
+## Copertura vegetale continua (2026-10-21)
+
+Il raster fisico dei combustibili resta a 20 m. Il renderer ricostruisce sei
+pesi di copertura con interpolazione bilineare a frazioni smoothstep, un filtro
+a cinque campioni e una deformazione spaziale deterministica di circa 5,6 m.
+Colori del terreno e sottobosco vengono miscelati dai pesi; le texture del suolo
+sono campionate a 5 m anche quando manca un DEM visuale separato. Le posizioni
+3D campionano la stessa copertura, mescolando specie e densità ai margini, senza
+cambiare combustibile o propagazione.
+
+Ogni pianta appartiene ancora alla propria cella fisica per incendio, rimozione
+del combustibile e rollback. Le celle inizialmente prive di vegetazione non
+acquisiscono piante per interpolazione. Il campo statico di copertura non filtra
+stato dinamico, probabilità o contatori. Alle quote da panoramica la distanza di
+visibilità cresce per evitare che i bordi quadrati dei chunk taglino i boschi.
+
+La regressione verifica continuità, normalizzazione, determinismo e assenza di
+mutazione del combustibile. Ispezionate cinque viste in
+`runs/valverde-delivery-review/`, con profilo projector, 1600×1000, Apple M4 Pro.
+La panoramica di 2 s ha raccolto 55 frame e 16 campioni GPU: media GPU 34,7 ms,
+p95 39,9 ms. La finestra invisibile e il laboratorio headless concorrente non
+sono una misura di fluidità interattiva o una garanzia per il proiettore.

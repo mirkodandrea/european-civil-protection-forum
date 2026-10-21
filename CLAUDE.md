@@ -1,22 +1,22 @@
 # PPRD East 4 agentic TTX — project guide
 
-Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildings) with a Bevy big screen, a web Master console, web player pages, and an OpenRouter LLM that mediates. Start with `README.md`; the design docs are in `docs/`.
+Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildings) with a Bevy big screen, a web EXCON console, web player pages, and an OpenRouter LLM that mediates. Start with `README.md`; the design docs are in `docs/`.
 
 ## Decisions (settled with Mirko)
 
 | Topic | Decision |
 |---|---|
 | Simulator | Rust + Bevy 0.14 (+ bevy_egui 0.28), from scratch; `propagator-core` vendored from `~/dev/experiments/propagator_abm` |
-| Game | Turn-based. Master omnipotent (GUI tools, AI prompts, commands by code). Every player action needs Master approval |
+| Game | Turn-based. EXCON omnipotent (GUI tools, AI prompts, commands by code). Every player action needs EXCON approval |
 | People | Not modelled individually: buildings have occupant counts |
-| Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. Master interventions act directly. See docs/api.md. |
+| Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. See docs/api.md. |
 | Places | Named places, zone codes of an 8×8 grid (`F4`), zone edges (`F4:N`), or coordinates |
 | LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash`, key in `.env`; must degrade gracefully |
 | Scenario | Synthetic "Valverde valley" for now |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
-| Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the Director sets a factor (e.g. 60× = 1 simulated min/s) |
+| Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the EXCON sets a factor (e.g. 60× = 1 simulated min/s) |
 | Demo video | Narrated with OpenRouter TTS `google/gemini-3.1-flash-tts-preview` (voice Charon), telling the story of the incident (not game mechanics); every clip checked by transcription; subtitles burned in + track + .srt/.vtt; LLM answers replayed from `scripts/record/llm_cassette.jsonl`; simulator streamed into ffmpeg while recording |
-| AI context | One continuous conversation per player and for the Director (received messages, replies, interpretations) |
+| AI context | One continuous conversation per player and for the EXCON (received messages, replies, interpretations) |
 | Player UI | Situation map first on the player's page (phones) |
 | Camera | Cinematic director follows injects, proposals, orders and the fire during turns; sun, shadows, fog, bloom, fire lights |
 | Flame rendering | Byram flame length from ensemble-mean intensity, scaled by probability; halo tongues below the cutoff; Froude wind tilt; age-based ground glow; smoke/sparks. Build on `propagator_abm` ideas but keep ensemble-aware |

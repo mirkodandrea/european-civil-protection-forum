@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TTX Master</title>
+<title>TTX EXCON</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1>Exercise Director</h1>
+  <h1>EXCON</h1>
   <span class="pill" id="turn">–</span>
   <span class="pill" id="clock">–</span>
   <span class="pill" id="weather">–</span>
@@ -40,7 +40,7 @@
 <div class="panel" id="forecast-review"></div>
 <div class="panel"><h2>Operational model</h2><div id="operationalState"></div></div>
 <div class="panel"><h2>Actual deployments</h2><div id="deployments"></div><p class="small">Staging bases and speeds are training assumptions. Use SetDeploymentTravel in Commands to configure future deployments. Operational scenarios use road routes, progressive crew work and finite water loads. Task effects wait for arrival.</p></div>
-    <div class="panel"><h2>Training design and paths</h2><p class="small">Original design is editable during briefing only. Paths change only after explicit approval; adaptations preserve physical work.</p><textarea id="designjson">{"objectives":["Contain the fire through timely coordination"],"phases":{"early_warning":"Assess and mobilise","early_action":"Successful containment","escalation":"Fire exceeds local containment"},"decision_points":[{"id":"containment-check","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0}]},{"path":"escalating","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1}]}]}]}</textarea><button id="savedesign">Save original design</button><div id="pathoptions"></div><label>Transition rationale<input id="pathreason"></label><label><input type="checkbox" id="pathadaptation">Explicit Master adaptation when phase/conditions diverge</label><div id="designview" class="small"></div></div>
+    <div class="panel"><h2>Training design and paths</h2><p class="small">Original design is editable during briefing only. Paths change only after explicit approval; adaptations preserve physical work.</p><textarea id="designjson">{"objectives":["Contain the fire through timely coordination"],"phases":{"early_warning":"Assess and mobilise","early_action":"Successful containment","escalation":"Fire exceeds local containment"},"decision_points":[{"id":"containment-check","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0}]},{"path":"escalating","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1}]}]}]}</textarea><button id="savedesign">Save original design</button><div id="pathoptions"></div><label>Transition rationale<input id="pathreason"></label><label><input type="checkbox" id="pathadaptation">Explicit EXCON adaptation when phase/conditions diverge</label><div id="designview" class="small"></div></div>
     <div class="panel"><h2>Physical intervention preview</h2><p class="small">Coordinates and widths/radii in metres; area in hectares. A zone is a whole grid square. Pause the clock to apply a reviewed preview or correct the latest intervention.</p><div id="physicalpreview"></div><input id="interventionreason" placeholder="Rationale for intervention"><button id="applypreview" disabled>Apply reviewed preview</button><input id="correctionreason" placeholder="Why the latest intervention needs correction"><button id="correctphysical" disabled>Correct latest intervention</button><div id="correctioninfo" class="small"></div></div>
     <div class="panel" id="director-map">
       <h2>Live situation map</h2>
@@ -90,7 +90,7 @@
       <div class="row"><button id="isend" class="primary">Send inject</button></div>
     </div>
     <div id="tab-prompt" class="panel" hidden>
-      <h2>Director prompt (AI)</h2>
+      <h2>EXCON prompt (AI)</h2>
       <p class="small muted">Describe what should happen — e.g. "the wind turns to the north and strengthens to 60 km/h; tell everyone" or "the fuel station explodes, destroy it and warn the mayor". The AI proposes commands and injects; you confirm them in the Proposals tab.</p>
       <textarea id="ptext"></textarea>
       <div class="row"><button id="psend" class="primary">Propose</button></div>
@@ -241,7 +241,7 @@ function renderProposals() {
   const list = [...master.proposals].sort((a, b) => (open.includes(b.status) - open.includes(a.status)) || b.id - a.id);
   $('tab-proposals').innerHTML = `<h2>Proposals (${list.filter(p => open.includes(p.status)).length} open)</h2>` + (list.length ? '' : '<p class="muted">Player replies and AI prompts appear here for your decision.</p>') +
     list.map(p => {
-      const who = p.source.kind === 'master' ? 'Director prompt' : (state.players[p.source.role]?.name || p.source.role);
+      const who = p.source.kind === 'master' ? 'EXCON prompt' : (state.players[p.source.role]?.name || p.source.role);
       const cmds = p.commands.map((c, i) => {
         const v = p.verdicts[i] || {};
         return `<li>${esc(p.descriptions[i])} <span class="verdict-${v.verdict}">${v.verdict === 'ok' ? '✓ ' + esc((v.notes || []).join('; ')) : '✗ ' + esc(v.reason || '')}</span></li>`;
@@ -259,12 +259,12 @@ function renderProposals() {
         ${p.summary ? `<div class="small"><i>${esc(p.summary)}</i></div>` : ''}
         ${cmds ? `<ul class="small">${cmds}</ul>` : ''}${drafts ? `<ul class="small">${drafts}</ul>` : ''}${communications ? `<ul class="small">${communications}</ul>` : ''}
         ${p.invalid.length ? `<div class="small error">Not understood: ${esc(p.invalid.join('; '))}</div>` : ''}
-        ${p.resource_limit_draft ? `<div class="small"><b>Resource-limit recommendation (awaits Master approval):</b><pre>${esc(JSON.stringify(p.resource_limit_draft,null,2))}</pre></div>` : ''}
-        ${p.clarification ? `<div class="small" style="color:var(--warn)">Draft clarification for Master review: ${esc(p.clarification)}</div>` : ''}
+        ${p.resource_limit_draft ? `<div class="small"><b>Resource-limit recommendation (awaits EXCON approval):</b><pre>${esc(JSON.stringify(p.resource_limit_draft,null,2))}</pre></div>` : ''}
+        ${p.clarification ? `<div class="small" style="color:var(--warn)">Draft clarification for EXCON review: ${esc(p.clarification)}</div>` : ''}
         ${p.results.length ? `<div class="small">${p.results.map(esc).join('<br>')}</div>` : ''}
         ${taskOutcomes}
         ${p.history?.length ? `<details class="small"><summary>Declaration and status history</summary>${p.history.map(h => `<div>${esc(h.status)} · turn ${h.turn} · ${h.t_s}s · ${esc(h.actor)}: ${esc(h.note)}</div>`).join('')}</details>` : ''}
-        ${p.decision ? `<div class="small muted">Master ${p.decision.approve ? 'approval' : 'rejection'} recorded at ${p.decision.t_s}s${p.decision.edited ? ' (actions edited)' : ''}</div>` : ''}
+        ${p.decision ? `<div class="small muted">EXCON ${p.decision.approve ? 'approval' : 'rejection'} recorded at ${p.decision.t_s}s${p.decision.edited ? ' (actions edited)' : ''}</div>` : ''}
         ${p.master_note ? `<div class="small muted">Note: ${esc(p.master_note)}</div>` : ''}
         ${editable && p.resource_limit_draft ? `<details class="small"><summary>Edit limit recommendation (complete JSON configuration)</summary><textarea id="limits-${p.id}">${esc(JSON.stringify(p.resource_limit_draft,null,1))}</textarea></details>` : ''}
         ${editable ? `<details class="small"><summary>Edit actions (JSON)</summary><textarea id="edit-${p.id}">${esc(JSON.stringify(p.commands, null, 1))}</textarea></details>
@@ -349,7 +349,7 @@ async function refresh() {
   $('rbturn').value = state.turn;
   $('stats').textContent = statsLine(st);
   map.setView(w);
-  // Don't wipe what the Director is typing in a proposal card.
+  // Don't wipe what the EXCON is typing in a proposal card.
   const busy = $('tab-proposals').contains(document.activeElement) && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName);
   const proposalKey=JSON.stringify([master.proposals,(state.world.deployments||[]).map(d=>[d.task.id,d.task.status,d.task.detail,d.active_qty])]);
   if (!busy && proposalKey!==renderedProposals) {

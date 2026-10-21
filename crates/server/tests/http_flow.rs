@@ -1,4 +1,4 @@
-//! The full Master ↔ player workflow over HTTP, with a mock LLM.
+//! The full EXCON ↔ player workflow over HTTP, with a mock LLM.
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -100,9 +100,9 @@ async fn master_player_llm_round_trip() {
     assert_eq!(p["commands"][0]["type"], "IssueWarning");
     assert_eq!(p["verdicts"][0]["verdict"], "ok");
     let (_, before) = call(&app, "GET", "/api/player/fire_commander", None).await;
-    assert!(!before["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"), "operational AI drafts await Master approval and execution");
+    assert!(!before["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"), "operational AI drafts await EXCON approval and execution");
 
-    // Master approves -> translated feedback to the player.
+    // EXCON approves -> translated feedback to the player.
     let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": true}))).await;
     assert_eq!(s, StatusCode::OK, "{out}");
     eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "feedback" && m["text"].as_str().unwrap().starts_with("[it]"))).await;
@@ -115,7 +115,7 @@ async fn master_player_llm_round_trip() {
     assert_eq!(s, StatusCode::OK);
     eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
 
-    // Master prompt -> proposal with a command and an inject draft; approval applies both.
+    // EXCON prompt -> proposal with a command and an inject draft; approval applies both.
     let (_, r) = call(&app, "POST", "/api/master/prompt", Some(json!({"text": "make the wind much stronger and tell everyone"}))).await;
     let mp = r["proposal"].as_u64().unwrap();
     eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == mp && p["status"] == "pending")).await;
@@ -166,7 +166,7 @@ async fn works_without_llm() {
     let (_, r) = call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "line along G3 south edge", "reply_to": reply_parent(&app, "fire_commander").await}))).await;
     let pid = r["proposal"].as_u64().unwrap();
     eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid && p["status"] == "pending")).await;
-    // The Master types the command for the player.
+    // The EXCON types the command for the player.
     let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": true, "commands": [{"type":"CutFireLine","along":"G3:S"}]}))).await;
     assert_eq!(s, StatusCode::OK, "{out}");
     let (_, rep) = call(&app, "POST", "/api/master/resolve", None).await;
@@ -549,7 +549,7 @@ async fn ai_resource_limits_are_recommendations_until_reviewed_and_approved() {
     assert_eq!(proposal["proposals"][0]["resource_limit_draft"]["total"]["ground_crews"],1);
     let (_,pending)=call(&app,"GET","/api/state",None).await;
     assert_eq!(pending["resource_limits"],before["resource_limits"]);assert_eq!(pending["world"],before["world"]);
-    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"Master edits recommendation to two crews"}))).await.0,StatusCode::OK);
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"EXCON edits recommendation to two crews"}))).await.0,StatusCode::OK);
     let (_,effective)=call(&app,"GET","/api/state",None).await;assert_eq!(effective["resource_limits"]["total"]["ground_crews"],2);
     assert_eq!(effective["resource_accounting"]["fire_commander"]["ground_crews"]["available"],2);
     let (_,evidence)=call_key(&app,"GET","/api/evaluator",None,Some("test-eval-one")).await;

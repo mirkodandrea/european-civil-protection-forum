@@ -1,6 +1,6 @@
 # 09 — AI players, and AI assessment of the exercise
 
-Two related parts. Both are opt-in and never replace the Master's approval. (See the assumption in `README.md`.)
+Two related parts. Both are opt-in and never replace the EXCON's approval. (See the assumption in `README.md`.)
 
 ## Part A — AI players (bots)
 
@@ -11,12 +11,12 @@ A role can be played by an AI, so an exercise can run with fewer humans, be rehe
 Every role is a human in a browser. The LLM only translates and interprets what humans write.
 
 ### Requirements
-1. A role can be configured as a **bot** in the game or scenario (`roles.yaml`): `bot: {persona, competence: novice|competent|expert, language, response_delay_s, initiative}`. The Master can turn a bot on or off during play, and take over the role by connecting a human.
-2. A bot uses the **same interfaces** as a human: it receives injects and messages, writes replies in its language, chats, and forwards injects (spec 05). Its replies go through the normal path — translation, interpretation into a proposal, Master approval, validation — so the guardrails are unchanged. Nothing gives a bot more power.
+1. A role can be configured as a **bot** in the game or scenario (`roles.yaml`): `bot: {persona, competence: novice|competent|expert, language, response_delay_s, initiative}`. The EXCON can turn a bot on or off during play, and take over the role by connecting a human.
+2. A bot uses the **same interfaces** as a human: it receives injects and messages, writes replies in its language, chats, and forwards injects (spec 05). Its replies go through the normal path — translation, interpretation into a proposal, EXCON approval, validation — so the guardrails are unchanged. Nothing gives a bot more power.
 3. A bot sees only what its role sees (role digest, its inbox, its own AI conversation). It is not told the objectives, expected responses or other roles' data.
 4. Behaviour is bounded: a response delay (real seconds, drawn around `response_delay_s`, to look like a person and to save cost), a limit on messages per turn, and imperfection by competence level (a `novice` may ask for clarification, or omit a step).
-5. Bots are **labelled** as bots for the Master and evaluators everywhere (dashboard, log: `actor_kind: bot`). Whether other players are told is a per-session setting, default yes for the pilot.
-6. Failure: if the LLM is unavailable a bot stays silent, and the Master is told, so nobody waits for it without knowing.
+5. Bots are **labelled** as bots for the EXCON and evaluators everywhere (dashboard, log: `actor_kind: bot`). Whether other players are told is a per-session setting, default yes for the pilot.
+6. Failure: if the LLM is unavailable a bot stays silent, and the EXCON is told, so nobody waits for it without knowing.
 
 ### Design
 - New workflow **L9 `bot_turn`**: system = persona, role manifest, allowed actions, language; messages = the role's conversation and current digest; output = `{reply?, chat: [{to, text}], forward: [{message, to, note}], wait_s}`. The output is applied through the same server functions a human's request uses (`player_reply`, `chat`, `forward`), so validation and logging come for free.
@@ -25,7 +25,7 @@ Every role is a human in a browser. The LLM only translates and interprets what 
 
 ### Tests
 - A scripted session with two bots and one human completes a turn; every bot action appears as a proposal needing approval; a bot cannot use a command outside its manifest.
-- Delay and message limits are respected (mock clock). LLM off → silent bot and a Master warning.
+- Delay and message limits are respected (mock clock). LLM off → silent bot and a EXCON warning.
 - Replay from the cassette gives an identical log.
 
 ## Part B — AI assessment of the exercise (including context)

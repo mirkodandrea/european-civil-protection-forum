@@ -8,17 +8,17 @@ Players cannot write to each other directly. The AI can produce a role message f
 
 ## Requirements
 ### Chat
-1. A player opens a conversation with any role they are allowed to contact (`roles.yaml` `message_links`, default: all roles). The Master can switch chat on or off, globally or per pair, and by phase (for example off during resolution).
+1. A player opens a conversation with any role they are allowed to contact (`roles.yaml` `message_links`, default: all roles). The EXCON can switch chat on or off, globally or per pair, and by phase (for example off during resolution).
 2. Text is written in the player's language and delivered in the recipient's language (spec 01). Both sides can show the original and the translation. The status steps of spec 02 apply, so the sender sees "translating…" and then "delivered/read".
 3. Each pair has one thread, ordered by time, with unread counts. The player page has a Chat tab next to the map and inbox, phone-first as the rest.
-4. Chat has **no simulation effect and needs no approval**. It is not parsed into commands. If a player writes an order in a chat, the page reminds them that orders go in the reply box (a short hint under the input, and a Master-visible flag when the text looks like an order — proposed, optional).
-5. The Master and evaluators see all threads (the join screen says so). The Master can post into a thread as "Exercise control".
+4. Chat has **no simulation effect and needs no approval**. It is not parsed into commands. If a player writes an order in a chat, the page reminds them that orders go in the reply box (a short hint under the input, and a EXCON-visible flag when the text looks like an order — proposed, optional).
+5. The EXCON and evaluators see all threads (the join screen says so). The EXCON can post into a thread as "EXCON".
 6. Rate limit per sender (default 10 messages/minute) to keep translation cost bounded.
 
 ### Forwarding
 7. Any inject a player has received can be forwarded to another role with an optional note. The recipient sees: "Forwarded by *Fire Commander*", the original sender and time, the note, and the inject text in their language.
 8. The forwarded text is translated from the **original** (English source or original text), not from the sender's translation, to avoid double translation loss.
-9. An inject can be marked not forwardable in the game file (`forwardable: false`), and the Master can disable forwarding globally. A forward can only go to roles the sender may contact.
+9. An inject can be marked not forwardable in the game file (`forwardable: false`), and the EXCON can disable forwarding globally. A forward can only go to roles the sender may contact.
 10. Forwarding is recorded as a link between messages (`forward_of`) so the chain inject → forward → reaction can be seen in the log and in the evaluator dashboard.
 
 ### AI context
@@ -27,7 +27,7 @@ Players cannot write to each other directly. The AI can produce a role message f
 ## Design
 - `Message` (spec 02) gets `channel` (`inject | chat | ai | system`), `thread` (sorted pair of roles, `"mayor|fire"`), and `forward_of: Option<u64>`. `MsgKind::Chat` and `MsgKind::Forward` are added.
 - API: `POST /api/player/{role}/chat {to, text}` → `{message}`; `POST /api/player/{role}/forward {message, to, note?}`; `GET /api/player/{role}` returns `threads` and `contacts`; `POST /api/master/chat {enabled, pairs?, forwarding?}`; `POST /api/master/chat/{thread}/post`.
-- Chat text is stored as `text_src`/`lang_src`, `text_en` (for the Master and the log) and `text` (recipient's language), like other messages.
+- Chat text is stored as `text_src`/`lang_src`, `text_en` (for the EXCON and the log) and `text` (recipient's language), like other messages.
 - A player who changes language mid-session keeps the old messages as they were delivered; new messages use the new language.
 
 ## Failure

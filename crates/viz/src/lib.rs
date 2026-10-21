@@ -6,7 +6,7 @@
 //! therefore never stalls a frame, and the renderer can never change the
 //! exercise.
 //!
-//! Turns are simulated live: while the Director resolves a turn the server
+//! Turns are simulated live: while the EXCON resolves a turn the server
 //! advances the world one simulated minute at a time (optionally paced), and
 //! every step bumps `generation`, so this renderer shows the fire, the
 //! buildings and the counters as they change.
@@ -472,7 +472,7 @@ fn feed_line(e: &exercise::LogEntry) -> Option<String> {
         ),
         "proposal_decided" => "REJECTED  a proposal".to_string(),
         "master_command" => format!(
-            "DIRECTOR  {}",
+            "EXCON  {}",
             serde_json::from_value::<sim::Command>(d["command"].clone())
                 .ok()?
                 .describe()

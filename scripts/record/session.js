@@ -89,19 +89,19 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await F('Fire').locator('#confirmlang').click();
   await sleep(1800);
 
-  await tab('Director');
+  await tab('EXCON');
   await caption('start', 1200);
-  await F('Director').locator('#start').click();
+  await F('EXCON').locator('#start').click();
   // Turns are simulated live on the big screen: 120× = one simulated minute every half second.
-  await F('Director').locator('#speed').fill('120');
-  await F('Director').locator('#speed').dispatchEvent('change');
+  await F('EXCON').locator('#speed').fill('120');
+  await F('EXCON').locator('#speed').dispatchEvent('change');
   await sleep(2000);
   await caption('injects', 500);
-  await F('Director').locator('#tb-injects').click();
+  await F('EXCON').locator('#tb-injects').click();
   await sleep(800);
   for (const id of ['I-01', 'I-02', 'I-03']) {
-    await scrollTo('Director', `[data-msel="${id}"]`);
-    await F('Director').locator(`[data-msel="${id}"]`).click();
+    await scrollTo('EXCON', `[data-msel="${id}"]`);
+    await F('EXCON').locator(`[data-msel="${id}"]`).click();
     await waitFor(async () => (await getJSON('/api/state')).sent_injects.includes(id), id);
     await sleep(600);
   }
@@ -131,38 +131,38 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await F('Fire').locator('#send').click();
   await sleep(1000);
 
-  await tab('Director');
+  await tab('EXCON');
   await caption('proposals', 300);
-  await F('Director').locator('#tb-proposals').click();
+  await F('EXCON').locator('#tb-proposals').click();
   await waitFor(noneParsing, 'turn-1 parsing');
   await sleep(1500);
   const m1 = await getJSON('/api/master');
   const mayorP = m1.proposals.find(p => p.source.role === 'mayor').id;
   const fireP = m1.proposals.find(p => p.source.role === 'fire_commander').id;
-  await scrollTo('Director', `[data-approve="${mayorP}"]`);
+  await scrollTo('EXCON', `[data-approve="${mayorP}"]`);
   await caption('buses', 1500);
 
   await caption('prompt', 300);
-  await F('Director').locator('#tb-prompt').click();
+  await F('EXCON').locator('#tb-prompt').click();
   await sleep(600);
-  await type(F('Director').locator('#ptext'), 'The regional transport company gives the mayor one extra bus right now. Send the mayor a short inject from the Regional transport company confirming it.', 12);
-  await F('Director').locator('#psend').click();
+  await type(F('EXCON').locator('#ptext'), 'The regional transport company gives the mayor one extra bus right now. Send the mayor a short inject from the Regional transport company confirming it.', 12);
+  await F('EXCON').locator('#psend').click();
   await sleep(1500);
   await waitFor(noneParsing, 'director prompt');
   const dirP = await lastPid();
   await sleep(1000);
-  await scrollTo('Director', `[data-approve="${dirP}"]`);
+  await scrollTo('EXCON', `[data-approve="${dirP}"]`);
   await caption('prompt_approve', 1500);
-  await F('Director').locator(`[data-approve="${dirP}"]`).click();
+  await F('EXCON').locator(`[data-approve="${dirP}"]`).click();
   await sleep(2500);
-  await scrollTo('Director', `[data-approve="${fireP}"]`);
+  await scrollTo('EXCON', `[data-approve="${fireP}"]`);
   await caption('fire_approve', 300);
-  await type(F('Director').locator(`#note-${fireP}`), 'Approved. F4 north edge first.', 25);
-  await F('Director').locator(`[data-approve="${fireP}"]`).click();
+  await type(F('EXCON').locator(`#note-${fireP}`), 'Approved. F4 north edge first.', 25);
+  await F('EXCON').locator(`[data-approve="${fireP}"]`).click();
   await sleep(2000);
-  await scrollTo('Director', `[data-approve="${mayorP}"]`);
+  await scrollTo('EXCON', `[data-approve="${mayorP}"]`);
   await caption('mayor_approve', 1500);
-  await F('Director').locator(`[data-approve="${mayorP}"]`).click();
+  await F('EXCON').locator(`[data-approve="${mayorP}"]`).click();
   await sleep(1500);
 
   await tab('Mayor');
@@ -172,10 +172,10 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await scrollInbox('Mayor', 'bottom');
   await sleep(4000);
 
-  await tab('Director');
+  await tab('EXCON');
   await caption('resolve1', 300);
-  await F('Director').locator('#resolve').scrollIntoViewIfNeeded();
-  await F('Director').locator('#resolve').click();
+  await F('EXCON').locator('#resolve').scrollIntoViewIfNeeded();
+  await F('EXCON').locator('#resolve').click();
   await sleep(3000);
   await caption('flames', 300);
   await sleep(6000);
@@ -191,21 +191,21 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await sleep(4500);
 
   // ---------------------------------------------------------------- turn 2
-  await tab('Director');
+  await tab('EXCON');
   await caption('turn2', 300);
-  await F('Director').locator('#tb-injects').click();
+  await F('EXCON').locator('#tb-injects').click();
   await sleep(500);
-  await scrollTo('Director', '[data-msel="I-04"]');
-  await F('Director').locator('[data-msel="I-04"]').click();
+  await scrollTo('EXCON', '[data-msel="I-04"]');
+  await F('EXCON').locator('[data-msel="I-04"]').click();
   await waitFor(async () => (await getJSON('/api/state')).sent_injects.includes('I-04'), 'I-04');
-  await F('Director').locator('#tb-commands').click();
+  await F('EXCON').locator('#tb-commands').click();
   await sleep(500);
-  await F('Director').locator('#ctext').scrollIntoViewIfNeeded();
-  await F('Director').locator('#ctext').fill('');
+  await F('EXCON').locator('#ctext').scrollIntoViewIfNeeded();
+  await F('EXCON').locator('#ctext').fill('');
   const returnedUnits = (await getJSON('/api/state')).world.allocations.filter(a => a.role === 'fire_commander' && a.qty > a.returned).map(a => ({type:'ReturnResource', allocation:a.id, qty:a.qty-a.returned}));
   // EXCON explicitly confirms first-turn fire tasks completed before reassigning units.
-  await type(F('Director').locator('#ctext'), JSON.stringify([...returnedUnits, {type:'SetWeather', wind_speed_kmh:55}, {type:'Ignite', at:'G5', radius_m:60}], null, 1), 20);
-  await F('Director').locator('#csend').click();
+  await type(F('EXCON').locator('#ctext'), JSON.stringify([...returnedUnits, {type:'SetWeather', wind_speed_kmh:55}, {type:'Ignite', at:'G5', radius_m:60}], null, 1), 20);
+  await F('EXCON').locator('#csend').click();
   await sleep(3000);
 
   await tab('Regional');
@@ -231,10 +231,10 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await waitFor(noneParsing, 'clarification draft');
   const clarificationDraft = (await getJSON('/api/master')).proposals.find(p => p.status === 'needs_clarification' && p.source.role === 'fire_commander');
   if (!clarificationDraft) throw new Error('No clarification draft to review');
-  await tab('Director');
-  await F('Director').locator('#tb-proposals').click();
-  await scrollTo('Director', `[data-approve="${clarificationDraft.id}"]`);
-  await F('Director').locator(`[data-approve="${clarificationDraft.id}"]`).click();
+  await tab('EXCON');
+  await F('EXCON').locator('#tb-proposals').click();
+  await scrollTo('EXCON', `[data-approve="${clarificationDraft.id}"]`);
+  await F('EXCON').locator(`[data-approve="${clarificationDraft.id}"]`).click();
   await tab('Fire');
   await waitFor(async () => (await getJSON('/api/player/fire_commander')).inbox.some(m => m.kind === 'clarification'), 'clarification');
   await sleep(800);
@@ -249,35 +249,35 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   await F('Fire').locator('#send').click();
   await sleep(800);
 
-  await tab('Director');
+  await tab('EXCON');
   await caption('decide2', 300);
-  await F('Director').locator('#tb-proposals').click();
+  await F('EXCON').locator('#tb-proposals').click();
   await waitFor(noneParsing, 'turn-2 parsing');
   await sleep(1500);
   const m2 = await getJSON('/api/master');
   const open = m2.proposals.filter(p => ['pending', 'needs_clarification'].includes(p.status));
   for (const p of open) {
     const vague = p.status === 'needs_clarification' || p.original.startsWith('Send the remaining');
-    await scrollTo('Director', `[data-approve="${p.id}"]`);
+    await scrollTo('EXCON', `[data-approve="${p.id}"]`);
     await sleep(1800);
     if (vague) {
-      await type(F('Director').locator(`#note-${p.id}`), 'Please specify the zone edge.', 25);
-      await F('Director').locator(`[data-reject="${p.id}"]`).click();
+      await type(F('EXCON').locator(`#note-${p.id}`), 'Please specify the zone edge.', 25);
+      await F('EXCON').locator(`[data-reject="${p.id}"]`).click();
     } else {
-      await F('Director').locator(`[data-approve="${p.id}"]`).click();
+      await F('EXCON').locator(`[data-approve="${p.id}"]`).click();
     }
     await sleep(1800);
   }
 
   await caption('resolve2', 300);
-  await F('Director').locator('#minutes').fill('60');
-  await F('Director').locator('#resolve').scrollIntoViewIfNeeded();
-  await F('Director').locator('#resolve').click();
+  await F('EXCON').locator('#minutes').fill('60');
+  await F('EXCON').locator('#resolve').scrollIntoViewIfNeeded();
+  await F('EXCON').locator('#resolve').click();
   await sleep(2000);
   await waitFor(async () => (await getJSON('/api/state')).phase === 'orders', 'turn 2 resolved', 180000);
   await sleep(2500);
 
-  await F('Director').locator('#stats').scrollIntoViewIfNeeded();
+  await F('EXCON').locator('#stats').scrollIntoViewIfNeeded();
   await caption('outro', 1500);
 
   const tail = speechEnds - Date.now();

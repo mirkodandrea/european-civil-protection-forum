@@ -1,13 +1,13 @@
 //! The turn-based exercise engine.
 //!
 //! Owns the [`World`] and everything around it that is not simulation:
-//! turns and phases, injects, per-role inboxes, proposals and the Master's
+//! turns and phases, injects, per-role inboxes, proposals and the EXCON's
 //! decisions, per-turn snapshots for rollback, and the event log.
 //!
 //! It is synchronous and knows nothing about LLMs or HTTP: the server runs
 //! the LLM workflows and feeds their results in ([`Exercise::attach_parse`],
 //! [`Exercise::add_message`]). That keeps the whole turn loop testable
-//! headless and makes "LLM down" a normal path — the Master can type
+//! headless and makes "LLM down" a normal path — the EXCON can type
 //! commands for any proposal.
 //!
 //! ## Turn loop
@@ -17,7 +17,7 @@
 //! player actions applied, simulated time advanced, snapshot) → `Orders` of
 //! the next turn … → [`Exercise::end`] → `Debrief`.
 //!
-//! Master actions (direct commands, approved Master prompts) apply at once;
+//! EXCON actions (direct commands, approved EXCON prompts) apply at once;
 //! approved player actions apply together at resolution.
 
 pub mod limits;
@@ -104,9 +104,9 @@ pub struct Message {
 pub enum ProposalStatus {
     /// Waiting for the LLM.
     Parsing,
-    /// Waiting for the Master.
+    /// Waiting for the EXCON.
     Pending,
-    /// The LLM asked the player a question; the Master may still act on it.
+    /// The LLM asked the player a question; the EXCON may still act on it.
     NeedsClarification,
     /// Approved; applies at turn resolution.
     Approved,
@@ -271,7 +271,7 @@ pub struct Proposal {
     pub status: ProposalStatus,
     pub master_note: Option<String>,
     pub results: Vec<String>,
-    /// Injects drafted by the LLM for a Master prompt; sent when approved.
+    /// Injects drafted by the LLM for a EXCON prompt; sent when approved.
     pub inject_drafts: Vec<Value>,
 }
 
@@ -291,7 +291,7 @@ pub struct ParsedInput {
 #[derive(Debug, Clone, Default)]
 pub struct Decision {
     pub approve: bool,
-    /// Replaces the proposal's commands (the Master's edit).
+    /// Replaces the proposal's commands (the EXCON's edit).
     pub commands: Option<Vec<Command>>,
     pub note: Option<String>,
 }
@@ -300,7 +300,7 @@ pub struct Decision {
 #[derive(Debug, Clone, Serialize)]
 pub struct DecisionOutcome {
     pub proposal: u64,
-    /// Player to inform (`None` for Master proposals).
+    /// Player to inform (`None` for EXCON proposals).
     pub notify: Option<String>,
     pub facts_en: String,
 }
@@ -710,7 +710,7 @@ impl Exercise {
         if self.players.contains_key(to) && kind != MsgKind::Clarification && kind != MsgKind::Reply {
             let what = match kind {
                 MsgKind::Inject => "INJECT",
-                MsgKind::Feedback => "EXERCISE CONTROL FEEDBACK",
+                MsgKind::Feedback => "EXCON FEEDBACK",
                 MsgKind::Situation => "SITUATION UPDATE",
                 MsgKind::RoleMessage => "MESSAGE",
                 _ => "NOTICE",
@@ -803,7 +803,7 @@ impl Exercise {
         Ok(pid)
     }
 
-    /// A Master natural-language prompt, opened as a proposal for confirmation.
+    /// A EXCON natural-language prompt, opened as a proposal for confirmation.
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
@@ -836,7 +836,7 @@ impl Exercise {
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
-        self.transition(pid, ProposalStatus::Parsing, MASTER, "Master suggestion requested").expect("new proposal");
+        self.transition(pid, ProposalStatus::Parsing, MASTER, "EXCON suggestion requested").expect("new proposal");
         self.record("master_prompt", MASTER, json!({"proposal": pid, "text": text}));
         pid
     }
@@ -868,10 +868,10 @@ impl Exercise {
     fn execute_proposal(&mut self, pid: u64) -> Result<Vec<AppliedAction>> {
         let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?.clone();
         if p.status != ProposalStatus::Approved || p.decision.as_ref().map(|d| d.approve) != Some(true) {
-            bail!("proposal has no effective Master approval");
+            bail!("proposal has no effective EXCON approval");
         }
         if let Some(draft)=&p.resource_limit_draft {
-            self.set_resource_limits(serde_json::from_value(draft.clone())?,p.decision.as_ref().and_then(|d|d.note.as_deref()).unwrap_or("Approved Master resource-limit recommendation"),Some(pid))?;
+            self.set_resource_limits(serde_json::from_value(draft.clone())?,p.decision.as_ref().and_then(|d|d.note.as_deref()).unwrap_or("Approved EXCON resource-limit recommendation"),Some(pid))?;
         }
         let origin = if matches!(p.source, Source::Master) { "approved_master_suggestion" } else { "approved_player_decision" };
         let mut applied = Vec::new();
@@ -896,7 +896,7 @@ impl Exercise {
         let all_ok = applied.iter().all(|a| a.ok);
         let pm = self.proposal_mut(pid)?;
         pm.results = applied.iter().map(|a| format!("{}: {} ({})", a.action, if a.ok { "executed / dispatched" } else { "not executed" }, a.detail)).collect();
-        if p.resource_limit_draft.is_some(){pm.results.push("Master-approved resource limits applied".into());}
+        if p.resource_limit_draft.is_some(){pm.results.push("EXCON-approved resource limits applied".into());}
         pm.executions = executions;
         self.transition(pid, if all_ok { ProposalStatus::Applied } else { ProposalStatus::Failed }, MASTER, "Execution outcomes recorded")?;
         Ok(applied)
@@ -964,12 +964,12 @@ impl Exercise {
         }
         let status = if p.commands.is_empty() && p.inject_drafts.is_empty() && p.clarification.is_some() { ProposalStatus::NeedsClarification } else { ProposalStatus::Pending };
         let (source, clar) = (p.source.clone(), p.clarification.clone());
-        self.transition(pid, status, source.label(), "Interpretation stored; awaiting exercise control")?;
+        self.transition(pid, status, source.label(), "Interpretation stored; awaiting EXCON")?;
         self.record("proposal_parsed", source.label(), serde_json::to_value(self.proposal(pid))?);
         Ok(clar)
     }
 
-    /// The LLM could not parse: the proposal waits for the Master, who can
+    /// The LLM could not parse: the proposal waits for the EXCON, who can
     /// type the commands themselves.
     pub fn parse_failed(&mut self, pid: u64, error: &str) -> Result<()> {
         if self.proposal(pid).map(|p| p.status) != Some(ProposalStatus::Parsing) { bail!("proposal is no longer awaiting interpretation"); }
@@ -984,7 +984,7 @@ impl Exercise {
     /// Deliver an approved communication once; translation may only preserve its meaning.
     pub fn deliver_approved_communication(&mut self, pid: u64, index: usize, translated: &str) -> Result<u64> {
         let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
-        if self.phase == Phase::Debrief || p.status != ProposalStatus::Applied || p.decision.as_ref().map(|d| d.approve) != Some(true) { bail!("communication has no effective Master approval"); }
+        if self.phase == Phase::Debrief || p.status != ProposalStatus::Applied || p.decision.as_ref().map(|d| d.approve) != Some(true) { bail!("communication has no effective EXCON approval"); }
         if p.delivered_communications.contains(&index) { bail!("communication already delivered"); }
         let draft = p.communication_drafts.get(index).ok_or_else(|| anyhow::anyhow!("unknown communication draft"))?.clone();
         let mid = self.add_message(&draft.from, &draft.to, draft.kind, Some(&draft.title), translated, &draft.text_en, Some(pid));
@@ -1022,7 +1022,7 @@ impl Exercise {
         Ok(())
     }
 
-    /// The Master decides on a proposal.
+    /// The EXCON decides on a proposal.
     pub fn decide(&mut self, pid: u64, d: Decision) -> Result<DecisionOutcome> {
         if self.phase != Phase::Orders { bail!("decisions require an open exercise turn"); }
         let status = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?.status;
@@ -1042,7 +1042,7 @@ impl Exercise {
             Source::Master => None,
         };
         let note = d.note.clone().filter(|n| !n.trim().is_empty());
-        if d.approve && matches!(p.source,Source::Master) && p.summary.contains("UNPLANNED DIVERGENCE") && note.is_none() {bail!("unplanned training divergence requires explicit Master rationale");}
+        if d.approve && matches!(p.source,Source::Master) && p.summary.contains("UNPLANNED DIVERGENCE") && note.is_none() {bail!("unplanned training divergence requires explicit EXCON rationale");}
         if d.approve {
             self.edit_communications(pid, Some(p.communication_drafts.clone()), Some(p.inject_drafts.clone()))?;
             if p.commands.is_empty() && p.inject_drafts.is_empty() && p.communication_drafts.is_empty() && p.resource_limit_draft.is_none() { bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)"); }
@@ -1057,14 +1057,14 @@ impl Exercise {
         });
         let mut facts = Vec::new();
         if !d.approve {
-            self.transition(pid, ProposalStatus::Rejected, MASTER, note.as_deref().unwrap_or("Rejected by exercise control"))?;
-            facts.push(format!("Your orders were NOT approved by exercise control: {}", if p.descriptions.is_empty() { p.summary.clone() } else { p.descriptions.join("; ") }));
+            self.transition(pid, ProposalStatus::Rejected, MASTER, note.as_deref().unwrap_or("Rejected by EXCON"))?;
+            facts.push(format!("Your orders were NOT approved by EXCON: {}", if p.descriptions.is_empty() { p.summary.clone() } else { p.descriptions.join("; ") }));
         } else {
-            self.transition(pid, ProposalStatus::Approved, MASTER, note.as_deref().unwrap_or("Approved by exercise control"))?;
+            self.transition(pid, ProposalStatus::Approved, MASTER, note.as_deref().unwrap_or("Approved by EXCON"))?;
             if matches!(p.source, Source::Master) || p.commands.is_empty() {
                 self.execute_proposal(pid)?;
                 facts.extend(self.proposal(pid).unwrap().results.clone());
-                if p.commands.is_empty() && (!p.communication_drafts.is_empty() || !p.inject_drafts.is_empty()) { facts.push("APPROVED: the reviewed communication will be delivered by exercise control.".into()); }
+                if p.commands.is_empty() && (!p.communication_drafts.is_empty() || !p.inject_drafts.is_empty()) { facts.push("APPROVED: the reviewed communication will be delivered by EXCON.".into()); }
             } else {
                 for (desc, v) in p.descriptions.iter().zip(&p.verdicts) {
                     let notes = match v { Verdict::Ok { notes } => notes.join("; "), _ => String::new() };
@@ -1073,7 +1073,7 @@ impl Exercise {
             }
         }
         if let Some(n) = &note {
-            facts.push(format!("Note from exercise control: {n}"));
+            facts.push(format!("Note from EXCON: {n}"));
         }
         self.proposal_mut(pid)?.master_note = note;
         let facts_en = facts.join("\n");
@@ -1081,7 +1081,7 @@ impl Exercise {
         Ok(DecisionOutcome { proposal: pid, notify, facts_en })
     }
 
-    /// A command from the Master GUI or a script: validated as Master and applied now.
+    /// A command from the EXCON GUI or a script: validated as EXCON and applied now.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
         let before = if interventions::physical(cmd) {Some(self.world.snapshot())}else{None};
         let resource_event_count = self.world.d.resource_events.len();

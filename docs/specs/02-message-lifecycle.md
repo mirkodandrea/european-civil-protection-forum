@@ -13,7 +13,7 @@ The server translates first, then calls `Exercise::add_message` once with both t
 4. Replies to the AI have the same visibility: `received → interpreting → waiting for the Master → decided`. This makes the 5–15 s wait explicit.
 5. Order is kept: messages from one sender to one recipient are delivered in the order sent, even if translation finishes out of order.
 6. Timeouts: translation is abandoned after 20 s (configurable) and the message is delivered in English, flagged.
-7. Master and evaluators see the status and the timing of every message (feeds the response-time metrics of spec 08).
+7. EXCON and evaluators see the status and the timing of every message (feeds the response-time metrics of spec 08).
 
 ## Design
 - `Message` gets `status`, `sent_ms`, `translated_ms`, `delivered_ms`, `read_ms` (wall clock), `translation { model, latency_ms, failed }`, and `text_src` + `lang_src` (the sender's original). `text` is filled when translation completes. The inbox filter (`Exercise::inbox`) returns messages for a recipient with status `translating` as placeholders (no text).

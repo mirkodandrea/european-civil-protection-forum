@@ -2,7 +2,7 @@
 //! [`Command`]s and by the passage of simulated time.
 //!
 //! - [`World::validate_batch`] is deterministic and side-effect free: it tells
-//!   the Master whether a proposal is feasible (authority, resources, places).
+//!   the EXCON whether a proposal is feasible (authority, resources, places).
 //! - [`World::apply`] executes one command.
 //! - [`World::advance`] moves simulated time in 60 s sub-steps: fire spread,
 //!   building exposure and damage, evacuations completing, roads cut by fire,
@@ -734,7 +734,7 @@ impl World {
                 Some(r)
             }
         };
-        // Consume `n` units of `res` from the acting role (the Master is unconstrained).
+        // Consume `n` units of `res` from the acting role (the EXCON is unconstrained).
         let mut take = |res: &str, n: u32, what: &str| -> Result<(), String> {
             let Some(r) = role else { return Ok(()) };
             let pool = pools.get_mut(&r.id).and_then(|p| p.get_mut(res));
@@ -1470,7 +1470,7 @@ impl World {
                 }
                 self.event(
                     "building_status",
-                    format!("Master set {}", cmd.describe().trim_start_matches("Set ")),
+                    format!("EXCON set {}", cmd.describe().trim_start_matches("Set ")),
                     None,
                 );
             }

@@ -46,15 +46,15 @@ pub struct InjectDraft {
     pub text: String,
 }
 
-/// What the model made of a player reply or a Master prompt.
+/// What the model made of a player reply or a EXCON prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ParsedReply {
-    /// Master-only recommendation; applied only after explicit review/approval.
+    /// EXCON-only recommendation; applied only after explicit review/approval.
     #[serde(default)]
     pub resource_limits:Option<Value>,
     #[serde(default)]
     pub detected_language: String,
-    /// The reply in English (the working language), for the Master.
+    /// The reply in English (the working language), for the EXCON.
     #[serde(default)]
     pub translation_en: String,
     /// Candidate commands, raw JSON (validated by the simulator).
@@ -63,7 +63,7 @@ pub struct ParsedReply {
     /// Messages to other roles (information sharing, requests).
     #[serde(default)]
     pub messages: Vec<RoleMessage>,
-    /// Injects the Master asked to draft (Master prompts only).
+    /// Injects the EXCON asked to draft (EXCON prompts only).
     #[serde(default)]
     pub injects: Vec<InjectDraft>,
     /// A question back to the author, in their language, when intent is unclear.
@@ -106,7 +106,7 @@ pub struct MasterInput<'a> {
     pub roles: &'a [(String, String)],
     pub gazetteer: &'a Value,
     pub digest: &'a Value,
-    /// The conversation so far with the Director, oldest first.
+    /// The conversation so far with the EXCON, oldest first.
     pub history: &'a [ChatMessage],
     pub prompt: &'a str,
 }
@@ -164,8 +164,8 @@ Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:
         ParsedReply::from_value(self.chat_json("parse_reply", &system, &messages).await?)
     }
 
-    /// Master natural-language instruction → commands and/or inject drafts,
-    /// in the ongoing conversation with the Director.
+    /// EXCON natural-language instruction → commands and/or inject drafts,
+    /// in the ongoing conversation with the EXCON.
     pub async fn master_prompt(&self, i: MasterInput<'_>) -> Result<ParsedReply> {
         let system = format!(
             "You assist the Exercise Director (Game Master) of a Civil Protection table-top exercise, in an ongoing conversation. \
@@ -184,7 +184,7 @@ Actions:\n{}\nRoles: {}\n\nGAZETTEER:\n{}",
         ParsedReply::from_value(self.chat_json("master_prompt", &system, &messages).await?)
     }
 
-    /// Translate the recorded Master decision without generating operational content.
+    /// Translate the recorded EXCON decision without generating operational content.
     pub async fn feedback(&self, _role_name: &str, lang: &str, decision_en: &str) -> Result<String> {
         self.translate(decision_en, lang).await
     }

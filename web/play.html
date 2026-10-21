@@ -27,9 +27,9 @@
 import { api, accessToken } from './common.js?v=role-access-2';
 
 const access = await api('/api/access');
-if (access.kind !== 'master') { location.replace(`player.html?role=${access.role}&token=${encodeURIComponent(accessToken())}`); throw new Error('Master access required'); }
+if (access.kind !== 'master') { location.replace(`player.html?role=${access.role}&token=${encodeURIComponent(accessToken())}`); throw new Error('EXCON access required'); }
 const s = await api('/api/static');
-const tabs = [{ id: 'master', label: 'Director', src: 'master.html' }]
+const tabs = [{ id: 'master', label: 'EXCON', src: 'master.html' }]
   .concat(s.roles.map(r => ({ id: r.id, label: r.name.split(' ')[0], full: r.name, src: `player.html?role=${r.id}` })));
 const bar = document.getElementById('bar'), frames = document.getElementById('frames');
 const seen = {};
@@ -61,7 +61,7 @@ for (const t of tabs) {
   frames.appendChild(t.frame);
 }
 
-// Unread markers: inbox sizes for players, open proposals for the Director.
+// Unread markers: inbox sizes for players, open proposals for the EXCON.
 const counts = {};
 async function poll() {
   try {

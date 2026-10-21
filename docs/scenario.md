@@ -1,5 +1,9 @@
 # Scenario: Valverde valley (synthetic)
 
+The application now starts with the [Factory landscape](landscape-generation.md),
+`data/scenarios/valverde_factory.json`. The following describes the historical
+calibrated template, retained for tests and recorded demos.
+
 Generated deterministically by `scenario::synthetic::generate(seed)` and written to `data/scenarios/synthetic_valley.json`:
 
 ```bash

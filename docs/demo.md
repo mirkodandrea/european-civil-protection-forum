@@ -8,7 +8,7 @@ A complete two-turn exercise, played for real: every reply was typed into the UI
 
 | Left: the phone (480 × 1040) | Right: the big screen (Bevy 3D) |
 |---|---|
-| `play.html`: the Director and the three players as tabs in one window. Each player's tab opens on the situation map, with the inbox and the reply box below. A yellow dot marks a tab with new messages or open proposals | The simulator with the **cinematic camera**: it cuts to the place each inject, proposal and order refers to (a slow push-in), follows the fire while a turn is simulated, and holds a wide establishing orbit in between. Low late-afternoon sun with long shadows, fog, bloom, fire light on the terrain, and a smoke plume carried downwind (the wind is faster higher up, so the column bends over). Top left: turn, clock, weather, the fire model, key numbers, a progress bar while a turn is simulated. Top right: the exercise feed. During each resolution the turn is **simulated live**: flame tongues sized by fireline intensity and by the share of runs that burn each cell, leaning with the wind; a faint glow ahead where only some runs reach; smoke drifting downwind; the ground cooling from glowing to charcoal. Under it: the subtitles |
+| `play.html`: the EXCON and the three players as tabs in one window. Each player's tab opens on the situation map, with the inbox and the reply box below. A yellow dot marks a tab with new messages or open proposals | The simulator with the **cinematic camera**: it cuts to the place each inject, proposal and order refers to (a slow push-in), follows the fire while a turn is simulated, and holds a wide establishing orbit in between. Low late-afternoon sun with long shadows, fog, bloom, fire light on the terrain, and a smoke plume carried downwind (the wind is faster higher up, so the column bends over). Top left: turn, clock, weather, the fire model, key numbers, a progress bar while a turn is simulated. Top right: the exercise feed. During each resolution the turn is **simulated live**: flame tongues sized by fireline intensity and by the share of runs that burn each cell, leaning with the wind; a faint glow ahead where only some runs reach; smoke drifting downwind; the ground cooling from glowing to charcoal. Under it: the subtitles |
 
 ## The situation
 
@@ -16,7 +16,7 @@ The synthetic **Valverde valley** (4 × 4 km, 8 × 8 grid of 500 m zones, see [d
 
 | Role | Played in | Resources per turn |
 |---|---|---|
-| Exercise Director (Master) | English | Omnipotent: injects, AI prompts, commands by code, approvals, turn speed |
+| EXCON | English | Omnipotent: injects, AI prompts, commands by code, approvals, turn speed |
 | Mayor of Valverde | Italian | 2 buses, 2 police patrols |
 | Fire and Rescue Commander | English | 3 ground crews (600 m of fire line each), 1 air tanker |
 | Regional Civil Protection | Armenian | None: coordinates and requests reinforcements |
@@ -30,29 +30,29 @@ Generated from the recording by `scripts/record/readme_demo.py`: each row is a n
 |---|---|---|---|
 | 0:02 | — | Valverde valley, one in the afternoon. A wildfire has broken out on Pine Hill, and a strong north-east wind is pushing it towards the village of Pineta. | The situation: one device plays every role |
 | 0:12 | Regional | Four people run the response: the exercise director, the mayor of Valverde, the fire commander, and a regional civil protection officer who works in Armenian. | Each player works in their own language |
-| 0:23 | Director | The exercise begins. The fire already covers five hectares and is spreading south-west through dry pine forest. | Turn-based control; turn speed set to 120× |
-| 0:32 | Director | The first reports come in: emergency calls about the fire, a warning that the primary school is in session, and a fire-behaviour estimate for the commander. | Injects from the exercise script, translated for each player |
+| 0:23 | EXCON | The exercise begins. The fire already covers five hectares and is spreading south-west through dry pine forest. | Turn-based control; turn speed set to 120× |
+| 0:32 | EXCON | The first reports come in: emergency calls about the fire, a warning that the primary school is in session, and a fire-behaviour estimate for the commander. | Injects from the exercise script, translated for each player |
 | 0:42 | Mayor | In Pineta, 120 pupils and staff are still inside the primary school, and the school has no transport of its own. | Role-specific information |
 | 0:51 | Mayor | The mayor acts at once: warn the village, evacuate the school to the sports centre in Valverde, and close the northern road. | Free-text orders, no command language |
 | 1:00 | Fire | The fire commander sends ground crews to cut fire breaks north and east of the village, and an air tanker to wet the forest above it. | Orders by map zone and place name |
-| 1:10 | Director | Before anything happens on the ground, every order is checked against the people, vehicles and authority actually available. | The AI interprets; the rules decide what is possible |
-| 1:18 | Director | A problem emerges: evacuating the school needs 3 buses, and the town has only 2. | A real constraint the AI cannot wave away |
-| 1:25 | Director | Exercise control steps in: the regional transport company can release one more bus. | The Director steers the scenario in plain language |
-| 1:31 | Director | The extra bus is confirmed, and the mayor is told it is on its way. | Nothing changes until the Director approves |
-| 1:37 | Director | The fire commander's plan goes ahead: two fire breaks and a water drop. | Approval, with a note to the player |
-| 1:42 | Director | With three buses available, the school evacuation can start, together with a warning to the whole village. | Feasibility re-checked at the moment of decision |
+| 1:10 | EXCON | Before anything happens on the ground, every order is checked against the people, vehicles and authority actually available. | The AI interprets; the rules decide what is possible |
+| 1:18 | EXCON | A problem emerges: evacuating the school needs 3 buses, and the town has only 2. | A real constraint the AI cannot wave away |
+| 1:25 | EXCON | EXCON steps in: the regional transport company can release one more bus. | The EXCON steers the scenario in plain language |
+| 1:31 | EXCON | The extra bus is confirmed, and the mayor is told it is on its way. | Nothing changes until the EXCON approves |
+| 1:37 | EXCON | The fire commander's plan goes ahead: two fire breaks and a water drop. | Approval, with a note to the player |
+| 1:42 | EXCON | With three buses available, the school evacuation can start, together with a warning to the whole village. | Feasibility re-checked at the moment of decision |
 | 1:49 | Mayor | The mayor receives the confirmation, and the buses head for the school. | Feedback in the player's language |
-| 1:56 | Director | The next thirty minutes unfold. The fire runs downhill towards Pineta while the crews race to finish the breaks. | The turn is simulated live |
+| 1:56 | EXCON | The next thirty minutes unfold. The fire runs downhill towards Pineta while the crews race to finish the breaks. | The turn is simulated live |
 | 2:04 | — | The tallest flames mark where the fire burns hottest and where most simulated runs agree. The faint glow ahead shows where it could spread next. | Flames from fire intensity and the Monte Carlo probability |
 | 2:16 | — | The fire breaks hold at the edge of the village, and the children reach the sports centre safely. The northern road is lost to the flames. | Consequences of the decisions |
 | 2:25 | Fire | Each responder receives a report on what has changed on the ground. | Situation updates for every role |
-| 2:32 | Director | Half past one. The wind strengthens to 55 kilometres per hour, and a second fire starts in the farmland south-east of Pineta. | Escalation by the Director |
+| 2:32 | EXCON | Half past one. The wind strengthens to 55 kilometres per hour, and a second fire starts in the farmland south-east of Pineta. | Escalation by the EXCON |
 | 2:42 | Regional | Local resources are stretched. Regional civil protection asks for international help: two water-bombing aircraft through the EU Civil Protection Mechanism, and two more ground crews. | International assistance (UCPM) |
 | 2:55 | Fire | Under pressure, the fire commander sends an unclear order… | — |
 | 3:00 | Fire | …and is asked exactly where the crews should go, instead of anyone guessing. | Ambiguity is clarified, never guessed |
 | 3:05 | Fire | The answer comes back: the eastern edge of the village, and the slope above it. | The follow-up is read in context |
-| 3:11 | Director | The request for aircraft and the new fire breaks are approved; the unclear order is sent back. | Every action passes through the Director |
-| 3:26 | Director | The next hour. Reinforcements arrive and the breaks keep the fire out of Pineta, but the second fire races through the farmland, where nobody was warned. | The escalation, simulated live |
+| 3:11 | EXCON | The request for aircraft and the new fire breaks are approved; the unclear order is sent back. | Every action passes through the EXCON |
+| 3:26 | EXCON | The next hour. Reinforcements arrive and the breaks keep the fire out of Pineta, but the second fire races through the farmland, where nobody was warned. | The escalation, simulated live |
 | 3:59 | — | By half past two, Pineta is safe and every child is accounted for, but farmhouses have burned and the aircraft are still on their way. Every decision and its consequences are recorded for the debrief. | Outcome and debrief |
 <!-- /demo:timeline -->
 
@@ -79,7 +79,7 @@ Generated from the recording by `scripts/record/readme_demo.py`: each row is a n
 </details>
 
 <details>
-<summary><b>Director (AI prompt)</b>: one extra bus</summary>
+<summary><b>EXCON (AI prompt)</b>: one extra bus</summary>
 
 > *The regional transport company gives the mayor one extra bus right now. Send the mayor a short inject from the Regional transport company confirming it.*
 
@@ -103,7 +103,7 @@ Generated from the recording by `scripts/record/readme_demo.py`: each row is a n
 
 - **No command.** AI summary: *"wants remaining ground crews sent to hold a line, but neither the number of crews nor the location is specified."*
 - **Clarification sent to the player**: *"Which crews do you mean (how many), and where exactly should they go — hold the F4:N fire line, or another line?"* The question refers back to the fire line ordered earlier: the AI keeps each player's whole conversation.
-- The Director rejected it with the note *"Please specify the zone edge."*
+- The EXCON rejected it with the note *"Please specify the zone edge."*
 
 > *One crew along the east edge of zone F4, the other along the north edge of G4. Air tanker drop on G4.* (read as the answer to the question above)
 
@@ -125,17 +125,17 @@ Generated from the recording by `scripts/record/readme_demo.py`: each row is a n
 | Reinforcements arrived | — | 2 ground_crews from Regional fire service arrived for fire_commander |
 <!-- /demo:outcome -->
 
-**Debrief reading.** The fire lines on the F4 north and east edges and the G4 north edge held the head of the fire above Pineta. Not a single Pineta building was damaged, and the school was empty 20 minutes after the order. All 9 damaged or destroyed buildings were **farmhouses in G5, G6, F5 and F6**, around the second fire the Director started in turn 2. Nobody warned or evacuated those zones, so their 30 occupants count as *people at risk*. That is exactly the kind of gap a debrief should surface: the log shows when the ignition happened, what each role knew, and that no warning followed. The UCPM air tankers, requested at 13:30 with a 120-minute delay, were still en route when the turn ended. The full event log of this run is in [`docs/media/ttx_demo_log.jsonl`](media/ttx_demo_log.jsonl).
+**Debrief reading.** The fire lines on the F4 north and east edges and the G4 north edge held the head of the fire above Pineta. Not a single Pineta building was damaged, and the school was empty 20 minutes after the order. All 9 damaged or destroyed buildings were **farmhouses in G5, G6, F5 and F6**, around the second fire the EXCON started in turn 2. Nobody warned or evacuated those zones, so their 30 occupants count as *people at risk*. That is exactly the kind of gap a debrief should surface: the log shows when the ignition happened, what each role knew, and that no warning followed. The UCPM air tankers, requested at 13:30 with a 120-minute delay, were still en route when the turn ended. The full event log of this run is in [`docs/media/ttx_demo_log.jsonl`](media/ttx_demo_log.jsonl).
 
 ## What the demo demonstrates
 
 | Principle (use case §43) | Where in the video |
 |---|---|
-| AI reduces EXCON's information-management workload | Translations, proposals, feedback and SITREPs are all generated; the Director only decides |
+| AI reduces EXCON's information-management workload | Translations, proposals, feedback and SITREPs are all generated; the EXCON only decides |
 | AI supports participants without replacing them | Players write freely in their own language; the AI only interprets, and asks when unsure (3:36) |
 | Operational models remain authoritative for physics | The fire comes from a 32-run PROPAGATOR ensemble; lines and drops act on its fuel and moisture; flame length is Byram's from the model's intensity |
 | Operational rules remain authoritative for feasibility | The bus shortage is caught (1:19) and the AI cannot override it |
-| The Master remains in control | Every player action is approved or rejected; the AI prompt becomes a proposal too (1:33) |
+| The EXCON remains in control | Every player action is approved or rejected; the AI prompt becomes a proposal too (1:33) |
 | Evaluation becomes easier to reconstruct | The event log (`/api/debrief`) holds every inject, reply, interpretation, decision and consequence |
 | The architecture is reusable | Roles, resources, languages and injects all come from the scenario file |
 
