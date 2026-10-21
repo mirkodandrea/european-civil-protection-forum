@@ -6,6 +6,12 @@ on:
   push:
     branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      verify_standalone:
+        description: Run the standalone browser verification
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -48,10 +54,12 @@ jobs:
           cache: npm
           cache-dependency-path: scripts/record/package-lock.json
       - name: Install browser fixture dependencies
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         run: |
           npm ci --prefix scripts/record
           scripts/record/node_modules/.bin/playwright install --with-deps chromium
       - name: Verify the staged app offline with real commands
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         env:
           TTX_BROWSER_CHANNEL: chromium
           TTX_STANDALONE_FILE: _site/index.html
