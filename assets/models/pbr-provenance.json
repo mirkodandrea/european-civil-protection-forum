@@ -37,7 +37,9 @@
     "crates/game/src/shaders/scene_light.wgsl": "d9caf6d0f1c5a7925447488f173ae7723ea704e68e1e216cecbe2763c523f8f6",
     "crates/game/src/bench.rs": "291515208fe5476ad5cf0ecec7bfa4c408f340142e6eda590c8a376a68e6d928",
     "crates/game/src/kiosk/snap.rs": "69bed24985d61e821d5d7a8cd9e4ca5829fd1eaa7264e2228e195fd44dfd6e4a",
-    ".claude/skills/game-snapshot-harness/SKILL.md": "bcc7e79cdcfdc1c91a94ed79e95ec654a0a4af6353f677a4812a45678fddb1c2"
+    ".claude/skills/game-snapshot-harness/SKILL.md": "bcc7e79cdcfdc1c91a94ed79e95ec654a0a4af6353f677a4812a45678fddb1c2",
+    "crates/game/src/kiosk/view.rs": "eb3b0872455dc3b69f393d8c72a02c19409a3e699242b7505e29a5ae54af57bc",
+    "crates/game/src/camera.rs": "67e5a1b35b55160f096ef0f4984d38064a7e25808270274390bb32dd5d66f9af"
   },
   "adaptation": "TTX snapshot state, centred coordinate frame, scenario clocks and exact ensemble cell codes; detailed rectangular architecture adapts source footprint dressing.",
   "fire_adaptation": "Source shaders, textures, 7-segment ribbons, smoke fog and ember drawing; TTX ensemble/intensity/wind and exact-cell overlays retained. Premultiplied additive flame coverage corrected; decorative embers never ignite fuel or flash unconfirmed spotting.",
@@ -49,5 +51,8 @@
   },
   "upscaling_source_revision": "48acd1c4d660468d67f5e5e05de731ad3a5ac309",
   "upscaling_captured": "2026-10-21",
-  "upscaling_adaptation": "Bilinear confirmed-fire coverage/intensity/arrival, deterministic domain warp and missing-neighbour arrival delay from field.rs; shared bounded lattice and feathered ground coverage from fire_view.rs. TTX plant and flame samples share the field. Physical ensemble, counters and decisions remain unchanged; uncertainty stays separate, cleared cells are masked per fragment, and raw-cell comparison remains available."
+  "upscaling_adaptation": "Bilinear confirmed-fire coverage/intensity/arrival, deterministic domain warp and missing-neighbour arrival delay from field.rs; shared bounded lattice and feathered ground coverage from fire_view.rs. TTX plant and flame samples share the field. Physical ensemble, counters and decisions remain unchanged; uncertainty stays separate, cleared cells are masked per fragment, and raw-cell comparison remains available.",
+  "camera_source_revision": "48acd1c4d660468d67f5e5e05de731ad3a5ac309",
+  "camera_captured": "2026-10-21",
+  "camera_adaptation": "Source manual mouse/touch/trackpad navigation: gesture ownership, drag pan, right/Shift-drag rotate, viewport/pitch-scaled pan and exponential zoom. TTX retains positive pitch, unrestricted yaw, scenario-wide focus, scripted snapshot frames and its optional EXCON cue director; no kiosk phases, gamepad actions or game commands."
 }

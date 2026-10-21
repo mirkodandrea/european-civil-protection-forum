@@ -1,6 +1,6 @@
 //! Camera, lighting and the cinematic "director".
 //!
-//! Manual control: left-drag rotate, right-drag pan, scroll zoom, `F` focus on
+//! Manual control: drag to pan, right/Shift-drag to rotate, wheel/pinch zoom, `F` focus on
 //! the fire, `R` reset, `A` toggle the director.
 //!
 //! **The director** (on with `TTX_ORBIT=1` / `TTX_CINEMATIC=1`, or `A`) frames
@@ -18,11 +18,16 @@
 //! glow), and a pool of flickering point lights placed on the hottest parts
 //! of the fire so it lights the terrain around it.
 
+// Manual navigation adapted from propagator_abm crates/game/src/kiosk/view.rs
+// (EUPL-1.2); provenance and TTX-specific limits: docs/graphics.md.
 use bevy::core_pipeline::bloom::BloomSettings;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::ecs::system::SystemParam;
+use bevy::input::gestures::{PinchGesture, RotationGesture};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::pbr::{CascadeShadowConfigBuilder, FogFalloff, FogSettings};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
 
 use crate::frame::{to_bevy, Frame};
@@ -38,6 +43,140 @@ pub struct Orbit {
     pub pitch: f32,
     pub dist: f32,
     pub auto: bool,
+}
+
+/// Capture gestures where they start, so UI drags cannot move the map.
+#[derive(Default)]
+pub struct Navigation {
+    mouse: [bool; 3],
+    moved: f32,
+    cursor: Option<Vec2>,
+    touch_owner: Option<bool>,
+    multi: bool,
+    pair: Option<(u64, u64, Vec2, Vec2)>,
+}
+
+#[derive(SystemParam)]
+pub struct ViewInput<'w, 's> {
+    buttons: Res<'w, ButtonInput<MouseButton>>,
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    wheel: EventReader<'w, 's, MouseWheel>,
+    pinch: EventReader<'w, 's, PinchGesture>,
+    rotation: EventReader<'w, 's, RotationGesture>,
+    touches: Res<'w, Touches>,
+    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+}
+
+fn pan(o: &mut Orbit, delta: Vec2, height: f32) {
+    let scale = o.dist * 0.83 / height.max(1.0);
+    let tilt = o.pitch.sin().abs().max(0.3);
+    o.focus += Quat::from_rotation_y(o.yaw) * Vec3::new(-delta.x, 0.0, -delta.y / tilt) * scale;
+}
+
+fn scroll_lines(unit: MouseScrollUnit, y: f32) -> f32 {
+    match unit {
+        MouseScrollUnit::Line => y,
+        MouseScrollUnit::Pixel => y / 50.0,
+    }
+}
+
+impl ViewInput<'_, '_> {
+    fn navigate(&mut self, o: &mut Orbit, nav: &mut Navigation, over_ui: bool) -> bool {
+        let window = self.windows.get_single().ok();
+        let focused = window.is_some_and(|w| w.focused);
+        let cursor = window.and_then(|w| w.cursor_position());
+        let delta = match (cursor, nav.cursor) {
+            (Some(c), Some(last)) if focused => c - last,
+            _ => Vec2::ZERO,
+        };
+        nav.cursor = cursor;
+        let height = window.map_or(1000.0, |w| w.height());
+        let touch_frame = self.touches.iter().next().is_some()
+            || self.touches.iter_just_released().next().is_some()
+            || self.touches.iter_just_canceled().next().is_some();
+        let over_map = focused && cursor.is_some() && !over_ui && !touch_frame;
+        let scroll: f32 = self.wheel.read().map(|e| scroll_lines(e.unit, e.y)).sum();
+        let pinch: f32 = self.pinch.read().map(|e| e.0).sum();
+        let rotation: f32 = self.rotation.read().map(|e| e.0).sum();
+        for (i, b) in [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+            .into_iter()
+            .enumerate()
+        {
+            if self.buttons.just_pressed(b) {
+                nav.mouse[i] = over_map;
+                if i == 0 {
+                    nav.moved = 0.0;
+                }
+            }
+            nav.mouse[i] &= self.buttons.pressed(b) && focused && !touch_frame;
+        }
+        if nav.mouse[0] {
+            nav.moved += delta.length();
+        }
+        let left = nav.mouse[0] && nav.moved >= 6.0;
+        let shift = self.keys.pressed(KeyCode::ShiftLeft) || self.keys.pressed(KeyCode::ShiftRight);
+        if (left && !shift) || nav.mouse[2] {
+            pan(o, delta, height);
+        }
+        if nav.mouse[1] || (left && shift) {
+            o.yaw -= delta.x * 0.005;
+            // TTX pitch is positive downwards, opposite to the source game.
+            o.pitch += delta.y * 0.004;
+        }
+        let mut manual = delta != Vec2::ZERO && (left || nav.mouse[1] || nav.mouse[2]);
+        if over_map {
+            o.yaw += rotation.to_radians();
+            o.dist *= (-scroll.clamp(-6.0, 6.0) * 0.1 - pinch.clamp(-1.0, 1.0)).exp();
+            manual |= scroll != 0.0 || pinch != 0.0 || rotation != 0.0;
+        }
+        let active: Vec<_> = self.touches.iter().collect();
+        if nav.touch_owner.is_none() && self.touches.iter_just_pressed().next().is_some() {
+            nav.touch_owner = Some(focused && !over_ui);
+            nav.multi = false;
+        }
+        if active.len() >= 2 {
+            nav.multi = true;
+        }
+        if !focused {
+            nav.touch_owner = Some(false);
+        }
+        if nav.touch_owner == Some(true) {
+            manual |= !active.is_empty();
+            match active.as_slice() {
+                [t] if !nav.multi => {
+                    if t.distance().length() >= 6.0 {
+                        pan(o, t.delta(), height);
+                    }
+                    nav.pair = None;
+                }
+                [a, b] => {
+                    let (a, b) = if a.id() < b.id() { (a, b) } else { (b, a) };
+                    if let Some((ia, ib, pa, pb)) = nav.pair {
+                        if (ia, ib) == (a.id(), b.id()) {
+                            let before = pb - pa;
+                            let now = b.position() - a.position();
+                            if before.length() > 8.0 && now.length() > 8.0 {
+                                o.dist *= before.length() / now.length();
+                                o.yaw -= before.perp_dot(now).atan2(before.dot(now));
+                                pan(o, (a.position() + b.position() - pa - pb) * 0.5, height);
+                            }
+                        }
+                    }
+                    nav.pair = Some((a.id(), b.id(), a.position(), b.position()));
+                }
+                _ => nav.pair = None,
+            }
+        }
+        if active.is_empty() {
+            nav.touch_owner = None;
+            nav.pair = None;
+        }
+        if manual {
+            o.dist = o.dist.clamp(90.0, 12000.0);
+            o.pitch = o.pitch.clamp(0.55, 1.30);
+        }
+        manual
+    }
 }
 
 /// A framing the camera eases towards.
@@ -272,10 +411,8 @@ pub fn control(
     mut o: ResMut<Orbit>,
     mut dir: ResMut<Director>,
     mut cam: Query<&mut Transform, With<Camera3d>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut motion: EventReader<MouseMotion>,
-    mut wheel: EventReader<MouseWheel>,
+    mut input: ViewInput,
+    mut navigation: Local<Navigation>,
     mut egui: EguiContexts,
     scn: Res<Scn>,
     frame: Res<Frame>,
@@ -286,45 +423,27 @@ pub fn control(
     let now = time.elapsed_seconds();
     let dt = time.delta_seconds().min(0.1);
     let over_ui = egui.ctx_mut().wants_pointer_input();
-    let delta: Vec2 = motion.read().map(|m| m.delta).sum();
-    let scroll: f32 = wheel.read().map(|w| w.y).sum();
-    let mut manual = false;
-    if !over_ui {
-        if buttons.pressed(MouseButton::Left) && delta != Vec2::ZERO {
-            o.yaw -= delta.x * 0.005;
-            o.pitch = (o.pitch + delta.y * 0.004).clamp(0.12, 1.45);
-            manual = true;
-        }
-        if (buttons.pressed(MouseButton::Right) || buttons.pressed(MouseButton::Middle))
-            && delta != Vec2::ZERO
-        {
-            let right = Vec3::new(o.yaw.cos(), 0.0, -o.yaw.sin());
-            let fwd = Vec3::new(-o.yaw.sin(), 0.0, -o.yaw.cos());
-            let k = o.dist * 0.0015;
-            o.focus += (-right * delta.x + fwd * delta.y) * k;
-            manual = true;
-        }
-        if scroll != 0.0 {
-            o.dist = (o.dist * (1.0 - scroll * 0.08)).clamp(150.0, 7000.0);
-            manual = true;
-        }
-    }
+    let manual = input.navigate(&mut o, &mut navigation, over_ui);
     if manual {
         dir.manual_until = now + 15.0;
     }
-    if !egui.ctx_mut().wants_keyboard_input() && keys.just_pressed(KeyCode::KeyA) {
+    if !egui.ctx_mut().wants_keyboard_input() && input.keys.just_pressed(KeyCode::KeyA) {
         o.auto = !o.auto;
     }
     if !egui.ctx_mut().wants_keyboard_input()
-        && (keys.just_pressed(KeyCode::KeyR) || keys.just_pressed(KeyCode::Home))
+        && (input.keys.just_pressed(KeyCode::KeyR) || input.keys.just_pressed(KeyCode::Home))
     {
         *o = Orbit {
             auto: o.auto,
             ..home(s)
         };
+        dir.manual_until = now + 15.0;
+        dir.v_focus = Vec3::ZERO;
+        dir.v_dist = 0.0;
+        dir.v_pitch = 0.0;
     }
     let fire = fire_extent(s, &frame.cells);
-    if !egui.ctx_mut().wants_keyboard_input() && keys.just_pressed(KeyCode::KeyF) {
+    if !egui.ctx_mut().wants_keyboard_input() && input.keys.just_pressed(KeyCode::KeyF) {
         if let Some((c, r)) = fire {
             o.focus = to_bevy(s, c, 0.0);
             o.dist = (r * 3.0).clamp(600.0, 3000.0);
@@ -434,6 +553,9 @@ pub fn control(
             dir.pitch_boost = (dir.pitch_boost - dt * 0.04).max(0.0);
         }
     }
+    // Panning follows the relief instead of retaining the previous focus elevation.
+    o.focus.y =
+        crate::frame::height_at(s, crate::frame::to_world(s, o.focus)) * crate::frame::EXAGGERATION;
     // Keep manual and scripted views above terrain too.
     let candidate = place(&o).translation;
     let ground = crate::frame::height_at(s, crate::frame::to_world(s, candidate))
@@ -503,6 +625,148 @@ pub fn fire_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Resource, Default)]
+    struct PointerUi(bool);
+
+    fn navigation_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin))
+            .init_resource::<PointerUi>()
+            .insert_resource(Orbit {
+                focus: Vec3::ZERO,
+                dist: 1000.0,
+                yaw: 0.0,
+                pitch: 0.8,
+                auto: false,
+            })
+            .add_systems(
+                Update,
+                |mut input: ViewInput,
+                 mut nav: Local<Navigation>,
+                 mut o: ResMut<Orbit>,
+                 ui: Res<PointerUi>| {
+                    input.navigate(&mut o, &mut nav, ui.0);
+                },
+            );
+        let mut window = Window {
+            focused: true,
+            resolution: (1000.0, 1000.0).into(),
+            ..default()
+        };
+        window.set_cursor_position(Some(Vec2::splat(100.0)));
+        let id = app.world_mut().spawn((window, PrimaryWindow)).id();
+        app.update();
+        (app, id)
+    }
+
+    fn cursor(app: &mut App, window: Entity, p: Vec2) {
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .set_cursor_position(Some(p));
+    }
+
+    fn button(app: &mut App, window: Entity, b: MouseButton, state: bevy::input::ButtonState) {
+        app.world_mut()
+            .send_event(bevy::input::mouse::MouseButtonInput {
+                button: b,
+                state,
+                window,
+            });
+    }
+
+    #[test]
+    fn source_mouse_mapping_and_ui_gesture_ownership() {
+        use bevy::input::ButtonState::{Pressed, Released};
+        let (mut app, window) = navigation_app();
+        button(&mut app, window, MouseButton::Left, Pressed);
+        app.update();
+        cursor(&mut app, window, Vec2::new(120.0, 100.0));
+        app.update();
+        let o = app.world().resource::<Orbit>();
+        assert!(o.focus.x < -10.0);
+        assert_eq!(o.yaw, 0.0);
+        let focus = o.focus;
+        // Crossing a panel keeps ownership with the map.
+        app.world_mut().resource_mut::<PointerUi>().0 = true;
+        cursor(&mut app, window, Vec2::new(140.0, 100.0));
+        app.update();
+        assert!(app.world().resource::<Orbit>().focus.x < focus.x);
+        button(&mut app, window, MouseButton::Left, Released);
+        app.update();
+        let focus = app.world().resource::<Orbit>().focus;
+        // A press originating on the panel cannot become a map drag.
+        button(&mut app, window, MouseButton::Left, Pressed);
+        app.update();
+        app.world_mut().resource_mut::<PointerUi>().0 = false;
+        cursor(&mut app, window, Vec2::new(180.0, 100.0));
+        app.update();
+        assert_eq!(app.world().resource::<Orbit>().focus, focus);
+        button(&mut app, window, MouseButton::Left, Released);
+        button(&mut app, window, MouseButton::Right, Pressed);
+        app.update();
+        cursor(&mut app, window, Vec2::new(200.0, 120.0));
+        app.update();
+        let o = app.world().resource::<Orbit>();
+        assert_eq!(o.focus, focus);
+        assert!(o.yaw < 0.0 && o.pitch > 0.8);
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        cursor(&mut app, window, Vec2::new(300.0, 200.0));
+        app.update();
+        assert!((app.world().resource::<Orbit>().yaw + 0.1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn line_and_pixel_wheels_match_and_ui_consumes_zoom() {
+        let distance = |unit, y, ui| {
+            let (mut app, window) = navigation_app();
+            app.world_mut().resource_mut::<PointerUi>().0 = ui;
+            app.world_mut().send_event(MouseWheel {
+                unit,
+                x: 0.0,
+                y,
+                window,
+            });
+            app.update();
+            let d = app.world().resource::<Orbit>().dist;
+            // Events must not be replayed after leaving a panel.
+            app.world_mut().resource_mut::<PointerUi>().0 = false;
+            app.update();
+            assert_eq!(d, app.world().resource::<Orbit>().dist);
+            d
+        };
+        let lines = distance(MouseScrollUnit::Line, 1.0, false);
+        assert!(lines < 1000.0);
+        assert_eq!(lines, distance(MouseScrollUnit::Pixel, 50.0, false));
+        assert_eq!(1000.0, distance(MouseScrollUnit::Line, 1.0, true));
+    }
+
+    #[test]
+    fn two_finger_zoom_does_not_jump_when_one_finger_lifts() {
+        use bevy::input::touch::{TouchInput, TouchPhase};
+        let (mut app, window) = navigation_app();
+        let touch = |app: &mut App, id, phase, x| {
+            app.world_mut().send_event(TouchInput {
+                id,
+                phase,
+                position: Vec2::new(x, 100.0),
+                window,
+                force: None,
+            });
+        };
+        touch(&mut app, 1, TouchPhase::Started, 100.0);
+        touch(&mut app, 2, TouchPhase::Started, 200.0);
+        app.update();
+        touch(&mut app, 2, TouchPhase::Moved, 300.0);
+        app.update();
+        assert!((app.world().resource::<Orbit>().dist - 500.0).abs() < 0.01);
+        let focus = app.world().resource::<Orbit>().focus;
+        touch(&mut app, 2, TouchPhase::Ended, 300.0);
+        touch(&mut app, 1, TouchPhase::Moved, 140.0);
+        app.update();
+        assert_eq!(app.world().resource::<Orbit>().focus, focus);
+    }
 
     #[test]
     fn smooth_damp_converges_without_overshoot() {

@@ -67,10 +67,35 @@ carries fine visual relief without changing the physical grid or travel slopes.
 Projector/low sample every second/fourth supplied mesh node. Buildings, roads,
 camera and shading share the continuous visual height sampler.
 
-The camera is stable by default. `A` toggles the optional cinematic director,
-`F` frames fire, `R` or Home restores the initial view. Keyboard shortcuts yield
-to text entry. Manual views are kept above terrain. `TTX_CAM=x,y,distance,yaw,pitch`
-fixes the frame in world metres and radians.
+The camera is stable by default. Manual navigation is adapted from Roccavento's
+`crates/game/src/kiosk/view.rs` (EUPL-1.2; source revision and input hashes in
+`assets/models/pbr-provenance.json`):
+
+- Left-drag or middle-drag pans; right-drag or Shift-left-drag rotates.
+- Wheel and trackpad pinch zoom exponentially; trackpad rotation changes heading.
+  Pixel wheel events are normalized separately from wheel notches.
+- On touchscreens, one finger pans; two fingers pan, pinch and rotate. Lifting
+  one finger after a pinch does not turn the remaining finger into a new drag.
+- Drags belong to the map or UI from the initial press, and stop on focus loss.
+  Pan speed follows viewport height, camera distance and inclination.
+- Manual zoom spans 90–12,000 m and inclination 0.55–1.30 radians. The focus
+  follows the visual terrain elevation as the map moves.
+
+`A` toggles the optional TTX cinematic director, `F` frames fire, and `R` or Home
+restores the initial view. Manual navigation, fire framing and reset hold off
+an enabled director for 15 seconds. Keyboard shortcuts yield to text entry.
+Manual views are kept above terrain. `TTX_CAM=x,y,distance,yaw,pitch` fixes the
+frame in world metres and radians; explicit snapshot frames retain their own
+limits, including overhead views. The TTX keeps unrestricted heading and
+scenario-wide panning instead of the game's fixed town-centred radius. Kiosk
+phases, gameplay selection and gamepad actions are not imported.
+
+Verified on 2026-10-21: all 212 workspace tests passed offline, including input
+event tests for mouse mapping, UI gesture ownership, focus loss, wheel units and
+two-finger zoom/release. Native release build passed; invisible oblique/HUD and
+overhead captures were inspected in `runs/camera-port-20261021-gpu/` without
+shader/GPU errors. Input behavior is covered by automated events; this does not
+claim a physical touchscreen or projector playtest.
 
 ## Invisible snapshot harness
 

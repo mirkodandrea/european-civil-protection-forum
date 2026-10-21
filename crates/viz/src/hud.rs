@@ -174,7 +174,7 @@ pub fn draw(
     egui::Area::new(egui::Id::new("join")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
         panel.show(ui, |ui| {
             ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else { format!("Players: http://{ip}:{}/player.html     Director: /master.html", port.0) }).color(Color32::WHITE).size(15.0));
-            ui.label(RichText::new(format!("AI: {}   ·   drag rotate · right-drag pan · wheel zoom · A auto-orbit · F fire · G grid · R reset", if snap.llm_model.is_empty() { "see Director page" } else { &snap.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
+            ui.label(RichText::new(format!("AI: {}   ·   drag pan · right/Shift-drag rotate · wheel zoom · A auto-orbit · F fire · G grid · R/Home reset", if snap.llm_model.is_empty() { "see Director page" } else { &snap.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
         });
     });
 
