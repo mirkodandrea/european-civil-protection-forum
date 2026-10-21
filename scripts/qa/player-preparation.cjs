@@ -58,7 +58,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   const excon=await browser.newPage({viewport:{width:1440,height:1000}});excon.on('pageerror',error=>errors.push(error.message));
   await excon.goto(base+'/master.html?token='+key);await excon.locator('#messages').filter({hasText:'Issue a warning for F4.'}).waitFor();
   await excon.screenshot({path:path.join(out,'excon-only-confirmed-decision.png')});
-  await excon.locator('[data-view="review"]').click();await excon.locator('#proposals').filter({hasText:'Issue a warning for F4.'}).waitFor();
+  await excon.locator('#messages [data-proposal]').filter({hasText:'Issue a warning for F4.'}).waitFor();
   await excon.screenshot({path:path.join(out,'excon-reviewed-translation.png')});
   assert.equal(errors.length,0,errors.join('\n'));
   fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({fixture:'local fake OpenRouter gateway; no external model calls',actions:['inject','private ambiguous draft','specific question to player','answer F4','review canonical message and actions','explicit confirmation','pending EXCON proposal'],requests,errors},null,2));

@@ -73,8 +73,10 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   assert(!(await api('/api/master')).messages.some(m=>m.original==='Issue a warning for F4.'),'failed preparation is still private');
   await player.locator('#confirm-prepared').click();
   await master.locator('[data-contact="mayor"]').click();
-  await master.locator('#messages [data-proposal]').filter({hasText:'Avvisare la popolazione'}).waitFor();
-  assert.equal(await master.locator('#messages [data-proposal] textarea').count(),0,'action inspection is readable, not raw JSON');
+  await master.locator('#messages [data-proposal]').filter({hasText:'Issue a warning for F4.'}).waitFor();
+  await master.locator('#messages [data-proposal] .manual-commands summary').click();
+  await master.locator('#messages [data-proposal] [data-manual-commands]').fill('[{"type":"IssueWarning","zone":"F4"}]');
+  assert.equal(await master.locator('#messages [data-proposal] .command-card textarea').count(),0,'individual action parameters remain readable');
   await master.locator('#messages [data-proposal] [data-field="zone"]').fill('F4');
   await master.screenshot({path:path.join(out,'excon-chat-action-review.png'),fullPage:true});
   await master.locator('#messages [data-approve]').click();

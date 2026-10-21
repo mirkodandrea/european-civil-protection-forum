@@ -36,6 +36,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 ```bash
 cargo test --release --workspace
 TTX_LIVE_LLM=1 cargo test -p llm --test live -- --nocapture
+./scripts/build_frontend.sh                # Rust/Yew → web/dist (before HTTP startup)
 cargo run --release -p app [-- --headless] # :8080, master.html / player.html
 cargo run -p scenario --bin gen-scenario
 ./scripts/demo_session.sh                  # scripted 2-turn session against a running ttx

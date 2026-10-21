@@ -18,9 +18,6 @@ tokio.workspace = true
 tracing.workspace = true
 rand.workspace = true
 futures = "0.3"
-axum = { version = "0.7", features = ["ws"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
-
-[dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
-http-body-util = "0.1"
+rocket = { version = "0.5.1", features = ["json"] }
+rocket_ws = "0.1.1"
+serde_urlencoded = "0.7"

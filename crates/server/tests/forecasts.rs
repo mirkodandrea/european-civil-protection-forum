@@ -1,18 +1,15 @@
 //! Forecast drafts are EXCON-only until an explicit, current-generation publication.
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-    Router,
-};
-use http_body_util::BodyExt;
+use rocket::http::{ContentType, Header, Method, Status};
+use rocket::local::asynchronous::Client;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
-use tower::ServiceExt;
 
-fn app() -> Router {
+type TestApp = std::sync::Arc<Client>;
+
+async fn app() -> TestApp {
     // A real, small fire grid keeps default +1h/+3h projections inexpensive.
     let mut scn = scenario::synthetic::generate(1);
     scn.grid = scenario::GridSpec {
@@ -55,56 +52,27 @@ fn app() -> Router {
         ]),
         evaluators: BTreeMap::from([("reviewer".into(), "forecast-evaluator".into())]),
     };
-    server::router_with_access(exercise, llm, None, access).0
+    build(exercise, llm, None, access).await.0
 }
 async fn request(
-    app: &Router,
+    app: &TestApp,
     token: Option<&str>,
     method: &str,
     path: &str,
     body: Option<Value>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("content-type", "application/json");
-    if let Some(token) = token {
-        builder = builder.header("authorization", format!("Bearer {token}"));
-    }
-    let response = app
-        .clone()
-        .oneshot(
-            builder
-                .body(
-                    body.map(|b| Body::from(b.to_string()))
-                        .unwrap_or(Body::empty()),
-                )
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+) -> (Status, Value) {
+    send(app, method, path, body, token).await
 }
-async fn master(
-    app: &Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, Value) {
+async fn master(app: &TestApp, method: &str, path: &str, body: Option<Value>) -> (Status, Value) {
     request(app, Some("forecast-master"), method, path, body).await
 }
-async fn start(app: &Router) {
+async fn start(app: &TestApp) {
     assert_eq!(
         master(app, "POST", "/api/master/start", None).await.0,
-        StatusCode::OK
+        Status::Ok
     );
 }
-async fn draft(app: &Router) -> Value {
+async fn draft(app: &TestApp) -> Value {
     let (status, value) = master(
         app,
         "POST",
@@ -112,7 +80,7 @@ async fn draft(app: &Router) -> Value {
         Some(json!({"members":1,"horizons_s":[60]})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(status, Status::Ok, "{value}");
     assert_eq!(value["review_required"], true);
     assert!(value["id"].is_string());
     assert!(value["generation"].is_u64());
@@ -121,7 +89,7 @@ async fn draft(app: &Router) -> Value {
 fn publication(draft: &Value, roles: Value) -> Value {
     json!({"id":draft["id"],"generation":draft["generation"],"roles":roles,"source":"Reviewed exercise weather bulletin"})
 }
-async fn player(app: &Router, role: &str) -> Value {
+async fn player(app: &TestApp, role: &str) -> Value {
     let key = if role == "mayor" {
         "forecast-mayor"
     } else {
@@ -129,13 +97,13 @@ async fn player(app: &Router, role: &str) -> Value {
     };
     let (status, value) =
         request(app, Some(key), "GET", &format!("/api/player/{role}"), None).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     value
 }
 
 #[tokio::test]
 async fn roles_and_evaluators_cannot_compute_or_publish_forecasts() {
-    let app = app();
+    let app = app().await;
     for token in [
         Some("forecast-mayor"),
         Some("forecast-fire"),
@@ -147,9 +115,9 @@ async fn roles_and_evaluators_cannot_compute_or_publish_forecasts() {
             assert_eq!(
                 status,
                 if token.is_none() {
-                    StatusCode::UNAUTHORIZED
+                    Status::Unauthorized
                 } else {
-                    StatusCode::FORBIDDEN
+                    Status::Forbidden
                 },
                 "{token:?} {path}"
             );
@@ -159,11 +127,11 @@ async fn roles_and_evaluators_cannot_compute_or_publish_forecasts() {
 
 #[tokio::test]
 async fn defaults_are_reviewable_and_only_selected_role_receives_published_product() {
-    let app = app();
+    let app = app().await;
     start(&app).await;
     let (_, before) = master(&app, "GET", "/api/state", None).await;
     let (status, default) = master(&app, "POST", "/api/master/forecast", Some(json!({}))).await;
-    assert_eq!(status, StatusCode::OK, "{default}");
+    assert_eq!(status, Status::Ok, "{default}");
     assert_eq!(default["review_required"], true);
     assert_eq!(
         default["forecast"]["spec"]["horizons_s"],
@@ -186,7 +154,7 @@ async fn defaults_are_reviewable_and_only_selected_role_receives_published_produ
         Some(publication(&default, json!(["mayor"]))),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{published}");
+    assert_eq!(status, Status::Ok, "{published}");
     assert_eq!(published["messages"].as_array().unwrap().len(), 1);
     let mayor = player(&app, "mayor").await;
     assert!(mayor["inbox"]
@@ -216,7 +184,7 @@ async fn defaults_are_reviewable_and_only_selected_role_receives_published_produ
 
 #[tokio::test]
 async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
-    let app = app();
+    let app = app().await;
     start(&app).await;
     let old = draft(&app).await;
     let (status, applied) = master(
@@ -226,7 +194,7 @@ async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
         Some(json!({"type":"SetWeather","wind_speed_kmh":15})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     assert_eq!(applied["results"][0]["ok"], true);
     assert_eq!(
         master(
@@ -237,7 +205,7 @@ async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
         )
         .await
         .0,
-        StatusCode::CONFLICT
+        Status::Conflict
     );
     let current = draft(&app).await;
     assert_eq!(
@@ -249,7 +217,7 @@ async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     assert_eq!(
         player(&app, "mayor").await["map"]["forecast_products"]
@@ -269,7 +237,7 @@ async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     assert_eq!(
         player(&app, "mayor").await["map"]["forecast_products"],
@@ -284,7 +252,7 @@ async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
         )
         .await
         .0,
-        StatusCode::CONFLICT
+        Status::Conflict
     );
     let fresh = draft(&app).await;
     assert_ne!(fresh["generation"], pending["generation"]);
@@ -296,7 +264,7 @@ async fn changed_generation_and_rollback_invalidate_drafts_and_map_products() {
 
 #[tokio::test]
 async fn invalid_specs_and_publications_are_rejected_without_leaking_maps() {
-    let app = app();
+    let app = app().await;
     start(&app).await;
     for spec in [
         json!({"members":0}),
@@ -313,7 +281,7 @@ async fn invalid_specs_and_publications_are_rejected_without_leaking_maps() {
     ] {
         let (status, _) = master(&app, "POST", "/api/master/forecast", Some(spec.clone())).await;
         assert!(
-            status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY,
+            status == Status::BadRequest || status == Status::UnprocessableEntity,
             "{spec}: {status}"
         );
     }
@@ -338,7 +306,10 @@ async fn invalid_specs_and_publications_are_rejected_without_leaking_maps() {
         },
     ] {
         let (status, _) = master(&app, "POST", "/api/master/forecast/publish", Some(body)).await;
-        assert!(status.is_client_error(), "{status}");
+        assert!(
+            status.class() == rocket::http::StatusClass::ClientError,
+            "{status}"
+        );
         assert_eq!(
             player(&app, "mayor").await["map"]["forecast_products"],
             json!([])
@@ -353,6 +324,40 @@ async fn invalid_specs_and_publications_are_rejected_without_leaking_maps() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
+}
+
+async fn build(
+    ex: std::sync::Arc<std::sync::Mutex<exercise::Exercise>>,
+    llm: llm::Llm,
+    web: Option<std::path::PathBuf>,
+    access: server::access::Access,
+) -> (TestApp, server::AppState) {
+    let (app, state) = server::router_with_access(ex, llm, web, access);
+    (
+        std::sync::Arc::new(Client::untracked(app).await.expect("Rocket ignition")),
+        state,
+    )
+}
+
+async fn send(
+    app: &TestApp,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    key: Option<&str>,
+) -> (Status, Value) {
+    let mut request = app
+        .req(method.parse::<Method>().unwrap(), uri)
+        .header(ContentType::JSON);
+    if let Some(key) = key {
+        request = request.header(Header::new("Authorization", format!("Bearer {key}")));
+    }
+    if let Some(body) = body {
+        request = request.body(body.to_string());
+    }
+    let response = request.dispatch().await;
+    let status = response.status();
+    (status, response.into_json().await.unwrap_or(Value::Null))
 }

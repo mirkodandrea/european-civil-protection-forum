@@ -1,15 +1,10 @@
 //! Per-run capability keys. Player identities are bound to keys, never URL claims.
 use crate::AppState;
-use axum::{
-    extract::{Request, State},
-    http::StatusCode,
-    middleware::Next,
-    response::{IntoResponse, Response},
-    Json,
-};
 use rand::RngCore;
+use rocket::http::{Method, Status};
+use rocket::request::{FromRequest, Outcome};
+use rocket::Request;
 use serde::Serialize;
-use serde_json::json;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -59,68 +54,63 @@ impl Access {
     }
 }
 
-pub async fn authorize(State(s): State<AppState>, mut req: Request, next: Next) -> Response {
-    let path = req.uri().path();
-    if path == "/api/health" {
-        return next.run(req).await;
-    }
-    let bearer = req
-        .headers()
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "));
-    // Browser WebSockets cannot set Authorization. Query keys are accepted only here.
-    let ws_token = if path == "/ws" {
-        req.uri()
-            .query()
-            .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
-    } else {
-        None
-    };
-    let Some(principal) = bearer.or(ws_token).and_then(|t| s.access.principal(t)) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"access key required"})),
-        )
-            .into_response();
-    };
-    let allowed = match &principal {
-        Principal::Master => true,
-        Principal::Evaluator { .. } => {
-            req.method() == axum::http::Method::GET
-                && matches!(
-                    path,
-                    "/api/access"
-                        | "/api/static"
-                        | "/api/state"
-                        | "/api/master"
-                        | "/api/debrief"
-                        | "/api/catalogue"
-                        | "/api/evaluator"
-                        | "/api/evaluator/assessment"
-                        | "/ws"
-                )
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for Principal {
+    type Error = ();
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, ()> {
+        let Some(s) = req.rocket().state::<AppState>() else {
+            return Outcome::Error((Status::InternalServerError, ()));
+        };
+        let path = req.uri().path();
+        let path = path.as_str();
+        let bearer = req
+            .headers()
+            .get_one("authorization")
+            .and_then(|h| h.strip_prefix("Bearer "));
+        // Browser WebSockets cannot set Authorization. Query keys are accepted only here.
+        let ws_token = if path == "/ws" {
+            req.query_value::<String>("token").and_then(Result::ok)
+        } else {
+            None
+        };
+        let Some(principal) = bearer
+            .or(ws_token.as_deref())
+            .and_then(|t| s.access.principal(t))
+        else {
+            return Outcome::Error((Status::Unauthorized, ()));
+        };
+        let allowed = match &principal {
+            Principal::Master => true,
+            Principal::Evaluator { .. } => {
+                matches!(req.method(), Method::Get | Method::Head)
+                    && matches!(
+                        path,
+                        "/api/access"
+                            | "/api/static"
+                            | "/api/state"
+                            | "/api/master"
+                            | "/api/debrief"
+                            | "/api/catalogue"
+                            | "/api/evaluator"
+                            | "/api/evaluator/assessment"
+                            | "/ws"
+                    )
+            }
+            Principal::Player { role } => {
+                let own = format!("/api/player/{role}");
+                path == "/api/static"
+                    || path == "/api/access"
+                    || path == "/ws"
+                    || path == own
+                    || ["draft", "draft/submit", "chat", "reply", "language"]
+                        .iter()
+                        .any(|suffix| path == format!("{own}/{suffix}"))
+            }
+        };
+        if !allowed {
+            return Outcome::Error((Status::Forbidden, ()));
         }
-        Principal::Player { role } => {
-            let own = format!("/api/player/{role}");
-            path == "/api/static"
-                || path == "/api/access"
-                || path == "/ws"
-                || path == own
-                || path == format!("{own}/draft")
-                || path == format!("{own}/draft/submit")
-                || path == format!("{own}/chat")
-                || path == format!("{own}/reply")
-                || path == format!("{own}/language")
-        }
-    };
-    if !allowed {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error":"access key does not authorize this endpoint"})),
-        )
-            .into_response();
+        Outcome::Success(principal)
     }
-    req.extensions_mut().insert(principal);
-    next.run(req).await
 }

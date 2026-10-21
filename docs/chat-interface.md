@@ -4,9 +4,21 @@ Questa implementazione preliminare vive nel worktree `.worktrees/chat-interface`
 branch `refactor/chat-interface`. Il worktree include lo stato locale del progetto
 esistente al momento della creazione, senza un commit di baseline aggiuntivo.
 
+## Frontend Rust/WebAssembly
+
+Le superfici web sono ora componenti Yew nel crate `crates/frontend`, compilati
+con `./scripts/build_frontend.sh` e serviti da Rocket da `web/dist/`. Non restano
+moduli JavaScript applicativi scritti a mano. La shell HTML e il loader JavaScript
+sono generati da Trunk/wasm-bindgen; lo stile resta CSS. Chat, bozze private,
+revisione, mappe canvas, console avanzata e valutatore sono implementati in Rust.
+I nomi degli entry point e le API restano compatibili. Nella console avanzata i
+parametri strutturati sono modificabili nei moduli Rust; l'interpretazione manuale
+EXCON può aggiungere comandi JSON nella scheda della proposta.
+
 ## Avvio e superfici
 
 ```sh
+./scripts/build_frontend.sh
 cargo run --release -p app -- --headless
 ```
 

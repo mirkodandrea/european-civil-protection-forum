@@ -1,13 +1,12 @@
 //! The full EXCON ↔ player workflow over HTTP, with a mock LLM.
+use rocket::http::{ContentType, Header, Method, Status};
+use rocket::local::asynchronous::Client;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use axum::Router;
-use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use tower::ServiceExt;
+
+type TestApp = std::sync::Arc<Client>;
 
 fn mock_llm() -> llm::Llm {
     llm::Llm::mock(|task, _system, user| {
@@ -39,20 +38,17 @@ fn access() -> server::access::Access {
     }
 }
 
-async fn app() -> Router {
+async fn app() -> TestApp {
     let scn = Arc::new(scenario::synthetic::generate(
         scenario::synthetic::DEFAULT_SEED,
     ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    server::router_with_access(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).0
+    build(Arc::new(Mutex::new(ex)), mock_llm(), None, access())
+        .await
+        .0
 }
 
-async fn call(
-    app: &Router,
-    method: &str,
-    uri: &str,
-    mut body: Option<Value>,
-) -> (StatusCode, Value) {
+async fn call(app: &TestApp, method: &str, uri: &str, mut body: Option<Value>) -> (Status, Value) {
     if method == "POST" && uri.ends_with("/reply") {
         if let Some(body) = body.as_mut() {
             if body.get("evidence").is_none() {
@@ -60,27 +56,10 @@ async fn call(
             }
         }
     }
-    let req = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json")
-        .header("authorization", "Bearer test-master");
-    let req = req
-        .body(
-            body.map(|b| Body::from(b.to_string()))
-                .unwrap_or(Body::empty()),
-        )
-        .unwrap();
-    let resp = app.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    call_key(app, method, uri, body, Some("test-master")).await
 }
 
-async fn reply_parent(app: &Router, role: &str) -> u64 {
+async fn reply_parent(app: &TestApp, role: &str) -> u64 {
     let (_, p) = call(app, "GET", &format!("/api/player/{role}"), None).await;
     call(
         app,
@@ -112,7 +91,7 @@ async fn reply_parent(app: &Router, role: &str) -> u64 {
 }
 
 /// Poll `GET uri` until `pred` holds (LLM work runs in spawned tasks).
-async fn eventually(app: &Router, uri: &str, pred: impl Fn(&Value) -> bool) -> Value {
+async fn eventually(app: &TestApp, uri: &str, pred: impl Fn(&Value) -> bool) -> Value {
     for _ in 0..100 {
         let (_, v) = call(app, "GET", uri, None).await;
         if pred(&v) {
@@ -127,7 +106,7 @@ async fn eventually(app: &Router, uri: &str, pred: impl Fn(&Value) -> bool) -> V
 async fn master_player_llm_round_trip() {
     let app = app().await;
     let (s, v) = call(&app, "GET", "/api/static", None).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     assert_eq!(v["roles"].as_array().unwrap().len(), 3);
     assert!(v["msel"].as_array().unwrap().len() >= 5);
 
@@ -139,16 +118,16 @@ async fn master_player_llm_round_trip() {
         Some(json!({"text": "hi", "reply_to": reply_parent(&app, "mayor").await})),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, Status::BadRequest);
 
     assert_eq!(
         call(&app, "POST", "/api/master/start", None).await.0,
-        StatusCode::OK
+        Status::Ok
     );
 
     // MSEL inject, translated for the Italian-speaking mayor only.
     let (s, _) = call(&app, "POST", "/api/master/msel/I-01/send", None).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     let (_, mayor) = call(&app, "GET", "/api/player/mayor", None).await;
     assert!(mayor["inbox"][0]["text"]
         .as_str()
@@ -195,7 +174,7 @@ async fn master_player_llm_round_trip() {
         Some(json!({"approve": true})),
     )
     .await;
-    assert_eq!(s, StatusCode::OK, "{out}");
+    assert_eq!(s, Status::Ok, "{out}");
     eventually(&app, "/api/player/mayor", |v| {
         v["inbox"]
             .as_array()
@@ -229,7 +208,7 @@ async fn master_player_llm_round_trip() {
         Some(json!({"approve": true, "note": "Send the clarification"})),
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     eventually(&app, "/api/player/mayor", |v| {
         v["inbox"]
             .as_array()
@@ -285,7 +264,7 @@ async fn master_player_llm_round_trip() {
         Some(json!([{"type":"Extinguish","area":"G3"},{"type":"WaterDrop","at":"Atlantis"}])),
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     assert_eq!(r["results"][0]["ok"], true);
     assert_eq!(r["results"][1]["ok"], false);
     let (s, _) = call(
@@ -295,7 +274,7 @@ async fn master_player_llm_round_trip() {
         Some(json!({"type":"NotACommand"})),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, Status::BadRequest);
 
     // Resolve the turn -> applied actions, time advanced, situation updates to every player.
     let (s, rep) = call(
@@ -305,7 +284,7 @@ async fn master_player_llm_round_trip() {
         Some(json!({"minutes": 30})),
     )
     .await;
-    assert_eq!(s, StatusCode::OK, "{rep}");
+    assert_eq!(s, Status::Ok, "{rep}");
     assert_eq!(rep["to_s"], 1800);
     assert!(rep["applied"]
         .as_array()
@@ -344,13 +323,13 @@ async fn master_player_llm_round_trip() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, st) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(st["turn"], 1);
     assert_eq!(
         call(&app, "POST", "/api/master/end", None).await.0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, d) = call(&app, "GET", "/api/debrief", None).await;
     assert!(d["log"].as_array().unwrap().len() > 10);
@@ -362,8 +341,9 @@ async fn works_without_llm() {
         scenario::synthetic::DEFAULT_SEED,
     ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let app =
-        server::router_with_access(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
     call(&app, "POST", "/api/master/start", None).await;
     call(
         &app,
@@ -392,7 +372,7 @@ async fn works_without_llm() {
         Some(json!({"approve": true, "commands": [{"type":"CutFireLine","along":"G3:S"}]})),
     )
     .await;
-    assert_eq!(s, StatusCode::OK, "{out}");
+    assert_eq!(s, Status::Ok, "{out}");
     let (_, rep) = call(&app, "POST", "/api/master/resolve", None).await;
     assert_eq!(rep["applied"][0]["ok"], true);
     eventually(&app, "/api/player/fire_commander", |v| {
@@ -420,6 +400,7 @@ async fn resolution_runs_live_and_is_observable() {
     )
     .await;
     assert_eq!(set["speed"], 600.0);
+    let parent = reply_parent(&app, "mayor").await;
     let a2 = app.clone();
     let resolver = tokio::spawn(async move {
         call(
@@ -437,18 +418,16 @@ async fn resolution_runs_live_and_is_observable() {
         if st["phase"] == "resolving" {
             assert_eq!(st["resolving"]["to_s"], 1200);
             seen_times.insert(st["world"]["stats"]["time_s"].as_i64().unwrap());
-            let (s, _) = call(
-                &app,
-                "POST",
-                "/api/player/mayor/reply",
-                Some(json!({"text": "hi", "reply_to": reply_parent(&app, "mayor").await})),
-            )
-            .await;
-            assert_eq!(
-                s,
-                StatusCode::BAD_REQUEST,
-                "replies are refused while resolving"
-            );
+            if seen_times.len() == 1 {
+                let (s, _) = call(
+                    &app,
+                    "POST",
+                    "/api/player/mayor/reply",
+                    Some(json!({"text": "hi", "reply_to": parent})),
+                )
+                .await;
+                assert_eq!(s, Status::BadRequest, "replies are refused while resolving");
+            }
         }
         if resolver.is_finished() {
             break;
@@ -456,7 +435,7 @@ async fn resolution_runs_live_and_is_observable() {
         tokio::time::sleep(Duration::from_millis(15)).await;
     }
     let (s, rep) = resolver.await.unwrap();
-    assert_eq!(s, StatusCode::OK, "{rep}");
+    assert_eq!(s, Status::Ok, "{rep}");
     assert_eq!(rep["to_s"], 1200);
     assert!(
         seen_times.len() >= 5,
@@ -493,7 +472,7 @@ async fn player_conversation_keeps_context() {
         scenario::synthetic::DEFAULT_SEED,
     ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
     call(&app, "POST", "/api/master/start", None).await;
     call(&app, "POST", "/api/master/msel/I-03/send", None).await;
     call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "send the crews over there", "reply_to": reply_parent(&app, "fire_commander").await}))).await;
@@ -562,7 +541,7 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
         )
         .await
         .0,
-        StatusCode::UNPROCESSABLE_ENTITY
+        Status::UnprocessableEntity
     );
     assert_eq!(
         call(
@@ -573,7 +552,7 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -584,7 +563,7 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert!(master["proposals"].as_array().unwrap().is_empty());
@@ -595,7 +574,7 @@ async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
         Some(json!({"text":"hello", "reply_to":parent, "declaration_kind":"request"})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["proposals"][0]["reply_to"], parent);
     assert_eq!(master["proposals"][0]["declaration_kind"], "request");
@@ -613,8 +592,7 @@ async fn operational_drafts_require_master_review_and_deliver_edited_text_once()
         scenario::synthetic::DEFAULT_SEED,
     ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let (app, state) =
-        server::router_with_access(Arc::new(Mutex::new(ex)), mock_llm(), None, access());
+    let (app, state) = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await;
     call(&app, "POST", "/api/master/start", None).await;
     let parent = reply_parent(&app, "mayor").await;
     let (_, r) = call(
@@ -644,7 +622,7 @@ async fn operational_drafts_require_master_review_and_deliver_edited_text_once()
         Some(json!({"approve":true, "communication_drafts":edited})),
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     server::flow::send_drafts(&state, pid).await;
     let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
     assert!(
@@ -664,7 +642,7 @@ async fn operational_drafts_require_master_review_and_deliver_edited_text_once()
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     eventually(&app, "/api/player/fire_commander", |p| {
         p["inbox"]
@@ -752,19 +730,15 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
     let parent = reply_parent(&app, "mayor").await;
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/player/mayor/reply")
-        .header("content-type", "application/json")
-        .header("authorization", "Bearer test-master")
-        .body(Body::from(
-            json!({"text":"warn F4","reply_to":parent}).to_string(),
-        ))
-        .unwrap();
-    assert_eq!(
-        app.clone().oneshot(req).await.unwrap().status(),
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
+    let (status, _) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"warn F4","reply_to":parent})),
+        Some("test-master"),
+    )
+    .await;
+    assert_eq!(status, Status::UnprocessableEntity);
     let evidence = json!({"basis":{"kind":"plan","reference":"Municipal warning plan, annex 3"},"attachments":[{"title":"Area map","url":"https://example.test/map.pdf"}]});
     let invalid = json!({"basis":{"kind":"plan","reference":""}});
     assert_eq!(
@@ -776,7 +750,7 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -787,7 +761,7 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (s, r) = call(
         &app,
@@ -796,7 +770,7 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
         Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence})),
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     let pid = r["proposal"].as_u64().unwrap();
     eventually(&app, "/api/master", |m| {
         m["proposals"][0]["status"] == "pending"
@@ -832,36 +806,13 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
 }
 
 async fn call_key(
-    app: &Router,
+    app: &TestApp,
     method: &str,
     uri: &str,
     body: Option<Value>,
     key: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut req = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    if let Some(key) = key {
-        req = req.header("authorization", format!("Bearer {key}"));
-    }
-    let resp = app
-        .clone()
-        .oneshot(
-            req.body(
-                body.map(|v| Body::from(v.to_string()))
-                    .unwrap_or(Body::empty()),
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+) -> (Status, Value) {
+    request(app, method, uri, body, key).await
 }
 
 #[tokio::test]
@@ -881,12 +832,12 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
             call_key(&app, "GET", path, None, Some("test-mayor"))
                 .await
                 .0,
-            StatusCode::FORBIDDEN,
+            Status::Forbidden,
             "{path}"
         );
         assert_eq!(
             call_key(&app, "GET", path, None, None).await.0,
-            StatusCode::UNAUTHORIZED,
+            Status::Unauthorized,
             "{path}"
         );
     }
@@ -915,7 +866,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
             call_key(&app, "POST", path, Some(json!({})), Some("test-mayor"))
                 .await
                 .0,
-            StatusCode::FORBIDDEN,
+            Status::Forbidden,
             "{path}"
         );
     }
@@ -923,15 +874,15 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
         call_key(&app, "GET", "/api/state?token=test-master", None, None)
             .await
             .0,
-        StatusCode::UNAUTHORIZED
+        Status::Unauthorized
     );
     assert_eq!(
         call_key(&app, "GET", "/ws", None, None).await.0,
-        StatusCode::UNAUTHORIZED
+        Status::Unauthorized
     );
     assert_eq!(
         call_key(&app, "GET", "/api/health", None, None).await,
-        (StatusCode::OK, json!({"ok":true}))
+        (Status::Ok, json!({"ok":true}))
     );
     let (_, mut after) = call(&app, "GET", "/api/state", None).await;
     after.as_object_mut().unwrap().remove("wall_ms");
@@ -954,7 +905,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
 }
 
@@ -964,7 +915,7 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
     call(&app, "POST", "/api/master/start", None).await;
     let report = json!({"locations":[[2500,2500]],"cells":[{"row":3,"col":4,"state":1}]});
     let (status, sent) = call(&app, "POST", "/api/master/inject", Some(json!({"title":"Field report","recipients":["mayor"],"text":"A fire is reported at these coordinates.","observation":report}))).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(mayor["map"]["cells"], report["cells"]);
     assert_eq!(mayor["knowledge_events"][0]["message"], sent["messages"][0]);
@@ -1004,16 +955,16 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
         call(&app, "POST", "/api/master/knowledge", Some(update))
             .await
             .0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, updated) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(updated["map"]["cells"].as_array().unwrap().len(), 2);
     assert_eq!(updated["map"]["cells"][0]["state"], 2);
     let (_, before_invalid) = call(&app, "GET", "/api/master", None).await;
-    assert_eq!(call(&app, "POST", "/api/master/inject", Some(json!({"title":"Invalid","recipients":["mayor"],"text":"bad report","observation":{"cells":[{"row":999999,"col":0,"state":1}]}}))).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app, "POST", "/api/master/inject", Some(json!({"title":"Invalid","recipients":["mayor"],"text":"bad report","observation":{"cells":[{"row":999999,"col":0,"state":1}]}}))).await.0, Status::BadRequest);
     let (_, after_invalid) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(before_invalid["messages"], after_invalid["messages"]);
-    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"Reviewed aerial perimeter","current_perimeter":true}))).await.0, StatusCode::OK);
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"Reviewed aerial perimeter","current_perimeter":true}))).await.0, Status::Ok);
     let (_, acquired) = call_key(
         &app,
         "GET",
@@ -1042,7 +993,7 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
         ] {
             assert_eq!(
                 call_key(&app, "GET", path, None, Some(key)).await.0,
-                StatusCode::OK,
+                Status::Ok,
                 "{key} {path}"
             );
         }
@@ -1050,7 +1001,7 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
             call_key(&app, "GET", "/api/master/access", None, Some(key))
                 .await
                 .0,
-            StatusCode::FORBIDDEN
+            Status::Forbidden
         );
         for path in [
             "/api/master/start",
@@ -1079,7 +1030,7 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
                 call_key(&app, "POST", path, Some(json!({})), Some(key))
                     .await
                     .0,
-                StatusCode::FORBIDDEN,
+                Status::Forbidden,
                 "{key} {path}"
             );
         }
@@ -1087,13 +1038,13 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
     let (_, after) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(before, after);
     let (s, identity) = call_key(&app, "GET", "/api/access", None, Some("test-eval-two")).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     assert_eq!(identity, json!({"kind":"evaluator","id":"eval-two"}));
     assert_eq!(
         call_key(&app, "GET", "/api/evaluator", None, Some("test-mayor"))
             .await
             .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
 }
 
@@ -1110,7 +1061,7 @@ async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materia
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     call(&app, "POST", "/api/master/start", None).await;
     call(&app, "POST", "/api/master/msel/I-01/send", None).await;
@@ -1150,7 +1101,7 @@ async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materia
         Some("test-eval-one"),
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     assert_eq!(view["chains"].as_array().unwrap().len(), 1);
     let chain = &view["chains"][0];
     assert_eq!(chain["proposal"]["evidence"], evidence);
@@ -1229,7 +1180,7 @@ async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materia
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call_key(
@@ -1241,7 +1192,7 @@ async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materia
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
 }
 
@@ -1257,7 +1208,7 @@ async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     call(&app, "POST", "/api/master/start", None).await;
     for (id, clock) in [("I-01", "13:00"), ("I-02", "13:30"), ("I-03", "14:00")] {
@@ -1270,7 +1221,7 @@ async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
             )
             .await
             .0,
-            StatusCode::OK
+            Status::Ok
         );
     }
     assert_eq!(
@@ -1282,7 +1233,7 @@ async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     let delivered = eventually(&app, "/api/state", |s| {
         s["scheduled_injects"]
@@ -1342,7 +1293,7 @@ async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -1353,7 +1304,7 @@ async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -1364,7 +1315,7 @@ async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (_, debrief) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(debrief["scheduled_injects"].as_array().unwrap().len(), 3);
@@ -1401,7 +1352,7 @@ async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only(
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     let parent = reply_parent(&app, "mayor").await;
     let (_, r) = call(
@@ -1421,7 +1372,7 @@ async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only(
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     eventually(&app, "/api/master", |m| {
         m["proposals"][0]["status"] == "pending"
@@ -1443,7 +1394,7 @@ async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only(
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     assert_eq!(
         call(
@@ -1454,7 +1405,7 @@ async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only(
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (_, state) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(state["turn"], 1);
@@ -1488,7 +1439,7 @@ async fn ai_resource_limits_are_recommendations_until_reviewed_and_approved() {
             anyhow::bail!("unexpected task")
         }
     });
-    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
     call(&app, "POST", "/api/master/start", None).await;
     let (_, before) = call(&app, "GET", "/api/state", None).await;
     let (_, p) = call(
@@ -1510,7 +1461,7 @@ async fn ai_resource_limits_are_recommendations_until_reviewed_and_approved() {
     let (_, pending) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(pending["resource_limits"], before["resource_limits"]);
     assert_eq!(pending["world"], before["world"]);
-    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"EXCON edits recommendation to two crews"}))).await.0,StatusCode::OK);
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"EXCON edits recommendation to two crews"}))).await.0,Status::Ok);
     let (_, effective) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(effective["resource_limits"]["total"]["ground_crews"], 2);
     assert_eq!(
@@ -1569,7 +1520,7 @@ async fn configured_limit_controls_enforce_capacity_and_reject_unknown_resources
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, fc) = call_key(
         &app,
@@ -1593,7 +1544,7 @@ async fn configured_limit_controls_enforce_capacity_and_reject_unknown_resources
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (_, state) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(state["resource_limits"], body["limits"]);
@@ -1607,7 +1558,7 @@ async fn configured_limit_controls_enforce_capacity_and_reject_unknown_resources
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
 }
 
@@ -1657,7 +1608,7 @@ async fn evaluator_assessment_cites_snapshot_is_cached_and_never_mutates_exercis
     let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
     ex.set_reference_materials(serde_json::from_value(json!([{"basis":{"kind":"plan","reference":"Plan section 3"},"attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}])).unwrap()).unwrap();
     ex.start().unwrap();
-    let (app, _) = server::router_with_access(Arc::new(Mutex::new(ex)), model, None, access());
+    let (app, _) = build(Arc::new(Mutex::new(ex)), model, None, access()).await;
     let parent = reply_parent(&app, "mayor").await;
     call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"Warn F4","reply_to":parent,"evidence":{"basis":{"kind":"plan","reference":"Plan section 3"}}}))).await;
     eventually(&app, "/api/master", |m| {
@@ -1673,7 +1624,7 @@ async fn evaluator_assessment_cites_snapshot_is_cached_and_never_mutates_exercis
         Some("test-eval-one"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     assert_eq!(report["error"], Value::Null);
     let citation = report["derived_assessment"]["findings"][0]["evidence"][0]
         .as_str()
@@ -1701,7 +1652,7 @@ async fn evaluator_assessment_cites_snapshot_is_cached_and_never_mutates_exercis
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
     assert_eq!(
         call_key(
@@ -1713,7 +1664,7 @@ async fn evaluator_assessment_cites_snapshot_is_cached_and_never_mutates_exercis
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
 }
 
@@ -1725,7 +1676,7 @@ async fn invalid_ai_assessment_keeps_recorded_evidence_and_no_operational_effect
         scenario::synthetic::DEFAULT_SEED,
     ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let (app, _) = server::router_with_access(Arc::new(Mutex::new(ex)), model, None, access());
+    let (app, _) = build(Arc::new(Mutex::new(ex)), model, None, access()).await;
     let (_, before) = call(&app, "GET", "/api/debrief", None).await;
     let (_, report) = call(&app, "GET", "/api/evaluator/assessment", None).await;
     assert_eq!(report["derived_assessment"], Value::Null);
@@ -1745,14 +1696,14 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         call(&app, "POST", "/api/master/design", Some(design.clone()))
             .await
             .0,
-        StatusCode::OK
+        Status::Ok
     );
     call(&app, "POST", "/api/master/start", None).await;
     assert_eq!(
         call(&app, "POST", "/api/master/design", Some(design.clone()))
             .await
             .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -1763,7 +1714,7 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let parent = reply_parent(&app, "mayor").await;
     let (_, declared) = call(
@@ -1794,7 +1745,7 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     call(
         &app,
@@ -1812,7 +1763,7 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         Some(json!({"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}})),
     )
     .await;
-    assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Observed all cells extinguished"}))).await.0,StatusCode::OK);
+    assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Observed all cells extinguished"}))).await.0,Status::Ok);
     assert_eq!(
         call(
             &app,
@@ -1822,9 +1773,9 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
-    assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Exercise a plausible second incident while retaining original containment","adaptation":true}))).await.0,StatusCode::OK);
+    assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Exercise a plausible second incident while retaining original containment","adaptation":true}))).await.0,Status::Ok);
     let (_, e) = call_key(&app, "GET", "/api/evaluator", None, Some("test-eval-one")).await;
     assert_eq!(e["context"]["stats"]["burning_cells"], 0);
     assert_eq!(e["training_design"]["original"], design);
@@ -1841,7 +1792,7 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
 }
 
@@ -1877,7 +1828,7 @@ async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -1888,7 +1839,7 @@ async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, corrected) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(corrected["stats"], before["stats"]);
@@ -1915,7 +1866,7 @@ async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call_key(
@@ -1927,7 +1878,7 @@ async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
 }
 
@@ -2026,7 +1977,7 @@ async fn only_executed_approved_deployments_move_and_player_sees_only_own_tasks(
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     call(
         &app,
@@ -2067,7 +2018,7 @@ async fn chat_is_direct_private_and_orders_wait_for_excon() {
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
     let (status, prepared) = call_key(
         &app,
@@ -2077,7 +2028,7 @@ async fn chat_is_direct_private_and_orders_wait_for_excon() {
         Some("test-mayor"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let (_, private) = call(&app, "GET", "/api/master", None).await;
     assert!(private["messages"].as_array().unwrap().is_empty());
     assert!(private["proposals"].as_array().unwrap().is_empty());
@@ -2089,7 +2040,7 @@ async fn chat_is_direct_private_and_orders_wait_for_excon() {
         Some("test-mayor"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let pid = delivered["proposal"].as_u64().unwrap();
     let master = eventually(&app, "/api/master", |v| {
         v["proposals"]
@@ -2152,7 +2103,7 @@ async fn chat_is_direct_private_and_orders_wait_for_excon() {
         )
         .await
         .0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, resolved) = call(&app, "GET", "/api/master", None).await;
     assert!(resolved["proposals"]
@@ -2168,11 +2119,25 @@ async fn chat_is_direct_private_and_orders_wait_for_excon() {
     )
     .await;
     let (_, rolled) = call(&app, "GET", "/api/master", None).await;
-    assert!(rolled["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|m| m["id"] == delivered["message"]));
+    assert!(
+        !rolled["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == delivered["message"]),
+        "peer chat stays private after rollback"
+    );
+    for role in ["mayor", "fire_commander"] {
+        let (_, player) = call(&app, "GET", &format!("/api/player/{role}"), None).await;
+        assert!(
+            player["inbox"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["id"] == delivered["message"]),
+            "participants retain chat history after rollback"
+        );
+    }
     assert!(rolled["proposals"]
         .as_array()
         .unwrap()
@@ -2204,7 +2169,7 @@ async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
         Some(json!({"to":"fire_commander","text":"Ricevuto"})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let (_, recipient) = call(&app, "GET", "/api/player/fire_commander", None).await;
     let message = recipient["inbox"]
         .as_array()
@@ -2222,8 +2187,9 @@ async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
     ));
     let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
     ex.set_language("mayor", "it").unwrap();
-    let app =
-        server::router_with_access(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
     let (status, sent) = call(
         &app,
         "POST",
@@ -2231,7 +2197,7 @@ async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
         Some(json!({"to":"master","text":"Ricevuto"})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     assert_eq!(sent["translation_failed"], true);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["messages"][0]["original"], "Ricevuto");
@@ -2245,7 +2211,7 @@ async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call(
@@ -2256,7 +2222,7 @@ async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
 }
 
@@ -2274,7 +2240,7 @@ async fn informational_chat_does_not_enter_the_approval_queue() {
                 .into(),
         )
     });
-    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
     let (_, prepared) = call(
         &app,
         "POST",
@@ -2289,7 +2255,7 @@ async fn informational_chat_does_not_enter_the_approval_queue() {
         Some(json!({"draft":prepared["draft"]["id"],"revision":prepared["draft"]["revision"]})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     assert!(sent["proposal"].is_null());
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert!(master["proposals"].as_array().unwrap().is_empty());
@@ -2312,7 +2278,7 @@ async fn translated_chat_cannot_cross_a_rollback() {
     ex.start().unwrap();
     ex.set_language("mayor", "it").unwrap();
     let ex = Arc::new(Mutex::new(ex));
-    let app = server::router_with_access(ex.clone(), llm, None, access()).0;
+    let app = build(ex.clone(), llm, None, access()).await.0;
     let worker = app.clone();
     let request = tokio::spawn(async move {
         call(
@@ -2331,7 +2297,7 @@ async fn translated_chat_cannot_cross_a_rollback() {
     .await
     .unwrap();
     ex.lock().unwrap().rollback(1).unwrap();
-    assert_eq!(request.await.unwrap().0, StatusCode::BAD_REQUEST);
+    assert_eq!(request.await.unwrap().0, Status::BadRequest);
     let ex = ex.lock().unwrap();
     assert!(ex.proposals.is_empty());
     assert!(!ex
@@ -2360,7 +2326,7 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (status, first) = call_key(
         &app,
@@ -2370,7 +2336,7 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         Some("test-mayor"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     assert_eq!(first["draft"]["status"], "needs_clarification");
     assert_eq!(
         first["draft"]["question"],
@@ -2393,7 +2359,7 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     assert_eq!(
         call_key(
@@ -2405,10 +2371,10 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        Status::Forbidden
     );
     let (status, second)=call(&app,"POST","/api/player/mayor/draft",Some(json!({"to":"master","text":"F4 confirmed","draft":first["id"],"revision":first["revision"]}))).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let second = second["draft"].clone();
     assert_eq!(second["status"], "ready");
     assert_eq!(second["message"], "Warn F4");
@@ -2424,7 +2390,7 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let submission = json!({"draft":second["id"],"revision":second["revision"]});
     let (status, sent) = call(
@@ -2434,7 +2400,7 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         Some(submission.clone()),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     assert!(sent["proposal"].is_number());
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["proposals"][0]["original"], "Warn F4");
@@ -2449,7 +2415,7 @@ async fn player_clarifies_privately_then_confirms_the_exact_revision() {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
 }
 
@@ -2461,8 +2427,9 @@ async fn unavailable_private_ai_requires_explicit_manual_submission_and_rollback
     let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
     ex.start().unwrap();
     ex.set_language("mayor", "en").unwrap();
-    let app =
-        server::router_with_access(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
     let (_, prepared) = call(
         &app,
         "POST",
@@ -2482,7 +2449,7 @@ async fn unavailable_private_ai_requires_explicit_manual_submission_and_rollback
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     );
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert!(master["messages"].as_array().unwrap().is_empty());
@@ -2492,7 +2459,7 @@ async fn unavailable_private_ai_requires_explicit_manual_submission_and_rollback
         call(&app, "POST", "/api/player/mayor/draft/submit", Some(manual))
             .await
             .0,
-        StatusCode::OK
+        Status::Ok
     );
     let (_, again) = call(
         &app,
@@ -2508,7 +2475,7 @@ async fn unavailable_private_ai_requires_explicit_manual_submission_and_rollback
         Some(json!({"turn":1})),
     )
     .await;
-    assert_eq!(call(&app,"POST","/api/player/mayor/draft/submit",Some(json!({"draft":again["draft"]["id"],"revision":again["draft"]["revision"],"manual":true}))).await.0,StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app,"POST","/api/player/mayor/draft/submit",Some(json!({"draft":again["draft"]["id"],"revision":again["draft"]["revision"],"manual":true}))).await.0,Status::BadRequest);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2528,7 +2495,7 @@ async fn private_interpretation_finishing_after_rollback_is_discarded() {
     ex.start().unwrap();
     ex.set_language("mayor", "en").unwrap();
     let ex = Arc::new(Mutex::new(ex));
-    let app = server::router_with_access(ex.clone(), llm, None, access()).0;
+    let app = build(ex.clone(), llm, None, access()).await.0;
     let worker = app.clone();
     let request = tokio::spawn(async move {
         call(
@@ -2547,7 +2514,7 @@ async fn private_interpretation_finishing_after_rollback_is_discarded() {
     .await
     .unwrap();
     ex.lock().unwrap().rollback(1).unwrap();
-    assert_eq!(request.await.unwrap().0, StatusCode::BAD_REQUEST);
+    assert_eq!(request.await.unwrap().0, Status::BadRequest);
     let ex = ex.lock().unwrap();
     assert!(ex.player_drafts("mayor").is_empty());
     assert!(ex.proposals.is_empty());
@@ -2568,7 +2535,7 @@ async fn a_missing_working_translation_is_not_presented_as_ready() {
     let llm = llm::Llm::mock(|_, _, _| {
         Ok(r#"{"message":"Allerta F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[]}"#.into())
     });
-    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
     let (_, prepared) = call(
         &app,
         "POST",
@@ -2580,4 +2547,38 @@ async fn a_missing_working_translation_is_not_presented_as_ready() {
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert!(master["messages"].as_array().unwrap().is_empty());
     assert!(master["proposals"].as_array().unwrap().is_empty());
+}
+
+async fn build(
+    ex: std::sync::Arc<std::sync::Mutex<exercise::Exercise>>,
+    llm: llm::Llm,
+    web: Option<std::path::PathBuf>,
+    access: server::access::Access,
+) -> (TestApp, server::AppState) {
+    let (app, state) = server::router_with_access(ex, llm, web, access);
+    (
+        std::sync::Arc::new(Client::untracked(app).await.expect("Rocket ignition")),
+        state,
+    )
+}
+
+async fn request(
+    app: &TestApp,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    key: Option<&str>,
+) -> (Status, Value) {
+    let mut request = app
+        .req(method.parse::<Method>().unwrap(), uri)
+        .header(ContentType::JSON);
+    if let Some(key) = key {
+        request = request.header(Header::new("Authorization", format!("Bearer {key}")));
+    }
+    if let Some(body) = body {
+        request = request.body(body.to_string());
+    }
+    let response = request.dispatch().await;
+    let status = response.status();
+    (status, response.into_json().await.unwrap_or(Value::Null))
 }

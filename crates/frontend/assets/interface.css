@@ -60,3 +60,26 @@
 @media(max-height:800px){#private-preparation{max-height:200px}}
 @media(max-height:550px){#private-preparation{max-height:110px}}
 .proposal-inline{margin-top:14px;padding:14px;border:1px solid #d7c38f;border-radius:10px;background:#fffaf0}.proposal-head,.proposal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.proposal-summary{margin:8px 0}.proposal-clarification{padding:9px;background:#fff0d2;border-radius:6px}.command-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}.command-card{min-width:0;margin:0;padding:10px;border:1px solid var(--line);border-radius:8px;background:white}.command-card legend{padding:0 5px;font-weight:650}.command-field,.proposal-note{display:grid;gap:4px;margin:7px 0;font-size:12px;color:var(--muted)}.command-field input,.proposal-note input{width:100%;min-width:0;color:var(--ink);font-size:14px}.proposal-actions{margin-top:12px}
+
+/* Yew owns the document; flex sizing also follows tablet visual viewport changes. */
+body{display:flex;flex-direction:column;min-height:100dvh}
+body:has(.workspace:not([hidden])){height:100dvh;overflow:hidden}
+.topbar,.navigation,#join{flex-shrink:0}
+#error:empty{display:none}
+.workspace:not([hidden]){flex:1;height:auto;width:100%;min-height:0;overflow:hidden}
+[hidden]{display:none!important}
+.page{width:100%;min-width:0}
+.advanced-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+.advanced-grid>section{min-width:0}.advanced-grid .card{margin-bottom:18px}
+.card form>label{display:grid;gap:5px;margin:12px 0}.card input,.card select,.card textarea{max-width:100%;min-width:0}
+.card pre,details pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:520px;overflow:auto}
+.card details{margin:9px 0}.card summary{cursor:pointer;overflow-wrap:anywhere}
+.mapbox{display:flex;flex-direction:column;align-items:center}.mapbox canvas{display:block;width:100%;max-width:760px;height:auto;aspect-ratio:auto;cursor:crosshair}
+.map-legend{font-size:12px;color:var(--muted);margin-top:8px}
+.filters{display:flex;flex-wrap:wrap;gap:12px}.filters label{display:grid;max-width:190px}
+button,input:not([type=checkbox]),select{min-height:44px}input[type=checkbox]{min-height:20px}
+.navigation{gap:12px}.navigation a{align-self:center;white-space:nowrap}
+#minutes{width:72px}fieldset{min-width:0}#forecast-review label{display:block;margin:9px 0}
+.message:has(.proposal-inline){max-width:96%}.command-card small{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:1000px){.advanced-grid{grid-template-columns:1fr}}
+@media(max-height:600px){.topbar{padding:8px 16px}.navigation{padding:6px 16px}.composer textarea{min-height:48px;max-height:80px}.composer{padding:8px 14px}.composer>small{display:none}.thread-head{padding:8px 14px}}

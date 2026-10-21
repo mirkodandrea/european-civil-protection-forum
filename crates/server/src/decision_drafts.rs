@@ -1,9 +1,7 @@
 //! Private interpretation before a player sends a decision into a conversation.
+use crate::access::Principal;
 use crate::{bad, ApiResult, AppState};
-use axum::{
-    extract::{Path, State},
-    Json,
-};
+use rocket::serde::json::Json;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -17,11 +15,14 @@ pub(crate) struct PrepareBody {
     revision: Option<u64>,
 }
 
+#[rocket::post("/api/player/<role>/draft", data = "<body>")]
 pub(crate) async fn prepare(
-    State(state): State<AppState>,
-    Path(role): Path<String>,
-    Json(body): Json<PrepareBody>,
+    _principal: Principal,
+    state: AppState,
+    role: String,
+    body: Json<PrepareBody>,
 ) -> ApiResult {
+    let Json(body) = body;
     let previous = match (body.draft, body.revision) {
         (None, None) => None,
         (Some(id), Some(revision)) => Some((id, revision)),
@@ -125,11 +126,14 @@ pub(crate) struct SubmitBody {
     manual: bool,
 }
 
+#[rocket::post("/api/player/<role>/draft/submit", data = "<body>")]
 pub(crate) async fn submit(
-    State(state): State<AppState>,
-    Path(role): Path<String>,
-    Json(body): Json<SubmitBody>,
+    _principal: Principal,
+    state: AppState,
+    role: String,
+    body: Json<SubmitBody>,
 ) -> ApiResult {
+    let Json(body) = body;
     let (draft, language, target_language) = {
         let ex = state.lock();
         let draft = ex.private_draft(&role, body.draft, body.revision)?;

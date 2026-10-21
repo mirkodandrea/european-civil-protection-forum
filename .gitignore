@@ -7,3 +7,5 @@ scripts/record/.cache/
 
 __pycache__/
 .worktrees/chat-interface
+
+/web/dist/

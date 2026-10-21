@@ -8,6 +8,7 @@ members = [
     "crates/llm",
     "crates/exercise",
     "crates/server",
+    "crates/frontend",
     "crates/viz",
     "crates/app",
 ]

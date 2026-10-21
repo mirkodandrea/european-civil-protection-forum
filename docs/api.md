@@ -1,5 +1,7 @@
 # HTTP / WebSocket API
 
+The API is implemented with Rocket 0.5 and `rocket_ws`. Existing endpoint paths and access keys remain unchanged.
+
 Everything the UIs do goes through this API, so the whole exercise can be driven by scripts (see `scripts/demo_session.sh`, and `scripts/record/session.js`, which drives the UIs themselves in a browser). JSON in, JSON out. Errors are `400 {"error": "..."}`. Requests require a per-run access key (`Authorization: Bearer KEY`). Missing/invalid keys return 401; keys for a different role or a EXCON-only endpoint return 403. `/api/health` is the public readiness endpoint.
 
 ## Reads

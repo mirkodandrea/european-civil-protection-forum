@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! ttx [--scenario data/scenarios/valverde_factory.json] [--seed 1]
-//!     [--port 8080] [--web web] [--headless]
+//!     [--port 8080] [--web web/dist] [--headless]
 //!     [--realizations 32] [--cutoff 0.5] [--operational-model]
 //! ```
 //!
@@ -32,7 +32,7 @@ fn args() -> Result<Args> {
         scenario: PathBuf::from("data/scenarios/valverde_factory.json"),
         seed: 1,
         port: 8080,
-        web: PathBuf::from("web"),
+        web: PathBuf::from("web/dist"),
         headless: false,
         realizations: 32,
         cutoff: 0.5,
@@ -184,6 +184,12 @@ fn main() -> Result<()> {
         viz::run(ex, a.port, "offline visual fixture".into());
         return Ok(());
     }
+
+    anyhow::ensure!(
+        a.web.join("index.html").is_file(),
+        "Rust frontend missing at {}: run ./scripts/build_frontend.sh (or supply --web DIR)",
+        a.web.display()
+    );
 
     let llm = llm::Llm::from_env();
     if llm.is_available() {

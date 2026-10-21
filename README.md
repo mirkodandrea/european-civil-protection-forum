@@ -1,5 +1,7 @@
 # PPRD East 4 — AI-supported Table-Top Exercise (working draft)
 
+The browser frontend is written in **Rust with Yew**, compiled to WebAssembly. **Rocket** serves its generated assets, JSON APIs and WebSockets. Application state, forms, chats, maps and live updates run in Rust; JavaScript is limited to the generated WebAssembly loader.
+
 Preliminary conversational interface in this worktree: see [chat interface](docs/chat-interface.md). EXCON and players use chats, reviewed action proposals and separate map views; the previous director console remains at `advanced.html`.
 
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
@@ -29,6 +31,13 @@ What happens in the video, and how to play or re-record it: [docs/demo.md](docs/
 ## Quick start
 
 ```bash
+# One-time frontend tools (Trunk and wasm-bindgen are already available on the development machine)
+rustup target add wasm32-unknown-unknown
+cargo install trunk --locked
+
+# Build the browser app before starting the server
+./scripts/build_frontend.sh
+
 # .env in the repo root
 OPENROUTER_API_KEY=sk-or-...
 # OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   (default)
@@ -50,7 +59,7 @@ The server prints a fresh EXCON access link at startup. Open it, then distribute
 
 ### Playing from a phone
 
-`play.html` puts the EXCON and every player in tabs of one page (a dot marks new messages or open proposals), laid out for phones. To reach it from outside the LAN, use a [Microsoft dev tunnel](https://aka.ms/devtunnels/docs):
+`play.html` opens the EXCON conversational console. Players use their individual role links, with a responsive chat and tactical map for phones and tablets. To reach it from outside the LAN, use a [Microsoft dev tunnel](https://aka.ms/devtunnels/docs):
 
 ```bash
 brew install --cask devtunnel
@@ -60,6 +69,8 @@ devtunnel host -p 8080            # private: only your account can open the URL
 ```
 
 Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the URL could run the EXCON console and spend your OpenRouter credit.
+
+The frontend build writes `web/dist/` (ignored by git), including compatible `.html` entry points. Rebuild it after changing `crates/frontend/`; the server defaults to `--web web/dist`. No Node build step or CDN is required.
 
 Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The default landscape is the Factory-generated Valverde valley. Regenerate it with `python3 scripts/scenario_factory.py landscape` (requires NumPy). The historical calibrated scenario remains available with `--scenario data/scenarios/synthetic_valley.json`; `cargo run -p scenario --bin gen-scenario` regenerates that historical template. See [landscape generation](docs/landscape-generation.md).
 
@@ -124,10 +135,11 @@ crates/fire             fire model wrapper: ignition, fire lines, drops, extingu
 crates/sim              world state, Command catalogue, validation, buildings, resources, digests
 crates/llm              OpenRouter gateway + prompt workflows (mockable)
 crates/exercise         turn engine: injects, inboxes, proposals, approval, rollback, event log
-crates/server           axum HTTP/WebSocket API + LLM orchestration
+crates/server           Rocket HTTP/WebSocket API + LLM orchestration
+crates/frontend         Yew Rust/WebAssembly UI (chat, canvas maps, EXCON, evaluator)
 crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, live turn view, HUD)
 crates/app              the `ttx` binary
-web/                    Master, player, all-roles (play.html) and landing pages (plain HTML/JS, no build step)
+web/dist/               Generated HTML entry points, CSS, WebAssembly and loader (Trunk build)
 scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)
 assets/models           Blender vegetation, town and articulated PBR unit bakes
 data/scenarios          generated scenario JSON

@@ -11,7 +11,7 @@ flowchart LR
     end
     subgraph ttx["ttx process"]
         subgraph tokio["server thread (tokio)"]
-            API[axum HTTP + /ws]
+            API[Rocket HTTP + /ws]
             FLOW[flow.rs<br/>LLM orchestration]
         end
         EX[(Arc&lt;Mutex&lt;Exercise&gt;&gt;<br/>turns · injects · proposals · log<br/>World: fire + buildings + resources)]
@@ -31,6 +31,7 @@ flowchart LR
 
 - **One shared state**: `Arc<Mutex<Exercise>>`. The server mutates it; the renderer only reads it, with `try_lock` once per frame and only when `generation` has changed. A long operation, such as resolving a turn, never freezes the screen. It just delays the next copy.
 - **The lock is never held across an `await`.** LLM workflows copy what the prompt needs, release the lock, call the model, then lock again to store the result (`crates/server/src/flow.rs`).
+- **Web delivery**: Rocket 0.5 serves generated `web/dist/` through `FileServer` (HTML shell, CSS, WebAssembly and its generated loader) and exposes typed JSON routes. The `--web DIR` override and existing `.html`, `/api/*` and `/ws` URLs are preserved. `Principal` is a request guard on every protected route; it validates the per-run capability key before JSON decoding. Only `/api/health` and static assets are public. API guard/data failures return the JSON error envelope. `rocket_ws` streams generation changes and handles socket closure and ping frames. Browser rendering and interaction are implemented in the `frontend` Rust crate using Yew 0.23, `web-sys` canvas APIs and `gloo-net` HTTP/WebSockets. The frontend depends on JSON contracts, never on the simulation crates.
 - **Live updates**: a watcher task polls `generation` every 250 ms and pushes it on `/ws`. Clients re-fetch when it changes (at most 4 Hz, including during live turn simulation), and also poll every 10 s as a fallback. The renderer reads the state directly, every frame.
 
 The target spec (§2) separated the simulation from the server with command channels. The draft uses a shared mutex instead: simpler, and enough for one process with ~10 clients. Only `sim::World` changes the world, and only through `Command`s, so moving to channels later touches just the server and viz glue.
@@ -54,7 +55,8 @@ Everything below `server` and `viz` is synchronous, has no Bevy or HTTP dependen
 | `sim` | World state; command catalogue; deterministic validation; buildings, roads, resources, reinforcements; digests | `World`, `Command`, `Verdict`, `Actor` |
 | `llm` | OpenRouter / mock / off gateway; prompt workflows | `Llm`, `ParsedReply` |
 | `exercise` | Turn engine; injects; inboxes; proposals and decisions; rollback; JSONL log | `Exercise`, `Proposal`, `Decision` |
-| `server` | HTTP API, WebSocket, LLM orchestration | `router`, `flow::*` |
+| `frontend` | Rust/WebAssembly browser UI; chat, private preparation, maps, EXCON review, forecast and evaluator | Yew `App`, canvas `SituationMap` |
+| `server` | HTTP API, WebSocket, LLM orchestration | `router` (returns `Rocket<Build>`), `flow::*` |
 | `viz` | Bevy renderer | `run` |
 | `app` | Binary; `.env`; wiring | `ttx` |
 
@@ -137,3 +139,38 @@ The demo video ([`docs/media/ttx_demo.mp4`](media/ttx_demo.mp4)) is produced by 
 - **EXCON.** `sync` turns new log entries into camera cues (`Snapshot::cues`): an inject naming a facility, place or zone; a parsed proposal; an approved proposal; a EXCON command. Each cue becomes a shot of that location sized to what it covers (a fire line, a zone, a building), with a slow push-in, held for 5–6 s. While a turn is simulated the camera follows the burning front (smoothed centroid, distance growing with the fire's extent, slow orbit). Otherwise it holds a wide establishing orbit. All parameters are eased; the camera rises if terrain would block the view; manual input takes over for 15 s.
 - **Smoothing.** Focus, distance and pitch follow their targets through critically damped springs (continuous velocity, no overshoot). The fire target is the whole fire area (burning and burnt), which grows steadily. Terrain clearance raises the pitch through a slow boost with hysteresis, so there is no oscillation.
 - **Lighting.** A low (~20°), warm late-afternoon sun with cascaded shadows, weak sky-tinted ambient light for contrast, distance fog with sun scattering, ACES tone mapping, HDR + bloom (the additive flames glow), and 8 flickering point lights (up to 6·10⁸ lm) on the hottest 200 m bins of the fire, bright enough to light the ground in daylight. Smoke, flames and sparks cast no shadows.
+
+## Rust browser build
+
+`./scripts/build_frontend.sh` runs Trunk against `crates/frontend/Trunk.toml` and
+copies the generated shell to the existing master/player/play/advanced/evaluator
+entry points. Rocket serves `web/dist/` by default; `--web DIR` still overrides it.
+The app reports a missing bundle with the build command before starting HTTP.
+The snapshot harness exits before this check and does not need a browser bundle.
+CSS is kept in `crates/frontend/assets/interface.css`; all application logic is
+Rust. The generated JavaScript only bridges browser APIs and loads WebAssembly.
+
+The frontend stores capability keys per role in session storage and removes them
+from the address bar. Player requests fetch only `/api/access`, `/api/static` and
+their own role endpoints; evaluator requests remain read-only. Refreshes are
+coalesced, WebSockets reconnect, and a 10-second poll provides fallback updates.
+Draft text and inject metadata are held per conversation. Private interpretations
+expire with turn/clock revision; edited text requires a fresh review. Proposal
+approval and physical effects continue to pass through Exercise and Command.
+Physical previews and forecasts retain generation checks at application/publication.
+
+The invisible browser fixtures are `scripts/qa/chat-interface.cjs`,
+`scripts/qa/player-preparation.cjs` and `scripts/qa/rust-frontend.cjs`.
+Use `TTX_BINARY` for the headless executable and `TTX_QA_OUT` for fresh screenshots.
+The private preparation fixture uses a local fake AI gateway; the others disable
+AI. They open Chrome headless and never foreground a window.
+
+Verification on 2026-10-21: release WebAssembly build and native frontend/headless
+app checks passed; all 36 server tests passed, including generated asset MIME types
+and authorization. The three invisible browser fixtures passed: private AI
+clarification/confirmation with a local fake gateway; MSEL, manual EXCON command
+entry, chat, perimeter and turn flow across phone/tablet viewports; intervention
+preview, forecast publication by recipient, evaluator read-only access and EXCON
+injects during live resolution. No external AI calls were made. The 27 inspected
+captures and manifests are under `runs/rust-frontend-verified/` (ignored by git).
+These checks do not substitute for device/projector usability validation.

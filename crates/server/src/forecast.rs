@@ -9,13 +9,16 @@ pub(crate) struct Draft {
     forecast: Forecast,
 }
 
+#[rocket::post("/api/master/forecast", data = "<spec>")]
 pub(crate) async fn compute(
-    State(s): State<AppState>,
-    Json(spec): Json<ForecastSpec>,
+    _principal: Principal,
+    s: AppState,
+    spec: Json<ForecastSpec>,
 ) -> ApiResult {
+    let Json(spec) = spec;
     let permit = s.forecast_slot.clone().try_acquire_owned().map_err(|_| {
         ApiError(
-            StatusCode::TOO_MANY_REQUESTS,
+            Status::TooManyRequests,
             "A forecast is already running".into(),
         )
     })?;
@@ -37,7 +40,7 @@ pub(crate) async fn compute(
     .map_err(|_| bad("Forecast worker failed"))??;
     if s.lock().generation != generation {
         return Err(ApiError(
-            StatusCode::CONFLICT,
+            Status::Conflict,
             "Exercise changed while forecasting; compute a fresh product".into(),
         ));
     }
@@ -69,7 +72,9 @@ pub(crate) struct Publish {
     roles: Vec<String>,
     source: String,
 }
-pub(crate) async fn publish(State(s): State<AppState>, Json(b): Json<Publish>) -> ApiResult {
+#[rocket::post("/api/master/forecast/publish", data = "<b>")]
+pub(crate) async fn publish(_principal: Principal, s: AppState, b: Json<Publish>) -> ApiResult {
+    let Json(b) = b;
     if b.source.trim().is_empty()
         || b.source.chars().count() > 2000
         || b.roles.is_empty()
@@ -89,7 +94,7 @@ pub(crate) async fn publish(State(s): State<AppState>, Json(b): Json<Publish>) -
     let mut ex = s.lock();
     if ex.generation != b.generation || draft.generation != b.generation {
         return Err(ApiError(
-            StatusCode::CONFLICT,
+            Status::Conflict,
             "Exercise changed; review a fresh forecast".into(),
         ));
     }
