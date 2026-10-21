@@ -1,5 +1,7 @@
 # PPRD East 4 — AI-supported Table-Top Exercise (working draft)
 
+Preliminary conversational interface in this worktree: see [chat interface](docs/chat-interface.md). EXCON and players use chats, reviewed action proposals and separate map views; the previous director console remains at `advanced.html`.
+
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
 - a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread as a 32-run Monte Carlo ensemble (the fire is the set of cells reached by at least half of the runs), buildings with occupants, approved deployed teams travelling on the simulation clock, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, second by second;
@@ -39,7 +41,7 @@ Then open:
 
 | Who | URL |
 |---|---|
-| **All roles in one window** (EXCON + every player as tabs; good on a phone) | Startup EXCON link with access key |
+| **Conversational EXCON interface** | Startup EXCON link with access key |
 | EXCON | `http://<host>:8080/master.html` |
 | Players (tablets) | Individual role link from the EXCON console |
 | Landing page | `http://<host>:8080/` |
@@ -94,8 +96,8 @@ prepares a batch of real exercise states, saves PNGs and an HTML review report;
 
 ## Playing a turn
 
-1. **EXCON**: *Start exercise*, then send MSEL injects (*Injects* tab) or custom ones. Each player receives them translated.
-2. **Players** choose and confirm their language, cite a procedure/plan or explain their operational judgment, optionally link supporting evidence, and reply in their own words ("evacuate the school to the sports centre, close the northern road"). The AI drafts commands and communications, checked against the role's authority and resources. Draft messages and clarification questions wait for EXCON review.
+1. **EXCON**: start the exercise, open a player conversation and choose **Scrivi come → Inject** in the chat composer. Write a custom message or load an MSEL template; select the conversation recipient or explicitly use the template audience. Each player receives a translated chat message and replies in the same conversation.
+2. **Players** choose their language and write in the conversation. With **Prepara decisione con l’AI**, interpretation happens privately: the assistant asks the player specific questions when details are missing. The player reviews the final message/actions and explicitly confirms delivery. EXCON receives only that confirmed message and proposal. Ordinary information can be sent directly by disabling decision preparation.
 3. **EXCON** approves, edits (JSON) or rejects each proposal (*Proposals* tab). Players get feedback in their language. The EXCON can also act directly: map tools (ignite, fire line, drop, extinguish zone, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
 4. **Resolve turn ▶** (Δt, default 30 min): approved actions are executed, then the turn is **simulated live, one simulated second at a time**. The 3D view redraws continuously, the browsers refresh up to 4 times a second, and when the turn ends every player receives a situation update. **speed** (next to Δt) is simulated seconds per real second: 0 = maximum speed (a 30-minute turn in about 0.45 s), 60× = one simulated minute per second (30 s per turn), 120× = 15 s per turn.
 5. Repeat. Use *Rollback* to return to the start of an earlier turn and *End* to finish. *Debrief JSON* gives the full timeline.

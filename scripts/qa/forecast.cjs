@@ -18,7 +18,7 @@ const cwd=path.resolve(__dirname,'../..');
   browser=await chromium.launch({headless:true,channel:"chrome"});
   const page=await browser.newPage({viewport:{width:1440,height:1100},deviceScaleFactor:1});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto('http://localhost:8098/master.html?token='+key);
+  await page.goto('http://localhost:8098/advanced.html?token='+key);
   await page.locator('[data-compute]').waitFor();
   await page.locator('#clock').filter({hasText:'Day'}).waitFor();
   await page.locator('[data-members]').fill('1');await page.locator('[data-horizons]').fill('1,2');

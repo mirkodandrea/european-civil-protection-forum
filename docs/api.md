@@ -509,3 +509,22 @@ products from the previous timeline while retaining their audit history.
 Drafts are in-memory and bounded to eight per generation. Published products
 remain in delivered knowledge and debrief evidence; this does not add general
 session restart/persistence. Unknown JSON fields and malformed bounds are refused.
+
+## Preliminary conversational interface
+
+This worktree adds `POST /api/player/{role}/chat` and `POST /api/master/chat` with
+`{to, text, interpret?: false}`. See [chat interface](chat-interface.md) for translation,
+privacy, proposal review, map visibility and preliminary limitations. Existing reply
+and inject endpoints remain available.
+
+### Player preparation before delivery
+
+`POST /api/player/{role}/draft {to,text,draft?,revision?}` returns a private
+`draft` with a specific question or a ready message/actions review. Nothing is
+sent to EXCON or the recipient yet. Answer a question with the same draft id and
+revision. `POST /api/player/{role}/draft/submit {draft,revision,manual?:false}`
+confirms that exact revision; `manual:true` is restricted to AI-unavailable drafts.
+The authenticated player view exposes only that player's drafts. EXCON/evaluator
+views and the committed log do not expose private rehearsal. Turn changes and
+rollback expire drafts. `POST /api/player/{role}/chat` now rejects `interpret:true`;
+plain messages remain immediate. See [chat interface](chat-interface.md).

@@ -18,7 +18,13 @@ use crate::AppState;
 
 /// A role's conversation, in the LLM's message format.
 fn history(ex: &exercise::Exercise, key: &str) -> Vec<llm::ChatMessage> {
-    ex.conversation(key).into_iter().map(|t| llm::ChatMessage { role: t.role, content: t.content }).collect()
+    ex.conversation(key)
+        .into_iter()
+        .map(|t| llm::ChatMessage {
+            role: t.role,
+            content: t.content,
+        })
+        .collect()
 }
 
 /// What goes back into the conversation as the AI's turn: its interpretation, compactly.
@@ -27,16 +33,29 @@ fn assistant_turn(p: &llm::ParsedReply) -> String {
 }
 
 /// Translate `text_en` for each recipient; English on failure.
-pub async fn translations(state: &AppState, recipients: &[String], text_en: &str) -> BTreeMap<String, String> {
+pub async fn translations(
+    state: &AppState,
+    recipients: &[String],
+    text_en: &str,
+) -> BTreeMap<String, String> {
     let langs: Vec<(String, String)> = {
         let ex = state.lock();
-        recipients.iter().map(|r| (r.clone(), ex.language_of(r))).collect()
+        recipients
+            .iter()
+            .map(|r| (r.clone(), ex.language_of(r)))
+            .collect()
     };
     let futs = langs.iter().map(|(r, lang)| {
         let llm = state.llm.clone();
         let (r, lang, text) = (r.clone(), lang.clone(), text_en.to_string());
         async move {
-            let t = if llm.is_available() { llm.translate(&text, &lang).await.unwrap_or_else(|_| text.clone()) } else { text.clone() };
+            let t = if llm.is_available() {
+                llm.translate(&text, &lang)
+                    .await
+                    .unwrap_or_else(|_| text.clone())
+            } else {
+                text.clone()
+            };
             (r, t)
         }
     });
@@ -44,10 +63,19 @@ pub async fn translations(state: &AppState, recipients: &[String], text_en: &str
 }
 
 /// Send an inject to recipients (role ids or "all"), translated per player.
-pub async fn send_inject(state: &AppState, inject_id: Option<&str>, title: &str, sender: &str, recipients: &[String], text_en: &str) -> Result<Vec<u64>> {
+pub async fn send_inject(
+    state: &AppState,
+    inject_id: Option<&str>,
+    title: &str,
+    sender: &str,
+    recipients: &[String],
+    text_en: &str,
+) -> Result<Vec<u64>> {
     let to = state.lock().recipients(recipients)?;
     let tr = translations(state, &to, text_en).await;
-    let ids = state.lock().send_inject(inject_id, title, sender, &to, text_en, &tr)?;
+    let ids = state
+        .lock()
+        .send_inject(inject_id, title, sender, &to, text_en, &tr)?;
     Ok(ids)
 }
 
@@ -57,15 +85,30 @@ pub async fn process_reply(state: AppState, pid: u64) {
         let ex = state.lock();
         let Some(p) = ex.proposal(pid) else { return };
         let role_id = p.source.label().to_string();
-        let Some(role) = ex.world.scn.role(&role_id).cloned() else { return };
-        let others: Vec<(String, String)> = ex.world.scn.roles.iter().filter(|r| r.id != role_id).map(|r| (r.id.clone(), r.name.clone())).collect();
+        let Some(role) = ex.world.scn.role(&role_id).cloned() else {
+            return;
+        };
+        let others: Vec<(String, String)> = ex
+            .world
+            .scn
+            .roles
+            .iter()
+            .filter(|r| r.id != role_id)
+            .map(|r| (r.id.clone(), r.name.clone()))
+            .collect();
         (
             role,
             ex.language_of(&role_id),
-            sim::catalogue(&ex.world.scn.role(&role_id).map(|r| r.allowed_actions.clone()).unwrap_or_default()),
+            sim::catalogue(
+                &ex.world
+                    .scn
+                    .role(&role_id)
+                    .map(|r| r.allowed_actions.clone())
+                    .unwrap_or_default(),
+            ),
             others,
             ex.world.gazetteer(),
-            serde_json::json!({"clock":ex.world.clock(),"map":ex.player_map(&role_id).unwrap_or_default(),"resources":ex.world.d.pools.get(&role_id),"deployments":ex.world.d.tasks.iter().filter(|t|t.role==role_id).collect::<Vec<_>>()}),
+            serde_json::json!({"chat_recipient":ex.messages.iter().find(|m|m.proposal==Some(pid) && m.kind==MsgKind::Chat).map(|m|&m.to),"clock":ex.world.clock(),"map":ex.player_map(&role_id).unwrap_or_default(),"resources":ex.world.d.pools.get(&role_id),"deployments":ex.world.d.tasks.iter().filter(|t|t.role==role_id).collect::<Vec<_>>()}),
             history(&ex, &role_id),
             p.original.clone(),
         )
@@ -89,17 +132,41 @@ pub async fn process_reply(state: AppState, pid: u64) {
     {
         // The reply joins the conversation whatever happened to the parse.
         let mut ex = state.lock();
+        if ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Parsing) {
+            return;
+        }
         let clock = ex.world.clock();
-        ex.converse(&role.id, "user", format!("[{clock}] PLAYER REPLY:\n{reply}"));
+        ex.converse(
+            &role.id,
+            "user",
+            format!("[{clock}] PLAYER REPLY:\n{reply}"),
+        );
         if let Ok(parsed) = &result {
             ex.converse(&role.id, "assistant", assistant_turn(parsed));
         }
     }
     match result {
         Ok(parsed) => {
-            let communication_drafts = parsed.messages.iter().filter(|m| m.to != role.id && state.lock().players.contains_key(&m.to)).map(|m| exercise::CommunicationDraft { to: m.to.clone(), from: role.id.clone(), kind: MsgKind::RoleMessage, title: format!("Message from {}", role.name), text_en: m.text.clone() }).collect();
+            let is_chat = state
+                .lock()
+                .messages
+                .iter()
+                .any(|m| m.proposal == Some(pid) && m.kind == MsgKind::Chat);
+            let communication_drafts = parsed
+                .messages
+                .iter()
+                .filter(|_| !is_chat)
+                .filter(|m| m.to != role.id && state.lock().players.contains_key(&m.to))
+                .map(|m| exercise::CommunicationDraft {
+                    to: m.to.clone(),
+                    from: role.id.clone(),
+                    kind: MsgKind::RoleMessage,
+                    title: format!("Message from {}", role.name),
+                    text_en: m.text.clone(),
+                })
+                .collect();
             let input = ParsedInput {
-                resource_limit_draft:None,
+                resource_limit_draft: None,
                 communication_drafts,
                 language: parsed.detected_language,
                 translation_en: parsed.translation_en,
@@ -111,7 +178,6 @@ pub async fn process_reply(state: AppState, pid: u64) {
             if let Err(e) = state.lock().attach_parse(pid, input) {
                 tracing::warn!("attach_parse {pid}: {e}");
             }
-
         }
         Err(e) => {
             let _ = state.lock().parse_failed(pid, &e.to_string());
@@ -126,28 +192,57 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
         let all: Vec<String> = sim::ALL_KINDS.iter().map(|s| s.to_string()).collect();
         (
             sim::catalogue(&all),
-            ex.world.scn.roles.iter().map(|r| (r.id.clone(), r.name.clone())).collect::<Vec<_>>(),
+            ex.world
+                .scn
+                .roles
+                .iter()
+                .map(|r| (r.id.clone(), r.name.clone()))
+                .collect::<Vec<_>>(),
             ex.world.gazetteer(),
             serde_json::json!({"training_design":ex.design_view(),"recorded_decisions":ex.proposals.iter().rev().take(100).collect::<Vec<_>>(),"deployments":ex.world.deployment_view(),"travel_settings":ex.world.d.travel_settings,"world":ex.world.digest(None),"exercise_phase":ex.exercise_phase,"resource_limits":ex.resource_limits,"resource_accounting":ex.resource_accounting(None)}),
             history(&ex, exercise::MASTER),
-            ex.proposal(pid).map(|p| p.original.clone()).unwrap_or_default(),
+            ex.proposal(pid)
+                .map(|p| p.original.clone())
+                .unwrap_or_default(),
         )
     };
-    let r = state.llm.master_prompt(llm::tasks::MasterInput { catalogue: &catalogue, roles: &roles, gazetteer: &gazetteer, digest: &digest, history: &history, prompt: &prompt }).await;
+    let r = state
+        .llm
+        .master_prompt(llm::tasks::MasterInput {
+            catalogue: &catalogue,
+            roles: &roles,
+            gazetteer: &gazetteer,
+            digest: &digest,
+            history: &history,
+            prompt: &prompt,
+        })
+        .await;
     let mut ex = state.lock();
     let clock = ex.world.clock();
-    ex.converse(exercise::MASTER, "user", format!("[{clock}] EXCON:\n{prompt}"));
+    ex.converse(
+        exercise::MASTER,
+        "user",
+        format!("[{clock}] EXCON:\n{prompt}"),
+    );
     if let Ok(p) = &r {
         ex.converse(exercise::MASTER, "assistant", assistant_turn(p));
     }
     match r {
         Ok(p) => {
-            let drafts = p.injects.iter().filter_map(|d| serde_json::to_value(d).ok()).collect();
+            let drafts = p
+                .injects
+                .iter()
+                .filter_map(|d| serde_json::to_value(d).ok())
+                .collect();
             let input = ParsedInput {
-                resource_limit_draft:p.resource_limits,
+                resource_limit_draft: p.resource_limits,
                 communication_drafts: Vec::new(),
                 language: "en".into(),
-                translation_en: if p.translation_en.is_empty() { prompt.clone() } else { p.translation_en },
+                translation_en: if p.translation_en.is_empty() {
+                    prompt.clone()
+                } else {
+                    p.translation_en
+                },
                 actions: p.actions,
                 clarification: p.clarification,
                 summary: p.summary,
@@ -167,17 +262,38 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
 pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: String) {
     let lang = state.lock().language_of(&role);
     let text = if state.llm.is_available() {
-        state.llm.translate(&facts_en, &lang).await.unwrap_or_else(|_| facts_en.clone())
-    } else { facts_en.clone() };
-    state.lock().add_message(MASTER, &role, MsgKind::Feedback, Some("Orders reviewed"), &text, &facts_en, Some(pid));
+        state
+            .llm
+            .translate(&facts_en, &lang)
+            .await
+            .unwrap_or_else(|_| facts_en.clone())
+    } else {
+        facts_en.clone()
+    };
+    state.lock().add_message(
+        MASTER,
+        &role,
+        MsgKind::Feedback,
+        Some("Orders reviewed"),
+        &text,
+        &facts_en,
+        Some(pid),
+    );
 }
 
 /// Claim and deliver communications once, only after the reviewed proposal executes.
 pub async fn send_drafts(state: &AppState, pid: u64) {
     let (drafts, injects) = {
         let mut ex = state.lock();
-        let Some(p) = ex.proposals.iter_mut().find(|p| p.id == pid) else { return };
-        if p.status != exercise::ProposalStatus::Applied || p.decision.as_ref().map(|d| d.approve) != Some(true) || p.communications_claimed { return; }
+        let Some(p) = ex.proposals.iter_mut().find(|p| p.id == pid) else {
+            return;
+        };
+        if p.status != exercise::ProposalStatus::Applied
+            || p.decision.as_ref().map(|d| d.approve) != Some(true)
+            || p.communications_claimed
+        {
+            return;
+        }
         p.communications_claimed = true;
         (p.communication_drafts.clone(), p.inject_drafts.clone())
     };
@@ -185,21 +301,58 @@ pub async fn send_drafts(state: &AppState, pid: u64) {
         let tr = translations(state, std::slice::from_ref(&d.to), &d.text_en).await;
         let text = tr.get(&d.to).cloned().unwrap_or_else(|| d.text_en.clone());
         let mut ex = state.lock();
-        if ex.phase == exercise::Phase::Debrief || ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Applied) { return; }
+        if ex.phase == exercise::Phase::Debrief
+            || ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Applied)
+        {
+            return;
+        }
         if let Err(e) = ex.deliver_approved_communication(pid, index, &text) {
-            ex.record("approved_communication_failed", MASTER, serde_json::json!({"proposal": pid, "draft": index, "error": e.to_string()}));
+            ex.record(
+                "approved_communication_failed",
+                MASTER,
+                serde_json::json!({"proposal": pid, "draft": index, "error": e.to_string()}),
+            );
         }
     }
     for d in injects {
-        let Ok(d) = serde_json::from_value::<llm::InjectDraft>(d) else { continue };
-        let recipients = if d.recipients.is_empty() { vec!["all".to_string()] } else { d.recipients.clone() };
-        let Ok(to) = state.lock().recipients(&recipients) else { continue };
+        let Ok(d) = serde_json::from_value::<llm::InjectDraft>(d) else {
+            continue;
+        };
+        let recipients = if d.recipients.is_empty() {
+            vec!["all".to_string()]
+        } else {
+            d.recipients.clone()
+        };
+        let Ok(to) = state.lock().recipients(&recipients) else {
+            continue;
+        };
         let tr = translations(state, &to, &d.text).await;
         let mut ex = state.lock();
-        if ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Applied) { return; }
-        match ex.send_inject(None, &d.title, if d.sender.is_empty() { "EXCON" } else { &d.sender }, &to, &d.text, &tr) {
-            Ok(ids) => ex.record("approved_inject_delivered", MASTER, serde_json::json!({"proposal": pid, "messages": ids})),
-            Err(e) => ex.record("approved_inject_failed", MASTER, serde_json::json!({"proposal": pid, "error": e.to_string()})),
+        if ex.proposal(pid).map(|p| p.status) != Some(exercise::ProposalStatus::Applied) {
+            return;
+        }
+        match ex.send_inject(
+            None,
+            &d.title,
+            if d.sender.is_empty() {
+                "EXCON"
+            } else {
+                &d.sender
+            },
+            &to,
+            &d.text,
+            &tr,
+        ) {
+            Ok(ids) => ex.record(
+                "approved_inject_delivered",
+                MASTER,
+                serde_json::json!({"proposal": pid, "messages": ids}),
+            ),
+            Err(e) => ex.record(
+                "approved_inject_failed",
+                MASTER,
+                serde_json::json!({"proposal": pid, "error": e.to_string()}),
+            ),
         }
     }
 }
@@ -211,8 +364,24 @@ pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
         ex.players.values().map(|p| (p.role.clone(), p.language.clone(), format!("{} — Turn resolved. Your resource ledger and reviewed orders are updated. Map reports retain their observation time; await new information from EXCON.", ex.world.clock()))).collect::<Vec<_>>()
     };
     for (role, lang, facts) in per_role {
-        let text = if state.llm.is_available() { state.llm.translate(&facts, &lang).await.unwrap_or_else(|_| facts.clone()) } else { facts.clone() };
-        state.lock().add_message(MASTER, &role, MsgKind::Situation, Some("Turn status"), &text, &facts, None);
+        let text = if state.llm.is_available() {
+            state
+                .llm
+                .translate(&facts, &lang)
+                .await
+                .unwrap_or_else(|_| facts.clone())
+        } else {
+            facts.clone()
+        };
+        state.lock().add_message(
+            MASTER,
+            &role,
+            MsgKind::Situation,
+            Some("Turn status"),
+            &text,
+            &facts,
+            None,
+        );
     }
 }
 
@@ -263,54 +432,102 @@ pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {
 /// Claim scheduled deliveries under the lock, then translate independently. Actual
 /// simulated/wall delivery times are retained rather than pretending translation is instant.
 pub fn dispatch_due(state: &AppState) {
-    let due=state.lock().claim_due_injects();
+    let due = state.lock().claim_due_injects();
     for (id, template) in due {
-        let state=state.clone();
+        let state = state.clone();
         tokio::spawn(async move {
-            let recipients={state.lock().recipients(&template.recipients)};
-            let to=match recipients {Ok(to)=>to,Err(e)=>{state.lock().complete_schedule(id,Err(e));return;}};
-            let tr=translations(&state,&to,&template.text).await;
-            let mut ex=state.lock();
-            if ex.scheduled_injects.iter().find(|i|i.id==id).map(|i|i.status)!=Some(exercise::ScheduleStatus::Dispatching){return;}
-            let result=ex.send_inject(Some(&template.id),&template.title,&template.sender,&to,&template.text,&tr);
-            ex.complete_schedule(id,result);
+            let recipients = { state.lock().recipients(&template.recipients) };
+            let to = match recipients {
+                Ok(to) => to,
+                Err(e) => {
+                    state.lock().complete_schedule(id, Err(e));
+                    return;
+                }
+            };
+            let tr = translations(&state, &to, &template.text).await;
+            let mut ex = state.lock();
+            if ex
+                .scheduled_injects
+                .iter()
+                .find(|i| i.id == id)
+                .map(|i| i.status)
+                != Some(exercise::ScheduleStatus::Dispatching)
+            {
+                return;
+            }
+            let result = ex.send_inject(
+                Some(&template.id),
+                &template.title,
+                &template.sender,
+                &to,
+                &template.text,
+                &tr,
+            );
+            ex.complete_schedule(id, result);
         });
     }
 }
 
 /// Wall-time pacing while a decision turn stays open. Revision changes (pause,
 /// ratio edits, explicit time jumps and rollback) always reanchor at the actual world.
-pub async fn run_clock(state:AppState) {
+pub async fn run_clock(state: AppState) {
     use std::time::Instant;
-    let mut anchor:Option<(u64,Instant,i64)>=None;
+    let mut anchor: Option<(u64, Instant, i64)> = None;
     loop {
         dispatch_due(&state);
-        let control={let ex=state.lock();(ex.clock_control.clone(),ex.phase,ex.world.time_s())};
-        if !control.0.running || control.1!=exercise::Phase::Orders {anchor=None;}
-        else {
-            if anchor.is_none_or(|(revision,_,_)|revision!=control.0.revision){anchor=Some((control.0.revision,Instant::now(),control.2));}
-            let (revision,start,sim_start)=anchor.unwrap();
-            let target=sim_start+(start.elapsed().as_secs_f64()*control.0.ratio) as i64;
+        let control = {
+            let ex = state.lock();
+            (ex.clock_control.clone(), ex.phase, ex.world.time_s())
+        };
+        if !control.0.running || control.1 != exercise::Phase::Orders {
+            anchor = None;
+        } else {
+            if anchor.is_none_or(|(revision, _, _)| revision != control.0.revision) {
+                anchor = Some((control.0.revision, Instant::now(), control.2));
+            }
+            let (revision, start, sim_start) = anchor.unwrap();
+            let target = sim_start + (start.elapsed().as_secs_f64() * control.0.ratio) as i64;
             for _ in 0..10 {
-                let result={
-                    let mut ex=state.lock();
-                    if !ex.clock_control.running || ex.clock_control.revision!=revision || ex.phase!=exercise::Phase::Orders {break;}
-                    let now=ex.world.time_s();
-                    let next_due=ex.scheduled_injects.iter().filter(|i|i.status==exercise::ScheduleStatus::Pending && i.due_s>now).map(|i|i.due_s).min().unwrap_or(target);
-                    let dt=(target-now).min(next_due-now).min(60);
-                    if dt<=0 {break;}
+                let result = {
+                    let mut ex = state.lock();
+                    if !ex.clock_control.running
+                        || ex.clock_control.revision != revision
+                        || ex.phase != exercise::Phase::Orders
+                    {
+                        break;
+                    }
+                    let now = ex.world.time_s();
+                    let next_due = ex
+                        .scheduled_injects
+                        .iter()
+                        .filter(|i| i.status == exercise::ScheduleStatus::Pending && i.due_s > now)
+                        .map(|i| i.due_s)
+                        .min()
+                        .unwrap_or(target);
+                    let dt = (target - now).min(next_due - now).min(60);
+                    if dt <= 0 {
+                        break;
+                    }
                     ex.advance_clock(dt)
                 };
-                if let Err(e)=result {
-                    let mut ex=state.lock();let ratio=ex.clock_control.ratio;
-                    let _=ex.configure_clock(false,ratio,"Clock paused after simulation error");
-                    ex.record("clock_failed",MASTER,serde_json::json!({"error":e.to_string()}));break;
+                if let Err(e) = result {
+                    let mut ex = state.lock();
+                    let ratio = ex.clock_control.ratio;
+                    let _ = ex.configure_clock(false, ratio, "Clock paused after simulation error");
+                    ex.record(
+                        "clock_failed",
+                        MASTER,
+                        serde_json::json!({"error":e.to_string()}),
+                    );
+                    break;
                 }
                 dispatch_due(&state);
                 tokio::task::yield_now().await;
             }
-            let mut ex=state.lock();
-            if ex.clock_control.revision==revision {ex.clock_control.lag_s=(target-ex.world.time_s()).max(0);}
+            let mut ex = state.lock();
+            if ex.clock_control.revision == revision {
+                ex.clock_control.lag_s = (target - ex.world.time_s()).max(0);
+            }
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }

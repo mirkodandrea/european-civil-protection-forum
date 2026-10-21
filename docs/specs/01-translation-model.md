@@ -1,5 +1,9 @@
 # 01 — Dedicated translation model
 
+Worktree update: dedicated translation-model selection is implemented; see
+[LLM workflows](../llm.md). The remaining masking, cache and fallback design below
+is still a draft. No Jev integration is enabled.
+
 ## Goal
 Translate with a model chosen for translation, called through OpenRouter, instead of the general model (`deepseek/deepseek-v4.1-flash`) that also parses replies and answers EXCON prompts, covering the PPRD East languages.
 

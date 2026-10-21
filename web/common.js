@@ -144,6 +144,8 @@ export class MapView {
 
   draw() {
     const ctx = this.ctx, k = this.scale;
+    ctx.ttxAvoidLabels = this.opts.simple;
+    ctx.ttxLabelBoxes = [];
     if (!k) return;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.fuelImg, 0, 0, this.W * k, this.H * k);
@@ -188,7 +190,7 @@ export class MapView {
     const z = this.s.zones;
     ctx.strokeStyle = 'rgba(0,0,0,0.25)';
     ctx.lineWidth = 1 * dpr;
-    ctx.font = `${11 * dpr}px system-ui`;
+    ctx.font = `${(this.opts.simple ? 13 : 11) * dpr}px system-ui`;
     for (let c = 0; c <= z.cols; c++) { ctx.beginPath(); ctx.moveTo(c * z.size_m * k, 0); ctx.lineTo(c * z.size_m * k, this.H * k); ctx.stroke(); }
     for (let r = 0; r <= z.rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * z.size_m * k); ctx.lineTo(this.W * k, r * z.size_m * k); ctx.stroke(); }
     const warned = new Set(v ? v.warned : []);
@@ -205,6 +207,7 @@ export class MapView {
     const trace = points => { ctx.beginPath(); points.forEach((p, i) => { const [x, y] = this.px(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); };
     const markedRoads = new Set();
     for (const road of this.s.roads) {
+      if (this.opts.simple && road.drivable === false) continue;
       const st = v?.roads?.[road.id];
       const width = (road.drivable === false ? 1.5 : 3) * dpr;
       trace(road.points); ctx.strokeStyle = '#29363d'; ctx.lineWidth = width + 2 * dpr; ctx.stroke();
@@ -226,6 +229,7 @@ export class MapView {
     // Buildings.
     const bv = v ? v.buildings : null;
     this.s.buildings.forEach((b, i) => {
+      if (this.opts.simple && !b.name) return;
       const st = bv && bv[i];
       const [x, y] = this.px(b.pos);
       const w = Math.max(3 * dpr, b.size[0] * k), h = Math.max(3 * dpr, b.size[1] * k);
@@ -273,7 +277,7 @@ export class MapView {
     }
 
     // Named facilities and places.
-    ctx.font = `${11 * dpr}px system-ui`;
+    ctx.font = `${(this.opts.simple ? 13 : 11) * dpr}px system-ui`;
     ctx.fillStyle = '#111';
     for (const b of this.s.buildings) if (b.name) { const [x, y] = this.px(b.pos); label(ctx, b.name, x + 6 * dpr, y - 4 * dpr, dpr); }
     for (const p of this.s.places) if (!p.name.includes(' edge') && !p.name.includes('junction')) { const [x, y] = this.px(p.pos); ctx.fillStyle = '#333'; label(ctx, p.name, x, y, dpr, true); }
@@ -284,7 +288,7 @@ export class MapView {
       ctx.fillStyle = '#ffe000'; ctx.beginPath(); ctx.arc(x, y, 5 * dpr, 0, Math.PI * 2); ctx.fill();
       if (this.hover) { const [hx, hy] = this.px([this.hover.x, this.hover.y]); ctx.strokeStyle = '#ffe000'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(hx, hy); ctx.stroke(); }
     }
-    if (this.hover) {
+    if (this.hover && !this.opts.simple) {
       const t = `${this.hover.zone || ''}  (${this.hover.x}, ${this.hover.y})`;
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.fillRect(4 * dpr, this.H * k - 20 * dpr, ctx.measureText(t).width + 10 * dpr, 16 * dpr);
@@ -305,9 +309,18 @@ export class MapView {
 
 function label(ctx, text, x, y, dpr, centred) {
   const w = ctx.measureText(text).width;
-  const x0 = centred ? x - w / 2 : x;
+  const fontPx = parseFloat(ctx.font) || 11*dpr;
+  const x0 = Math.max(2*dpr, Math.min(ctx.canvas.width-w-2*dpr, centred ? x-w/2 : x));
+  y = Math.max(fontPx+dpr, Math.min(ctx.canvas.height-4*dpr, y));
+  if (ctx.ttxAvoidLabels) {
+    const boxes=ctx.ttxLabelBoxes;
+    const candidate=[0,-18,18,-36,36].map(offset=>({x:x0-2*dpr,y:y+offset*dpr-fontPx,w:w+4*dpr,h:fontPx+4*dpr})).find(b=>b.y>=0&&b.y+b.h<=ctx.canvas.height&&!boxes.some(a=>b.x<a.x+a.w&&b.x+b.w>a.x&&b.y<a.y+a.h&&b.y+b.h>a.y));
+    if (!candidate) return;
+    boxes.push(candidate);
+    y=candidate.y+fontPx;
+  }
   ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.fillRect(x0 - 2 * dpr, y - 10 * dpr, w + 4 * dpr, 13 * dpr);
+  ctx.fillRect(x0 - 2 * dpr, y - fontPx + dpr, w + 4 * dpr, fontPx + 2*dpr);
   ctx.fillStyle = '#111';
   ctx.fillText(text, x0, y);
 }

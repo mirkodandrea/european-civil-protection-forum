@@ -12,23 +12,24 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use access::{Access, Principal};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use access::{Access, Principal};
 use exercise::{Decision, Exercise, ProposalStatus};
 use llm::Llm;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sim::Command;
 use tokio::sync::watch;
 
-pub mod flow;
 pub mod access;
 mod assessment;
+mod decision_drafts;
+pub mod flow;
 mod forecast;
 
 #[derive(Clone)]
@@ -55,7 +56,12 @@ pub fn router(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>) -> (
     router_with_access(ex, llm, web_dir, access)
 }
 
-pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>, access: Access) -> (Router, AppState) {
+pub fn router_with_access(
+    ex: Arc<Mutex<Exercise>>,
+    llm: Llm,
+    web_dir: Option<PathBuf>,
+    access: Access,
+) -> (Router, AppState) {
     let (tx, rx) = watch::channel(0u64);
     let watched = ex.clone();
     tokio::spawn(async move {
@@ -71,7 +77,15 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
-    let state = AppState { ex, llm, generation: rx, access: Arc::new(access), assessments: Default::default(), forecasts: Default::default(), forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)) };
+    let state = AppState {
+        ex,
+        llm,
+        generation: rx,
+        access: Arc::new(access),
+        assessments: Default::default(),
+        forecasts: Default::default(),
+        forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+    };
     tokio::spawn(flow::run_clock(state.clone()));
     let api = Router::new()
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
@@ -85,7 +99,10 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/master/clock", post(post_clock))
         .route("/api/master/phase", post(post_phase))
         .route("/api/master/schedules", post(post_schedule))
-        .route("/api/master/schedules/:id/cancel", post(post_cancel_schedule))
+        .route(
+            "/api/master/schedules/:id/cancel",
+            post(post_cancel_schedule),
+        )
         .route("/api/master/proposals/:id/execute", post(post_execute))
         .route("/api/evaluator", get(get_evaluator))
         .route("/api/evaluator/assessment", get(assessment::get))
@@ -93,6 +110,13 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/state", get(get_state))
         .route("/api/master", get(get_master))
         .route("/api/player/:role", get(get_player))
+        .route("/api/player/:role/draft", post(decision_drafts::prepare))
+        .route(
+            "/api/player/:role/draft/submit",
+            post(decision_drafts::submit),
+        )
+        .route("/api/player/:role/chat", post(post_player_chat))
+        .route("/api/master/chat", post(post_master_chat))
         .route("/api/player/:role/reply", post(post_reply))
         .route("/api/player/:role/language", post(post_language))
         .route("/api/master/start", post(post_start))
@@ -113,21 +137,37 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
         .route("/api/catalogue", get(get_catalogue))
         .route("/api/debrief", get(get_debrief))
         .route("/ws", get(ws))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), access::authorize))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            access::authorize,
+        ))
         .with_state(state.clone());
     let app = match web_dir {
-        Some(dir) => api.fallback_service(tower_http::services::ServeDir::new(dir).append_index_html_on_directories(true)),
+        Some(dir) => api.fallback_service(
+            tower_http::services::ServeDir::new(dir).append_index_html_on_directories(true),
+        ),
         None => api,
     };
     (app, state)
 }
 
 /// Serve until the process exits.
-pub async fn serve(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: PathBuf, addr: std::net::SocketAddr) -> anyhow::Result<()> {
+pub async fn serve(
+    ex: Arc<Mutex<Exercise>>,
+    llm: Llm,
+    web_dir: PathBuf,
+    addr: std::net::SocketAddr,
+) -> anyhow::Result<()> {
     let (app, state) = router(ex, llm, Some(web_dir));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!("EXCON access: http://localhost:{}/play.html?token={}", addr.port(), state.access.master);
-    tracing::info!("web UI on http://{addr}; distribute individual player links from the EXCON console");
+    println!(
+        "EXCON access: http://localhost:{}/play.html?token={}",
+        addr.port(),
+        state.access.master
+    );
+    tracing::info!(
+        "web UI on http://{addr}; distribute individual player links from the EXCON console"
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -156,44 +196,81 @@ fn bad(msg: impl Into<String>) -> ApiError {
 
 // ---------------------------------------------------------------- reads
 
-async fn get_static(State(s): State<AppState>, Extension(principal): Extension<Principal>) -> ApiResult {
+async fn get_static(
+    State(s): State<AppState>,
+    Extension(principal): Extension<Principal>,
+) -> ApiResult {
     let ex = s.lock();
-    if let Principal::Player { role } = principal { return Ok(Json(ex.player_static(&role)?)); }
+    if let Principal::Player { role } = principal {
+        return Ok(Json(ex.player_static(&role)?));
+    }
     let mut v = ex.world.static_view();
     v["msel"] = json!(ex.world.scn.msel);
     Ok(Json(v))
 }
 
-async fn get_access(Extension(principal): Extension<Principal>) -> ApiResult { Ok(Json(json!(principal))) }
+async fn get_access(Extension(principal): Extension<Principal>) -> ApiResult {
+    Ok(Json(json!(principal)))
+}
 
 async fn get_access_links(State(s): State<AppState>) -> ApiResult {
-    Ok(Json(json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.iter().map(|(id, token)| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}&token={token}")})).collect::<Vec<_>>()})))
+    Ok(Json(
+        json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.iter().map(|(id, token)| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}&token={token}")})).collect::<Vec<_>>()}),
+    ))
 }
 
 #[derive(Deserialize)]
-struct KnowledgeBody { role: String, source: String, #[serde(default)] observation: Option<exercise::MapObservation>, #[serde(default)] current_perimeter: bool }
+struct KnowledgeBody {
+    role: String,
+    source: String,
+    #[serde(default)]
+    observation: Option<exercise::MapObservation>,
+    #[serde(default)]
+    current_perimeter: bool,
+}
 async fn post_knowledge(State(s): State<AppState>, Json(b): Json<KnowledgeBody>) -> ApiResult {
     let observation = {
         let ex = s.lock();
-        if !ex.players.contains_key(&b.role) || b.source.trim().is_empty() || b.source.chars().count() > 2000 { return Err(bad("known role and information source required")); }
-        if b.current_perimeter && b.observation.is_some() { return Err(bad("choose an observation or current_perimeter")); }
-        let observation = if b.current_perimeter { ex.current_perimeter() } else { b.observation.ok_or_else(|| bad("observation required"))? };
+        if !ex.players.contains_key(&b.role)
+            || b.source.trim().is_empty()
+            || b.source.chars().count() > 2000
+        {
+            return Err(bad("known role and information source required"));
+        }
+        if b.current_perimeter && b.observation.is_some() {
+            return Err(bad("choose an observation or current_perimeter"));
+        }
+        let observation = if b.current_perimeter {
+            ex.current_perimeter()
+        } else {
+            b.observation.ok_or_else(|| bad("observation required"))?
+        };
         ex.validate_observation(&observation)?;
         observation
     };
     let text = Exercise::map_information_text(&b.source);
     let translations = flow::translations(&s, std::slice::from_ref(&b.role), &text).await;
-    let id = s.lock().acquire_map(&b.role, &b.source, observation, translations.get(&b.role).map(String::as_str))?;
+    let id = s.lock().acquire_map(
+        &b.role,
+        &b.source,
+        observation,
+        translations.get(&b.role).map(String::as_str),
+    )?;
     Ok(Json(json!({"message":id})))
 }
 
 #[derive(Deserialize)]
-struct ReferencesBody { references: Vec<exercise::DecisionEvidence> }
+struct ReferencesBody {
+    references: Vec<exercise::DecisionEvidence>,
+}
 async fn post_references(State(s): State<AppState>, Json(b): Json<ReferencesBody>) -> ApiResult {
     s.lock().set_reference_materials(b.references)?;
     Ok(Json(json!({"ok":true})))
 }
-async fn get_evaluator(State(s): State<AppState>, Query(filter): Query<exercise::evaluation::EvidenceFilter>) -> ApiResult {
+async fn get_evaluator(
+    State(s): State<AppState>,
+    Query(filter): Query<exercise::evaluation::EvidenceFilter>,
+) -> ApiResult {
     Ok(Json(s.lock().evaluator_view(&filter)?))
 }
 
@@ -215,7 +292,7 @@ async fn get_state(State(s): State<AppState>) -> ApiResult {
         "last_turn": ex.last_turn,
         "players": ex.players,
         "sent_injects": ex.sent_injects,
-        "llm": {"available": s.llm.is_available(), "model": s.llm.model()},
+        "llm": {"available": s.llm.is_available(), "model": s.llm.model(), "translation_model":s.llm.model_for("translate")},
         "world": ex.world.view(),
         "resource_accounting": ex.resource_accounting(None),
     })))
@@ -224,10 +301,34 @@ async fn get_state(State(s): State<AppState>) -> ApiResult {
 async fn get_master(State(s): State<AppState>) -> ApiResult {
     let ex = s.lock();
     let tail = ex.log.len().saturating_sub(300);
+    // Peer-to-peer chat is private to its two participants. Operational
+    // proposals remain visible to EXCON through the separate review queue.
+    let messages = ex
+        .messages
+        .iter()
+        .filter(|m| {
+            !(m.kind == exercise::MsgKind::Chat
+                && m.from != exercise::MASTER
+                && m.to != exercise::MASTER)
+        })
+        .collect::<Vec<_>>();
+    let log = ex.log[tail..]
+        .iter()
+        .filter(|entry| {
+            !matches!(entry.kind.as_str(), "message" | "chat_source")
+                || !(entry.data["kind"] == "chat"
+                    && entry.data["from"]
+                        .as_str()
+                        .is_some_and(|from| from != exercise::MASTER)
+                    && entry.data["to"]
+                        .as_str()
+                        .is_some_and(|to| to != exercise::MASTER))
+        })
+        .collect::<Vec<_>>();
     Ok(Json(json!({
         "proposals": ex.proposals,
-        "messages": ex.messages,
-        "log": &ex.log[tail..],
+        "messages": messages,
+        "log": log,
         "training_design":ex.design_view(),
         "correction":ex.correction_view(),
         "digest": ex.world.digest(None),
@@ -237,7 +338,11 @@ async fn get_master(State(s): State<AppState>) -> ApiResult {
 
 async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiResult {
     let ex = s.lock();
-    let player = ex.players.get(&role).cloned().ok_or_else(|| bad(format!("unknown role {role}")))?;
+    let player = ex
+        .players
+        .get(&role)
+        .cloned()
+        .ok_or_else(|| bad(format!("unknown role {role}")))?;
     let proposals: Vec<Value> = ex
         .proposals
         .iter()
@@ -256,6 +361,7 @@ async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiR
         "clock": ex.world.clock(),
         "time_s":ex.world.time_s(),
         "inbox": ex.inbox(&role),
+        "drafts": ex.player_drafts(&role),
         "resources": ex.world.d.pools.get(&role),
         "resource_accounting": ex.resource_accounting(Some(&role))[&role],
         "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),
@@ -267,11 +373,90 @@ async fn get_player(State(s): State<AppState>, Path(role): Path<String>) -> ApiR
 async fn get_catalogue(State(s): State<AppState>) -> ApiResult {
     let ex = s.lock();
     let all: Vec<String> = sim::ALL_KINDS.iter().map(|k| k.to_string()).collect();
-    Ok(Json(json!({"kinds": sim::ALL_KINDS, "master_only": sim::MASTER_ONLY, "doc": sim::catalogue(&all), "roles": ex.world.scn.roles})))
+    Ok(Json(
+        json!({"kinds": sim::ALL_KINDS, "master_only": sim::MASTER_ONLY, "doc": sim::catalogue(&all), "roles": ex.world.scn.roles}),
+    ))
 }
 
 async fn get_debrief(State(s): State<AppState>) -> ApiResult {
     Ok(Json(s.lock().debrief()))
+}
+
+#[derive(Deserialize)]
+struct ChatBody {
+    to: String,
+    text: String,
+    #[serde(default)]
+    interpret: bool,
+}
+
+async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
+    let (language, turn, revision) = {
+        let ex = s.lock();
+        ex.validate_chat(&from, &b.to, &b.text, b.interpret)?;
+        (ex.language_of(&from), ex.turn, ex.clock_control.revision)
+    };
+    let mut failed = false;
+    let text_en = if language == "en" || from == exercise::MASTER {
+        b.text.clone()
+    } else {
+        match s.llm.translate_to_english(&b.text, &language).await {
+            Ok(text) => text,
+            Err(_) => {
+                failed = true;
+                b.text.clone()
+            }
+        }
+    };
+    let target_language = s.lock().language_of(&b.to);
+    let translated = if failed || target_language == "en" {
+        text_en.clone()
+    } else {
+        match s.llm.translate(&text_en, &target_language).await {
+            Ok(text) => text,
+            Err(_) => {
+                failed = true;
+                text_en.clone()
+            }
+        }
+    };
+    let (message, proposal) = {
+        let mut ex = s.lock();
+        // A rollback/turn change during translation must not submit an obsolete order.
+        if ex.turn != turn || ex.clock_control.revision != revision {
+            return Err(bad("exercise changed during translation; send again"));
+        }
+        ex.chat(
+            &from,
+            &b.to,
+            &b.text,
+            &text_en,
+            &translated,
+            failed,
+            b.interpret,
+        )?
+    };
+    if let Some(pid) = proposal {
+        tokio::spawn(flow::process_reply(s, pid));
+    }
+    Ok(Json(
+        json!({"message":message,"proposal":proposal,"translation_failed":failed}),
+    ))
+}
+async fn post_player_chat(
+    State(s): State<AppState>,
+    Path(role): Path<String>,
+    Json(b): Json<ChatBody>,
+) -> ApiResult {
+    if b.interpret {
+        return Err(bad(
+            "prepare and confirm the decision privately before sending it",
+        ));
+    }
+    deliver_chat(s, role, b).await
+}
+async fn post_master_chat(State(s): State<AppState>, Json(b): Json<ChatBody>) -> ApiResult {
+    deliver_chat(s, exercise::MASTER.into(), b).await
 }
 
 // ---------------------------------------------------------------- players
@@ -290,7 +475,11 @@ struct ReplyBody {
     declaration_kind: exercise::DeclarationKind,
 }
 
-async fn post_reply(State(s): State<AppState>, Path(role): Path<String>, Json(b): Json<ReplyBody>) -> ApiResult {
+async fn post_reply(
+    State(s): State<AppState>,
+    Path(role): Path<String>,
+    Json(b): Json<ReplyBody>,
+) -> ApiResult {
     let pid = {
         let mut ex = s.lock();
         let pid = ex.player_reply(&role, &b.text, b.reply_to, b.evidence)?;
@@ -306,7 +495,11 @@ struct LangBody {
     language: String,
 }
 
-async fn post_language(State(s): State<AppState>, Path(role): Path<String>, Json(b): Json<LangBody>) -> ApiResult {
+async fn post_language(
+    State(s): State<AppState>,
+    Path(role): Path<String>,
+    Json(b): Json<LangBody>,
+) -> ApiResult {
     s.lock().set_language(&role, &b.language)?;
     Ok(Json(json!({"ok": true})))
 }
@@ -314,43 +507,85 @@ async fn post_language(State(s): State<AppState>, Path(role): Path<String>, Json
 // ---------------------------------------------------------------- master
 
 #[derive(Deserialize)]
-struct ClockBody { running:bool, ratio:f64, #[serde(default)] reason:String }
-#[derive(Deserialize)]
-struct LimitsBody {limits:exercise::ResourceLimits,reason:String}
-async fn post_resource_limits(State(s):State<AppState>,Json(b):Json<LimitsBody>)->ApiResult {
-    s.lock().set_resource_limits(b.limits,&b.reason,None)?;Ok(Json(json!({"ok":true})))
-}
-async fn post_clock(State(s):State<AppState>,Json(b):Json<ClockBody>)->ApiResult {
-    s.lock().configure_clock(b.running,b.ratio,&b.reason)?;Ok(Json(json!({"ok":true})))
+struct ClockBody {
+    running: bool,
+    ratio: f64,
+    #[serde(default)]
+    reason: String,
 }
 #[derive(Deserialize)]
-struct PhaseBody { phase:exercise::ExercisePhase, reason:String }
-async fn post_phase(State(s):State<AppState>,Json(b):Json<PhaseBody>)->ApiResult {
-    s.lock().set_exercise_phase(b.phase,&b.reason)?;Ok(Json(json!({"ok":true})))
+struct LimitsBody {
+    limits: exercise::ResourceLimits,
+    reason: String,
+}
+async fn post_resource_limits(State(s): State<AppState>, Json(b): Json<LimitsBody>) -> ApiResult {
+    s.lock().set_resource_limits(b.limits, &b.reason, None)?;
+    Ok(Json(json!({"ok":true})))
+}
+async fn post_clock(State(s): State<AppState>, Json(b): Json<ClockBody>) -> ApiResult {
+    s.lock().configure_clock(b.running, b.ratio, &b.reason)?;
+    Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]
-struct ScheduleBody { msel_id:String, #[serde(default)] at_s:Option<i64>, #[serde(default)] at_clock:Option<String> }
-async fn post_schedule(State(s):State<AppState>,Json(b):Json<ScheduleBody>)->ApiResult {
-    let mut ex=s.lock();
-    let due=match (b.at_s,b.at_clock) {
-        (Some(s),None)=>s,
-        (None,Some(clock))=>{
-            let parts=clock.split(':').map(str::parse::<i64>).collect::<Result<Vec<_>,_>>().map_err(|_|bad("at_clock must be HH:MM or HH:MM:SS on Day 1"))?;
-            if !(2..=3).contains(&parts.len()) || !(0..=23).contains(&parts[0]) || !(0..=59).contains(&parts[1]) || parts.get(2).is_some_and(|s|!(0..=59).contains(s)){return Err(bad("at_clock must be HH:MM or HH:MM:SS on Day 1"));}
-            parts[0]*3600+parts[1]*60+parts.get(2).copied().unwrap_or(0)-ex.world.scn.start_clock_s
+struct PhaseBody {
+    phase: exercise::ExercisePhase,
+    reason: String,
+}
+async fn post_phase(State(s): State<AppState>, Json(b): Json<PhaseBody>) -> ApiResult {
+    s.lock().set_exercise_phase(b.phase, &b.reason)?;
+    Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+struct ScheduleBody {
+    msel_id: String,
+    #[serde(default)]
+    at_s: Option<i64>,
+    #[serde(default)]
+    at_clock: Option<String>,
+}
+async fn post_schedule(State(s): State<AppState>, Json(b): Json<ScheduleBody>) -> ApiResult {
+    let mut ex = s.lock();
+    let due = match (b.at_s, b.at_clock) {
+        (Some(s), None) => s,
+        (None, Some(clock)) => {
+            let parts = clock
+                .split(':')
+                .map(str::parse::<i64>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| bad("at_clock must be HH:MM or HH:MM:SS on Day 1"))?;
+            if !(2..=3).contains(&parts.len())
+                || !(0..=23).contains(&parts[0])
+                || !(0..=59).contains(&parts[1])
+                || parts.get(2).is_some_and(|s| !(0..=59).contains(s))
+            {
+                return Err(bad("at_clock must be HH:MM or HH:MM:SS on Day 1"));
+            }
+            parts[0] * 3600 + parts[1] * 60 + parts.get(2).copied().unwrap_or(0)
+                - ex.world.scn.start_clock_s
         }
-        _=>return Err(bad("provide exactly one of at_s or at_clock")),
+        _ => return Err(bad("provide exactly one of at_s or at_clock")),
     };
-    let id=ex.schedule_inject(&b.msel_id,due)?;Ok(Json(json!({"schedule":id})))
+    let id = ex.schedule_inject(&b.msel_id, due)?;
+    Ok(Json(json!({"schedule":id})))
 }
 #[derive(Deserialize)]
-struct ReasonBody { reason:String }
-async fn post_cancel_schedule(State(s):State<AppState>,Path(id):Path<u64>,Json(b):Json<ReasonBody>)->ApiResult {
-    s.lock().cancel_schedule(id,&b.reason)?;Ok(Json(json!({"ok":true})))
+struct ReasonBody {
+    reason: String,
 }
-async fn post_execute(State(s):State<AppState>,Path(id):Path<u64>)->ApiResult {
-    let results=s.lock().execute_approved(id)?;
-    let state=s.clone();tokio::spawn(async move {flow::send_drafts(&state,id).await;});
+async fn post_cancel_schedule(
+    State(s): State<AppState>,
+    Path(id): Path<u64>,
+    Json(b): Json<ReasonBody>,
+) -> ApiResult {
+    s.lock().cancel_schedule(id, &b.reason)?;
+    Ok(Json(json!({"ok":true})))
+}
+async fn post_execute(State(s): State<AppState>, Path(id): Path<u64>) -> ApiResult {
+    let results = s.lock().execute_approved(id)?;
+    let state = s.clone();
+    tokio::spawn(async move {
+        flow::send_drafts(&state, id).await;
+    });
     Ok(Json(json!({"results":results})))
 }
 
@@ -375,15 +610,31 @@ fn default_sender() -> String {
 }
 
 async fn post_inject(State(s): State<AppState>, Json(b): Json<InjectBody>) -> ApiResult {
-    if let Some(o) = &b.observation { s.lock().validate_observation(o)?; }
+    if let Some(o) = &b.observation {
+        s.lock().validate_observation(o)?;
+    }
     let ids = flow::send_inject(&s, None, &b.title, &b.sender, &b.recipients, &b.text).await?;
-    if let Some(o) = b.observation { let mut ex = s.lock(); for id in &ids { ex.attach_map_observation(*id, o.clone(), exercise::KnowledgeSource::Delivered)?; } }
+    if let Some(o) = b.observation {
+        let mut ex = s.lock();
+        for id in &ids {
+            ex.attach_map_observation(*id, o.clone(), exercise::KnowledgeSource::Delivered)?;
+        }
+    }
     Ok(Json(json!({"messages": ids})))
 }
 
 async fn post_msel_send(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult {
-    let t = s.lock().world.scn.msel.iter().find(|i| i.id == id).cloned().ok_or_else(|| bad(format!("unknown inject {id}")))?;
-    let ids = flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &t.recipients, &t.text).await?;
+    let t = s
+        .lock()
+        .world
+        .scn
+        .msel
+        .iter()
+        .find(|i| i.id == id)
+        .cloned()
+        .ok_or_else(|| bad(format!("unknown inject {id}")))?;
+    let ids =
+        flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &t.recipients, &t.text).await?;
     Ok(Json(json!({"messages": ids})))
 }
 
@@ -399,9 +650,9 @@ async fn post_prompt(State(s): State<AppState>, Json(b): Json<TextBody>) -> ApiR
 #[derive(Deserialize)]
 struct DecideBody {
     #[serde(default)]
-    preview_generation:Option<u64>,
+    preview_generation: Option<u64>,
     #[serde(default)]
-    resource_limits:Option<exercise::ResourceLimits>,
+    resource_limits: Option<exercise::ResourceLimits>,
     #[serde(default)]
     communication_drafts: Option<Vec<exercise::CommunicationDraft>>,
     #[serde(default)]
@@ -413,23 +664,50 @@ struct DecideBody {
     note: Option<String>,
 }
 
-async fn post_decide(State(s): State<AppState>, Path(id): Path<u64>, Json(b): Json<DecideBody>) -> ApiResult {
+async fn post_decide(
+    State(s): State<AppState>,
+    Path(id): Path<u64>,
+    Json(b): Json<DecideBody>,
+) -> ApiResult {
     let commands = match b.commands {
-        Some(vals) => Some(vals.into_iter().map(serde_json::from_value::<Command>).collect::<Result<Vec<_>, _>>().map_err(|e| bad(format!("invalid command: {e}")))?),
+        Some(vals) => Some(
+            vals.into_iter()
+                .map(serde_json::from_value::<Command>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| bad(format!("invalid command: {e}")))?,
+        ),
         None => None,
     };
     let (outcome, drafts) = {
         let mut ex = s.lock();
-        if b.approve && b.preview_generation.is_some_and(|g|g!=ex.generation) {return Err(bad("exercise changed; review a fresh physical preview"));}
-        if let Some(limits)=b.resource_limits {ex.edit_resource_limit_draft(id,limits)?;}
-        if b.communication_drafts.is_some() || b.inject_drafts.is_some() { ex.edit_communications(id, b.communication_drafts, b.inject_drafts)?; }
-        let outcome = ex.decide(id, Decision { approve: b.approve, commands, note: b.note })?;
+        if b.approve && b.preview_generation.is_some_and(|g| g != ex.generation) {
+            return Err(bad("exercise changed; review a fresh physical preview"));
+        }
+        if let Some(limits) = b.resource_limits {
+            ex.edit_resource_limit_draft(id, limits)?;
+        }
+        if b.communication_drafts.is_some() || b.inject_drafts.is_some() {
+            ex.edit_communications(id, b.communication_drafts, b.inject_drafts)?;
+        }
+        let outcome = ex.decide(
+            id,
+            Decision {
+                approve: b.approve,
+                commands,
+                note: b.note,
+            },
+        )?;
         let p = ex.proposal(id).unwrap();
         let drafts = b.approve && p.status == ProposalStatus::Applied;
         (outcome, drafts)
     };
     if let Some(role) = outcome.notify.clone() {
-        tokio::spawn(flow::send_feedback(s.clone(), role, id, outcome.facts_en.clone()));
+        tokio::spawn(flow::send_feedback(
+            s.clone(),
+            role,
+            id,
+            outcome.facts_en.clone(),
+        ));
     }
     if drafts {
         let st = s.clone();
@@ -439,28 +717,82 @@ async fn post_decide(State(s): State<AppState>, Path(id): Path<u64>, Json(b): Js
 }
 
 #[derive(Deserialize)]
-struct PreviewBody {commands:Vec<Command>}
-async fn post_preview(State(s):State<AppState>,Json(b):Json<PreviewBody>)->ApiResult {Ok(Json(s.lock().preview_commands(&b.commands)?))}
+struct PreviewBody {
+    commands: Vec<Command>,
+}
+async fn post_preview(State(s): State<AppState>, Json(b): Json<PreviewBody>) -> ApiResult {
+    Ok(Json(s.lock().preview_commands(&b.commands)?))
+}
 #[derive(Deserialize)]
-struct CorrectionBody {reason:String}
-async fn post_correction(State(s):State<AppState>,Json(b):Json<CorrectionBody>)->ApiResult {s.lock().correct_intervention(&b.reason)?;Ok(Json(json!({"ok":true})))}
-async fn post_design(State(s):State<AppState>,Json(b):Json<exercise::design::TrainingDesign>)->ApiResult {s.lock().configure_design(b)?;Ok(Json(json!({"ok":true})))}
+struct CorrectionBody {
+    reason: String,
+}
+async fn post_correction(State(s): State<AppState>, Json(b): Json<CorrectionBody>) -> ApiResult {
+    s.lock().correct_intervention(&b.reason)?;
+    Ok(Json(json!({"ok":true})))
+}
+async fn post_design(
+    State(s): State<AppState>,
+    Json(b): Json<exercise::design::TrainingDesign>,
+) -> ApiResult {
+    s.lock().configure_design(b)?;
+    Ok(Json(json!({"ok":true})))
+}
 #[derive(Deserialize)]
-struct PathBody {point:String,path:String,reason:String,#[serde(default)]adaptation:bool}
-async fn post_path(State(s):State<AppState>,Json(b):Json<PathBody>)->ApiResult {s.lock().approve_path(&b.point,&b.path,&b.reason,b.adaptation)?;Ok(Json(json!({"ok":true})))}
+struct PathBody {
+    point: String,
+    path: String,
+    reason: String,
+    #[serde(default)]
+    adaptation: bool,
+}
+async fn post_path(State(s): State<AppState>, Json(b): Json<PathBody>) -> ApiResult {
+    s.lock()
+        .approve_path(&b.point, &b.path, &b.reason, b.adaptation)?;
+    Ok(Json(json!({"ok":true})))
+}
 #[derive(Deserialize)]
-struct PreviewApplyBody {generation:u64,commands:Vec<Command>,reason:String}
-async fn post_preview_apply(State(s):State<AppState>,Json(b):Json<PreviewApplyBody>)->ApiResult {
- let mut ex=s.lock();
- if ex.generation!=b.generation {return Err(bad("exercise changed; refresh the preview"));}
- if ex.clock_control.running || ex.phase==exercise::Phase::Resolving {return Err(bad("pause simulation before applying a reviewed intervention"));}
- if b.reason.trim().is_empty()||b.reason.len()>2000||b.commands.is_empty()||b.commands.len()>20{return Err(bad("intervention requires rationale and 1–20 commands"));}
- let mut results=Vec::new();
- for cmd in b.commands {let r=ex.direct_command(&cmd);results.push(match r {Ok(n)=>json!({"command":cmd.describe(),"ok":true,"notes":n}),Err(e)=>json!({"command":cmd.describe(),"ok":false,"error":e.to_string()})});}
- // Rationale becomes part of the same correctable intervention generation.
- ex.record("physical_preview_approved",exercise::MASTER,json!({"reason":b.reason,"preview_generation":b.generation,"results":results}));
- ex.refresh_correction_generation();
- Ok(Json(json!({"results":results})))
+struct PreviewApplyBody {
+    generation: u64,
+    commands: Vec<Command>,
+    reason: String,
+}
+async fn post_preview_apply(
+    State(s): State<AppState>,
+    Json(b): Json<PreviewApplyBody>,
+) -> ApiResult {
+    let mut ex = s.lock();
+    if ex.generation != b.generation {
+        return Err(bad("exercise changed; refresh the preview"));
+    }
+    if ex.clock_control.running || ex.phase == exercise::Phase::Resolving {
+        return Err(bad(
+            "pause simulation before applying a reviewed intervention",
+        ));
+    }
+    if b.reason.trim().is_empty()
+        || b.reason.len() > 2000
+        || b.commands.is_empty()
+        || b.commands.len() > 20
+    {
+        return Err(bad("intervention requires rationale and 1–20 commands"));
+    }
+    let mut results = Vec::new();
+    for cmd in b.commands {
+        let r = ex.direct_command(&cmd);
+        results.push(match r {
+            Ok(n) => json!({"command":cmd.describe(),"ok":true,"notes":n}),
+            Err(e) => json!({"command":cmd.describe(),"ok":false,"error":e.to_string()}),
+        });
+    }
+    // Rationale becomes part of the same correctable intervention generation.
+    ex.record(
+        "physical_preview_approved",
+        exercise::MASTER,
+        json!({"reason":b.reason,"preview_generation":b.generation,"results":results}),
+    );
+    ex.refresh_correction_generation();
+    Ok(Json(json!({"results":results})))
 }
 
 /// One command or a list, applied immediately as the EXCON.
@@ -471,7 +803,8 @@ async fn post_command(State(s): State<AppState>, Json(body): Json<Value>) -> Api
     };
     let mut results = Vec::new();
     for v in list {
-        let cmd: Command = serde_json::from_value(v.clone()).map_err(|e| bad(format!("invalid command {v}: {e}")))?;
+        let cmd: Command = serde_json::from_value(v.clone())
+            .map_err(|e| bad(format!("invalid command {v}: {e}")))?;
         let r = s.lock().direct_command(&cmd);
         results.push(match r {
             Ok(notes) => json!({"command": cmd.describe(), "ok": true, "notes": notes}),
@@ -492,11 +825,35 @@ async fn post_resolve(State(s): State<AppState>, body: Option<Json<ResolveBody>>
     s.lock().begin_resolution(minutes)?;
     // Spawned, so the turn completes even if the client goes away; the
     // response still waits for the report.
-    let report = tokio::spawn(flow::run_resolution(s.clone())).await.map_err(|e| bad(e.to_string()))??;
-    let mut events: Vec<String> = report.applied.iter().map(|a| format!("{} ({}): {}", a.action, a.by, if a.ok { "done" } else { &a.detail })).collect();
+    let report = tokio::spawn(flow::run_resolution(s.clone()))
+        .await
+        .map_err(|e| bad(e.to_string()))??;
+    let mut events: Vec<String> = report
+        .applied
+        .iter()
+        .map(|a| {
+            format!(
+                "{} ({}): {}",
+                a.action,
+                a.by,
+                if a.ok { "done" } else { &a.detail }
+            )
+        })
+        .collect();
     events.extend(report.events.iter().map(|e| e.text.clone()));
-    let approved = s.lock().proposals.iter().filter(|p| p.status == ProposalStatus::Applied && !p.communications_claimed).map(|p| p.id).collect::<Vec<_>>();
-    for pid in approved { let st = s.clone(); tokio::spawn(async move { flow::send_drafts(&st, pid).await; }); }
+    let approved = s
+        .lock()
+        .proposals
+        .iter()
+        .filter(|p| p.status == ProposalStatus::Applied && !p.communications_claimed)
+        .map(|p| p.id)
+        .collect::<Vec<_>>();
+    for pid in approved {
+        let st = s.clone();
+        tokio::spawn(async move {
+            flow::send_drafts(&st, pid).await;
+        });
+    }
     tokio::spawn(flow::situation_updates(s.clone(), events));
     Ok(Json(json!(report)))
 }
@@ -533,11 +890,17 @@ async fn post_settings(State(s): State<AppState>, Json(b): Json<SettingsBody>) -
         ex.record("settings", exercise::MASTER, json!({"turn_minutes": m}));
     }
     if let Some(v) = b.speed {
-        let v = if v.is_finite() { v.clamp(0.0, 86_400.0) } else { 0.0 };
+        let v = if v.is_finite() {
+            v.clamp(0.0, 86_400.0)
+        } else {
+            0.0
+        };
         ex.speed = v;
         ex.record("settings", exercise::MASTER, json!({"speed": v}));
     }
-    Ok(Json(json!({"turn_minutes": ex.turn_minutes, "speed": ex.speed})))
+    Ok(Json(
+        json!({"turn_minutes": ex.turn_minutes, "speed": ex.speed}),
+    ))
 }
 
 // ---------------------------------------------------------------- ws
@@ -548,18 +911,30 @@ struct WsQuery {
     role: Option<String>,
 }
 
-async fn ws(State(s): State<AppState>, Query(_q): Query<WsQuery>, up: WebSocketUpgrade) -> Response {
+async fn ws(
+    State(s): State<AppState>,
+    Query(_q): Query<WsQuery>,
+    up: WebSocketUpgrade,
+) -> Response {
     up.on_upgrade(move |socket| ws_loop(socket, s.generation.clone()))
 }
 
 async fn ws_loop(mut socket: WebSocket, mut rx: watch::Receiver<u64>) {
     let g = *rx.borrow();
-    if socket.send(WsMessage::Text(json!({"generation": g}).to_string())).await.is_err() {
+    if socket
+        .send(WsMessage::Text(json!({"generation": g}).to_string()))
+        .await
+        .is_err()
+    {
         return;
     }
     while rx.changed().await.is_ok() {
         let g = *rx.borrow();
-        if socket.send(WsMessage::Text(json!({"generation": g}).to_string())).await.is_err() {
+        if socket
+            .send(WsMessage::Text(json!({"generation": g}).to_string()))
+            .await
+            .is_err()
+        {
             return;
         }
     }

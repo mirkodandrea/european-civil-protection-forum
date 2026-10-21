@@ -51,7 +51,7 @@ pub struct InjectDraft {
 pub struct ParsedReply {
     /// EXCON-only recommendation; applied only after explicit review/approval.
     #[serde(default)]
-    pub resource_limits:Option<Value>,
+    pub resource_limits: Option<Value>,
     #[serde(default)]
     pub detected_language: String,
     /// The reply in English (the working language), for the EXCON.
@@ -77,7 +77,10 @@ pub struct ParsedReply {
 impl ParsedReply {
     fn from_value(v: Value) -> Result<ParsedReply> {
         let mut p: ParsedReply = serde_json::from_value(v)?;
-        if p.clarification.as_deref().is_some_and(|c| c.trim().is_empty() || c.trim() == "null") {
+        if p.clarification
+            .as_deref()
+            .is_some_and(|c| c.trim().is_empty() || c.trim() == "null")
+        {
             p.clarification = None;
         }
         Ok(p)
@@ -121,6 +124,18 @@ const REPLY_SCHEMA: &str = r#"{
 }"#;
 
 impl Llm {
+    /// Preserve a player's original meaning when creating the English working copy.
+    pub async fn translate_to_english(&self, text: &str, language: &str) -> anyhow::Result<String> {
+        let system = format!(
+            "Translate this civil-protection exercise message from {language} to English. Preserve names, numbers, intent and uncertainty exactly. Add no advice or facts. Output only the translation."
+        );
+        Ok(self
+            .complete("translate", &system, text, false)
+            .await?
+            .trim()
+            .to_string())
+    }
+
     /// Translate an exercise message. English targets are returned unchanged
     /// without a call (the working language is English).
     pub async fn translate(&self, text: &str, target_lang: &str) -> Result<String> {
@@ -131,7 +146,11 @@ impl Llm {
             "You translate civil-protection exercise messages into {}. Keep place names, facility names, zone codes (like F4), road ids, numbers and times unchanged. Preserve the original meaning exactly. Never add facts, decisions, advice, interpretations, explanations, urgency, or operational instructions. Never change a request or pending proposal into an accomplished action. Output only the translation, nothing else.",
             language_name(target_lang)
         );
-        Ok(self.complete("translate", &system, text, false).await?.trim().to_string())
+        Ok(self
+            .complete("translate", &system, text, false)
+            .await?
+            .trim()
+            .to_string())
     }
 
     /// Player free text → candidate actions, messages, or a clarification
@@ -143,7 +162,7 @@ impl Llm {
             "You are the exercise assistant of a Civil Protection table-top exercise (TTX), in an ongoing conversation with one player: \
 the {} ({}) — {}. The player writes in {}. \
 The conversation contains what the player received (injects, messages, feedback, situation updates), what the player wrote, and your earlier interpretations. \
-You turn each new reply into structured actions for the simulator. Rules:\n\
+You turn each new reply into structured actions for the simulator. If CURRENT SITUATION contains a non-null chat_recipient, this is a direct chat already delivered to that recipient: return no messages, and extract only explicit operational decisions of the speaking role. Reports, acknowledgments, hypothetical actions and requests for another role to decide are not executable decisions; return an empty actions array for them. Rules:\n\
 - Use ONLY the action types documented below, with exactly the documented JSON shape.\n\
 - Use ONLY place names, facility names, road ids and zone codes from the gazetteer, or zone codes like F4. Never invent places, resources or facts.\n\
 - The player decides: add an action only if the player clearly ordered it in the NEW reply. Do not repeat actions from earlier replies. Do not add your own ideas.\n\
@@ -155,13 +174,58 @@ Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:
             i.role_id,
             i.role_description,
             language_name(i.language),
-            i.other_roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", "),
+            i.other_roles
+                .iter()
+                .map(|(id, name)| format!("{id} = {name}"))
+                .collect::<Vec<_>>()
+                .join(", "),
             i.catalogue,
             i.gazetteer
         );
         let mut messages = i.history.to_vec();
-        messages.push(ChatMessage::user(format!("CURRENT SITUATION:\n{}\n\nNEW PLAYER REPLY:\n\"\"\"{}\"\"\"", i.digest, i.reply)));
+        messages.push(ChatMessage::user(format!(
+            "CURRENT SITUATION:\n{}\n\nNEW PLAYER REPLY:\n\"\"\"{}\"\"\"",
+            i.digest, i.reply
+        )));
         ParsedReply::from_value(self.chat_json("parse_reply", &system, &messages).await?)
+    }
+
+    /// Private player preparation: no message has been sent and no proposal exists.
+    pub async fn prepare_decision(&self, i: ReplyInput<'_>) -> Result<(ParsedReply, String)> {
+        let system = format!(
+            "You help a civil-protection exercise player prepare their own message BEFORE sending it. \
+The player is {} ({}) — {} and writes in {}. The conversation and situation contain only information available to this role. \
+The latest private draft includes the original message and any answers to YOUR clarification questions. Interpret the complete evolving draft, not only the latest answer. \
+Extract only explicit decisions made by this player, using the documented actions below. Reports, acknowledgments, hypotheses, and requests for another role to decide are not executable decisions. \
+Never invent targets, quantities, resources or facts. Never give tactical advice or suggest a better strategy. Do not approve or execute anything. \
+If essential information is missing, set clarification to ONE specific question addressed directly to the player in their own language, naming the missing quantity, destination or other field. Never write only 'needs clarification'. \
+A clarification is private to the player, never for EXCON review. Do not ask for facts already explicit in the draft or the authorized context. \
+Do not ask the player a conversational confirmation question. The interface will show every extracted action and require an explicit confirmation before submission. Ask a clarification only when information needed to identify the action is missing. \
+For a complete draft set clarification to null. Return message as the complete text to send in the player's language, incorporating only details the player supplied. The player will explicitly confirm it. \
+Return translation_en as a faithful English version of that complete message and summary in the player's language. messages and injects must be empty: delivery is handled separately. \
+Do not judge resource availability: the simulator validates it. Answer with ONE JSON object with fields: \
+message (string), detected_language, translation_en, summary, actions (array), clarification (string or null), messages (empty array).\n\nRole actions:\n{}\nGazetteer:\n{}",
+            i.role_name,
+            i.role_id,
+            i.role_description,
+            language_name(i.language),
+            i.catalogue,
+            i.gazetteer
+        );
+        let mut messages = i.history.to_vec();
+        messages.push(ChatMessage::user(format!(
+            "AUTHORIZED SITUATION:\n{}\n\nPRIVATE PLAYER DRAFT:\n{}",
+            i.digest, i.reply
+        )));
+        let value = self
+            .chat_json("prepare_decision", &system, &messages)
+            .await?;
+        let message = value["message"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("prepared decision has no final message"))?
+            .to_string();
+        Ok((ParsedReply::from_value(value)?, message))
     }
 
     /// EXCON natural-language instruction → commands and/or inject drafts,
@@ -176,30 +240,60 @@ You may suggest exercise-wide and per-training-phase deployable resource caps as
 Answer with ONE JSON object:\n{{\"resource_limits\": null, \"actions\": [...], \"injects\": [{{\"recipients\": [\"role_id\" or \"all\"], \"title\": \"...\", \"sender\": \"...\", \"text\": \"...\"}}], \"clarification\": null, \"summary\": \"one sentence\", \"translation_en\": \"the instruction in English\"}}\n\n\
 Actions:\n{}\nRoles: {}\n\nGAZETTEER:\n{}",
             i.catalogue,
-            i.roles.iter().map(|(id, name)| format!("{id} = {name}")).collect::<Vec<_>>().join(", "),
+            i.roles
+                .iter()
+                .map(|(id, name)| format!("{id} = {name}"))
+                .collect::<Vec<_>>()
+                .join(", "),
             i.gazetteer
         );
         let mut messages = i.history.to_vec();
-        messages.push(ChatMessage::user(format!("CURRENT SITUATION:\n{}\n\nNEW DIRECTOR INSTRUCTION:\n\"\"\"{}\"\"\"", i.digest, i.prompt)));
+        messages.push(ChatMessage::user(format!(
+            "CURRENT SITUATION:\n{}\n\nNEW DIRECTOR INSTRUCTION:\n\"\"\"{}\"\"\"",
+            i.digest, i.prompt
+        )));
         ParsedReply::from_value(self.chat_json("master_prompt", &system, &messages).await?)
     }
 
     /// Translate the recorded EXCON decision without generating operational content.
-    pub async fn feedback(&self, _role_name: &str, lang: &str, decision_en: &str) -> Result<String> {
+    pub async fn feedback(
+        &self,
+        _role_name: &str,
+        lang: &str,
+        decision_en: &str,
+    ) -> Result<String> {
         self.translate(decision_en, lang).await
     }
 
     /// Draft a situation summary for review. Operational delivery uses recorded facts
     /// and translation instead of sending this generated text automatically.
-    pub async fn situation_update(&self, role_name: &str, lang: &str, digest: &Value, events_en: &[String]) -> Result<String> {
+    pub async fn situation_update(
+        &self,
+        role_name: &str,
+        lang: &str,
+        digest: &Value,
+        events_en: &[String],
+    ) -> Result<String> {
         let system = format!(
             "You write the situation update that EXCON sends to the {role_name} at the end of a turn of a Civil Protection table-top exercise, in {}. \
 At most 120 words, factual, operational tone, only facts present in the data (clock, fire, what happened this turn, the player's resources). \
 No advice on what to do. Output only the message.",
             language_name(lang)
         );
-        let user = format!("EVENTS THIS TURN:\n{}\n\nSITUATION:\n{}", if events_en.is_empty() { "(none)".into() } else { events_en.join("\n") }, digest);
-        Ok(self.complete("situation_update", &system, &user, false).await?.trim().to_string())
+        let user = format!(
+            "EVENTS THIS TURN:\n{}\n\nSITUATION:\n{}",
+            if events_en.is_empty() {
+                "(none)".into()
+            } else {
+                events_en.join("\n")
+            },
+            digest
+        );
+        Ok(self
+            .complete("situation_update", &system, &user, false)
+            .await?
+            .trim()
+            .to_string())
     }
 }
 
@@ -229,15 +323,30 @@ mod tests {
             assert_eq!(task, "parse_reply");
             assert!(system.contains("EvacuateZone"));
             assert!(user.contains("evacuate F4"));
-            assert!(user.contains("earlier context"), "history must be sent: {user}");
+            assert!(
+                user.contains("earlier context"),
+                "history must be sent: {user}"
+            );
             Ok(r#"{"detected_language":"it","translation_en":"evacuate F4","actions":[{"type":"EvacuateZone","zone":"F4"}],"messages":[],"clarification":"","summary":"Evacuate F4"}"#.into())
         });
         let g = json!({});
-        let history = [ChatMessage::user("earlier context"), ChatMessage::assistant("{}")];
-        let p = llm.parse_reply(ReplyInput { history: &history, ..input("evacuate F4", &g) }).await.unwrap();
+        let history = [
+            ChatMessage::user("earlier context"),
+            ChatMessage::assistant("{}"),
+        ];
+        let p = llm
+            .parse_reply(ReplyInput {
+                history: &history,
+                ..input("evacuate F4", &g)
+            })
+            .await
+            .unwrap();
         assert_eq!(p.actions.len(), 1);
         assert_eq!(p.actions[0]["zone"], "F4");
-        assert!(p.clarification.is_none(), "empty clarification must become None");
+        assert!(
+            p.clarification.is_none(),
+            "empty clarification must become None"
+        );
     }
 
     #[tokio::test]
@@ -256,9 +365,17 @@ mod translation_control_tests {
             assert_eq!(task, "translate");
             assert_eq!(user, facts);
             assert!(system.contains("Never add facts, decisions, advice"));
-            assert!(system.contains("Never change a request or pending proposal into an accomplished action"));
+            assert!(system.contains(
+                "Never change a request or pending proposal into an accomplished action"
+            ));
             Ok("IN ATTESA: evacuare F4 alle 13:30 con 2 autobus. Non ancora eseguito.".into())
         });
-        assert!(model.translate(facts, "it").await.unwrap().contains("Non ancora eseguito"));
+        assert!(
+            model
+                .translate(facts, "it")
+                .await
+                .unwrap()
+                .contains("Non ancora eseguito")
+        );
     }
 }

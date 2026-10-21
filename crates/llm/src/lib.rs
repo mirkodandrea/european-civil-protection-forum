@@ -31,10 +31,16 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
-        ChatMessage { role: "user".into(), content: content.into() }
+        ChatMessage {
+            role: "user".into(),
+            content: content.into(),
+        }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
-        ChatMessage { role: "assistant".into(), content: content.into() }
+        ChatMessage {
+            role: "assistant".into(),
+            content: content.into(),
+        }
     }
 }
 
@@ -54,6 +60,7 @@ pub fn merge_consecutive(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     out
 }
 
+pub const DEFAULT_TRANSLATION_MODEL: &str = "google/gemini-3.1-flash-lite";
 pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash";
 /// Preferred hosts for [`DEFAULT_MODEL`], fastest first (OpenRouter P50 latency, Sep 2026:
 /// Together 0.4 s, CoreWeave 0.6 s, Modal 1.0 s). Others remain as fallbacks.
@@ -65,7 +72,13 @@ pub type MockFn = dyn Fn(&str, &str, &str) -> Result<String> + Send + Sync;
 
 #[derive(Clone)]
 pub enum Backend {
-    OpenRouter { client: reqwest::Client, api_key: String, model: String, base_url: String, providers: Vec<String> },
+    OpenRouter {
+        client: reqwest::Client,
+        api_key: String,
+        model: String,
+        base_url: String,
+        providers: Vec<String>,
+    },
     Mock(Arc<MockFn>),
     Off,
 }
@@ -74,6 +87,7 @@ pub enum Backend {
 pub struct Llm {
     backend: Backend,
     cassette: Option<Arc<cassette::Cassette>>,
+    translation_model: Option<String>,
 }
 
 impl Llm {
@@ -81,17 +95,55 @@ impl Llm {
     pub fn from_env() -> Llm {
         match std::env::var("OPENROUTER_API_KEY") {
             Ok(key) if !key.trim().is_empty() => {
-                let model = std::env::var("OPENROUTER_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.into());
-                let base_url = std::env::var("OPENROUTER_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.into());
+                let model = std::env::var("OPENROUTER_MODEL")
+                    .ok()
+                    .filter(|m| !m.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_MODEL.into());
+                let base_url = std::env::var("OPENROUTER_BASE_URL")
+                    .unwrap_or_else(|_| DEFAULT_BASE_URL.into());
                 let llm = Llm::openrouter(key.trim().to_string(), model, base_url);
                 match std::env::var("OPENROUTER_PROVIDERS") {
-                    Ok(list) => llm.with_providers(list.split(',').map(str::trim).filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("auto")).map(String::from).collect()),
+                    Ok(list) => llm.with_providers(
+                        list.split(',')
+                            .map(str::trim)
+                            .filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("auto"))
+                            .map(String::from)
+                            .collect(),
+                    ),
                     Err(_) => llm,
                 }
             }
             _ => Llm::off(),
         }
+        .with_translation_model_from_env()
         .with_cassette_from_env()
+    }
+
+    /// Translation is the only separately selected model; interpretation keeps the existing model.
+    fn with_translation_model_from_env(mut self) -> Self {
+        if matches!(self.backend, Backend::OpenRouter { .. }) {
+            let model = std::env::var("OPENROUTER_TRANSLATION_MODEL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_TRANSLATION_MODEL.into());
+            self.translation_model = Some(model.trim().into());
+        }
+        self
+    }
+
+    pub fn with_translation_model(mut self, model: &str) -> Self {
+        self.translation_model = Some(model.into());
+        self
+    }
+
+    pub fn model_for(&self, task: &str) -> String {
+        if task == "translate" {
+            self.translation_model
+                .clone()
+                .unwrap_or_else(|| self.model())
+        } else {
+            self.model()
+        }
     }
 
     /// Record/replay answers through the cassette named by `TTX_LLM_CASSETTE`.
@@ -108,9 +160,22 @@ impl Llm {
     }
 
     pub fn openrouter(api_key: String, model: String, base_url: String) -> Llm {
-        let client = reqwest::Client::builder().timeout(Duration::from_secs(90)).build().expect("http client");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(90))
+            .build()
+            .expect("http client");
         let providers = DEFAULT_PROVIDERS.iter().map(|p| p.to_string()).collect();
-        Llm { backend: Backend::OpenRouter { client, api_key, model, base_url, providers }, cassette: None }
+        Llm {
+            backend: Backend::OpenRouter {
+                client,
+                api_key,
+                model,
+                base_url,
+                providers,
+            },
+            cassette: None,
+            translation_model: None,
+        }
     }
 
     /// Preferred OpenRouter hosts in order (empty = let OpenRouter choose). No effect on other backends.
@@ -122,15 +187,24 @@ impl Llm {
     }
 
     pub fn mock(f: impl Fn(&str, &str, &str) -> Result<String> + Send + Sync + 'static) -> Llm {
-        Llm { backend: Backend::Mock(Arc::new(f)), cassette: None }
+        Llm {
+            backend: Backend::Mock(Arc::new(f)),
+            cassette: None,
+            translation_model: None,
+        }
     }
 
     pub fn off() -> Llm {
-        Llm { backend: Backend::Off, cassette: None }
+        Llm {
+            backend: Backend::Off,
+            cassette: None,
+            translation_model: None,
+        }
     }
 
     pub fn is_available(&self) -> bool {
-        !matches!(self.backend, Backend::Off) || self.cassette.as_ref().is_some_and(|c| !c.is_empty())
+        !matches!(self.backend, Backend::Off)
+            || self.cassette.as_ref().is_some_and(|c| !c.is_empty())
     }
 
     pub fn model(&self) -> String {
@@ -142,19 +216,70 @@ impl Llm {
     }
 
     /// One chat completion with a single user message. `json` asks the model for a JSON object.
-    pub async fn complete(&self, task: &str, system: &str, user: &str, json_mode: bool) -> Result<String> {
-        self.complete_chat(task, system, &[ChatMessage::user(user)], json_mode).await
+    pub async fn complete(
+        &self,
+        task: &str,
+        system: &str,
+        user: &str,
+        json_mode: bool,
+    ) -> Result<String> {
+        self.complete_chat(task, system, &[ChatMessage::user(user)], json_mode)
+            .await
     }
 
     /// A completion over a whole conversation (`messages` after the system prompt).
-    pub async fn complete_chat(&self, task: &str, system: &str, messages: &[ChatMessage], json_mode: bool) -> Result<String> {
+    pub async fn complete_chat(
+        &self,
+        task: &str,
+        system: &str,
+        messages: &[ChatMessage],
+        json_mode: bool,
+    ) -> Result<String> {
+        let mut routed = self.clone();
+        if let Backend::OpenRouter {
+            model, providers, ..
+        } = &mut routed.backend
+        {
+            if let Some(selected) = self
+                .translation_model
+                .as_ref()
+                .filter(|_| task == "translate")
+            {
+                if selected != model {
+                    *model = selected.clone();
+                    providers.clear();
+                }
+            }
+        }
+        routed
+            .complete_routed(task, system, messages, json_mode)
+            .await
+    }
+
+    async fn complete_routed(
+        &self,
+        task: &str,
+        system: &str,
+        messages: &[ChatMessage],
+        json_mode: bool,
+    ) -> Result<String> {
         let messages = merge_consecutive(messages);
         let Some(tape) = self.cassette.clone() else {
             return self.complete_live(task, system, &messages, json_mode).await;
         };
         // Single-message requests keep the key format of earlier cassettes.
-        let flat = if messages.len() == 1 && messages[0].role == "user" { messages[0].content.clone() } else { serde_json::to_string(&messages)? };
-        let key = cassette::key(&[&self.model(), task, system, &flat, if json_mode { "json" } else { "text" }]);
+        let flat = if messages.len() == 1 && messages[0].role == "user" {
+            messages[0].content.clone()
+        } else {
+            serde_json::to_string(&messages)?
+        };
+        let key = cassette::key(&[
+            &self.model(),
+            task,
+            system,
+            &flat,
+            if json_mode { "json" } else { "text" },
+        ]);
         if let Some(answer) = tape.get(&key) {
             tracing::info!(task, "llm replayed from cassette");
             return Ok(answer);
@@ -162,23 +287,49 @@ impl Llm {
         if tape.mode() == cassette::Mode::Replay {
             anyhow::bail!("LLM cassette miss for task {task} (replay mode)");
         }
-        let answer = self.complete_live(task, system, &messages, json_mode).await?;
+        let answer = self
+            .complete_live(task, system, &messages, json_mode)
+            .await?;
         tape.put(&key, task, &answer);
         Ok(answer)
     }
 
-    async fn complete_live(&self, task: &str, system: &str, messages: &[ChatMessage], json_mode: bool) -> Result<String> {
+    async fn complete_live(
+        &self,
+        task: &str,
+        system: &str,
+        messages: &[ChatMessage],
+        json_mode: bool,
+    ) -> Result<String> {
         let started = Instant::now();
         let out = match &self.backend {
             Backend::Off => anyhow::bail!("LLM is not configured (set OPENROUTER_API_KEY)"),
             // The mock sees the conversation flattened, oldest first.
             Backend::Mock(f) => match messages {
                 [only] if only.role == "user" => f(task, system, &only.content),
-                _ => f(task, system, &messages.iter().map(|m| format!("[{}] {}", m.role, m.content)).collect::<Vec<_>>().join("\n")),
+                _ => f(
+                    task,
+                    system,
+                    &messages
+                        .iter()
+                        .map(|m| format!("[{}] {}", m.role, m.content))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
             },
-            Backend::OpenRouter { client, api_key, model, base_url, providers } => {
+            Backend::OpenRouter {
+                client,
+                api_key,
+                model,
+                base_url,
+                providers,
+            } => {
                 let mut all = vec![json!({"role": "system", "content": system})];
-                all.extend(messages.iter().map(|m| json!({"role": m.role, "content": m.content})));
+                all.extend(
+                    messages
+                        .iter()
+                        .map(|m| json!({"role": m.role, "content": m.content})),
+                );
                 let mut body = json!({
                     "model": model,
                     "temperature": 0.2,
@@ -205,7 +356,10 @@ impl Llm {
                 let status = resp.status();
                 let v: Value = resp.json().await.context("decoding OpenRouter response")?;
                 if !status.is_success() {
-                    anyhow::bail!("OpenRouter {status}: {}", v["error"]["message"].as_str().unwrap_or(&v.to_string()));
+                    anyhow::bail!(
+                        "OpenRouter {status}: {}",
+                        v["error"]["message"].as_str().unwrap_or(&v.to_string())
+                    );
                 }
                 v["choices"][0]["message"]["content"]
                     .as_str()
@@ -214,26 +368,38 @@ impl Llm {
             }
         };
         match &out {
-            Ok(t) => tracing::info!(task, ms = started.elapsed().as_millis() as u64, chars = t.len(), "llm ok"),
-            Err(e) => tracing::warn!(task, ms = started.elapsed().as_millis() as u64, error = %e, "llm failed"),
+            Ok(t) => {
+                tracing::info!(task, model = %self.model(), ms = started.elapsed().as_millis() as u64, chars = t.len(), "llm ok")
+            }
+            Err(e) => {
+                tracing::warn!(task, model = %self.model(), ms = started.elapsed().as_millis() as u64, error = %e, "llm failed")
+            }
         }
         out
     }
 
     /// A completion parsed as a JSON object, retried once on unparseable output.
     pub async fn complete_json(&self, task: &str, system: &str, user: &str) -> Result<Value> {
-        self.chat_json(task, system, &[ChatMessage::user(user)]).await
+        self.chat_json(task, system, &[ChatMessage::user(user)])
+            .await
     }
 
     /// A conversation completion parsed as a JSON object, retried once on unparseable output.
-    pub async fn chat_json(&self, task: &str, system: &str, messages: &[ChatMessage]) -> Result<Value> {
+    pub async fn chat_json(
+        &self,
+        task: &str,
+        system: &str,
+        messages: &[ChatMessage],
+    ) -> Result<Value> {
         let text = self.complete_chat(task, system, messages, true).await?;
         match extract_json(&text) {
             Ok(v) => Ok(v),
             Err(_) => {
                 let mut retry = messages.to_vec();
                 retry.push(ChatMessage::assistant(text));
-                retry.push(ChatMessage::user("Your previous answer was not valid JSON. Answer with ONE JSON object only."));
+                retry.push(ChatMessage::user(
+                    "Your previous answer was not valid JSON. Answer with ONE JSON object only.",
+                ));
                 let text = self.complete_chat(task, system, &retry, true).await?;
                 extract_json(&text)
             }
@@ -251,7 +417,8 @@ pub fn extract_json(text: &str) -> Result<Value> {
     let (Some(a), Some(b)) = (t.find('{'), t.rfind('}')) else {
         anyhow::bail!("no JSON object in model output: {t:.200}");
     };
-    serde_json::from_str(&t[a..=b]).with_context(|| format!("invalid JSON in model output: {t:.200}"))
+    serde_json::from_str(&t[a..=b])
+        .with_context(|| format!("invalid JSON in model output: {t:.200}"))
 }
 
 #[cfg(test)]
@@ -262,7 +429,10 @@ mod tests {
     fn extracts_json_from_fences_and_prose() {
         assert_eq!(extract_json(r#"{"a":1}"#).unwrap()["a"], 1);
         assert_eq!(extract_json("```json\n{\"a\": 2}\n```").unwrap()["a"], 2);
-        assert_eq!(extract_json("Sure! {\"a\": {\"b\": 3}} hope it helps").unwrap()["a"]["b"], 3);
+        assert_eq!(
+            extract_json("Sure! {\"a\": {\"b\": 3}} hope it helps").unwrap()["a"]["b"],
+            3
+        );
         assert!(extract_json("no json here").is_err());
     }
 
@@ -270,7 +440,10 @@ mod tests {
     async fn off_fails_fast_and_mock_answers() {
         assert!(Llm::off().complete("t", "s", "u", false).await.is_err());
         let m = Llm::mock(|task, _, _| Ok(format!("hello from {task}")));
-        assert_eq!(m.complete("x", "", "", false).await.unwrap(), "hello from x");
+        assert_eq!(
+            m.complete("x", "", "", false).await.unwrap(),
+            "hello from x"
+        );
     }
 
     #[tokio::test]
@@ -286,19 +459,38 @@ mod tests {
                 Ok(format!("answer to {u}"))
             })
         };
-        let a = mk().with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Auto).unwrap());
-        assert_eq!(a.complete("t", "s", "hello", false).await.unwrap(), "answer to hello");
-        assert_eq!(a.complete("t", "s", "hello", false).await.unwrap(), "answer to hello");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "second call replayed");
+        let a = mk()
+            .with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Auto).unwrap());
+        assert_eq!(
+            a.complete("t", "s", "hello", false).await.unwrap(),
+            "answer to hello"
+        );
+        assert_eq!(
+            a.complete("t", "s", "hello", false).await.unwrap(),
+            "answer to hello"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "second call replayed"
+        );
         // A new process (fresh Llm) replays from the file; replay mode refuses misses.
-        let b = Llm::off().with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Replay).unwrap());
+        let b = Llm::off()
+            .with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Replay).unwrap());
         assert!(b.is_available());
         let b_answer = b.complete("t", "s", "hello", false).await;
         // The key includes the model name, which differs ("off" vs "mock"): a miss.
         assert!(b_answer.is_err());
-        let m = mk().with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Replay).unwrap());
-        assert_eq!(m.complete("t", "s", "hello", false).await.unwrap(), "answer to hello");
-        assert!(m.complete("t", "s", "other", false).await.is_err(), "replay mode: misses are errors");
+        let m = mk()
+            .with_cassette(cassette::Cassette::open(path.clone(), cassette::Mode::Replay).unwrap());
+        assert_eq!(
+            m.complete("t", "s", "hello", false).await.unwrap(),
+            "answer to hello"
+        );
+        assert!(
+            m.complete("t", "s", "other", false).await.is_err(),
+            "replay mode: misses are errors"
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         let _ = std::fs::remove_file(&path);
     }
@@ -311,7 +503,12 @@ mod tests {
 
     #[test]
     fn consecutive_messages_are_merged() {
-        let m = merge_consecutive(&[ChatMessage::user("a"), ChatMessage::user("b"), ChatMessage::assistant("c"), ChatMessage::user("d")]);
+        let m = merge_consecutive(&[
+            ChatMessage::user("a"),
+            ChatMessage::user("b"),
+            ChatMessage::assistant("c"),
+            ChatMessage::user("d"),
+        ]);
         assert_eq!(m.len(), 3);
         assert_eq!(m[0].content, "a\n\nb");
     }
@@ -322,9 +519,31 @@ mod tests {
         let c = calls.clone();
         let m = Llm::mock(move |_, _, _| {
             let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(if n == 0 { "oops".into() } else { r#"{"ok":true}"#.into() })
+            Ok(if n == 0 {
+                "oops".into()
+            } else {
+                r#"{"ok":true}"#.into()
+            })
         });
         assert_eq!(m.complete_json("t", "", "").await.unwrap()["ok"], true);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+}
+
+#[cfg(test)]
+mod translation_routing_tests {
+    use super::*;
+    #[test]
+    fn translation_selection_preserves_the_action_and_excon_model() {
+        let llm = Llm::openrouter(
+            "unused".into(),
+            "general-model".into(),
+            "http://127.0.0.1:1".into(),
+        )
+        .with_translation_model("small-translator");
+        assert_eq!(llm.model_for("translate"), "small-translator");
+        assert_eq!(llm.model_for("prepare_decision"), "general-model");
+        assert_eq!(llm.model_for("parse_reply"), "general-model");
+        assert_eq!(llm.model_for("master_prompt"), "general-model");
     }
 }
