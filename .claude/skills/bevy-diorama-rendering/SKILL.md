@@ -17,7 +17,7 @@ La grafica legge `sim::World`; non decide pericolo, percorsi, tempi o consumo d'
   nebbia dei materiali custom e blending delle particelle. Non lasciare mesh vuote.
 - Ricampionare le linee sul DEM; evitare etichette sotto la chioma o dentro gli overlay.
 - Vegetazione coerente con il combustibile e diradata vicino alle strade. Un filare
-  decorativo non è una barriera al fuoco. Bruciato e fiamme seguono le celle del core.
+  decorativo non è una barriera al fuoco. Bruciato e fiamme derivano dalle celle del core tramite il campo visuale continuo.
 - Geometria per gli oggetti che sporgono, shader per superficie e dettaglio distante;
   niente scintillio o animazione che nasconda ordini ed evacuazioni.
 - Pulire cache visuali, particelle e selezioni dopo reset/rollback.
@@ -61,3 +61,10 @@ normali coerenti con `frame::to_bevy`, anche con DEM visuale fine.
 errore GPU/shader. Un PNG salvato non garantisce che lo shader sia compilato.
 Ispezionare sempre tutte le immagini; gli errori WGSL non sono rilevati da
 `cargo check`. Nessuna metrica FPS è implicita in una cattura riuscita.
+
+Il campo `fire_field.rs` ricostruisce solo la presentazione: bilineare, domain warp
+ripetibile e arrivo per pianta. Non usarlo per decisioni fisiche o contatori. La
+modalità `V`/`TTX_FIRE_RENDER=cells` consente confronti con il raster originale;
+mostrare sempre la risoluzione fisica nell'HUD. L'alone non fornisce copertura o
+tempi all'incendio confermato. Proteggere le celle disboscate anche nello shader
+del suolo, perché triangoli interpolati possono attraversarne il bordo.

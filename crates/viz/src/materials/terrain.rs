@@ -67,6 +67,9 @@ impl TerrainMaterial {
         }
     }
 
+    pub fn set_continuous_fire(&mut self, on: bool) {
+        self.uniform.tactical.z = if on { 1. } else { 0. };
+    }
     pub fn set_time(&mut self, t: f32) {
         self.uniform.tactical.y = t;
     }

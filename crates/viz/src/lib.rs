@@ -24,6 +24,7 @@ mod architecture;
 mod bench;
 mod camera;
 mod deployments;
+mod fire_field;
 mod fire_shader;
 mod fire_textures;
 mod flames;
@@ -168,6 +169,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
             llm_model,
             ..default()
         })
+        .init_resource::<fire_field::FirePresentation>()
         .init_resource::<Frame>()
         .add_systems(
             Startup,
@@ -183,12 +185,15 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
             (
                 sync,
                 frame::update.after(sync),
-                terrain::update.after(frame::update),
+                fire_field::toggle,
+                terrain::update
+                    .after(frame::update)
+                    .after(fire_field::toggle),
                 objects::update.after(frame::update),
                 deployments::update.after(frame::update),
                 camera::control.after(frame::update),
                 camera::fire_lights.after(frame::update),
-                hud::draw.after(frame::update),
+                hud::draw.after(frame::update).after(fire_field::toggle),
                 screenshot,
                 record,
                 snapshot::hold.after(camera::control).after(sync),

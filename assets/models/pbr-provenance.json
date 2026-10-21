@@ -42,5 +42,12 @@
   "adaptation": "TTX snapshot state, centred coordinate frame, scenario clocks and exact ensemble cell codes; detailed rectangular architecture adapts source footprint dressing.",
   "fire_adaptation": "Source shaders, textures, 7-segment ribbons, smoke fog and ember drawing; TTX ensemble/intensity/wind and exact-cell overlays retained. Premultiplied additive flame coverage corrected; decorative embers never ignite fuel or flash unconfirmed spotting.",
   "fire_source_revision": "f1f458a160c789bbf02466de8ba626e8c5c0e3a0",
-  "snapshot_adaptation": "Source GPU/CPU/render probes copied, state-list parser and camera hold adapted to fresh TTX processes and approved fixtures. Uses completed PNG callbacks, explicit dimensions, JSON metrics and HTML comparison reports. No game phases, team shortcuts, Mario or live LLM/server path."
+  "snapshot_adaptation": "Source GPU/CPU/render probes copied, state-list parser and camera hold adapted to fresh TTX processes and approved fixtures. Uses completed PNG callbacks, explicit dimensions, JSON metrics and HTML comparison reports. No game phases, team shortcuts, Mario or live LLM/server path.",
+  "upscaling_sha256_of_inputs": {
+    "crates/game/src/field.rs": "ff17295dc82791bd87476806be04f9d0f87ef4317a6c658804876fff24b29f11",
+    "crates/game/src/fire_view.rs": "b5627d8271ba71af9a1fa2a949288df6600c037e7939254ffcf31c2b3fe8fde9"
+  },
+  "upscaling_source_revision": "48acd1c4d660468d67f5e5e05de731ad3a5ac309",
+  "upscaling_captured": "2026-10-21",
+  "upscaling_adaptation": "Bilinear confirmed-fire coverage/intensity/arrival, deterministic domain warp and missing-neighbour arrival delay from field.rs; shared bounded lattice and feathered ground coverage from fire_view.rs. TTX plant and flame samples share the field. Physical ensemble, counters and decisions remain unchanged; uncertainty stays separate, cleared cells are masked per fragment, and raw-cell comparison remains available."
 }

@@ -17,6 +17,7 @@
 @group(2) @binding(0) var road_tex: texture_2d<f32>;
 @group(2) @binding(1) var road_samp: sampler;
 @group(2) @binding(2) var<uniform> mask_rect: vec4<f32>;
+@group(2) @binding(3) var fire_state: texture_2d<f32>;
 
 // Keep in step with `ground_mask.rs` and `terrain.wgsl`.
 const RANGE_M: f32 = 12.0;
@@ -49,6 +50,11 @@ fn fire_ramp(h: f32) -> vec3<f32> {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let dims=vec2<i32>(textureDimensions(fire_state));
+    let uv=in.world_position.xz*mask_rect.xy+vec2<f32>(0.5);
+    let cell=clamp(vec2<i32>(uv*vec2<f32>(dims)),vec2<i32>(0),dims-vec2<i32>(1));
+    // Preserve authored fuel breaks at pixel scale; interpolation is display only.
+    let cleared=u32(textureLoad(fire_state,cell,0).r+0.5)==3u;
     var col = in.color;
     // `w` fades the fractal treatment in smoothly over the glow gradient so
     // there is no seam where the CPU colour crosses the hot threshold.
@@ -161,5 +167,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let shade = scene_shade(in.world_position.xyz, nrm, in.position);
     let lit_rgb = mix(col.rgb, col.rgb * shade * 0.55, cold);
     col = vec4<f32>(apply_scene_fog(vec4<f32>(lit_rgb, col.a), in.world_position.xyz).rgb, col.a);
+    if cleared {return vec4<f32>(0.0);}
     return col;
 }

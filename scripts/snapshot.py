@@ -17,7 +17,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-KEYS = {'name', 't', 'fixture', 'at', 'dist', 'yaw', 'pitch', 'ui', 'marks', 'quality', 'bench', 'settle'}
+KEYS = {'name', 't', 'fixture', 'at', 'dist', 'yaw', 'pitch', 'ui', 'marks', 'quality', 'bench', 'settle', 'fire'}
 
 
 def parse(spec):
@@ -54,6 +54,8 @@ def parse(spec):
             raise ValueError('quality must be projector, low or high')
         if any(state[k] not in ['0', '1'] for k in ['ui', 'marks']):
             raise ValueError('ui and marks must be 0 or 1')
+        if state.get('fire', 'continuous') not in ['continuous', 'cells']:
+            raise ValueError('fire must be continuous or cells')
         at = state['at']
         if at not in ['home', 'fire'] and not at.startswith(('place:', 'task:')):
             xy = at.split(':')
@@ -72,7 +74,7 @@ def report(out, states, compare):
     for st in states:
         name = html.escape(st['name'])
         before = ''
-        if compare:
+        if compare and (compare / f'{st["name"]}.png').is_file():
             # Generated relative paths also work when the output folders move together.
             path = html.escape(os.path.relpath(compare / f'{st["name"]}.png', out), quote=True)
             before = f'<figure><figcaption>Before</figcaption><img src="{path}"></figure>'
@@ -123,7 +125,8 @@ def main():
     manifest = {'source_style': 'propagator_abm kiosk/snap.rs',
                 'scenario_sha256': hashlib.sha256(args.scenario.resolve().read_bytes()).hexdigest(), 'scenario': str(args.scenario.resolve()),
                 'seed': args.seed, 'realizations': args.realizations, 'size': args.size, 'scale': args.scale,
-                'operational_model': not args.legacy_model, 'states': [], 'argv': sys.argv[1:]}
+                'operational_model': not args.legacy_model,
+                'fire_render': os.environ.get('TTX_FIRE_RENDER', 'continuous'), 'states': [], 'argv': sys.argv[1:]}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2))
     for state in states:
         name = state['name']
@@ -142,7 +145,7 @@ def main():
                 env.pop(key)
         env.update(TTX_SNAPSHOT=str(out / f'{name}.png'), TTX_SNAPSHOT_SPEC=str(fixture_path),
                    TTX_SNAPSHOT_AT=state['at'], TTX_SNAPSHOT_UI=state['ui'], TTX_SNAPSHOT_MARKS=state['marks'],
-                   TTX_QUALITY=state.get('quality', 'projector'), TTX_SIZE=args.size, TTX_SCALE=str(args.scale),
+                   TTX_QUALITY=state.get('quality', 'projector'), TTX_FIRE_RENDER=state.get('fire', os.environ.get('TTX_FIRE_RENDER', 'continuous')), TTX_SIZE=args.size, TTX_SCALE=str(args.scale),
                    TTX_SNAPSHOT_BENCH=state.get('bench', str(args.bench)), TTX_SNAPSHOT_SETTLE=state.get('settle', '3'))
         for key, variable in [('dist', 'DISTANCE'), ('yaw', 'YAW'), ('pitch', 'PITCH')]:
             if key in state:
@@ -157,7 +160,7 @@ def main():
         text = (out / f'{name}.log').read_text()
         if result.returncode or re.search(r'ERROR|panicked|failed to process shader|Validation Error|snapshot .*failed', text) or not (out / f'{name}.png').is_file():
             raise RuntimeError(f'{name}: snapshot failed; inspect {out / (name + ".log")}')
-        manifest['states'].append({'state': state, 'fixture': fixture, 'wall_s': time.monotonic() - started})
+        manifest['states'].append({'state': state, 'fixture': fixture, 'fire_render': env['TTX_FIRE_RENDER'], 'wall_s': time.monotonic() - started})
         (out / 'manifest.json').write_text(json.dumps(manifest, indent=2))
         print(f'Snapshot OK: {out / (name + ".png")}', flush=True)
     report(out, states, args.compare.resolve() if args.compare else None)

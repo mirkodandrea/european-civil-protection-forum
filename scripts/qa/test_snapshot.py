@@ -14,7 +14,7 @@ class SnapshotSpecTests(unittest.TestCase):
         self.assertEqual(states[1]['at'], '1600:1300')
 
     def test_unknown_keys_and_invalid_numbers_are_rejected(self):
-        for text in ['unknown=1', 'dist=nan', 'yaw=inf', 'pitch=0', 't=-1', 't=0.5', 'ui=maybe', 'bench=-1', 'quality=ultra']:
+        for text in ['unknown=1', 'dist=nan', 'yaw=inf', 'pitch=0', 't=-1', 't=0.5', 'ui=maybe', 'bench=-1', 'quality=ultra', 'fire=unknown']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 harness.parse(text)
 
@@ -24,8 +24,10 @@ class SnapshotSpecTests(unittest.TestCase):
                 harness.parse(text)
 
     def test_native_place_and_task_targets_are_supported(self):
-        states = harness.parse('at=place:Pineta Primary School;at=task:12')
+        states = harness.parse('at=place:Pineta Primary School,fire=cells;at=task:12,fire=continuous')
         self.assertEqual(states[1]['at'], 'task:12')
+        self.assertEqual(states[0]['fire'], 'cells')
+        self.assertEqual(states[1]['fire'], 'continuous')
         with self.assertRaises(ValueError):
             harness.parse('at=task:bad')
 

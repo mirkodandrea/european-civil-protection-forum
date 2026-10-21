@@ -9,8 +9,9 @@ Terrain has its own PBR material: procedural dry meadow, ground colour and
 surface normals, signed-distance asphalt/tracks, kerbs and rock strata on steep
 faces. Normal textures retain the supplied visual DEM resolution independently
 of mesh detail. Roads come from the actual scenario network. Fire, burnt fuel,
-clearing, wetting and ensemble uncertainty are a separate exact-cell texture;
-uncertain cells do not ignite plants. Fire cuts are drawn on the affected graph
+clearing, wetting and ensemble uncertainty use a separate model-state texture.
+Confirmed fire is reconstructed as a continuous visual field by default; the
+uncertainty halo remains separate and does not supply confirmed ignition times. Fire cuts are drawn on the affected graph
 segments; police closures remain a separate administrative state.
 
 Foliage uses the source vertex, depth and shadow shaders: bark, leaf clumps,
@@ -18,7 +19,7 @@ roughness and diffuse transmission. Fifteen supplied pine, chestnut, scrub and
 olive varieties are planted deterministically, with several plants per forest
 cell and visual thinning along roads. The GPU reads one state/ignition-time
 texel per plant. Meshes remain immutable when fire advances or rolls back.
-The crown chars and burns away over 240 seconds from model arrival; the same
+The crown chars and burns away over 240 seconds from its reconstructed visual arrival; the same
 trunk stays in place and the matching fine branches/debris emerge. Fuel removal
 hides both layers, including their shadows. This visual crown duration does not
 change the model's fuel residence time or suppression effectiveness.
@@ -141,12 +142,37 @@ CPU-evaluated puff fog and ground glow/ash treatment. The source inputs' hashes
 and fire revision are recorded in `pbr-provenance.json`.
 
 The TTX keeps ensemble intensity/probability, its existing flaming lifetime and
-wind tilt. Ground heat/coverage is bilinear for shading but clipped to confirmed
-burning/burnt parent cells; a halo or fuel break gets no glow overlay. Decorative
+wind tilt. The optional cell display clips ground heat to confirmed burning/burnt
+parent cells. The default continuous display reconstructs the perimeter as
+described below; uncertainty never contributes confirmed coverage and fuel breaks
+remain excluded from the glow overlay. Decorative
 embers do not ignite fuel or draw unconfirmed landing flashes. These visual
 particles never alter `World`. Smoke/embers clear when time or turn rolls back;
 dynamic meshes bypass stale frustum bounds. Additive flame RGB is multiplied by
 its coverage (alpha zero) to prevent luminous ribbon triangles and dark rims.
+
+## Continuous fire display
+
+The game's `field.rs` and shared fire-ground lattice are adapted to TTX snapshots.
+Bilinear coverage, arrival and intensity are sampled through deterministic domain
+warping (up to ±7 m per axis on the synthetic valley's 20 m grid). Missing reached
+neighbours delay visual arrival by up to 90 seconds. These are presentation rules,
+not a new spread model or a calibration of physical arrival times.
+
+A shared-vertex mesh feathers the perimeter between coverage 0.42 and 0.62.
+Nominal visual spacing is 5 m in high, 10 m in projector and 20 m in low on that
+20 m grid; adaptive subdivision limits large extents. Only the confirmed-fire
+bounds and their margin are meshed. Flames and individual plants sample the same
+field, avoiding simultaneous whole-cell canopy changes. Cleared cells are masked
+both at sample positions and per fragment. The qualitative uncertainty halo is
+smoothed separately; it never supplies confirmed-fire coverage or arrival times.
+
+Press `V` to compare the continuous display with the original cells, or launch
+with `TTX_FIRE_RENDER=cells` (`continuous` is the default). The HUD identifies the
+display and physical grid resolution. The renderer does not change snapshots,
+hectares, building damage, probabilities, cutoffs, routes or agent decisions. The
+browser map continues to show the authoritative operational raster. Mode changes
+and rollback refresh the visual caches.
 
 ## Batch snapshots and source rendering probes
 
@@ -177,6 +203,7 @@ States are separated by `;`, assignments by `,`. Keys:
 | `yaw`, `pitch` | Degrees; pitch magnitude 3–89, unlike legacy `TTX_CAM` radians |
 | `ui`, `marks` | `0` hides, `1` shows |
 | `quality` | `projector`, `low` or `high` |
+| `fire` | `continuous` or `cells`; per-state override of `TTX_FIRE_RENDER` |
 | `settle` | Virtual settling seconds, default 3 |
 | `bench` | Real seconds to benchmark after settling, default 0 |
 
@@ -202,3 +229,13 @@ Pro/macOS 26.6.2. Inspected fire, close fire, overhead UI and low-profile rollba
 no shader/GPU errors. The one-second 1600×1000 fire sample is a harness smoke
 test, not a projector performance qualification. Local artifacts:
 `runs/flames-review/` and `runs/snapshot-port-review/`.
+
+
+Continuous-display verification (2026-10-21): **209 Rust workspace tests** and
+four Python parser tests passed; the release application built successfully.
+Identical-seed/camera cell and continuous captures were inspected close up and
+overhead, plus a continuous low-profile rollback. Both displays reported 9.2 ha
+burned and 23 damaged buildings. No shader/GPU errors were logged. Local review:
+`runs/upscale-final/report.html`, compared with `runs/upscale-cells/`. The
+one-second high-profile benchmark is a harness smoke test, not a performance
+improvement claim or projector qualification.

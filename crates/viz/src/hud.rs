@@ -29,6 +29,7 @@ pub fn draw(
     port: Res<ServerPort>,
     grid: Res<ShowGrid>,
     quality: Res<crate::quality::Quality>,
+    fire_style: Res<crate::fire_field::FirePresentation>,
     cam: Query<(&Camera, &GlobalTransform)>,
     mut ip: Local<Option<String>>,
 ) {
@@ -38,6 +39,15 @@ pub fn draw(
     let ip = ip.get_or_insert_with(local_ip).clone();
     let s = &scn.0;
     let ctx = ctx.ctx_mut();
+    let fire_caption = format!(
+        "Fire display: {} · model {:.0} m · V toggles",
+        if fire_style.continuous {
+            "interpolated"
+        } else {
+            "cells"
+        },
+        s.grid.cellsize
+    );
     let panel = egui::Frame::none()
         .fill(Color32::from_rgba_unmultiplied(12, 20, 28, 245))
         .rounding(8.0)
@@ -101,6 +111,11 @@ pub fn draw(
                         .size(13.0),
                     );
                 }
+                ui.label(
+                    RichText::new(&fire_caption)
+                        .color(Color32::from_rgb(195, 205, 215))
+                        .size(12.0),
+                );
                 if let Some(st) = &snap.stats {
                     ui.add_space(4.0);
                     for (k, v) in [

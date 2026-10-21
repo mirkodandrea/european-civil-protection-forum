@@ -52,7 +52,12 @@ impl Plugin for FlamesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FireShaderPlugin)
             .add_systems(Startup, setup.after(crate::terrain::setup))
-            .add_systems(Update, update.after(crate::frame::update));
+            .add_systems(
+                Update,
+                update
+                    .after(crate::frame::update)
+                    .after(crate::fire_field::toggle),
+            );
     }
 }
 
@@ -78,7 +83,7 @@ struct Spark {
 #[derive(Resource)]
 pub struct FlameView {
     ground: Handle<Mesh>,
-    ground_key: Option<(u64, i64)>,
+    ground_key: Option<(u64, i64, bool)>,
     last_clock: Option<(i64, u32)>,
     flames: Handle<Mesh>,
     smoke: Handle<Mesh>,
@@ -124,6 +129,7 @@ fn setup(
             mesh: ground.clone(),
             material: ground_mats.add(FireGroundMaterial {
                 road_mask: Some(terrain.road_mask.clone()),
+                fire_state: terrain.state.clone(),
                 mask_rect: Vec4::new(
                     1. / scn.0.grid.width_m(),
                     1. / scn.0.grid.height_m(),
@@ -374,6 +380,7 @@ pub fn tongue_for(fli: f32, p: f32, flaming: f32, halo: bool, cutoff: f32) -> To
 fn update(
     snap: Res<Snapshot>,
     quality: Res<crate::quality::Quality>,
+    style: Res<crate::fire_field::FirePresentation>,
     scn: Res<Scn>,
     view: Option<ResMut<FlameView>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -401,13 +408,24 @@ fn update(
         view.ground_key = None;
     }
     view.last_clock = Some((snap.time_s, snap.turn));
-    if view.ground_key != Some((snap.generation, snap.time_s)) {
-        meshes.insert(&view.ground, ground_overlay(s, &snap));
-        view.ground_key = Some((snap.generation, snap.time_s));
+    if view.ground_key != Some((snap.generation, snap.time_s, style.continuous)) {
+        meshes.insert(
+            &view.ground,
+            if style.continuous {
+                ground_overlay_continuous(s, &snap, &quality)
+            } else {
+                ground_overlay(s, &snap)
+            },
+        );
+        view.ground_key = Some((snap.generation, snap.time_s, style.continuous));
     }
     let t = time.elapsed_seconds();
     let dt = time.delta_seconds().min(0.1);
     let now = snap.time_s as f32;
+    let field = crate::fire_field::FireField {
+        snap: &snap,
+        grid: s.grid,
+    };
     let cutoff = snap.ensemble.map(|e| e.cutoff).unwrap_or(0.5);
     let w = snap.weather.unwrap_or(s.weather);
     let wind_ms = w.wind_speed_kmh as f32 / 3.6;
@@ -464,7 +482,6 @@ fn update(
             }
             continue;
         }
-        let base = tongue_for(fli, p, flaming, halo, cutoff);
         let count = if halo {
             1
         } else {
@@ -485,6 +502,19 @@ fn update(
                 centre[0] + (h1 - 0.5) * 2.0 * half_cell,
                 centre[1] + (h2 - 0.5) * 2.0 * half_cell,
             ];
+            let base = if style.continuous && !halo {
+                let sample = field.sample(pos);
+                let Some(arrival) = sample.arrival else {
+                    continue;
+                };
+                let local_flaming = (1. - (now - arrival) / FLAMING_S).clamp(0., 1.);
+                if sample.coverage < 0.5 || arrival > now || local_flaming < 0.03 {
+                    continue;
+                }
+                tongue_for(sample.intensity, p, local_flaming, false, cutoff)
+            } else {
+                tongue_for(fli, p, flaming, halo, cutoff)
+            };
             let ground = Vec3::new(
                 pos[0] - s.grid.width_m() * 0.5,
                 height_at(s, pos) * EXAGGERATION - 0.5,
@@ -905,4 +935,146 @@ fn ground_colour(s: &scenario::Scenario, snap: &Snapshot, p: Pos) -> [f32; 4] {
         0.060 + 0.06 * heat,
         cover * 0.95,
     ]
+}
+
+/// Source shared-vertex lattice over the touched region, including the one-cell
+/// feather margin. Domain-warped samples reconstruct the display perimeter;
+/// they never enter the model or the operational web raster.
+fn ground_overlay_continuous(
+    s: &scenario::Scenario,
+    snap: &Snapshot,
+    quality: &crate::quality::Quality,
+) -> Mesh {
+    let g = s.grid;
+    let (mut r0, mut c0, mut r1, mut c1) = (usize::MAX, usize::MAX, 0, 0);
+    for (i, &code) in snap.cells.iter().enumerate() {
+        if matches!(code, 1 | 2) {
+            let (r, c) = (i / g.cols, i % g.cols);
+            r0 = r0.min(r);
+            c0 = c0.min(c);
+            r1 = r1.max(r);
+            c1 = c1.max(c);
+        }
+    }
+    if r0 == usize::MAX {
+        return empty_mesh();
+    }
+    r0 = r0.saturating_sub(1);
+    c0 = c0.saturating_sub(1);
+    r1 = (r1 + 2).min(g.rows);
+    c1 = (c1 + 2).min(g.cols);
+    let span = (r1 - r0).max(c1 - c0);
+    let requested = match quality.name {
+        "low" => 1,
+        "high" => 4,
+        _ => 2,
+    };
+    let subdiv = requested.min((560 / span.max(1)).max(1));
+    let step = g.cellsize / subdiv as f32;
+    let (nx, ny) = ((c1 - c0) * subdiv + 1, (r1 - r0) * subdiv + 1);
+    let field = crate::fire_field::FireField { snap, grid: g };
+    let mut positions = Vec::with_capacity(nx * ny);
+    let mut colours = Vec::with_capacity(nx * ny);
+    for y in 0..ny {
+        for x in 0..nx {
+            let p = [
+                c0 as f32 * g.cellsize + x as f32 * step,
+                g.height_m() - r0 as f32 * g.cellsize - y as f32 * step,
+            ];
+            let sample = field.sample(p);
+            let cover = ((sample.coverage - 0.42) / 0.20).clamp(0., 1.);
+            let arrival = sample.arrival.unwrap_or(snap.time_s as f32);
+            let age = (snap.time_s as f32 - arrival).max(0.);
+            let glow = if arrival <= snap.time_s as f32 {
+                (1. - age / 1100.).clamp(0., 1.).powi(2)
+            } else {
+                0.
+            };
+            let embers = (1. - age / 4400.).clamp(0., 1.);
+            let ash = 0.72
+                + 0.85
+                    * (0.6 * crate::fire_field::noise(p[0] / 23., p[1] / 23., 0x77)
+                        + 0.4 * crate::fire_field::noise(p[0] / 8., p[1] / 8., 0x88));
+            let col = [
+                (0.085 + 0.10 * embers) * ash + 2.4 * glow,
+                0.065 * ash + 0.70 * glow * glow,
+                0.060 * ash + 0.06 * glow,
+                cover * 0.95,
+            ];
+            let lift = 0.5 + if col[0] > 1. { 1.2 * col[3] } else { 0. };
+            positions.push(to_bevy(s, p, lift).to_array());
+            colours.push(col);
+        }
+    }
+    let mut remap = vec![u32::MAX; nx * ny];
+    let mut out = QuadBuilder::default();
+    for y in 0..ny - 1 {
+        for x in 0..nx - 1 {
+            let q = [
+                y * nx + x,
+                y * nx + x + 1,
+                (y + 1) * nx + x + 1,
+                (y + 1) * nx + x,
+            ];
+            if q.iter().all(|&i| colours[i][3] < 0.02) {
+                continue;
+            }
+            let mut indices = [0; 4];
+            for (slot, &i) in indices.iter_mut().zip(&q) {
+                if remap[i] == u32::MAX {
+                    remap[i] = out.positions.len() as u32;
+                    out.positions.push(positions[i]);
+                    out.colors.push(colours[i]);
+                    out.normals.push([0., 1., 0.]);
+                    out.uvs.push([0.5, 0.5]);
+                }
+                *slot = remap[i];
+            }
+            out.indices.extend([
+                indices[0], indices[3], indices[2], indices[0], indices[2], indices[1],
+            ]);
+        }
+    }
+    out.finish()
+}
+
+#[cfg(test)]
+mod upscale_tests {
+    use super::*;
+    #[test]
+    fn continuous_lattice_shares_vertices_and_rebuilds_from_the_snapshot() {
+        let s = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+        let mut snap = Snapshot {
+            cells: vec![0; s.grid.len()],
+            arrival: vec![i32::MIN; s.grid.len()],
+            ..default()
+        };
+        for r in 49..52 {
+            for c in 49..52 {
+                let i = r * s.grid.cols + c;
+                snap.cells[i] = 1;
+                snap.arrival[i] = 0;
+            }
+        }
+        let mut quality = crate::quality::Quality::from_env();
+        quality.name = "high";
+        let m = ground_overlay_continuous(&s, &snap, &quality);
+        let count = m.count_vertices();
+        assert!(count > 0);
+        let triangles = m.indices().unwrap().len() / 3;
+        assert!(
+            count < triangles * 2,
+            "vertices should be shared between neighbouring quads"
+        );
+        snap.cells.fill(5); // same arrival values are uncertainty, never confirmed fire
+        assert_eq!(
+            ground_overlay_continuous(&s, &snap, &quality).count_vertices(),
+            0
+        );
+        snap.cells.fill(3);
+        assert_eq!(
+            ground_overlay_continuous(&s, &snap, &quality).count_vertices(),
+            0
+        );
+    }
 }

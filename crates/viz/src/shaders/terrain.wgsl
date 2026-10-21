@@ -237,6 +237,22 @@ fn terrain_albedo(base: vec4<f32>, p: vec3<f32>, mask_s: vec4<f32>, meadow: f32,
     return vec4<f32>(rgb, base.a);
 }
 
+// The uncertainty halo is a separate qualitative coverage layer. Smooth
+// its display too, without treating it as confirmed fire or a new probability.
+fn halo_coverage(uv:vec2<f32>)->f32 {
+    let dims=vec2<i32>(textureDimensions(fire_tex));
+    let q=uv*vec2<f32>(dims)-vec2<f32>(0.5);
+    let base=vec2<i32>(floor(q));let f=fract(q);
+    var coverage=0.0;
+    for (var y=0;y<2;y++) {for (var x=0;x<2;x++) {
+        let cell=clamp(base+vec2<i32>(x,y),vec2<i32>(0),dims-vec2<i32>(1));
+        let code=u32(textureLoad(fire_tex,cell,0).r+0.5);
+        let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,y==1);
+        coverage+=select(0.0,w,code==5u);
+    }}
+    return coverage;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     let p = in.world_position.xyz;
@@ -271,14 +287,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let mode=u32(state.x+0.5);
     let age=max(terrain.tactical.y-state.y,0.0);
     let scar=vec3<f32>(0.018,0.016,0.014)*(0.8+0.5*value_noise(p.xz*0.7));
-    if mode==1u || mode==2u {
+    if (mode==1u || mode==2u) && terrain.tactical.z<0.5 {
         pbr.material.base_color=vec4<f32>(mix(pbr.material.base_color.rgb,scar,select(1.0,smoothstep(0.0,240.0,age),mode==1u)),1.0);
     } else if mode==3u {
         pbr.material.base_color=vec4<f32>(0.22,0.15,0.085,1.0);
     } else if mode==4u {
         pbr.material.base_color=vec4<f32>(pbr.material.base_color.rgb*vec3<f32>(0.65,0.80,1.05),1.0);
-    } else if mode==5u {
+    } else if mode==5u && terrain.tactical.z<0.5 {
         pbr.material.base_color=vec4<f32>(mix(pbr.material.base_color.rgb,vec3<f32>(0.55,0.28,0.04),0.3),1.0);
+    }
+    if terrain.tactical.z>0.5 && mode!=3u && mode!=4u {
+        let halo=halo_coverage(mask_uv);
+        pbr.material.base_color=vec4<f32>(mix(pbr.material.base_color.rgb,vec3<f32>(0.55,0.28,0.04),0.3*halo),1.0);
     }
     pbr.material.perceptual_roughness = ROUGHNESS;
     pbr.material.metallic = 0.0;

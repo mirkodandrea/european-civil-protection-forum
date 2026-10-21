@@ -21,7 +21,7 @@ const CHUNK: usize = 25;
 #[derive(Resource)]
 pub struct TerrainHandles {
     material: Handle<TerrainMaterial>,
-    state: Handle<Image>,
+    pub(crate) state: Handle<Image>,
     pub road_mask: Handle<Image>,
 }
 #[derive(Component)]
@@ -30,6 +30,7 @@ pub struct VegChunk {
     material: Handle<FoliageMaterial>,
     /// One model cell per plant; vertices and indices remain immutable.
     cells: Vec<usize>,
+    points: Vec<scenario::Pos>,
     centre: Vec3,
 }
 
@@ -145,7 +146,8 @@ pub fn setup(
     for cr in 0..g.rows.div_ceil(CHUNK) {
         for cc in 0..chunks_per_row {
             let (mut p, mut n, mut col, mut ix) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-            let (mut plant_ids, mut plant_cells) = (Vec::new(), Vec::new());
+            let (mut plant_ids, mut plant_cells, mut plant_points) =
+                (Vec::new(), Vec::new(), Vec::new());
             for row in cr * CHUNK..((cr + 1) * CHUNK).min(g.rows) {
                 for c in cc * CHUNK..((cc + 1) * CHUNK).min(g.cols) {
                     let cell = Cell { row, col: c };
@@ -186,6 +188,7 @@ pub fn setup(
                         let variety = plant(name, rng.gen::<f32>());
                         let ci = plant_cells.len() as u32;
                         plant_cells.push(g.index(cell));
+                        plant_points.push(at);
                         for (part, m) in [(0, &variety.live), (2, &variety.remains)] {
                             let off = p.len() as u32;
                             for (k, v) in m.positions.iter().enumerate() {
@@ -234,6 +237,7 @@ pub fn setup(
                     state,
                     material,
                     cells: plant_cells,
+                    points: plant_points,
                     centre: to_bevy(
                         s,
                         [
@@ -258,18 +262,21 @@ pub fn setup(
 /// snapshot, with no persistent burn latch or randomised replacement geometry.
 pub fn update(
     frame: Res<Frame>,
+    style: Res<crate::fire_field::FirePresentation>,
+    scn: Res<Scn>,
     snap: Res<crate::Snapshot>,
     h: Option<Res<TerrainHandles>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain: ResMut<Assets<TerrainMaterial>>,
     mut foliage: ResMut<Assets<FoliageMaterial>>,
     chunks: Query<&VegChunk>,
-    mut seen: Local<Option<(u64, i64)>>,
+    mut seen: Local<Option<(u64, i64, bool)>>,
 ) {
     let Some(h) = h else { return };
     let now = frame.display_s as f32;
     if let Some(m) = terrain.get_mut(&h.material) {
         m.set_time(now);
+        m.set_continuous_fire(style.continuous);
     }
     if frame.cells.is_empty() {
         return;
@@ -279,10 +286,10 @@ pub fn update(
             m.fire = Vec4::new(0., now, 240., 0.);
         }
     }
-    if *seen == Some((snap.generation, frame.display_s)) {
+    if *seen == Some((snap.generation, frame.display_s, style.continuous)) {
         return;
     }
-    *seen = Some((snap.generation, frame.display_s));
+    *seen = Some((snap.generation, frame.display_s, style.continuous));
     if let Some(img) = images.get_mut(&h.state) {
         for (i, code) in frame.cells.iter().enumerate() {
             let arrival = snap
@@ -306,7 +313,24 @@ pub fn update(
                     .copied()
                     .filter(|a| *a != i32::MIN)
                     .unwrap_or(snap.time_s as i32) as f32;
-                let code = plant_state(frame.cells[i], now - arrival);
+                let (code, arrival) = if style.continuous {
+                    let field = crate::fire_field::FireField {
+                        snap: &snap,
+                        grid: scn.0.grid,
+                    };
+                    let p = chunk.points[j];
+                    let sample = field.sample(p);
+                    if frame.cells[i] == 3 {
+                        (4, arrival)
+                    } else if sample.coverage > 0.5 && sample.arrival.is_some_and(|a| a <= now) {
+                        let a = sample.arrival.unwrap();
+                        (plant_state(1, now - a), a)
+                    } else {
+                        (0, arrival)
+                    }
+                } else {
+                    (plant_state(frame.cells[i], now - arrival), arrival)
+                };
                 put_state(&mut img.data, j, code as f32, arrival);
             }
         }

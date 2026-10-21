@@ -79,3 +79,8 @@ devtunnel host -p 8080                     # private tunnel for phone play (play
   Angles in this batch format are degrees; legacy `TTX_CAM` stays radians.
   `--bench 3` freezes animation after settling and reports wall/CPU/render/GPU samples.
   Read `docs/graphics.md`; hidden-window FPS is not an interactive projector guarantee.
+
+- Fire display defaults to the continuous, read-only field; `V` / `TTX_FIRE_RENDER=cells`
+  selects exact-cell presentation. Snapshot states accept `fire=continuous|cells`.
+  Physical decisions stay on the model grid; preserve cleared-cell masking and
+  keep ensemble uncertainty separate from confirmed-fire reconstruction.

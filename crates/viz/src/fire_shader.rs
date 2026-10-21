@@ -103,6 +103,9 @@ pub struct FireGroundMaterial {
     pub road_mask: Option<Handle<Image>>,
     #[uniform(2)]
     pub mask_rect: Vec4,
+    /// TTX authoritative state: a cleared cell stays open even at a smoothed edge.
+    #[texture(3, sample_type = "float", filterable = false)]
+    pub fire_state: Handle<Image>,
 }
 
 impl Material for FireGroundMaterial {

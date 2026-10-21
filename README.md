@@ -85,6 +85,9 @@ facades, and imported open spaces retain their original visual category. The
 browser retains its 2D operational map. `sh scripts/qa/pbr.sh` captures the
 native renderer invisibly and checks for shader errors before visual review.
 The game flame ribbons, smoke/ember shaders and ground glow are integrated too.
+Its continuous fire-field reconstruction now smooths the perimeter and individual
+plant ignition; `V` compares with the original cells. The HUD shows the physical
+model resolution; this visual upscaling does not change simulation results.
 `python3 scripts/snapshot.py --out runs/new --spec 'name=fire,t=30,at=fire,ui=0,marks=0'`
 prepares a batch of real exercise states, saves PNGs and an HTML review report;
 `--bench 3` adds CPU/render/GPU measurements. See the graphics guide for keys.
