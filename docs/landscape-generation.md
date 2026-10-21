@@ -43,12 +43,12 @@ Il generatore adatta il DEM sintetico a 20 m ai tracciati: un problema vincolato
 di sterro/riporto limita la pendenza, distribuendo le correzioni sulle banchine
 con regolarizzazione spaziale. Non è una correzione nascosta del renderer: il
 DEM risultante è quello fisico salvato. Il manifest registra correzione massima,
-RMS e residuo numerico (nel territorio fornito: circa 57 m massimi, 4,74 m RMS).
+RMS e residuo numerico (nel territorio fornito: circa 57 m massimi, 4,73 m RMS).
 Sono movimenti di terreno sintetici, non lavori dimensionati su dati reali.
 
 Raccordi e incroci condividono realmente i vertici; i percorsi sono verificati
 sul grafo Rust usato dalla simulazione. Il controllo finale rifiuta pendenze
-carrabili bilineari superiori al 18%; il risultato fornito arriva al 15,35%.
+carrabili bilineari superiori al 18%; il risultato fornito arriva al 15,77%.
 È una soglia della ricetta, non un criterio progettuale validato per mezzi reali.
 
 ## Tool trasferiti e provenienza
@@ -93,6 +93,6 @@ storica o il video dimostrativo valgano per il nuovo scenario.
 Verifica del 2026-10-21: rigenerazione identica byte per byte, 24 corse accoppiate
 sui semi 1–3 senza comandi rifiutati; cinque catture GPU invisibili ispezionate
 (panoramica, abitato, crinale, zenitale con UI, incendio a 30 minuti). Output in
-`runs/valverde-delivery-review/` e `runs/valverde-delivery-lab/`.
+`runs/valverde-final/` e `runs/valverde-final-lab/`.
 
 ![Panoramica della nuova Valverde](screenshots/valverde_factory.png)
