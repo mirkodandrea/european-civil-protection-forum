@@ -12,7 +12,7 @@
 //! - **Off**, every call fails fast so callers fall back to manual flow.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -86,11 +86,31 @@ pub enum Backend {
 #[derive(Clone)]
 pub struct Llm {
     backend: Backend,
+    #[cfg(target_arch = "wasm32")]
+    runtime: Option<Arc<std::sync::RwLock<Option<Llm>>>>,
     cassette: Option<Arc<cassette::Cassette>>,
     translation_model: Option<String>,
 }
 
 impl Llm {
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_runtime_config(mut self) -> Self {
+        self.runtime = Some(Arc::new(std::sync::RwLock::new(None)));
+        self
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn configure_runtime(&self, configured: Llm) {
+        if let Some(runtime) = &self.runtime {
+            *runtime.write().unwrap() = Some(configured);
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn configured(&self) -> Option<Llm> {
+        self.runtime
+            .as_ref()
+            .and_then(|r| r.read().unwrap().clone())
+    }
+
     /// OpenRouter if `OPENROUTER_API_KEY` is set, otherwise off.
     pub fn from_env() -> Llm {
         match std::env::var("OPENROUTER_API_KEY") {
@@ -137,6 +157,10 @@ impl Llm {
     }
 
     pub fn model_for(&self, task: &str) -> String {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() {
+            return configured.model_for(task);
+        }
         if task == "translate" {
             self.translation_model
                 .clone()
@@ -160,10 +184,10 @@ impl Llm {
     }
 
     pub fn openrouter(api_key: String, model: String, base_url: String) -> Llm {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(90))
-            .build()
-            .expect("http client");
+        let builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(Duration::from_secs(90));
+        let client = builder.build().expect("http client");
         let providers = DEFAULT_PROVIDERS.iter().map(|p| p.to_string()).collect();
         Llm {
             backend: Backend::OpenRouter {
@@ -173,6 +197,8 @@ impl Llm {
                 base_url,
                 providers,
             },
+            #[cfg(target_arch = "wasm32")]
+            runtime: None,
             cassette: None,
             translation_model: None,
         }
@@ -189,6 +215,8 @@ impl Llm {
     pub fn mock(f: impl Fn(&str, &str, &str) -> Result<String> + Send + Sync + 'static) -> Llm {
         Llm {
             backend: Backend::Mock(Arc::new(f)),
+            #[cfg(target_arch = "wasm32")]
+            runtime: None,
             cassette: None,
             translation_model: None,
         }
@@ -197,17 +225,27 @@ impl Llm {
     pub fn off() -> Llm {
         Llm {
             backend: Backend::Off,
+            #[cfg(target_arch = "wasm32")]
+            runtime: None,
             cassette: None,
             translation_model: None,
         }
     }
 
     pub fn is_available(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() {
+            return configured.is_available();
+        }
         !matches!(self.backend, Backend::Off)
             || self.cassette.as_ref().is_some_and(|c| !c.is_empty())
     }
 
     pub fn model(&self) -> String {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() {
+            return configured.model();
+        }
         match &self.backend {
             Backend::OpenRouter { model, .. } => model.clone(),
             Backend::Mock(_) => "mock".into(),
@@ -235,6 +273,10 @@ impl Llm {
         messages: &[ChatMessage],
         json_mode: bool,
     ) -> Result<String> {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() {
+            return Box::pin(configured.complete_chat(task, system, messages, json_mode)).await;
+        }
         let mut routed = self.clone();
         if let Backend::OpenRouter {
             model, providers, ..
@@ -347,6 +389,7 @@ impl Llm {
                 }
                 let resp = client
                     .post(format!("{base_url}/chat/completions"))
+                    .timeout(Duration::from_secs(90))
                     .bearer_auth(api_key)
                     .header("X-Title", "PPRD East TTX")
                     .json(&body)

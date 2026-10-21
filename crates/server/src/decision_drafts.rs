@@ -1,6 +1,10 @@
 //! Private interpretation before a player sends a decision into a conversation.
+
 use crate::access::Principal;
+#[cfg(target_arch = "wasm32")]
+use crate::browser::Json;
 use crate::{bad, ApiResult, AppState};
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::serde::json::Json;
 use serde::Deserialize;
 use serde_json::json;
@@ -15,7 +19,10 @@ pub(crate) struct PrepareBody {
     revision: Option<u64>,
 }
 
-#[rocket::post("/api/player/<role>/draft", data = "<body>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/draft", data = "<body>")
+)]
 pub(crate) async fn prepare(
     _principal: Principal,
     state: AppState,
@@ -126,7 +133,10 @@ pub(crate) struct SubmitBody {
     manual: bool,
 }
 
-#[rocket::post("/api/player/<role>/draft/submit", data = "<body>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/draft/submit", data = "<body>")
+)]
 pub(crate) async fn submit(
     _principal: Principal,
     state: AppState,

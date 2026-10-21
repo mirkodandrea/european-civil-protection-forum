@@ -9,6 +9,9 @@ pub fn details(title: impl Into<AttrValue>, value: &Value) -> Html {
     html! {<details><summary>{title.into()}</summary><pre>{pretty(value)}</pre></details>}
 }
 pub fn participant_links(links: &Value, roles: &[Value]) -> Html {
+    if cfg!(feature = "standalone") {
+        return html! {<p>{"Tutti i ruoli sono disponibili nelle schede di questa app. Ogni apertura del file avvia un’esercitazione indipendente."}</p>};
+    }
     html! {<div id="links">{for list(&links["players"]).iter().chain(list(&links["evaluators"])).map(|p|{
         let id=text(if p["role"].is_null(){&p["id"]}else{&p["role"]});
         let name=roles.iter().find(|r|r["id"]==id).map(|r|text(&r["name"])).unwrap_or(id);

@@ -1,4 +1,7 @@
-use futures::{future::AbortHandle, StreamExt};
+use futures::future::AbortHandle;
+#[cfg(not(feature = "standalone"))]
+use futures::StreamExt;
+#[cfg(not(feature = "standalone"))]
 use gloo_net::{http::Request, websocket::futures::WebSocket};
 use gloo_timers::future::TimeoutFuture;
 use serde_json::Value;
@@ -62,6 +65,7 @@ pub fn save_token(key: &str) {
     url.search_params().set("token", key);
     let _ = window().location().set_href(&url.href());
 }
+#[cfg(not(feature = "standalone"))]
 pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
     let req = if let Some(body) = body {
         Request::post(path)
@@ -91,6 +95,7 @@ pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Val
             .into())
     }
 }
+#[cfg(not(feature = "standalone"))]
 pub fn live(token: String, callback: yew::Callback<()>) -> AbortHandle {
     let (handle, registration) = AbortHandle::new_pair();
     wasm_bindgen_futures::spawn_local(async move {
@@ -171,4 +176,34 @@ pub fn status(s: &str) -> &str {
         "rejected" => "Rifiutata",
         _ => s,
     }
+}
+
+#[cfg(feature = "standalone")]
+pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
+    let state = crate::standalone::runtime()?;
+    server::browser::request(state, token, path, body).await
+}
+#[cfg(feature = "standalone")]
+pub fn live(_token: String, callback: yew::Callback<()>) -> AbortHandle {
+    let (handle, registration) = AbortHandle::new_pair();
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = futures::future::Abortable::new(
+            async move {
+                let mut last = u64::MAX;
+                loop {
+                    if let Ok(state) = crate::standalone::runtime() {
+                        let generation = state.lock().generation;
+                        if generation != last {
+                            last = generation;
+                            callback.emit(());
+                        }
+                    }
+                    TimeoutFuture::new(250).await;
+                }
+            },
+            registration,
+        )
+        .await;
+    });
+    handle
 }

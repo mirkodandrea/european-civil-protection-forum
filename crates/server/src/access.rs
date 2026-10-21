@@ -1,8 +1,12 @@
 //! Per-run capability keys. Player identities are bound to keys, never URL claims.
+#[cfg(not(target_arch = "wasm32"))]
 use crate::AppState;
 use rand::RngCore;
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::http::{Method, Status};
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::request::{FromRequest, Outcome};
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::Request;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -54,6 +58,7 @@ impl Access {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for Principal {
     type Error = ();
@@ -80,22 +85,31 @@ impl<'r> FromRequest<'r> for Principal {
         else {
             return Outcome::Error((Status::Unauthorized, ()));
         };
-        let allowed = match &principal {
+        let allowed = principal.allows(path, matches!(req.method(), Method::Get | Method::Head));
+        if !allowed {
+            return Outcome::Error((Status::Forbidden, ()));
+        }
+        Outcome::Success(principal)
+    }
+}
+
+impl Principal {
+    pub fn allows(&self, path: &str, read: bool) -> bool {
+        match self {
             Principal::Master => true,
             Principal::Evaluator { .. } => {
-                matches!(req.method(), Method::Get | Method::Head)
-                    && matches!(
-                        path,
-                        "/api/access"
-                            | "/api/static"
-                            | "/api/state"
-                            | "/api/master"
-                            | "/api/debrief"
-                            | "/api/catalogue"
-                            | "/api/evaluator"
-                            | "/api/evaluator/assessment"
-                            | "/ws"
-                    )
+                read && matches!(
+                    path,
+                    "/api/access"
+                        | "/api/static"
+                        | "/api/state"
+                        | "/api/master"
+                        | "/api/debrief"
+                        | "/api/catalogue"
+                        | "/api/evaluator"
+                        | "/api/evaluator/assessment"
+                        | "/ws"
+                )
             }
             Principal::Player { role } => {
                 let own = format!("/api/player/{role}");
@@ -107,10 +121,6 @@ impl<'r> FromRequest<'r> for Principal {
                         .iter()
                         .any(|suffix| path == format!("{own}/{suffix}"))
             }
-        };
-        if !allowed {
-            return Outcome::Error((Status::Forbidden, ()));
         }
-        Outcome::Success(principal)
     }
 }

@@ -191,8 +191,8 @@ pub struct ExecutionRecord {
 }
 
 fn wall_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
 }
@@ -524,8 +524,8 @@ impl Exercise {
             exercise_phase: self.exercise_phase,
             phase: self.phase,
             seq: self.log.len() as u64 + 1,
-            wall_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            wall_ms: web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0),
             turn: self.turn,
@@ -843,8 +843,8 @@ impl Exercise {
             inject_id,
             reply_to,
             recipients,
-            wall_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            wall_ms: web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0),
             id,

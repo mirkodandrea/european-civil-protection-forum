@@ -28,6 +28,15 @@ Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agenti
 
 What happens in the video, and how to play or re-record it: [docs/demo.md](docs/demo.md).
 
+## Standalone WebAssembly
+
+`./scripts/build_standalone.sh` builds **`web/standalone/ttx.html`**, one
+self-contained HTML app with the real simulation, EXCON and all player views.
+It runs directly in the browser, offline, without a backend; OpenRouter keys
+and models can be configured in the app for direct AI requests. The simulation
+panel uses the 2D operational map. Each opening has its own in-memory exercise.
+See [standalone build, usage and verification](docs/standalone-web.md).
+
 ## Quick start
 
 ```bash

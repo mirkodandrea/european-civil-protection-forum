@@ -6,6 +6,7 @@ license.workspace = true
 description = "HTTP + WebSocket server for the EXCON and player UIs, and the LLM orchestration of the turn loop"
 
 [dependencies]
+web-time = "1"
 scenario.workspace = true
 sim.workspace = true
 fire.workspace = true
@@ -14,10 +15,17 @@ llm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 rand.workspace = true
 futures = "0.3"
+serde_urlencoded = "0.7"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
 rocket = { version = "0.5.1", features = ["json"] }
 rocket_ws = "0.1.1"
-serde_urlencoded = "0.7"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
+getrandom = { version = "0.2", features = ["js"] }

@@ -8,24 +8,41 @@
 //!
 //! See `docs/api.md` for the endpoint reference.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use access::{Access, Principal};
 use exercise::{Decision, Exercise, ProposalStatus};
+#[cfg(not(target_arch = "wasm32"))]
 use futures::{SinkExt, StreamExt};
 use llm::Llm;
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::http::Status;
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::response::{self, Responder};
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::serde::json::Json;
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::{Build, Request, Rocket};
+#[cfg(not(target_arch = "wasm32"))]
 use rocket_ws::Message as WsMessage;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sim::Command;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::watch;
 
+#[cfg(target_arch = "wasm32")]
+pub mod browser;
+#[cfg(target_arch = "wasm32")]
+mod browser_runtime;
+#[cfg(target_arch = "wasm32")]
+use browser::{Json, Status};
+#[cfg(target_arch = "wasm32")]
+use browser_runtime as tokio;
 pub mod access;
 mod assessment;
 mod decision_drafts;
@@ -37,6 +54,7 @@ pub struct AppState {
     pub ex: Arc<Mutex<Exercise>>,
     pub llm: Llm,
     pub access: Arc<Access>,
+    #[cfg(not(target_arch = "wasm32"))]
     generation: watch::Receiver<u64>,
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
@@ -51,6 +69,7 @@ impl AppState {
 
 /// Build the Rocket application. Spawns the generation watcher, so call it
 /// inside a Tokio runtime.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn router(
     ex: Arc<Mutex<Exercise>>,
     llm: Llm,
@@ -60,6 +79,7 @@ pub fn router(
     router_with_access(ex, llm, web_dir, access)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn router_with_access(
     ex: Arc<Mutex<Exercise>>,
     llm: Llm,
@@ -152,6 +172,7 @@ pub fn router_with_access(
 }
 
 /// Serve until the process exits.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn serve(
     ex: Arc<Mutex<Exercise>>,
     llm: Llm,
@@ -180,6 +201,7 @@ pub async fn serve(
 
 pub struct ApiError(Status, String);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'r> Responder<'r, 'static> for ApiError {
     fn respond_to(self, request: &'r Request<'_>) -> response::Result<'static> {
         (self.0, Json(json!({"error": self.1}))).respond_to(request)
@@ -187,6 +209,7 @@ impl<'r> Responder<'r, 'static> for ApiError {
 }
 
 // Guard/data failures retain the JSON error envelope used by browser clients.
+#[cfg(not(target_arch = "wasm32"))]
 #[rocket::catch(default)]
 async fn api_catcher(mut status: Status, request: &Request<'_>) -> (Status, Json<Value>) {
     // Preserve authorization errors for unsupported methods on protected URLs.
@@ -205,11 +228,13 @@ async fn api_catcher(mut status: Status, request: &Request<'_>) -> (Status, Json
     (status, Json(json!({"error": message})))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[rocket::get("/api/health")]
 fn health() -> Json<Value> {
     Json(json!({"ok": true}))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[rocket::async_trait]
 impl<'r> rocket::request::FromRequest<'r> for AppState {
     type Error = ();
@@ -224,6 +249,7 @@ impl<'r> rocket::request::FromRequest<'r> for AppState {
 /// Decode API filters without coupling the headless Exercise types to HTTP.
 pub(crate) struct EvidenceQuery(pub exercise::evaluation::EvidenceFilter);
 
+#[cfg(not(target_arch = "wasm32"))]
 #[rocket::async_trait]
 impl<'r> rocket::request::FromRequest<'r> for EvidenceQuery {
     type Error = ();
@@ -250,7 +276,7 @@ fn bad(msg: impl Into<String>) -> ApiError {
 
 // ---------------------------------------------------------------- reads
 
-#[rocket::get("/api/static")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/static"))]
 async fn get_static(s: AppState, principal: Principal) -> ApiResult {
     let ex = s.lock();
     if let Principal::Player { role } = principal {
@@ -261,12 +287,12 @@ async fn get_static(s: AppState, principal: Principal) -> ApiResult {
     Ok(Json(v))
 }
 
-#[rocket::get("/api/access")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/access"))]
 async fn get_access(principal: Principal) -> ApiResult {
     Ok(Json(json!(principal)))
 }
 
-#[rocket::get("/api/master/access")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(
         json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.iter().map(|(id, token)| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}&token={token}")})).collect::<Vec<_>>()}),
@@ -282,7 +308,10 @@ struct KnowledgeBody {
     #[serde(default)]
     current_perimeter: bool,
 }
-#[rocket::post("/api/master/knowledge", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/knowledge", data = "<b>")
+)]
 async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBody>) -> ApiResult {
     let Json(b) = b;
     let observation = {
@@ -319,13 +348,16 @@ async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBod
 struct ReferencesBody {
     references: Vec<exercise::DecisionEvidence>,
 }
-#[rocket::post("/api/master/references", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/references", data = "<b>")
+)]
 async fn post_references(_principal: Principal, s: AppState, b: Json<ReferencesBody>) -> ApiResult {
     let Json(b) = b;
     s.lock().set_reference_materials(b.references)?;
     Ok(Json(json!({"ok":true})))
 }
-#[rocket::get("/api/evaluator")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/evaluator"))]
 async fn get_evaluator(
     _principal: Principal,
     s: AppState,
@@ -335,11 +367,11 @@ async fn get_evaluator(
     Ok(Json(s.lock().evaluator_view(&filter)?))
 }
 
-#[rocket::get("/api/state")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/state"))]
 async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
     let ex = s.lock();
     Ok(Json(json!({
-        "wall_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
+        "wall_ms": web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
         "exercise_phase":ex.exercise_phase,
         "phase_history":ex.phase_history,
         "resource_limits":ex.resource_limits,
@@ -360,7 +392,7 @@ async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
     })))
 }
 
-#[rocket::get("/api/master")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master"))]
 async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
     let ex = s.lock();
     let tail = ex.log.len().saturating_sub(300);
@@ -399,7 +431,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
     })))
 }
 
-#[rocket::get("/api/player/<role>")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
 async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
     let ex = s.lock();
     let player = ex
@@ -434,7 +466,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
     })))
 }
 
-#[rocket::get("/api/catalogue")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/catalogue"))]
 async fn get_catalogue(_principal: Principal, s: AppState) -> ApiResult {
     let ex = s.lock();
     let all: Vec<String> = sim::ALL_KINDS.iter().map(|k| k.to_string()).collect();
@@ -443,7 +475,7 @@ async fn get_catalogue(_principal: Principal, s: AppState) -> ApiResult {
     ))
 }
 
-#[rocket::get("/api/debrief")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/debrief"))]
 async fn get_debrief(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(s.lock().debrief()))
 }
@@ -509,7 +541,10 @@ async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
         json!({"message":message,"proposal":proposal,"translation_failed":failed}),
     ))
 }
-#[rocket::post("/api/player/<role>/chat", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/chat", data = "<b>")
+)]
 async fn post_player_chat(
     _principal: Principal,
     s: AppState,
@@ -524,7 +559,10 @@ async fn post_player_chat(
     }
     deliver_chat(s, role, b).await
 }
-#[rocket::post("/api/master/chat", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/chat", data = "<b>")
+)]
 async fn post_master_chat(_principal: Principal, s: AppState, b: Json<ChatBody>) -> ApiResult {
     let Json(b) = b;
     deliver_chat(s, exercise::MASTER.into(), b).await
@@ -546,7 +584,10 @@ struct ReplyBody {
     declaration_kind: exercise::DeclarationKind,
 }
 
-#[rocket::post("/api/player/<role>/reply", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/reply", data = "<b>")
+)]
 async fn post_reply(
     _principal: Principal,
     s: AppState,
@@ -569,7 +610,10 @@ struct LangBody {
     language: String,
 }
 
-#[rocket::post("/api/player/<role>/language", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/language", data = "<b>")
+)]
 async fn post_language(
     _principal: Principal,
     s: AppState,
@@ -595,7 +639,10 @@ struct LimitsBody {
     limits: exercise::ResourceLimits,
     reason: String,
 }
-#[rocket::post("/api/master/resource-limits", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/resource-limits", data = "<b>")
+)]
 async fn post_resource_limits(
     _principal: Principal,
     s: AppState,
@@ -605,7 +652,10 @@ async fn post_resource_limits(
     s.lock().set_resource_limits(b.limits, &b.reason, None)?;
     Ok(Json(json!({"ok":true})))
 }
-#[rocket::post("/api/master/clock", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/clock", data = "<b>")
+)]
 async fn post_clock(_principal: Principal, s: AppState, b: Json<ClockBody>) -> ApiResult {
     let Json(b) = b;
     s.lock().configure_clock(b.running, b.ratio, &b.reason)?;
@@ -616,7 +666,10 @@ struct PhaseBody {
     phase: exercise::ExercisePhase,
     reason: String,
 }
-#[rocket::post("/api/master/phase", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/phase", data = "<b>")
+)]
 async fn post_phase(_principal: Principal, s: AppState, b: Json<PhaseBody>) -> ApiResult {
     let Json(b) = b;
     s.lock().set_exercise_phase(b.phase, &b.reason)?;
@@ -630,7 +683,10 @@ struct ScheduleBody {
     #[serde(default)]
     at_clock: Option<String>,
 }
-#[rocket::post("/api/master/schedules", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/schedules", data = "<b>")
+)]
 async fn post_schedule(_principal: Principal, s: AppState, b: Json<ScheduleBody>) -> ApiResult {
     let Json(b) = b;
     let mut ex = s.lock();
@@ -661,7 +717,10 @@ async fn post_schedule(_principal: Principal, s: AppState, b: Json<ScheduleBody>
 struct ReasonBody {
     reason: String,
 }
-#[rocket::post("/api/master/schedules/<id>/cancel", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/schedules/<id>/cancel", data = "<b>")
+)]
 async fn post_cancel_schedule(
     _principal: Principal,
     s: AppState,
@@ -672,7 +731,10 @@ async fn post_cancel_schedule(
     s.lock().cancel_schedule(id, &b.reason)?;
     Ok(Json(json!({"ok":true})))
 }
-#[rocket::post("/api/master/proposals/<id>/execute")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/proposals/<id>/execute")
+)]
 async fn post_execute(_principal: Principal, s: AppState, id: u64) -> ApiResult {
     let results = s.lock().execute_approved(id)?;
     let state = s.clone();
@@ -682,7 +744,7 @@ async fn post_execute(_principal: Principal, s: AppState, id: u64) -> ApiResult 
     Ok(Json(json!({"results":results})))
 }
 
-#[rocket::post("/api/master/start")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/start"))]
 async fn post_start(_principal: Principal, s: AppState) -> ApiResult {
     s.lock().start()?;
     Ok(Json(json!({"ok": true})))
@@ -703,7 +765,10 @@ fn default_sender() -> String {
     "EXCON".into()
 }
 
-#[rocket::post("/api/master/inject", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/inject", data = "<b>")
+)]
 async fn post_inject(_principal: Principal, s: AppState, b: Json<InjectBody>) -> ApiResult {
     let Json(b) = b;
     if let Some(o) = &b.observation {
@@ -719,7 +784,10 @@ async fn post_inject(_principal: Principal, s: AppState, b: Json<InjectBody>) ->
     Ok(Json(json!({"messages": ids})))
 }
 
-#[rocket::post("/api/master/msel/<id>/send")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/msel/<id>/send")
+)]
 async fn post_msel_send(_principal: Principal, s: AppState, id: String) -> ApiResult {
     let t = s
         .lock()
@@ -735,7 +803,10 @@ async fn post_msel_send(_principal: Principal, s: AppState, id: String) -> ApiRe
     Ok(Json(json!({"messages": ids})))
 }
 
-#[rocket::post("/api/master/prompt", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/prompt", data = "<b>")
+)]
 async fn post_prompt(_principal: Principal, s: AppState, b: Json<TextBody>) -> ApiResult {
     let Json(b) = b;
     if b.text.trim().is_empty() {
@@ -763,7 +834,10 @@ struct DecideBody {
     note: Option<String>,
 }
 
-#[rocket::post("/api/master/proposals/<id>/decide", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/proposals/<id>/decide", data = "<b>")
+)]
 async fn post_decide(
     _principal: Principal,
     s: AppState,
@@ -822,7 +896,10 @@ async fn post_decide(
 struct PreviewBody {
     commands: Vec<Command>,
 }
-#[rocket::post("/api/master/preview", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/preview", data = "<b>")
+)]
 async fn post_preview(_principal: Principal, s: AppState, b: Json<PreviewBody>) -> ApiResult {
     let Json(b) = b;
     Ok(Json(s.lock().preview_commands(&b.commands)?))
@@ -831,13 +908,19 @@ async fn post_preview(_principal: Principal, s: AppState, b: Json<PreviewBody>) 
 struct CorrectionBody {
     reason: String,
 }
-#[rocket::post("/api/master/correct-intervention", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/correct-intervention", data = "<b>")
+)]
 async fn post_correction(_principal: Principal, s: AppState, b: Json<CorrectionBody>) -> ApiResult {
     let Json(b) = b;
     s.lock().correct_intervention(&b.reason)?;
     Ok(Json(json!({"ok":true})))
 }
-#[rocket::post("/api/master/design", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/design", data = "<b>")
+)]
 async fn post_design(
     _principal: Principal,
     s: AppState,
@@ -855,7 +938,10 @@ struct PathBody {
     #[serde(default)]
     adaptation: bool,
 }
-#[rocket::post("/api/master/path", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/path", data = "<b>")
+)]
 async fn post_path(_principal: Principal, s: AppState, b: Json<PathBody>) -> ApiResult {
     let Json(b) = b;
     s.lock()
@@ -868,7 +954,10 @@ struct PreviewApplyBody {
     commands: Vec<Command>,
     reason: String,
 }
-#[rocket::post("/api/master/preview/apply", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/preview/apply", data = "<b>")
+)]
 async fn post_preview_apply(
     _principal: Principal,
     s: AppState,
@@ -910,7 +999,10 @@ async fn post_preview_apply(
 }
 
 /// One command or a list, applied immediately as the EXCON.
-#[rocket::post("/api/master/command", data = "<body>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/command", data = "<body>")
+)]
 async fn post_command(_principal: Principal, s: AppState, body: Json<Value>) -> ApiResult {
     let Json(body) = body;
     let list = match body {
@@ -936,7 +1028,10 @@ struct ResolveBody {
     minutes: Option<u32>,
 }
 
-#[rocket::post("/api/master/resolve", data = "<body>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/resolve", data = "<body>")
+)]
 async fn post_resolve(
     _principal: Principal,
     s: AppState,
@@ -984,14 +1079,17 @@ struct RollbackBody {
     turn: u32,
 }
 
-#[rocket::post("/api/master/rollback", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/rollback", data = "<b>")
+)]
 async fn post_rollback(_principal: Principal, s: AppState, b: Json<RollbackBody>) -> ApiResult {
     let Json(b) = b;
     s.lock().rollback(b.turn)?;
     Ok(Json(json!({"ok": true})))
 }
 
-#[rocket::post("/api/master/end")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/end"))]
 async fn post_end(_principal: Principal, s: AppState) -> ApiResult {
     s.lock().end()?;
     Ok(Json(json!({"ok": true})))
@@ -1006,7 +1104,10 @@ struct SettingsBody {
     speed: Option<f32>,
 }
 
-#[rocket::post("/api/master/settings", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/settings", data = "<b>")
+)]
 async fn post_settings(_principal: Principal, s: AppState, b: Json<SettingsBody>) -> ApiResult {
     let Json(b) = b;
     let mut ex = s.lock();
@@ -1031,7 +1132,8 @@ async fn post_settings(_principal: Principal, s: AppState, b: Json<SettingsBody>
 
 // ---------------------------------------------------------------- ws
 
-#[rocket::get("/ws")]
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/ws"))]
 fn ws(
     _principal: Principal,
     s: AppState,

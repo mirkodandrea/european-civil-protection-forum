@@ -8,6 +8,9 @@
 //! Every workflow has a no-LLM fallback: English text, or a proposal left for
 //! the EXCON to fill in by hand.
 
+#[cfg(target_arch = "wasm32")]
+use crate::browser_runtime as tokio;
+
 use std::collections::BTreeMap;
 
 use anyhow::Result;
@@ -394,7 +397,7 @@ pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
 /// it mid-turn). 0 runs as fast as the model computes (~0.4 s for a
 /// 30-minute turn with the default 32-run ensemble).
 pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {
-    use std::time::{Duration, Instant};
+    use web_time::{Duration, Instant};
     let mut anchor: Option<(Instant, i64, f32)> = None;
     loop {
         let (sim_now, speed) = {
@@ -417,8 +420,14 @@ pub async fn run_resolution(state: AppState) -> Result<exercise::TurnReport> {
         }
         let target = s0 + (t0.elapsed().as_secs_f64() * speed as f64) as i64;
         let mut done = false;
+        #[cfg(target_arch = "wasm32")]
+        let frame_started = Instant::now();
         while !done && state.lock().world.time_s() < target {
             done = state.lock().step_resolution(exercise::STEP_S)?;
+            #[cfg(target_arch = "wasm32")]
+            if frame_started.elapsed().as_millis() >= 12 {
+                break;
+            }
         }
         if done {
             break;
@@ -471,7 +480,7 @@ pub fn dispatch_due(state: &AppState) {
 /// Wall-time pacing while a decision turn stays open. Revision changes (pause,
 /// ratio edits, explicit time jumps and rollback) always reanchor at the actual world.
 pub async fn run_clock(state: AppState) {
-    use std::time::Instant;
+    use web_time::Instant;
     let mut anchor: Option<(u64, Instant, i64)> = None;
     loop {
         dispatch_due(&state);

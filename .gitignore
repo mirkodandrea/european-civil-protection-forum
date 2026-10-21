@@ -9,3 +9,7 @@ __pycache__/
 .worktrees/chat-interface
 
 /web/dist/
+
+/web/standalone/
+
+/_site/

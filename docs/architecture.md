@@ -174,3 +174,12 @@ preview, forecast publication by recipient, evaluator read-only access and EXCON
 injects during live resolution. No external AI calls were made. The 27 inspected
 captures and manifests are under `runs/rust-frontend-verified/` (ignored by git).
 These checks do not substitute for device/projector usability validation.
+
+## Standalone target
+
+The optional `frontend --features standalone` build compiles the same model,
+Exercise and shared controllers into one WASM module. Local dispatch replaces
+HTTP/WebSockets; the browser executor replaces Tokio. The server transport and
+Rocket dependencies are excluded on WASM. `ttx.html` embeds all assets and
+scenario data; OpenRouter is called directly with an in-memory frontend key.
+See [standalone architecture and limits](standalone-web.md).

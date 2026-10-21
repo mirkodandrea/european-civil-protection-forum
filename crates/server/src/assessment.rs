@@ -1,7 +1,13 @@
 //! Optional evaluator interpretation of a bounded, immutable evidence snapshot.
+#[cfg(target_arch = "wasm32")]
+use crate::browser_runtime as tokio;
+
 use crate::access::Principal;
+#[cfg(target_arch = "wasm32")]
+use crate::browser::Json;
 use crate::{ApiResult, AppState};
 use anyhow::{bail, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use rocket::serde::json::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -106,15 +112,15 @@ fn snapshot(view: Value, generation: u64) -> Value {
         "limitations":["Filtered and bounded snapshot; omitted or unmatched records cannot establish absence.","Delivered messages do not prove reading, acknowledgement or effective coordination.","Response and queue times describe recorded timestamps; no performance thresholds are assumed.","Reference and attachment links have not been fetched. Citing a plan does not establish its contents or compliance.","AI findings are derived interpretations for human review, not recorded facts or scores."]})
 }
 
-#[rocket::get("/api/evaluator/assessment")]
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/evaluator/assessment"))]
 pub async fn get(_principal: Principal, s: AppState, filter: crate::EvidenceQuery) -> ApiResult {
     let crate::EvidenceQuery(filter) = filter;
     let (generation, view) = {
         let ex = s.lock();
         (ex.generation, ex.evaluator_view(&filter)?)
     };
-    let captured_wall_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let captured_wall_ms = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let key = format!(

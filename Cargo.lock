@@ -2036,6 +2036,7 @@ dependencies = [
  "serde_json",
  "sim",
  "url",
+ "web-time",
 ]
 
 [[package]]
@@ -2159,11 +2160,16 @@ name = "frontend"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "exercise",
  "futures",
  "gloo-net 0.6.0",
  "gloo-timers",
  "js-sys",
+ "llm",
+ "scenario",
  "serde_json",
+ "server",
+ "sim",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3430,6 +3436,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -5070,6 +5077,8 @@ dependencies = [
  "exercise",
  "fire",
  "futures",
+ "getrandom 0.2.17",
+ "gloo-timers",
  "llm",
  "rand 0.8.8",
  "rocket",
@@ -5081,6 +5090,8 @@ dependencies = [
  "sim",
  "tokio",
  "tracing",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]

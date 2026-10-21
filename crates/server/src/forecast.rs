@@ -1,4 +1,7 @@
 //! EXCON-only computation and explicit, role-specific publication of forecasts.
+#[cfg(target_arch = "wasm32")]
+use crate::browser_runtime as tokio;
+
 use super::*;
 use fire::forecast::{Forecast, ForecastJob, ForecastSpec};
 use serde::Deserialize;
@@ -9,7 +12,10 @@ pub(crate) struct Draft {
     forecast: Forecast,
 }
 
-#[rocket::post("/api/master/forecast", data = "<spec>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/forecast", data = "<spec>")
+)]
 pub(crate) async fn compute(
     _principal: Principal,
     s: AppState,
@@ -72,7 +78,10 @@ pub(crate) struct Publish {
     roles: Vec<String>,
     source: String,
 }
-#[rocket::post("/api/master/forecast/publish", data = "<b>")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/forecast/publish", data = "<b>")
+)]
 pub(crate) async fn publish(_principal: Principal, s: AppState, b: Json<Publish>) -> ApiResult {
     let Json(b) = b;
     if b.source.trim().is_empty()

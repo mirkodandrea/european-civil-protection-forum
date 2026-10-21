@@ -3,6 +3,8 @@ mod api;
 mod chat;
 mod evaluator;
 mod map;
+#[cfg(feature = "standalone")]
+mod standalone;
 mod widgets;
 
 use api::{list, text, window};
@@ -240,11 +242,18 @@ impl App {
         });
     }
 }
+#[derive(Properties, PartialEq, Default)]
+pub struct AppProps {
+    #[prop_or_default]
+    pub token: Option<String>,
+    #[prop_or_default]
+    pub page: Option<String>,
+}
 impl Component for App {
     type Message = Msg;
-    type Properties = ();
+    type Properties = AppProps;
     fn create(ctx: &Context<Self>) -> Self {
-        let token = api::token();
+        let token = ctx.props().token.clone().unwrap_or_else(api::token);
         let key = token.clone();
         ctx.link().send_future(async move {
             let result = async {
@@ -282,16 +291,18 @@ impl Component for App {
             own: String::new(),
             selected: String::new(),
             active: "chat".into(),
-            page: if path.ends_with("advanced.html") {
-                "advanced"
-            } else if path.ends_with("evaluator.html") {
-                "evaluator"
-            } else if path == "/" || path.ends_with("index.html") {
-                "lobby"
-            } else {
-                "chat"
-            }
-            .into(),
+            page: ctx.props().page.clone().unwrap_or_else(|| {
+                if path.ends_with("advanced.html") {
+                    "advanced"
+                } else if path.ends_with("evaluator.html") {
+                    "evaluator"
+                } else if path == "/" || path.ends_with("index.html") {
+                    "lobby"
+                } else {
+                    "chat"
+                }
+                .into()
+            }),
             error: String::new(),
             notice: String::new(),
             busy: false,
@@ -326,12 +337,14 @@ impl Component for App {
                     self.page = "evaluator".into()
                 } else if !self.is_master() {
                     self.page = "chat".into();
-                    let _ = window()
-                        .document()
-                        .unwrap()
-                        .body()
-                        .unwrap()
-                        .set_attribute("class", "player-ui");
+                    if !cfg!(feature = "standalone") {
+                        let _ = window()
+                            .document()
+                            .unwrap()
+                            .body()
+                            .unwrap()
+                            .set_attribute("class", "player-ui");
+                    }
                 }
                 self.selected = self
                     .contacts()
@@ -608,7 +621,7 @@ impl Component for App {
             <nav class="navigation" aria-label="Viste">
             if self.page=="chat" { {nav("chat","Conversazioni")} {nav("map",if self.is_master(){"Mappa dettagliata"}else{"Mappa tattica"})} }
             <div class="grow"/>
-            if self.is_master(){<a href={href("master.html")}>{"Conversazioni"}</a><a id="advanced" href={href("advanced.html")}>{"Strumenti avanzati ↗"}</a><a href={href("evaluator.html")}>{"Valutazione"}</a>}
+            if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{"Conversazioni"}</a><a id="advanced" href={href("advanced.html")}>{"Strumenti avanzati ↗"}</a><a href={href("evaluator.html")}>{"Valutazione"}</a>}
             </nav>
             <div id="error" class="error" role="alert">{&self.error}</div>
             if (self.page=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
@@ -626,5 +639,8 @@ impl Component for App {
     }
 }
 fn main() {
+    #[cfg(not(feature = "standalone"))]
     yew::Renderer::<App>::new().render();
+    #[cfg(feature = "standalone")]
+    yew::Renderer::<standalone::Standalone>::new().render();
 }
