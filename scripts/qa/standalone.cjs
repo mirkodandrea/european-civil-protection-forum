@@ -5,12 +5,14 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
 (async()=>{
  fs.mkdirSync(out,{recursive:true});
  const reference=JSON.parse(execFileSync('cargo',['run','--release','--offline','-p','exercise','--example','standalone_reference'],{encoding:'utf8',maxBuffer:8*1024*1024}));
- const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome'});
- const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[],ai=[];
+ const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome',args:process.platform==='linux'?['--use-angle=swiftshader','--enable-unsafe-swiftshader']:[]});
+ const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[],ai=[],browserDiagnostics=[];
  page.on('pageerror',e=>{
   // winit transfers control to the browser event loop with this sentinel.
   if(e.message!=="Using exceptions for control flow, don't mind me. This isn't actually an error!") errors.push(e.message);
  });page.on('request',r=>requests.push(r.url()));
+ page.on('console',m=>{if(['warning','error'].includes(m.type())){browserDiagnostics.push({type:m.type(),text:m.text()});if(browserDiagnostics.length>200)browserDiagnostics.shift();}});
+ page.on('crash',()=>errors.push('Browser page crashed'));
  const master=page.locator('[data-panel="master"]'),mayor=page.locator('[data-panel="mayor"]'),advanced=page.locator('[data-panel="advanced"]');
  const select=async id=>page.locator(`.role-tabs [data-role="${id}"]`).click();
  const download=async name=>{await select('advanced');const pending=page.waitForEvent('download');await advanced.locator('#debriefdownload').click();const d=await pending;await d.saveAs(path.join(out,name));return JSON.parse(fs.readFileSync(path.join(out,name),'utf8'));};
@@ -54,5 +56,10 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   assert.equal(errors.length,0,errors.join('\n'));
   fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({fixture:'single file, offline model and controllers; mocked direct OpenRouter fetch',scenario:'valverde_factory.json',seed:1,realizations:32,commands:[{type:'IssueWarning',zone:'F4'}],minutes:1,rollback:1,pairedNativeStateIdentical:true,requests,ai:ai.map(({authorization,...r})=>r),errors},null,2));
   console.log(out);console.log('PASS standalone: offline start, inject, private manual fallback, EXCON approval, physics turn, forecast, rollback, views, direct browser AI and secret-free debrief');
- } catch(error) { await page.screenshot({path:path.join(out,'failure.png')});console.log((await page.locator('body').innerText()).slice(-3000));console.log({errors});throw error;} finally { await browser.close(); }
+ } catch(error) {
+  console.error('Original failure:',error);console.log({errors,browserDiagnostics});
+  fs.writeFileSync(path.join(out,'failure.json'),JSON.stringify({error:String(error),stack:error.stack,errors,requests,browserDiagnostics},null,2));
+  try {await page.screenshot({path:path.join(out,'failure.png'),timeout:10000});}catch(capture){console.warn('Failure screenshot unavailable:',String(capture));}
+  throw error;
+ } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});
