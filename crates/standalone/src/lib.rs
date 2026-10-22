@@ -1,4 +1,5 @@
 //! Browser bridge for main's original JavaScript views and unchanged model.
+#![cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, sync::Arc};
 use wasm_bindgen::prelude::*;
 thread_local! { static STATE: RefCell<Option<server::AppState>> = const { RefCell::new(None) }; }
