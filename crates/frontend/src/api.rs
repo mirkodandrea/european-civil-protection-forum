@@ -179,9 +179,9 @@ pub fn status(s: &str) -> &str {
 }
 
 #[cfg(feature = "standalone")]
-pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
+pub async fn request(role: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
     let state = crate::standalone::runtime()?;
-    server::browser::request(state, token, path, body).await
+    server::browser::request(state, role, path, body).await
 }
 #[cfg(feature = "standalone")]
 pub fn live(_token: String, callback: yew::Callback<()>) -> AbortHandle {

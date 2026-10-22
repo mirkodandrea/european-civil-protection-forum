@@ -26,7 +26,7 @@ fn decode<T: serde::de::DeserializeOwned>(body: Value) -> Result<Json<T>, ApiErr
 }
 
 pub fn new(ex: Exercise) -> AppState {
-    let access = Access::new(ex.role_ids());
+    let access = Access::local(ex.role_ids());
     let state = AppState {
         ex: Arc::new(Mutex::new(ex)),
         llm: Llm::off().with_runtime_config(),
@@ -75,24 +75,36 @@ fn route<'a>(pattern: &str, path: &'a str) -> Option<BTreeMap<String, &'a str>> 
 
 pub async fn request(
     s: AppState,
-    token: &str,
+    role: &str,
     url: &str,
     body: Option<Value>,
 ) -> Result<Value, String> {
-    dispatch(s, token, url, body)
+    dispatch(s, role, url, body)
         .await
         .map(|v| v.0)
         .map_err(|e| e.1)
 }
-async fn dispatch(s: AppState, token: &str, url: &str, body: Option<Value>) -> ApiResult {
+async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> ApiResult {
     let (path, query) = url.split_once('?').unwrap_or((url, ""));
-    let principal = s
-        .access
-        .principal(token)
-        .ok_or_else(|| bad("access key required"))?;
-    if !principal.allows(path, body.is_none()) {
-        return Err(bad("access key does not authorize this operation"));
-    }
+    // This dispatcher exists only for the all-in-one local WASM build. Its
+    // role tabs are the UI's authority; there is no remote client or access
+    // key boundary in this process.
+    let principal = match role {
+        "master" | "advanced" => Principal::Master,
+        "evaluator" => Principal::Evaluator {
+            id: s
+                .access
+                .evaluators
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_default(),
+        },
+        player if s.access.players.contains_key(player) => Principal::Player {
+            role: player.to_string(),
+        },
+        _ => return Err(bad("unknown standalone role")),
+    };
     let method = if body.is_some() { "POST" } else { "GET" };
     // Match path templates before calling the shared typed handlers.
     let patterns = PATTERNS;

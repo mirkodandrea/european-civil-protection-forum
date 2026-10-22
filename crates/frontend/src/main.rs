@@ -252,12 +252,17 @@ pub struct AppProps {
     #[prop_or_default]
     pub token: Option<String>,
     #[prop_or_default]
+    pub role: Option<String>,
+    #[prop_or_default]
     pub page: Option<String>,
 }
 impl Component for App {
     type Message = Msg;
     type Properties = AppProps;
     fn create(ctx: &Context<Self>) -> Self {
+        #[cfg(feature = "standalone")]
+        let token = ctx.props().role.clone().unwrap_or_else(|| "master".into());
+        #[cfg(not(feature = "standalone"))]
         let token = ctx.props().token.clone().unwrap_or_else(api::token);
         let key = token.clone();
         ctx.link().send_future(async move {
@@ -674,14 +679,19 @@ impl Component for App {
     }
     fn view(&self, ctx: &Context<Self>) -> Html {
         if self.access.is_null() {
-            let login = ctx.link().callback(|e: SubmitEvent| {
-                e.prevent_default();
-                let doc = window().document().unwrap();
-                let input = doc.get_element_by_id("access-key").unwrap();
-                use wasm_bindgen::JsCast;
-                Msg::Login(input.unchecked_into::<web_sys::HtmlInputElement>().value())
-            });
-            return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){"Connessione all’esercitazione…"}else{&self.error}}</p><form onsubmit={login}><label>{"Chiave di accesso ricevuta da EXCON"}<input id="access-key" type="password" required=true/></label><button type="submit">{"Apri esercitazione"}</button></form></section></main>};
+            #[cfg(feature = "standalone")]
+            return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){"Connessione all’esercitazione…"}else{&self.error}}</p></section></main>};
+            #[cfg(not(feature = "standalone"))]
+            {
+                let login = ctx.link().callback(|e: SubmitEvent| {
+                    e.prevent_default();
+                    let doc = window().document().unwrap();
+                    let input = doc.get_element_by_id("access-key").unwrap();
+                    use wasm_bindgen::JsCast;
+                    Msg::Login(input.unchecked_into::<web_sys::HtmlInputElement>().value())
+                });
+                return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){"Connessione all’esercitazione…"}else{&self.error}}</p><form onsubmit={login}><label>{"Chiave di accesso ricevuta da EXCON"}<input id="access-key" type="password" required=true/></label><button type="submit">{"Apri esercitazione"}</button></form></section></main>};
+            }
         }
         let title = if self.is_evaluator() {
             "Valutatore · sola lettura".into()

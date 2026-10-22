@@ -35,7 +35,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   const rolled=await download('rollback.json');assert.deepEqual(rolled.physical_state,reference.rollback,'rollback restores the same native and WASM state');
   // All role panels coexist in this same document, then map can be hidden.
   await page.getByLabel('Tutti i player',{exact:true}).check();await page.screenshot({path:path.join(out,'all-roles.png')});await page.getByLabel('Tutti i player',{exact:true}).uncheck();
-  await page.getByLabel('Simulazione',{exact:true}).uncheck();assert(await page.locator('#standalone-map').count()===0);await page.getByLabel('Simulazione',{exact:true}).check();
+  await page.getByLabel('Simulazione',{exact:true}).uncheck();assert.equal(await page.locator('#standalone-3d').count(),1);assert(await page.locator('.standalone-simulation').isHidden());await page.getByLabel('Simulazione',{exact:true}).check();
   assert(!requests.some(u=>/^https?:|^wss?:/.test(u)),'offline exercise has no network dependencies');
   // Intercept the direct OpenRouter request; no real model or credit consumed.
   await page.context().setOffline(false);

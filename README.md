@@ -26,10 +26,12 @@ Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agenti
 ## Standalone WebAssembly
 
 `./scripts/build_standalone.sh` builds **`web/standalone/ttx.html`**, one
-self-contained HTML app with the real simulation, EXCON and all player views.
-It runs directly in the browser, offline, without a backend; OpenRouter keys
-and models can be configured in the app for direct AI requests. The simulation
-panel uses the 2D operational map. Each opening has its own in-memory exercise.
+self-contained HTML app with the real simulation, EXCON, all player views and
+the Bevy 3D renderer in the simulation panel. It runs directly in a browser
+with GPU support, offline and without a backend; OpenRouter keys and models can
+be configured in the app for direct AI requests. Standalone role tabs need no
+access keys; each opening has its own in-memory exercise. The server-hosted
+version continues to use EXCON and player access links.
 Build and serve it locally with `./scripts/run_pages_local.sh` as described below.
 
 To build and serve the standalone app locally, run `./scripts/run_pages_local.sh`

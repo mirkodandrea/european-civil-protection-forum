@@ -114,22 +114,28 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .expect("exercise lock");
     let quality = quality::Quality::from_env();
     let capture = std::env::var("TTX_SNAPSHOT").is_ok();
+    let mut primary_window = Window {
+        title: "PPRD East TTX — simulator".into(),
+        visible: !capture,
+        focused: !capture,
+        resolution: snapshot::resolution(),
+        present_mode: if snapshot::bench_s().is_some() {
+            bevy::window::PresentMode::AutoNoVsync
+        } else {
+            bevy::window::PresentMode::AutoVsync
+        },
+        ..default()
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        primary_window.canvas = Some("#standalone-3d".into());
+        primary_window.fit_canvas_to_parent = true;
+    }
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "PPRD East TTX — simulator".into(),
-                        visible: !capture,
-                        focused: !capture,
-                        resolution: snapshot::resolution(),
-                        present_mode: if snapshot::bench_s().is_some() {
-                            bevy::window::PresentMode::AutoNoVsync
-                        } else {
-                            bevy::window::PresentMode::AutoVsync
-                        },
-                        ..default()
-                    }),
+                    primary_window: Some(primary_window),
                     ..default()
                 })
                 // The app installs its own tracing subscriber.

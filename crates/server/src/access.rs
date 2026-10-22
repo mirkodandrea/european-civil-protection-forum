@@ -40,6 +40,18 @@ impl Access {
             evaluators: (1..=3).map(|n| (format!("evaluator-{n}"), key())).collect(),
         }
     }
+    pub fn local(roles: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            master: String::new(),
+            players: roles
+                .into_iter()
+                .map(|role| (role, String::new()))
+                .collect(),
+            evaluators: (1..=3)
+                .map(|n| (format!("evaluator-{n}"), String::new()))
+                .collect(),
+        }
+    }
     pub fn principal(&self, token: &str) -> Option<Principal> {
         if token == self.master {
             return Some(Principal::Master);

@@ -93,3 +93,4 @@ body:has(.standalone){height:100dvh;overflow:hidden}.standalone{height:100dvh;di
 .loader{width:15px;height:15px;flex:none;border:2px solid #bfd3c7;border-top-color:#126752;border-radius:50%;animation:ttx-spin .8s linear infinite}
 @keyframes ttx-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.loader{animation:none;border-top-color:#126752;box-shadow:inset 0 0 0 2px #bfd3c7}}
+.standalone-simulation{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}.standalone-3d-frame{position:relative;flex:1;min-height:240px;overflow:hidden;border:1px solid #bac9c0;border-radius:10px;background:linear-gradient(#9bb9c2,#d5dfd5 68%,#86947a)}.standalone-3d-frame canvas{display:block;width:100%;height:100%;outline:none;touch-action:none}.standalone-simulation[hidden]{display:none}

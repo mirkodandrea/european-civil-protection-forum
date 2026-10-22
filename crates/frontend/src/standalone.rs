@@ -1,5 +1,5 @@
 //! One document, one in-memory Exercise, multiple authorized views.
-use crate::{api, map::SituationMap, App};
+use crate::{api, App};
 use gloo_timers::callback::Interval;
 use std::{cell::RefCell, sync::Arc};
 use yew::prelude::*;
@@ -76,11 +76,20 @@ pub fn standalone() -> Html {
             return html! {<main class="page"><h1>{"Impossibile inizializzare l’esercitazione"}</h1><p role="alert">{e}</p></main>}
         }
     };
-    let (stat, view, clock, phase, roles) = {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let exercise = state.ex.clone();
+        use_effect_with((), move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(100).await;
+                viz::run(exercise, 0, "standalone".into());
+            });
+            || ()
+        });
+    }
+    let (clock, phase, roles) = {
         let ex = state.lock();
         (
-            ex.world.static_view(),
-            ex.world.view(),
             ex.world.clock(),
             format!("{:?}", ex.phase),
             ex.world.scn.roles.clone(),
@@ -127,38 +136,12 @@ pub fn standalone() -> Html {
         })
     };
     let mut panels = vec![
-        (
-            "master".to_string(),
-            "EXCON".to_string(),
-            state.access.master.clone(),
-            "chat",
-        ),
-        (
-            "advanced".into(),
-            "Strumenti EXCON".into(),
-            state.access.master.clone(),
-            "advanced",
-        ),
-        (
-            "evaluator".into(),
-            "Valutazione".into(),
-            state
-                .access
-                .evaluators
-                .values()
-                .next()
-                .cloned()
-                .unwrap_or_default(),
-            "evaluator",
-        ),
+        ("master".to_string(), "EXCON".to_string(), "chat"),
+        ("advanced".into(), "Strumenti EXCON".into(), "advanced"),
+        ("evaluator".into(), "Valutazione".into(), "evaluator"),
     ];
     for role in &roles {
-        panels.push((
-            role.id.clone(),
-            role.name.clone(),
-            state.access.players[&role.id].clone(),
-            "chat",
-        ));
+        panels.push((role.id.clone(), role.name.clone(), "chat"));
     }
     html! {
       <div class="standalone">
@@ -176,13 +159,13 @@ pub fn standalone() -> Html {
           <p>{"L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente."}</p>
         </details>
         <div class={classes!("standalone-content",(!*show_map).then_some("without-sim"))} style={format!("--sim-width:{}%",*split)}>
-          if *show_map { <aside class="standalone-simulation"><div class="simulation-heading"><h2>{"Situazione simulata"}</h2><p>{"Vista completa EXCON · le mappe dei player mostrano solo le informazioni ricevute"}</p></div><SituationMap id="standalone-map" stat={stat} view={view}/></aside> }
-          <section class="standalone-views"><nav class="role-tabs" aria-label="Ruoli dell’esercitazione">{for panels.iter().map(|(id,name,_,_)|{
+          <aside class="standalone-simulation" hidden={!*show_map}><div class="simulation-heading"><h2>{"Situazione simulata"}</h2><p>{"Vista 3D completa EXCON · le mappe dei player mostrano solo le informazioni ricevute"}</p></div><div class="standalone-3d-frame"><canvas id="standalone-3d" aria-label="Visualizzatore 3D della situazione simulata"/></div></aside>
+          <section class="standalone-views"><nav class="role-tabs" aria-label="Ruoli dell’esercitazione">{for panels.iter().map(|(id,name,_)|{
             let id=id.clone();html!{<button data-role={id.clone()} class={classes!((*selected==id).then_some("active"))} onclick={{let selected=selected.clone();let all=all_roles.clone();Callback::from(move |_|{selected.set(id.clone());all.set(false);})}}>{name}</button>}
           })}</nav>
-          <div class={classes!("role-panels",(*all_roles).then_some("all-roles"))}>{for panels.iter().map(|(id,_,token,page)|{
+          <div class={classes!("role-panels",(*all_roles).then_some("all-roles"))}>{for panels.iter().map(|(id,_,page)|{
              let visible = if *all_roles { roles.iter().any(|r|r.id==*id) } else { *selected==*id };
-             html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App token={Some(token.clone())} page={Some(page.to_string())}/></section>}
+             html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App role={Some(id.clone())} page={Some(page.to_string())}/></section>}
           })}</div></section>
         </div>
       </div>

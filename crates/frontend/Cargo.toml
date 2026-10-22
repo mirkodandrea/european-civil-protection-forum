@@ -6,7 +6,7 @@ license.workspace = true
 description = "Rust/WebAssembly browser UI for the TTX"
 
 [features]
-standalone = ["dep:server", "dep:scenario", "dep:sim", "dep:exercise", "dep:llm"]
+standalone = ["dep:server", "dep:scenario", "dep:sim", "dep:exercise", "dep:llm", "dep:viz"]
 
 [dependencies]
 server = { workspace = true, optional = true }
@@ -14,6 +14,7 @@ scenario = { workspace = true, optional = true }
 sim = { workspace = true, optional = true }
 exercise = { workspace = true, optional = true }
 llm = { workspace = true, optional = true }
+viz = { workspace = true, optional = true }
 yew = { version = "0.23", features = ["csr"] }
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4"

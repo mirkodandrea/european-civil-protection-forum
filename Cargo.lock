@@ -2170,6 +2170,7 @@ dependencies = [
  "serde_json",
  "server",
  "sim",
+ "viz",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -2330,9 +2331,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -5991,11 +5994,13 @@ dependencies = [
  "bevy_egui",
  "exercise",
  "fire",
+ "getrandom 0.3.4",
  "rand 0.8.8",
  "rand_chacha",
  "scenario",
  "serde_json",
  "sim",
+ "uuid",
  "wgpu",
 ]
 
