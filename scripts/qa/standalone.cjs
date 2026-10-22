@@ -6,7 +6,9 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
  fs.mkdirSync(out,{recursive:true});
  const reference=JSON.parse(execFileSync('cargo',['run','--release','--offline','-p','exercise','--example','standalone_reference'],{encoding:'utf8',maxBuffer:8*1024*1024}));
  const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome',args:process.platform==='linux'?['--use-angle=swiftshader','--enable-unsafe-swiftshader']:[]});
- const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[],ai=[],browserDiagnostics=[];
+ const page=await browser.newPage({viewport:{width:1680,height:1100},deviceScaleFactor:process.platform==='linux'?0.5:1}),errors=[],requests=[],ai=[],browserDiagnostics=[];
+ // SwiftShader needs longer for the first full scene; CSS layout remains 1680×1100.
+ if(process.platform==='linux')page.setDefaultTimeout(120000);
  page.on('pageerror',e=>{
   // winit transfers control to the browser event loop with this sentinel.
   if(e.message!=="Using exceptions for control flow, don't mind me. This isn't actually an error!") errors.push(e.message);
@@ -54,7 +56,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   await page.locator('#clear-ai').click();const callsBeforeClear=ai.length;await mayor.locator('#text').fill('Issue a warning for F5.');await mayor.locator('#send').click();await mayor.locator('#private-preparation').filter({hasText:'Interpretazione non riuscita'}).waitFor();assert.equal(ai.length,callsBeforeClear,'removing key disables later requests');const clean=await download('no-credentials.json');assert(!JSON.stringify(clean).includes('fixture-key-not-a-secret'),'credentials excluded from debrief');
   await page.locator('.standalone-settings summary').click();await select('mayor');await page.setViewportSize({width:820,height:1180});await page.waitForTimeout(300);assert(!await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),'tablet has no horizontal overflow');await page.screenshot({path:path.join(out,'tablet.png')});
   assert.equal(errors.length,0,errors.join('\n'));
-  fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({fixture:'single file, offline model and controllers; mocked direct OpenRouter fetch',scenario:'valverde_factory.json',seed:1,realizations:32,commands:[{type:'IssueWarning',zone:'F4'}],minutes:1,rollback:1,pairedNativeStateIdentical:true,requests,ai:ai.map(({authorization,...r})=>r),errors},null,2));
+  fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({fixture:'single file, offline model and controllers; mocked direct OpenRouter fetch',scenario:'valverde_factory.json',seed:1,realizations:32,commands:[{type:'IssueWarning',zone:'F4'}],minutes:1,rollback:1,pairedNativeStateIdentical:true,deviceScaleFactor:process.platform==='linux'?0.5:1,requests,ai:ai.map(({authorization,...r})=>r),errors},null,2));
   console.log(out);console.log('PASS standalone: offline start, inject, private manual fallback, EXCON approval, physics turn, forecast, rollback, views, direct browser AI and secret-free debrief');
  } catch(error) {
   console.error('Original failure:',error);console.log({errors,browserDiagnostics});
