@@ -2,23 +2,18 @@ name: Standalone WebAssembly and Pages
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
     branches: [main, dev]
   workflow_dispatch:
-    inputs:
-      verify_standalone:
-        description: Run the standalone browser verification
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: read
 
+# Every deployment contains both branches. Serialize them across all refs.
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: pages-dual-standalone
+  cancel-in-progress: false
 
 env:
   RUSTUP_TOOLCHAIN: 1.92.0
@@ -28,55 +23,103 @@ env:
 
 jobs:
   build:
-    name: Test and build the self-contained app
+    name: Test and build ${{ matrix.branch }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [main, dev]
     steps:
       - uses: actions/checkout@v7
         with:
+          # Test proposed changes on their target branch, without deploying PRs.
+          ref: ${{ github.event_name == 'pull_request' && matrix.branch == github.base_ref && github.event.pull_request.head.sha || matrix.branch }}
           persist-credentials: false
+      - name: Record source revision
+        run: git rev-parse HEAD > /tmp/source-revision
       - name: Install Rust and WebAssembly target
         run: rustup toolchain install 1.92.0 --profile minimal --target wasm32-unknown-unknown
       - name: Test shared model and exercise controllers
         run: cargo test --locked --release -p server -p exercise -p llm
-      - name: Install pinned Trunk
+      - name: Install pinned Trunk for dev
+        if: matrix.branch == 'dev'
         run: cargo install trunk --version 0.21.14 --locked
+      - name: Install pinned wasm-bindgen for main
+        if: matrix.branch == 'main'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
       - name: Build standalone WebAssembly
         run: ./scripts/build_standalone.sh
-      - name: Stage only the self-contained public app
-        run: |
-          mkdir -p _site
-          cp web/standalone/ttx.html _site/index.html
-          touch _site/.nojekyll
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: scripts/record/package-lock.json
       - name: Install browser fixture dependencies
-        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         run: |
           npm ci --prefix scripts/record
           scripts/record/node_modules/.bin/playwright install --with-deps chromium
-      - name: Verify the staged app offline with real commands
-        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
+      - name: Verify the app offline with real commands
         env:
           TTX_BROWSER_CHANNEL: chromium
-          TTX_STANDALONE_FILE: _site/index.html
         run: node scripts/qa/standalone.cjs
-      - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-        uses: actions/configure-pages@v5
-      - name: Upload the tested Pages site
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-        uses: actions/upload-pages-artifact@v4
+      - name: Stage the tested branch
+        env:
+          TTX_BRANCH: ${{ matrix.branch }}
+        run: |
+          mkdir -p _branch
+          cp web/standalone/ttx.html _branch/index.html
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('_branch/version.json').write_text(json.dumps({
+              'branch': os.environ['TTX_BRANCH'],
+              'commit': Path('/tmp/source-revision').read_text().strip(),
+              'run': os.environ['GITHUB_RUN_ID'],
+          }) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: standalone-${{ matrix.branch }}
+          path: _branch
+          retention-days: 7
+      - name: Upload browser verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ matrix.branch }}
+          path: runs/standalone-review
+          if-no-files-found: ignore
+          retention-days: 7
+
+  assemble:
+    name: Assemble both standalone versions
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: standalone-main
+          path: _site/main
+      - uses: actions/download-artifact@v4
+        with:
+          name: standalone-dev
+          path: _site/dev
+      - name: Build the version chooser
+        run: python3 scripts/stage_pages.py _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
   deploy:
-    name: Publish on GitHub Pages
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-    needs: build
+    name: Publish both versions on GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: assemble
     runs-on: ubuntu-24.04
     permissions:
       pages: write
