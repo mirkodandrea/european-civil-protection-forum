@@ -3,3 +3,6 @@ target = "index.html"
 dist = "../../web/dist"
 public_url = "/"
 filehash = true
+
+[serve]
+port = 8080

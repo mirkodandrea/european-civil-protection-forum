@@ -47,6 +47,9 @@ cargo install trunk --locked
 # Build the browser app before starting the server
 ./scripts/build_frontend.sh
 
+# Development: frontend rebuild + browser live reload
+./scripts/dev_frontend.sh
+
 # .env in the repo root
 OPENROUTER_API_KEY=sk-or-...
 # OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   (default)
@@ -54,6 +57,12 @@ OPENROUTER_API_KEY=sk-or-...
 cargo run --release -p app            # simulator window + web server on :8080
 cargo run --release -p app -- --headless   # native server only (no window)
 ```
+
+During frontend development, `./scripts/dev_frontend.sh` runs the full
+standalone WASM app through Trunk on `http://127.0.0.1:8080`, with automatic
+rebuild and browser refresh. It reads `OPENROUTER_API_KEY` from `.env` like
+`run_pages_local.sh`; the key is compiled into the browser app, so keep this
+local build private. Changes in `crates/frontend/` are picked up automatically.
 
 Then open:
 
