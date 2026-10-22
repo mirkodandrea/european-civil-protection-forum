@@ -37,9 +37,10 @@ and models can be configured in the app for direct AI requests. The simulation
 panel uses the 2D operational map. Each opening has its own in-memory exercise.
 See [standalone build, usage and verification](docs/standalone-web.md).
 
-To build and serve the same standalone artifact staged by GitHub Pages locally,
-run `./scripts/run_pages_local.sh` and open `http://127.0.0.1:8000/`.
-Set `TTX_PAGES_PORT` or pass a port to choose another local port.
+To build and serve the standalone app locally, run `./scripts/run_pages_local.sh`
+and open `http://127.0.0.1:8000/`. It reads `OPENROUTER_API_KEY` from `.env`,
+uses `openai/gpt-oss-120b` for both tasks, and accepts a port argument or
+`TTX_PAGES_PORT`. This local artifact embeds the key; do not publish it.
 
 ## Quick start
 

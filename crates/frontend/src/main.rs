@@ -462,7 +462,14 @@ impl Component for App {
                 }
                 self.busy = true;
                 self.error.clear();
-                self.notice = "Elaborazione…".into();
+                self.notice = match &action.kind {
+                    ActionKind::Prepare(_) => "L’AI sta analizzando il messaggio…",
+                    ActionKind::Submit(_) | ActionKind::Send(_, _) => {
+                        "Traduzione e invio in corso…"
+                    }
+                    _ => "Elaborazione…",
+                }
+                .into();
                 let key = self.token.clone();
                 ctx.link().send_future(async move {
                     let body = action.body.clone();
@@ -487,6 +494,7 @@ impl Component for App {
             }
             Msg::Done(kind, result) => {
                 self.busy = false;
+                let mut auto_submit = None;
                 match result {
                     Err(e) => {
                         self.error = e;
@@ -516,7 +524,7 @@ impl Component for App {
                                 self.responses.insert(key, value);
                             }
                             ActionKind::Prepare(to) => {
-                                let d = self.drafts.entry(to).or_default();
+                                let d = self.drafts.entry(to.clone()).or_default();
                                 d.private = value["draft"].clone();
                                 d.dirty = false;
                                 d.clock_revision = self.state["clock_control"]["revision"].clone();
@@ -525,7 +533,25 @@ impl Component for App {
                                 } else {
                                     text(&d.private["message"]).into()
                                 };
-                                self.notice = "Bozza privata · nessun messaggio inviato".into();
+                                let no_actions = list(&d.private["actions"]).is_empty();
+                                let needs_clarification =
+                                    d.private["status"] == "needs_clarification";
+                                if d.private["status"] == "ready" && no_actions {
+                                    self.notice = "Nessuna azione operativa rilevata · invio del messaggio tradotto…".into();
+                                    auto_submit = Some((
+                                        to.clone(),
+                                        d.private["id"].clone(),
+                                        d.private["revision"].clone(),
+                                    ));
+                                } else if needs_clarification {
+                                    self.notice = "Serve un chiarimento prima dell’invio".into();
+                                } else if d.private["status"] == "ai_unavailable" {
+                                    self.notice =
+                                        "Interpretazione non riuscita · scegli come procedere"
+                                            .into();
+                                } else {
+                                    self.notice = "Azioni individuate · controlla la bozza".into();
+                                }
                             }
                             ActionKind::Send(to, sent) => {
                                 self.notice = if value["translation_failed"] == true {
@@ -540,7 +566,13 @@ impl Component for App {
                                 }
                             }
                             ActionKind::Submit(to) => {
-                                self.notice = "Decisione inviata per revisione EXCON".into();
+                                self.notice = if value["translation_failed"] == true {
+                                    "Inviato · traduzione non disponibile".into()
+                                } else if value["proposal"].is_null() {
+                                    "Messaggio tradotto inviato".into()
+                                } else {
+                                    "Decisione inviata per revisione EXCON".into()
+                                };
                                 if let Some(d) = self.drafts.remove(&to) {
                                     if let Some(id) = d.private["id"].as_u64() {
                                         self.dismissed.insert(id);
@@ -555,6 +587,14 @@ impl Component for App {
                             ActionKind::Ordinary => {}
                         }
                     }
+                }
+                if let Some((to, draft, revision)) = auto_submit {
+                    let mut action = Action::post(
+                        format!("/api/player/{}/draft/submit", self.own),
+                        json!({"draft":draft,"revision":revision,"manual":false}),
+                    );
+                    action.kind = ActionKind::Submit(to);
+                    ctx.link().send_message(Msg::Action(action));
                 }
                 self.request_refresh(ctx);
             }

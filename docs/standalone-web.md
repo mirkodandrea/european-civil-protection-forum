@@ -24,8 +24,8 @@ eseguire `ttx.html`. La build nativa e `scripts/build_frontend.sh` restano dispo
 - **OpenRouter** permette di impostare chiave, modello di interpretazione e modello
   di traduzione. **Applica** svuota il campo della chiave; **Rimuovi chiave** disattiva
   l’AI. La configurazione è condivisa anche con clock e consegne programmate.
-- La chiave vive soltanto in memoria, separata da Exercise: non è scritta in
-  storage, URL, log, snapshot o debrief. Le richieste AI usano direttamente
+- La chiave inserita dall’interfaccia vive soltanto in memoria, separata da
+  Exercise: non è scritta in storage, URL, log, snapshot o debrief. Le richieste AI usano direttamente
   `https://openrouter.ai/api/v1/chat/completions`, con timeout di 90 secondi.
 - Senza chiave o connessione si usa il percorso manuale EXCON. L’AI richiede
   Internet; la simulazione e i controlli non lo richiedono.
@@ -94,6 +94,13 @@ La directory pubblicata contiene soltanto `index.html` (copia del singolo
 `ttx.html` collaudato) e `.nojekyll`. Non contiene sorgenti, `.env`, cassette,
 registrazioni o risultati di esercitazioni. L’app non carica asset da percorsi
 assoluti e funziona anche nel sottopercorso di un sito Pages di progetto.
+
+Per l’avvio locale usare `./scripts/run_pages_local.sh`: carica
+`OPENROUTER_API_KEY` da `.env`, compila entrambi i task con
+`openai/gpt-oss-120b` e serve su `127.0.0.1`. In questa build locale la chiave è
+inclusa nel WASM e quindi recuperabile dall’artefatto: non pubblicare né
+condividere `web/standalone/ttx.html` o `_site/`. Il workflow Pages ricompila da
+sorgente senza la chiave e pubblica un artefatto privo di credenziali.
 
 Pages deve essere disponibile per il repository: l’attivazione sul repository
 privato attuale è stata rifiutata da GitHub con HTTP 422 (piano non compatibile).

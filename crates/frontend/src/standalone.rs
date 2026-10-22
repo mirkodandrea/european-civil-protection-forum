@@ -5,6 +5,8 @@ use std::{cell::RefCell, sync::Arc};
 use yew::prelude::*;
 
 thread_local! { static RUNTIME: RefCell<Option<server::AppState>> = const { RefCell::new(None) }; }
+const STANDALONE_MODEL: &str = "openai/gpt-oss-120b";
+
 pub fn runtime() -> Result<server::AppState, String> {
     RUNTIME
         .with(|r| r.borrow().clone())
@@ -25,7 +27,10 @@ fn initialize() -> Result<server::AppState, String> {
         },
     )
     .map_err(|e| e.to_string())?;
-    let state = server::browser::new(exercise::Exercise::new(world));
+    let mut state = server::browser::new(exercise::Exercise::new(world));
+    if let Some(key) = option_env!("OPENROUTER_API_KEY").filter(|key| !key.trim().is_empty()) {
+        server::browser::configure(&mut state, &key, STANDALONE_MODEL, STANDALONE_MODEL);
+    }
     RUNTIME.with(|r| *r.borrow_mut() = Some(state.clone()));
     Ok(state)
 }
@@ -38,9 +43,18 @@ pub fn standalone() -> Html {
     let all_roles = use_state(|| false);
     let split = use_state(|| "50".to_string());
     let key = use_state(String::new);
-    let model = use_state(|| llm::DEFAULT_MODEL.to_string());
-    let translator = use_state(|| llm::DEFAULT_TRANSLATION_MODEL.to_string());
-    let ai_notice = use_state(|| "AI disattivata · modalità manuale".to_string());
+    let model = use_state(|| STANDALONE_MODEL.to_string());
+    let translator = use_state(|| STANDALONE_MODEL.to_string());
+    let ai_notice = use_state(|| {
+        if initialized
+            .as_ref()
+            .is_ok_and(|state| state.llm.is_available())
+        {
+            "AI configurata da .env · OpenRouter".to_string()
+        } else {
+            "AI disattivata · modalità manuale".to_string()
+        }
+    });
     let revision = use_state_eq(|| 0u64);
     {
         let revision = revision.clone();

@@ -38,16 +38,19 @@ principale usa il pulsante EXCON di avanzamento del turno.
   I documenti e le motivazioni della vecchia dichiarazione rimangono nel modello e
   nelle API precedenti; la chat non inventa una motivazione a nome del partecipante.
 - I messaggi informativi possono essere inviati direttamente disattivando
-  «Prepara decisione con l’AI». La preparazione di una decisione invece crea una
-  bozza privata, senza consegnare messaggi né aprire proposte EXCON.
+  «Distingui automaticamente chat e azioni con l’AI». Con l'opzione attiva, l'AI
+  classifica il messaggio al primo invio: se non rileva azioni, lo traduce e lo
+  consegna come chat; se rileva azioni, prepara una bozza privata da verificare e
+  confermare. Disattivando l'opzione il testo viene inviato direttamente come chat.
 - L’assistente individua le azioni e, se mancano dati essenziali, rivolge una
   domanda precisa al player nella sua lingua. Il player risponde nel composer;
   non deve interpretare un badge generico «serve un chiarimento».
 - Quando il testo è completo, il player vede il messaggio finale e le azioni e
-  conferma esplicitamente. Un'azione viene inviata a EXCON per la revisione; se la
-  chat è diretta a un altro player, quel messaggio raggiunge direttamente il contatto.
-  Modificare il testo richiede una nuova analisi. Solo la revisione confermata
-  diventa messaggio e proposta, senza una seconda estrazione AI.
+  conferma esplicitamente quando contiene azioni. Un'azione viene inviata a EXCON
+  per la revisione; se la chat è diretta a un altro player, il messaggio arriva al
+  contatto dopo la conferma. Un testo senza azioni viene invece consegnato come
+  chat tradotta. Modificare il testo richiede una nuova analisi; la conferma non
+  avvia una seconda estrazione AI.
 - Le domande private non vengono condivise con EXCON nemmeno dopo l’invio.
   EXCON riceve il testo finale confermato e le azioni da revisionare. Le approvazioni
   e le conseguenze fisiche restano nel percorso Exercise / Command esistente.
