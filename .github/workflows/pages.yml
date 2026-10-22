@@ -18,7 +18,7 @@ permissions:
 
 # Every deployment contains both branches. Serialize them across all refs.
 concurrency:
-  group: pages-dual-standalone
+  group: pages-dual-standalone-release
   cancel-in-progress: false
 
 env:
