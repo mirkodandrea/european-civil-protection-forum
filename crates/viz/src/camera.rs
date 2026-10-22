@@ -19,7 +19,7 @@
 //! of the fire so it lights the terrain around it.
 
 // Manual navigation adapted from propagator_abm crates/game/src/kiosk/view.rs
-// (EUPL-1.2); provenance and TTX-specific limits: docs/graphics.md.
+// (EUPL-1.2).
 use bevy::core_pipeline::bloom::BloomSettings;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::system::SystemParam;

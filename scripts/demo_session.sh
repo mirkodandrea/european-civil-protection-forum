@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Drive a two-turn demo session through the HTTP API (the same calls the web
 # UIs make). Requires a running `ttx` (default http://localhost:8080) with the
-# LLM configured. Screenshots of the simulator window go to docs/screenshots/.
+# LLM configured. Screenshots of the simulator window go to runs/demo-screenshots/.
 #
 #   ./scripts/demo_session.sh [base_url]
 set -euo pipefail
@@ -23,7 +23,7 @@ wait_parsed() { # wait until no proposal is still being parsed
   done
 }
 last_pid() { curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposals"][-1]["id"])'; }
-shot() { echo "$ROOT/docs/screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
+shot() { mkdir -p "$ROOT/runs/demo-screenshots"; echo "$ROOT/runs/demo-screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
 
 echo "== setup: regional player plays in Armenian"
 post /player/regional_cp/language '{"language":"hy"}'

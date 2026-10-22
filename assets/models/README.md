@@ -54,5 +54,5 @@ for the structure shader. This is a material identifier, not transparency.
 Each `rig` gives its authored pivot, axis, animation kind and phase. Preserve
 these fields when editing/regenerating; RGB-only loading loses the PBR response.
 Use Blender in background mode with the generator to rebuild the assets.
-The TTX uses metre-authored meshes with presentation magnification, as described
-in `docs/graphics.md`. Physical allocations and movement remain in `sim`.
+The TTX uses metre-authored meshes with presentation magnification. Physical
+allocations and movement remain in `sim`.

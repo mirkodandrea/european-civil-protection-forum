@@ -1,39 +1,10 @@
-# To do
+# Temi da definire
 
-What is not built yet. The difference between the code and the specs, item by item, is in [`gaps.md`](gaps.md). The v0.3 items have their own draft specs in [`specs/`](specs/README.md), with priorities and dependencies.
+Il progetto è in fase di definizione: questi punti non hanno priorità né
+scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](stato-attuale.md).
 
-## Operational update (2026-10-20)
-
-The Roccavento transfer is implemented: segment routing, consistent travel times,
-bounded local unit policies, reviewable forecasts, projector graphics, invisible
-fixtures, a paired laboratory and ten adapted skills. Current configuration and
-verified limits are in [operational-upgrade.md](operational-upgrade.md).
-
-Pilot checks still needed: scenario-specific tactical calibration, actual projector
-contrast/FPS, real participant usability, and operational review of authored rates
-and danger thresholds. Synthetic comparisons have mixed outcomes and do not establish
-universal superiority of autonomous execution. Node-based behavior authoring and
-bot participants remain separate possible extensions.
-
-## Planned for v0.3 (pilot session and after)
-
-Priority order proposed in [`specs/README.md`](specs/README.md); the pilot's must-have is player chat with inject forwarding.
-
-1. [Dedicated translation model](specs/01-translation-model.md)
-2. [Asynchronous message states (visible translation step)](specs/02-message-lifecycle.md)
-3. [Complete session recording, including conversation logs](specs/03-session-recording.md)
-4. [1-to-1 player chat with auto-translation; forwarding injects](specs/05-player-chat-forward.md)
-5. [Restart and resume a session](specs/06-session-restart.md)
-6. [Time compression per turn, time jumps](specs/04-time-compression.md)
-7. [EXCON pre-authors turns; editor and generation](specs/07-turn-authoring.md)
-8. [Live evaluator dashboard in the evaluator's language](specs/08-evaluator-dashboard.md)
-9. [AI players; AI assessment of the exercise](specs/09-ai-players.md)
-
-## Later (from the v0.2 draft)
-
-- Individual civilian behavior and richer operational calibration. Aggregate evacuation traffic, routed deployments, progressive crews and engines are available in the [operational model](operational-model.md).
-- L6/L7 AI workflows (inject suggestions, debrief narrative; L7 is folded into spec 09)
-- A real scenario for the Forum (the synthetic Valverde valley stands in)
-- Role/permission editing in the UI
-- Authentication for the web UIs before any non-private deployment
-- A local model (Ollama) as an LLM fallback; today only OpenRouter is wired in
+- Discutere quali ulteriori azioni operative il simulatore dovrebbe modellare.
+- Aggiungere hint testuali ai partecipanti sulle azioni possibili nel loro ruolo
+  e su come chiedere supporto.
+- Modellare più viaggi per autobus nella stessa evacuazione, con riuso dei mezzi
+  e tempi di completamento.

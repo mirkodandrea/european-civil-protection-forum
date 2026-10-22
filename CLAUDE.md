@@ -1,6 +1,9 @@
 # PPRD East 4 agentic TTX — project guide
 
-Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildings) with a Bevy big screen, a web EXCON console, web player pages, and an OpenRouter LLM that mediates. Start with `README.md`; the design docs are in `docs/`.
+**WIP — work in progress.** The project is still being defined; requirements,
+features and direction may change.
+
+Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildings) with a Bevy big screen, a web EXCON console, web player pages, and an OpenRouter LLM that mediates. Start with `README.md`; high-level capabilities and open topics are in `docs/stato-attuale.md` and `docs/todo.md`.
 
 ## Decisions (settled with Mirko)
 
@@ -9,7 +12,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | Simulator | Rust + Bevy 0.14 (+ bevy_egui 0.28), from scratch; `propagator-core` vendored from `~/dev/experiments/propagator_abm` |
 | Game | Turn-based. EXCON omnipotent (GUI tools, AI prompts, commands by code). Every player action needs EXCON approval |
 | People | Not modelled individually: buildings have occupant counts |
-| Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. See docs/api.md. |
+| Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. |
 | Places | Named places, zone codes of an 8×8 grid (`F4`), zone edges (`F4:N`), or coordinates |
 | LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash`, key in `.env`; must degrade gracefully |
 | Scenario | Synthetic "Valverde valley" for now |
@@ -42,7 +45,6 @@ cargo run -p scenario --bin gen-scenario
 ./scripts/demo_session.sh                  # scripted 2-turn session against a running ttx
 echo "$PWD/runs/x.png" > runs/shot.req     # simulator window screenshot (or press P)
 ./scripts/record/record.sh                 # re-record the narrated demo (own ttx on :8090, LLM cassette, TTS cache)
-python3 scripts/record/readme_demo.py      # refresh the docs/demo.md timeline/outcome from the recording
 devtunnel host -p 8080                     # private tunnel for phone play (play.html)
 ```
 
@@ -52,15 +54,14 @@ devtunnel host -p 8080                     # private tunnel for phone play (play
 - The graph is static geometry; mutable routes, work, water, queues, site failures and pending warnings live in `sim::Dyn` for rollback. Keep all model decisions in `sim`; Bevy only draws snapshots.
 - `DeployEngine` needs an approved role allocation. Ground routes obey fire cuts; civilian traffic also obeys police closures. No path means waiting/failure, never a straight-line fallback.
 - EU12 ids differ from legacy ids: use scenario fuel definitions for burnability, fuel removal and rendering.
-- Scenario Factory port and import commands, provenance, training assumptions and verification: `docs/operational-model.md`.
+- Scenario Factory generation and import are implemented in `crates/scenario` and `scripts/scenario_factory.py`.
 
 ## Roccavento lessons update (2026-10-20)
 
-- Reusable skills: `docs/ttx-skills.md`, under `.claude/skills/`. Read relevant ones;
+- Reusable skills: under `.claude/skills/`. Read relevant ones;
   explicit user authorization takes precedence over source-game checkpoints.
-- Current transfer and limits: `docs/operational-upgrade.md`. Segment closures,
-  terrain travel, emergency queue delay and local autonomy are enabled by
-  `--operational-model`, independently configurable in scenario `operations`.
+- Segment closures, terrain travel, emergency queue delay and local autonomy
+  are enabled by `--operational-model`, independently configurable in scenario `operations`.
 - Keep approved mission centre separate from current post/base. Local policies
   never grant resources or change approved fire-line endpoints. Suspended tasks
   retain physical allocations and respect confirmed returns.
@@ -70,7 +71,7 @@ devtunnel host -p 8080                     # private tunnel for phone play (play
 - `scripts/lab/run.sh SUITE NEW_OUTPUT` runs paired seeds through real commands;
   `scripts/lab/generate_cases.py NEW_DIRECTORY` creates explicit synthetic fixtures.
 - `TTX_QUALITY=projector|low|high` changes presentation only. Invisible fixtures:
-  `docs/graphics.md`, `scripts/snapshot.sh`, `TTX_SNAPSHOT_SPEC`. Never start the
+  `scripts/snapshot.sh`, `TTX_SNAPSHOT_SPEC`. Never start the
   live HTTP/LLM path when generating a snapshot. Inspect every generated image.
 - Avoid formatting unrelated modules: use scoped rustfmt with `skip_children=true`.
 
@@ -79,7 +80,7 @@ devtunnel host -p 8080                     # private tunnel for phone play (play
   Each process uses real fixture approvals, no HTTP/LLM; names cannot reuse stale PNGs.
   Angles in this batch format are degrees; legacy `TTX_CAM` stays radians.
   `--bench 3` freezes animation after settling and reports wall/CPU/render/GPU samples.
-  Read `docs/graphics.md`; hidden-window FPS is not an interactive projector guarantee.
+  Hidden-window FPS is not an interactive projector guarantee.
 
 - Fire display defaults to the continuous, read-only field; `V` / `TTX_FIRE_RENDER=cells`
   selects exact-cell presentation. Snapshot states accept `fire=continuous|cells`.

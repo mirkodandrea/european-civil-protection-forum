@@ -1,11 +1,14 @@
 # Working on this TTX
 
-Read `CLAUDE.md` and the relevant documentation before changing behavior.
-`docs/lessons-from-propagator-abm.md` records the comparison; current implementation
-and verification are in `docs/operational-upgrade.md`.
+**WIP — work in progress.** Il progetto è in fase di definizione: requisiti,
+funzionalità e direzione possono ancora cambiare.
 
-Reusable project skills are indexed in `docs/ttx-skills.md` and stored under
-`.claude/skills/<name>/SKILL.md`. Read only the skills relevant to the task;
+Read `CLAUDE.md` and the relevant code before changing behavior. The high-level
+capabilities and current open topics are summarized in `docs/stato-attuale.md`
+and `docs/todo.md`; implementation details are defined by the code.
+
+Reusable project skills are stored under `.claude/skills/<name>/SKILL.md`. Read
+only the skills relevant to the task;
 their source-game examples do not override TTX requirements or user instructions.
 
 Keep physical decisions in the headless model, approvals in Exercise, and rendering

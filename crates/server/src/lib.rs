@@ -6,7 +6,7 @@
 //! in spawned tasks (see [`flow`]). Clients open `/ws` and receive the
 //! exercise `generation` whenever anything changes, then re-fetch.
 //!
-//! See `docs/api.md` for the endpoint reference.
+//! Route definitions and request types live in this crate.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;

@@ -4,7 +4,7 @@
 # ffmpeg while recording, cinematic camera), with Gemini TTS narration and
 # subtitles. One final ffmpeg pass composes everything.
 #
-#   ./scripts/record/record.sh [output.mp4]      (default docs/media/ttx_demo.mp4)
+#   ./scripts/record/record.sh [output.mp4]      (default runs/demo/ttx_demo.mp4)
 #
 # Environment:
 #   TTX_REC_FAST=1    hardware encoder for the final pass (faster, bigger file)
@@ -23,7 +23,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REC="$ROOT/scripts/record"
-OUT_MP4="${1:-$ROOT/docs/media/ttx_demo.mp4}"
+OUT_MP4="${1:-$ROOT/runs/demo/ttx_demo.mp4}"
 PORT="${TTX_REC_PORT:-8090}"
 WORK="$(mktemp -d -t ttx-rec)"
 T0=$(date +%s)

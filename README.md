@@ -1,8 +1,11 @@
 # PPRD East 4 — AI-supported Table-Top Exercise (working draft)
 
+**WIP — work in progress.** Il progetto è in fase di definizione: funzionalità,
+requisiti e direzione possono ancora cambiare.
+
 The browser frontend is written in **Rust with Yew**, compiled to WebAssembly. **Rocket** serves its generated assets, JSON APIs and WebSockets. Application state, forms, chats, maps and live updates run in Rust; JavaScript is limited to the generated WebAssembly loader.
 
-Preliminary conversational interface in this worktree: see [chat interface](docs/chat-interface.md). EXCON and players use chats, reviewed action proposals and separate map views; the previous director console remains at `advanced.html`.
+The current capabilities are summarized in [docs/stato-attuale.md](docs/stato-attuale.md). EXCON and players use chats, reviewed action proposals and separate map views; the previous director console remains at `advanced.html`.
 
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
@@ -16,17 +19,9 @@ A turn-based wildfire TTX for the Civil Protection Forum 2026:
 Deployed units travel from configurable training staging bases. Fire-line, water-drop,
 bus evacuation and road-closure task effects begin on actual arrival; the 3D view
 shows travel, arrival and task status from simulation records. Pending proposals
-never create team markers. See [deployment semantics](docs/api.md#deployed-team-travel).
+never create team markers.
 
-Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md) (methodology) and [`TTX_Software_Spec.md`](TTX_Software_Spec.md) (target spec, with an as-built section).
-
-## Demo
-
-[![Demo: one phone plays every role next to the 3D simulator, narrated (4 min)](docs/media/ttx_demo_poster.jpg)](docs/media/ttx_demo.mp4)
-
-**[▶ Watch the demo: docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4)** (4 min 18 s, 1920×1080, 27 MB, **narrated** by Google Gemini TTS, voice "Charon": the story of the incident as it unfolds, with burned-in subtitles plus a subtitle track; separate [`.srt`](docs/media/ttx_demo.srt) and [`.vtt`](docs/media/ttx_demo.vtt))
-
-What happens in the video, and how to play or re-record it: [docs/demo.md](docs/demo.md).
+Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md) records the initial use case. The current scope is in [docs/stato-attuale.md](docs/stato-attuale.md); implementation details are in code.
 
 ## Standalone WebAssembly
 
@@ -35,7 +30,7 @@ self-contained HTML app with the real simulation, EXCON and all player views.
 It runs directly in the browser, offline, without a backend; OpenRouter keys
 and models can be configured in the app for direct AI requests. The simulation
 panel uses the 2D operational map. Each opening has its own in-memory exercise.
-See [standalone build, usage and verification](docs/standalone-web.md).
+Build and serve it locally with `./scripts/run_pages_local.sh` as described below.
 
 To build and serve the standalone app locally, run `./scripts/run_pages_local.sh`
 and open `http://127.0.0.1:8000/`. It reads `OPENROUTER_API_KEY` from `.env`,
@@ -86,7 +81,7 @@ Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the
 
 The frontend build writes `web/dist/` (ignored by git), including compatible `.html` entry points. Rebuild it after changing `crates/frontend/`; the server defaults to `--web web/dist`. No Node build step or CDN is required.
 
-Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The default landscape is the Factory-generated Valverde valley. Regenerate it with `python3 scripts/scenario_factory.py landscape` (requires NumPy). The historical calibrated scenario remains available with `--scenario data/scenarios/synthetic_valley.json`; `cargo run -p scenario --bin gen-scenario` regenerates that historical template. See [landscape generation](docs/landscape-generation.md).
+Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The default landscape is the Factory-generated Valverde valley. Regenerate it with `python3 scripts/scenario_factory.py landscape` (requires NumPy). The historical calibrated scenario remains available with `--scenario data/scenarios/synthetic_valley.json`; `cargo run -p scenario --bin gen-scenario` regenerates that historical template.
 
 ## Operational model from propagator_abm
 
@@ -94,16 +89,15 @@ Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realiz
 progressive fire-line construction, engines with finite tanks and refills,
 finite aircraft drops, evacuation queues, intensity-based exposure and
 communication outages. Existing scenarios keep their calibrated rules unless
-this mode is enabled. See [operational model and Scenario Factory](docs/operational-model.md)
-for commands, parameters, EU12 package import and reproducible fire atlases.
+this mode is enabled. Scenario configuration and command behavior are defined in
+the scenario and simulation crates.
 
 The updated operational model adds segment-local fire closures, terrain-aware
 travel and queue delays, and local execution policies inside an approved mission.
 The renderer defaults to a stable, readable projector profile (`TTX_QUALITY=projector`;
 also `low` and `high`). EXCON can compute private forecast drafts and publish reviewed
-products to selected roles. See [implementation and verification](docs/operational-upgrade.md),
-[graphics and invisible snapshots](docs/graphics.md), and the
-[paired operational laboratory](docs/operational-lab.md).
+products to selected roles. The implementation is in the simulation, exercise
+and visualization crates; snapshot tooling is under `scripts/`.
 
 The native big screen now uses the latest source PBR pipeline: separate terrain,
 foliage and structure materials, GPU vegetation burning, sky reflections and
@@ -131,15 +125,6 @@ Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone code
 
 `scripts/demo_session.sh` plays a full two-turn session through the API; `scripts/record/record.sh` plays one in the browser and records the demo video (Italian, English and Armenian players; an AI prompt; a clarification; reinforcements).
 
-## Screenshots
-
-| | |
-|---|---|
-| ![EXCON — proposals](docs/screenshots/master_proposals.png) EXCON: proposals with translation, AI summary and feasibility checks | ![Player — Mayor, Italian](docs/screenshots/player_mayor_italian.png) Mayor playing in Italian |
-| ![Player — regional, Armenian](docs/screenshots/player_regional_armenian.png) Regional Civil Protection playing in Armenian | ![Player — clarification](docs/screenshots/player_fire_commander_clarification.png) A vague order gets a clarification question |
-| ![EXCON — commands by code](docs/screenshots/master_commands_by_code.png) Commands by code | ![Turn 2 simulated live](docs/screenshots/sim_turn2_live.png) Turn 2 simulated live: the lines hold above Pineta, the second fire runs through the farmland |
-| ![Flames close-up](docs/screenshots/sim_flames_closeup.png) Flames sized by ensemble intensity and probability, tilted by the wind; uncertainty glow ahead, charcoal scar behind | |
-
 ## Layout
 
 ```
@@ -157,7 +142,7 @@ web/dist/               Generated HTML entry points, CSS, WebAssembly and loader
 scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)
 assets/models           Blender vegetation, town and articulated PBR unit bakes
 data/scenarios          generated scenario JSON
-docs/                   architecture, API, commands, simulation, LLM, scenario docs; media/ demo video
+docs/                   high-level capabilities and open topics
 runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
 ```
 
@@ -172,23 +157,15 @@ The server tests play the whole EXCON ↔ player ↔ LLM loop over HTTP with a m
 
 ## Docs
 
-- [docs/architecture.md](docs/architecture.md): components, threads, data flow, turn loop
-- [docs/api.md](docs/api.md): HTTP/WebSocket API (drive everything by code)
-- [docs/commands.md](docs/commands.md): the command catalogue and location syntax
-- [docs/simulation.md](docs/simulation.md): fire, buildings, evacuation, resources, calibration
-- [docs/lessons-from-propagator-abm.md](docs/lessons-from-propagator-abm.md): comparison with current Roccavento, proposed graphics and simulation improvements for the TTX
-- [docs/operational-upgrade.md](docs/operational-upgrade.md): implemented transfer, configuration, forecast review, verification and limits
-- [docs/ttx-skills.md](docs/ttx-skills.md): ten adapted project skills and their provenance
-- [docs/llm.md](docs/llm.md): LLM workflows, prompts, guardrails, fallback
-- [docs/scenario.md](docs/scenario.md): the synthetic scenario, roles, MSEL, how to make another
-- [docs/demo.md](docs/demo.md): the demo video described: incident, roles, timeline, players' words, outcome
-- [docs/todo.md](docs/todo.md): what is not built yet; [docs/specs/](docs/specs/README.md): draft specs for v0.3
-- [docs/screenshots](docs/screenshots): captures from a live session
-- [docs/media/ttx_demo.mp4](docs/media/ttx_demo.mp4): the demo video; [scripts/record/README.md](scripts/record/README.md) explains how it is recorded
+- [docs/stato-attuale.md](docs/stato-attuale.md): specifica di alto livello delle capacità presenti
+- [docs/todo.md](docs/todo.md): pochi temi ancora da definire
+- [scripts/record/README.md](scripts/record/README.md): come registrare una sessione demo
+
+The implementation and detailed behavior can be read from the source code.
 
 Player maps show reported locations and perimeter observations delivered to that
 role. The EXCON can attach map data to injects or publish a reviewed perimeter;
-undisclosed simulation changes remain hidden. See [role access and map API](docs/api.md#role-access-and-map-information).
+undisclosed simulation changes remain hidden. Role-specific access is enforced by the server API.
 Scripted demos require `TTX_MASTER_KEY` from the startup link. The console also
 provides three evaluator links: each opens a read-only evidence dashboard with
 chains, objectives, supporting documents, filters, and full debrief export.
@@ -197,7 +174,7 @@ EXCON can run a configurable clock within an open turn and schedule MSEL injects
 by simulated time. Training phases (early warning, early action, escalation,
 full response) preserve accumulated state and are independent of decision turns.
 Clock progression runs physics and arrivals; approved orders execute only when
-EXCON explicitly executes them or resolves the turn. See [time and phase API](docs/api.md#within-turn-clock-training-phases-and-scheduled-injects).
+EXCON explicitly executes them or resolves the turn. The server and exercise crates implement clock and phase behavior.
 
 Resource deployment respects physical inventory plus reviewed exercise-wide and
 per-training-phase caps. Active and approved units count together; requests and
