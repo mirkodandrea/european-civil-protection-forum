@@ -57,4 +57,6 @@ un unico sito con `scripts/stage_pages.py`. Le pull request verificano il codice
 proposto senza pubblicare. Le pubblicazioni sono serializzate tra tutti i branch;
 un errore di build o verifica impedisce il deploy dell’intero sito.
 Ogni sottocartella include `version.json` con branch, commit e run GitHub.
-Le prove browser sono conservate negli artefatti della run per sette giorni.
+La CI usa Chrome preinstallato sul runner Ubuntu, con ANGLE SwiftShader per
+verificare il 3D senza una GPU fisica. Le prove browser sono conservate negli
+artefatti della run per sette giorni.

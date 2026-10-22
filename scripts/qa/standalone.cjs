@@ -5,9 +5,11 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
 (async()=>{
  fs.mkdirSync(out,{recursive:true});
  const reference=JSON.parse(execFileSync('cargo',['run','--locked','--release','--offline','-p','exercise','--example','standalone_reference'],{encoding:'utf8',maxBuffer:8*1024*1024}));
- const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome'});
- const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[];
+ const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome',args:process.platform==='linux'?['--use-angle=swiftshader','--enable-unsafe-swiftshader']:[]});
+ const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[],browserDiagnostics=[];
  page.on('pageerror',e=>{if(e.message!=="Using exceptions for control flow, don't mind me. This isn't actually an error!")errors.push(e.message);});page.on('request',r=>requests.push(r.url()));
+ page.on('console',m=>{if(['warning','error'].includes(m.type())){browserDiagnostics.push({type:m.type(),text:m.text()});if(browserDiagnostics.length>200)browserDiagnostics.shift();}});
+ page.on('crash',()=>errors.push('Browser page crashed'));
  const api=(role,url,body)=>page.evaluate(async({role,url,body})=>JSON.parse(await window.ttxRequest(role,url,body===undefined?undefined:JSON.stringify(body))),{role,url,body});
  const wait=async predicate=>{const deadline=Date.now()+60000;while(!await predicate()){if(Date.now()>deadline)throw Error('State timeout');await page.waitForTimeout(100);}};
  const select=async role=>page.locator(`#tabs [data-role="${role}"]`).click();
@@ -57,5 +59,10 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   assert.equal(errors.length,0,errors.join('\n'));
   fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({scenario:'synthetic_valley.json',seed:1,realizations:32,commands:[{type:'IssueWarning',zone:'F4'}],minutes:1,rollback:1,pairedNativeStateIdentical:true,requests,errors},null,2));
   console.log('PASS main standalone: offline original UI and Bevy 3D, inject, player reply, manual approval, turn, paired physics, rollback, evaluator, runtime AI settings and secret-free debrief');
- } catch(e) {await page.screenshot({path:path.join(out,'failure.png')});console.log({errors});throw e;} finally {await browser.close();}
+ } catch(error) {
+  console.error('Original failure:',error);console.log({errors,browserDiagnostics});
+  fs.writeFileSync(path.join(out,'failure.json'),JSON.stringify({error:String(error),stack:error.stack,errors,requests,browserDiagnostics},null,2));
+  try {await page.screenshot({path:path.join(out,'failure.png'),timeout:10000});}catch(capture){console.warn('Failure screenshot unavailable:',String(capture));}
+  throw error;
+ } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -41,7 +41,8 @@ jobs:
       - name: Install Rust and WebAssembly target
         run: rustup toolchain install 1.92.0 --profile minimal --target wasm32-unknown-unknown
       - name: Cache Rust dependencies and branch build outputs
-        uses: actions/cache@v4
+        id: rust-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -84,10 +85,11 @@ jobs:
       - name: Install browser fixture dependencies
         run: |
           npm ci --prefix scripts/record
-          scripts/record/node_modules/.bin/playwright install --with-deps chromium
+          # Ubuntu's runner image includes Chrome and its system libraries.
+          google-chrome --version
       - name: Verify the app offline with real commands
         env:
-          TTX_BROWSER_CHANNEL: chromium
+          TTX_BROWSER_CHANNEL: chrome
         run: node scripts/qa/standalone.cjs
       - name: Stage the tested branch
         env:
@@ -109,6 +111,15 @@ jobs:
           name: standalone-${{ matrix.branch }}
           path: _branch
           retention-days: 7
+      - name: Preserve compiled outputs for verification retries
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-1.92-${{ matrix.branch }}-${{ hashFiles('Cargo.lock') }}
       - name: Upload browser verification evidence
         if: always()
         uses: actions/upload-artifact@v4
