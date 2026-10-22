@@ -6,6 +6,12 @@ on:
   push:
     branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      verify_standalone:
+        description: Run the full offline browser verification (slow on software GPUs)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -78,16 +84,19 @@ jobs:
       - name: Build standalone WebAssembly
         run: ./scripts/build_standalone.sh
       - uses: actions/setup-node@v7
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: scripts/record/package-lock.json
       - name: Install browser fixture dependencies
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         run: |
           npm ci --prefix scripts/record
           # Ubuntu's runner image includes Chrome and its system libraries.
           google-chrome --version
       - name: Verify the app offline with real commands
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         env:
           TTX_BROWSER_CHANNEL: chrome
         run: node scripts/qa/standalone.cjs

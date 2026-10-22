@@ -52,11 +52,13 @@ Le build pubbliche impostano chiavi e cassette vuote. Lo script locale
 ## Pubblicazione
 
 `.github/workflows/pages.yml` è presente su entrambi i branch. Un push su main
-o dev o un avvio manuale costruisce e verifica entrambi i branch, poi compone
+o dev o un avvio manuale esegue i test del modello e costruisce entrambi i branch, poi compone
 un unico sito con `scripts/stage_pages.py`. Le pull request verificano il codice
 proposto senza pubblicare. Le pubblicazioni sono serializzate tra tutti i branch;
-un errore di build o verifica impedisce il deploy dell’intero sito.
+un errore nei test o nella build impedisce il deploy dell’intero sito.
+La verifica browser estesa può essere richiesta dall’avvio manuale del workflow
+con `verify_standalone=true`; se richiesta, anche il suo esito blocca il deploy.
 Ogni sottocartella include `version.json` con branch, commit e run GitHub.
-La CI usa Chrome preinstallato sul runner Ubuntu, con ANGLE SwiftShader per
+La verifica browser opzionale usa Chrome preinstallato sul runner Ubuntu, con ANGLE SwiftShader per
 verificare il 3D senza una GPU fisica. Le prove browser sono conservate negli
 artefatti della run per sette giorni.
