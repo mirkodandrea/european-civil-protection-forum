@@ -81,6 +81,12 @@ esplicito, senza presentarlo come una traduzione riuscita. Il sender vede il pro
 originale e il destinatario può espandere il testo originale. L'invio attende la
 traduzione; lo stato intermedio è locale al composer, senza ricevute di lettura.
 
+Durante la preparazione privata la chat mostra un indicatore animato che specifica
+che l'assistente sta ragionando; invio e traduzione hanno un messaggio di attesa
+distinto. Nelle chat dirette tra player, un heartbeat temporaneo mostra quando il
+contatto sta scrivendo. La presenza scade dopo cinque secondi e resta fuori da
+Exercise, snapshot, log e debrief.
+
 ## Mappe
 
 La mappa EXCON legge la vista completa del simulatore. Quella player usa esclusivamente

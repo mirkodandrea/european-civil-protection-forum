@@ -11,8 +11,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use web_time::{Duration, Instant};
 
 use access::{Access, Principal};
 use exercise::{Decision, Exercise, ProposalStatus};
@@ -59,6 +58,7 @@ pub struct AppState {
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
     forecast_slot: Arc<tokio::sync::Semaphore>,
+    presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
 }
 
 impl AppState {
@@ -109,6 +109,7 @@ pub fn router_with_access(
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+        presence: Default::default(),
     };
     tokio::spawn(flow::run_clock(state.clone()));
     let config = rocket::Config::figment()
@@ -138,6 +139,8 @@ pub fn router_with_access(
                 get_state,
                 get_master,
                 get_player,
+                post_presence,
+                get_presence,
                 decision_drafts::prepare,
                 decision_drafts::submit,
                 post_player_chat,
@@ -464,6 +467,55 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
     })))
+}
+
+#[derive(Deserialize)]
+struct PresenceBody {
+    to: String,
+    typing: bool,
+}
+
+// Ephemeral typing hints: deliberately kept outside Exercise so snapshots and
+// the exercise record contain no transient UI state.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/presence", data = "<body>")
+)]
+async fn post_presence(
+    principal: Principal,
+    s: AppState,
+    role: String,
+    body: Json<PresenceBody>,
+) -> ApiResult {
+    if principal != (Principal::Player { role: role.clone() }) {
+        return Err(bad("presence role does not match access key"));
+    }
+    if !s.access.players.contains_key(&body.to) || body.to == role {
+        return Err(bad("unknown conversation recipient"));
+    }
+    let mut presence = s.presence.lock().unwrap_or_else(|p| p.into_inner());
+    presence.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(5));
+    if body.typing {
+        presence.insert(role, (body.to.clone(), Instant::now()));
+    } else {
+        presence.remove(&role);
+    }
+    Ok(Json(json!({"ok":true})))
+}
+
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::get("/api/player/<role>/presence?<peer>")
+)]
+async fn get_presence(principal: Principal, s: AppState, role: String, peer: String) -> ApiResult {
+    if principal != (Principal::Player { role: role.clone() }) {
+        return Err(bad("presence role does not match access key"));
+    }
+    let presence = s.presence.lock().unwrap_or_else(|p| p.into_inner());
+    let typing = presence
+        .get(&peer)
+        .is_some_and(|(to, at)| to == &role && at.elapsed() < Duration::from_secs(5));
+    Ok(Json(json!({"typing":typing,"from":peer})))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/catalogue"))]

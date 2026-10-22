@@ -117,9 +117,16 @@ impl Principal {
                     || path == "/api/access"
                     || path == "/ws"
                     || path == own
-                    || ["draft", "draft/submit", "chat", "reply", "language"]
-                        .iter()
-                        .any(|suffix| path == format!("{own}/{suffix}"))
+                    || [
+                        "draft",
+                        "draft/submit",
+                        "chat",
+                        "reply",
+                        "language",
+                        "presence",
+                    ]
+                    .iter()
+                    .any(|suffix| path == format!("{own}/{suffix}"))
             }
         }
     }

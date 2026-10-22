@@ -34,6 +34,7 @@ pub fn new(ex: Exercise) -> AppState {
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+        presence: Default::default(),
     };
     tokio::spawn(flow::run_clock(state.clone()));
     state
@@ -134,6 +135,28 @@ async fn dispatch(s: AppState, token: &str, url: &str, body: Option<Value>) -> A
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
         ("GET", "/api/player/<role>") => {
             get_player(principal.clone(), s.clone(), captures["role"].to_string()).await
+        }
+        ("POST", "/api/player/<role>/presence") => {
+            post_presence(
+                principal.clone(),
+                s.clone(),
+                captures["role"].to_string(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("GET", "/api/player/<role>/presence") => {
+            let peer = serde_urlencoded::from_str::<BTreeMap<String, String>>(query)
+                .map_err(|e| bad(e.to_string()))?
+                .remove("peer")
+                .ok_or_else(|| bad("peer required"))?;
+            get_presence(
+                principal.clone(),
+                s.clone(),
+                captures["role"].to_string(),
+                peer,
+            )
+            .await
         }
         ("GET", "/api/catalogue") => get_catalogue(principal.clone(), s.clone()).await,
         ("GET", "/api/debrief") => get_debrief(principal.clone(), s.clone()).await,
@@ -378,6 +401,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/state"),
     ("GET", "/api/master"),
     ("GET", "/api/player/<role>"),
+    ("POST", "/api/player/<role>/presence"),
+    ("GET", "/api/player/<role>/presence"),
     ("GET", "/api/catalogue"),
     ("GET", "/api/debrief"),
     ("POST", "/api/player/<role>/chat"),

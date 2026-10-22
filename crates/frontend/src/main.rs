@@ -103,6 +103,8 @@ pub struct App {
     responses: BTreeMap<String, Value>,
     socket: Option<AbortHandle>,
     poll: Option<Interval>,
+    presence_poll: Option<Interval>,
+    peer_typing: bool,
     filter: String,
 }
 pub enum Msg {
@@ -119,6 +121,9 @@ pub enum Msg {
     Filter(String),
     Login(String),
     ClearError,
+    PresenceCheck,
+    PresenceUpdated(Result<Value, String>),
+    PresenceSent,
 }
 impl App {
     fn is_master(&self) -> bool {
@@ -316,6 +321,8 @@ impl Component for App {
             responses: BTreeMap::new(),
             socket: None,
             poll: None,
+            presence_poll: None,
+            peer_typing: false,
             filter: String::new(),
         }
     }
@@ -359,6 +366,10 @@ impl Component for App {
                 self.poll = Some(Interval::new(10000, move || {
                     link.send_message(Msg::Refresh)
                 }));
+                let link = ctx.link().clone();
+                self.presence_poll = Some(Interval::new(1800, move || {
+                    link.send_message(Msg::PresenceCheck)
+                }));
                 self.request_refresh(ctx);
             }
             Msg::Boot(Err(e)) => self.error = e,
@@ -366,6 +377,26 @@ impl Component for App {
                 self.request_refresh(ctx);
                 return false;
             }
+            Msg::PresenceCheck => {
+                if self.is_master() || self.is_evaluator() || self.selected == "master" {
+                    return false;
+                }
+                let token = self.token.clone();
+                let path = format!(
+                    "/api/player/{}/presence?peer={}",
+                    self.own,
+                    api::encode(&self.selected)
+                );
+                ctx.link().send_future(async move {
+                    Msg::PresenceUpdated(api::request(&token, &path, None).await)
+                });
+                return false;
+            }
+            Msg::PresenceUpdated(result) => {
+                self.peer_typing = result.is_ok_and(|v| v["typing"] == true);
+                return true;
+            }
+            Msg::PresenceSent => return false,
             Msg::Refreshed(result) => {
                 self.reading = false;
                 match result {
@@ -529,6 +560,7 @@ impl Component for App {
             }
             Msg::Select(id) => {
                 self.selected = id;
+                self.peer_typing = false;
                 self.mark_seen();
             }
             Msg::View(view) => {
@@ -537,13 +569,26 @@ impl Component for App {
             }
             Msg::Field(key, value) => {
                 if key.starts_with("draft:") {
-                    let d = self.drafts.entry(self.selected.clone()).or_default();
+                    let selected = self.selected.clone();
+                    let own = self.own.clone();
+                    let player_chat = !self.is_master() && selected != "master";
+                    let d = self.drafts.entry(selected.clone()).or_default();
                     match key.as_str() {
                         "draft:text" => {
                             d.text = value;
                             if !d.private.is_null() && d.private["status"] != "needs_clarification"
                             {
                                 d.dirty = d.text != text(&d.private["message"]);
+                            }
+                            if player_chat {
+                                let token = self.token.clone();
+                                let path = format!("/api/player/{own}/presence");
+                                let body =
+                                    json!({"to":selected,"typing":!d.text.trim().is_empty()});
+                                ctx.link().send_future(async move {
+                                    let _ = api::request(&token, &path, Some(body)).await;
+                                    Msg::PresenceSent
+                                });
                             }
                         }
                         "draft:mode" => d.mode = value,

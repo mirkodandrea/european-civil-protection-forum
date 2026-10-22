@@ -37,6 +37,10 @@ and models can be configured in the app for direct AI requests. The simulation
 panel uses the 2D operational map. Each opening has its own in-memory exercise.
 See [standalone build, usage and verification](docs/standalone-web.md).
 
+To build and serve the same standalone artifact staged by GitHub Pages locally,
+run `./scripts/run_pages_local.sh` and open `http://127.0.0.1:8000/`.
+Set `TTX_PAGES_PORT` or pass a port to choose another local port.
+
 ## Quick start
 
 ```bash
@@ -52,7 +56,7 @@ OPENROUTER_API_KEY=sk-or-...
 # OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   (default)
 
 cargo run --release -p app            # simulator window + web server on :8080
-cargo run --release -p app -- --headless   # web server only (no window)
+cargo run --release -p app -- --headless   # native server only (no window)
 ```
 
 Then open:
