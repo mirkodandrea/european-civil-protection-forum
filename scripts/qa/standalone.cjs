@@ -7,7 +7,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
  const reference=JSON.parse(execFileSync('cargo',['run','--locked','--release','--offline','-p','exercise','--example','standalone_reference'],{encoding:'utf8',maxBuffer:8*1024*1024}));
  const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome'});
  const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[];
- page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));
+ page.on('pageerror',e=>{if(e.message!=="Using exceptions for control flow, don't mind me. This isn't actually an error!")errors.push(e.message);});page.on('request',r=>requests.push(r.url()));
  const api=(role,url,body)=>page.evaluate(async({role,url,body})=>JSON.parse(await window.ttxRequest(role,url,body===undefined?undefined:JSON.stringify(body))),{role,url,body});
  const wait=async predicate=>{const deadline=Date.now()+60000;while(!await predicate()){if(Date.now()>deadline)throw Error('State timeout');await page.waitForTimeout(100);}};
  const select=async role=>page.locator(`#tabs [data-role="${role}"]`).click();
@@ -16,6 +16,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   await page.context().setOffline(true);
   await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE||'web/standalone/ttx.html'));
   await master.locator('#start').waitFor({timeout:30000});
+  await page.waitForFunction(()=>document.getElementById('standalone-3d').width>500);await page.waitForTimeout(1500);
   await page.screenshot({path:path.join(out,'desktop.png')});
   await master.locator('#start').click();
   await wait(async()=>(await api('master','/api/state')).phase==='orders');
@@ -39,6 +40,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   await assert.rejects(()=>api('mayor','/api/master'));await assert.rejects(()=>api('evaluator','/api/master/start',{}));
   await select('evaluator');await page.frameLocator('iframe[data-role="evaluator"]').locator('#context').filter({hasText:'Day'}).waitFor();
   assert(!requests.some(u=>/^https?:|^wss?:/.test(u)),'offline has no network dependencies');
+  await page.getByRole('checkbox',{name:'Simulazione 3D',exact:true}).uncheck();assert(await page.locator('#simulation').isHidden());await page.getByRole('checkbox',{name:'Simulazione 3D',exact:true}).check();
   await page.locator('details').click();await page.locator('#key').fill('fixture-key-not-a-secret');await page.locator('#configure').click();assert.equal(await page.locator('#key').inputValue(),'');
   assert.equal((await api('master','/api/state')).llm.available,true);
   const ai=[];await page.context().setOffline(false);
@@ -51,9 +53,9 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   assert(ai.includes('Bearer fixture-key-not-a-secret'),'OpenRouter called directly with runtime credential');
   assert(!JSON.stringify(await api('master','/api/debrief')).includes('fixture-key-not-a-secret'));
   await page.locator('#clear').click();assert.equal((await api('master','/api/state')).llm.available,false);
-  await page.locator('summary').click();await select('mayor');await page.setViewportSize({width:820,height:1180});await page.screenshot({path:path.join(out,'tablet.png')});
+  await page.locator('summary').click();await select('mayor');await page.setViewportSize({width:820,height:1180});await page.waitForTimeout(500);assert(!await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),'tablet has no horizontal overflow');await page.screenshot({path:path.join(out,'tablet.png')});
   assert.equal(errors.length,0,errors.join('\n'));
   fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({scenario:'synthetic_valley.json',seed:1,realizations:32,commands:[{type:'IssueWarning',zone:'F4'}],minutes:1,rollback:1,pairedNativeStateIdentical:true,requests,errors},null,2));
-  console.log('PASS main standalone: offline original UI, inject, player reply, manual approval, turn, paired physics, rollback, evaluator, runtime AI settings and secret-free debrief');
+  console.log('PASS main standalone: offline original UI and Bevy 3D, inject, player reply, manual approval, turn, paired physics, rollback, evaluator, runtime AI settings and secret-free debrief');
  } catch(e) {await page.screenshot({path:path.join(out,'failure.png')});console.log({errors});throw e;} finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

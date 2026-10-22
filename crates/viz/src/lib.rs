@@ -101,15 +101,23 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .lock()
         .map(|e| e.world.scn.clone())
         .expect("exercise lock");
+    let primary_window = Window {
+        title: "PPRD East TTX — simulator".into(),
+        resolution: (1600., 900.).into(),
+        ..default()
+    };
+    #[cfg(target_arch = "wasm32")]
+    let primary_window = Window {
+        canvas: Some("#standalone-3d".into()),
+        fit_canvas_to_parent: true,
+        focused: false,
+        ..primary_window
+    };
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "PPRD East TTX — simulator".into(),
-                        resolution: (1600., 900.).into(),
-                        ..default()
-                    }),
+                    primary_window: Some(primary_window),
                     ..default()
                 })
                 // The app installs its own tracing subscriber.
@@ -441,8 +449,14 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn screenshot() {}
+#[cfg(target_arch = "wasm32")]
+fn record() {}
+
 /// `P` saves a screenshot to `runs/`; so does writing a target path into
 /// `runs/shot.req` (for unattended captures — the file is consumed).
+#[cfg(not(target_arch = "wasm32"))]
 fn screenshot(
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
@@ -478,6 +492,7 @@ pub const RECORD_EVERY: u32 = 2;
 
 /// The recording stream: raw frames piped into an ffmpeg child that encodes
 /// on the fly (hardware H.264), so there is no pile of PNGs to encode later.
+#[cfg(not(target_arch = "wasm32"))]
 struct Recorder {
     tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
     writer: Option<std::thread::JoinHandle<()>>,
@@ -485,6 +500,7 @@ struct Recorder {
     dropped: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Recorder> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -545,6 +561,7 @@ fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Record
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Recorder {
     fn drop(&mut self) {
         eprintln!(
@@ -561,12 +578,14 @@ impl Drop for Recorder {
 /// Whether recording is on, and the running recorder. The flag matters:
 /// screenshots still in flight when recording stops must not start a new
 /// recorder (which would truncate the finished file).
+#[cfg(not(target_arch = "wasm32"))]
 type RecSlot = std::sync::Arc<std::sync::Mutex<(bool, Option<Recorder>)>>;
 
 /// While `runs/rec/ON` exists, stream every [`RECORD_EVERY`]-th frame into
 /// `runs/rec/sim.mkv` (encoded while recording) and write the wall-clock time
 /// of the first frame to `runs/rec/sim_start_ms.txt`. Removing the flag
 /// closes the stream.
+#[cfg(not(target_arch = "wasm32"))]
 fn record(
     windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
     mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,

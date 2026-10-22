@@ -62,3 +62,13 @@ pub fn configure_ai(key: String, model: String) -> Result<(), JsValue> {
         Ok(())
     })
 }
+
+/// Start main's original read-only Bevy renderer on the shared local Exercise.
+#[wasm_bindgen]
+pub fn start_renderer() -> Result<(), JsValue> {
+    let state = STATE
+        .with(|s| s.borrow().clone())
+        .ok_or_else(|| error("Exercise not initialized"))?;
+    viz::run(state.ex, 0, "standalone".into());
+    Ok(())
+}

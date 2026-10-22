@@ -20,7 +20,7 @@ Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agenti
 
 Le versioni pubblicate sono disponibili su [GitHub Pages](https://mirkodandrea.github.io/european-civil-protection-forum/): [main](https://mirkodandrea.github.io/european-civil-protection-forum/main/) e [dev](https://mirkodandrea.github.io/european-civil-protection-forum/dev/). Build, differenze e verifica: [docs/standalone-pages.md](docs/standalone-pages.md).
 
-`./scripts/build_standalone.sh` genera `web/standalone/ttx.html`: interfaccia originale, mappe 2D e modello Rust eseguiti interamente nel browser, senza backend. La configurazione OpenRouter è opzionale e avviene nell’app.
+`./scripts/build_standalone.sh` genera `web/standalone/ttx.html`: interfaccia originale, renderer Bevy 3D, mappe 2D e modello Rust eseguiti interamente nel browser, senza backend. La configurazione OpenRouter è opzionale e avviene nell’app.
 
 ## Demo
 

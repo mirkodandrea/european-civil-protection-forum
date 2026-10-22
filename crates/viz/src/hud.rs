@@ -10,6 +10,7 @@ use crate::frame::{to_bevy, Frame};
 use crate::objects::ShowGrid;
 use crate::{Scn, ServerPort, Snapshot};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn local_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
         .and_then(|s| {
@@ -19,6 +20,9 @@ fn local_ip() -> String {
         .map(|a| a.ip().to_string())
         .unwrap_or_else(|_| "localhost".into())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn local_ip() -> String { "local".into() }
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
@@ -88,7 +92,7 @@ pub fn draw(
 
     egui::Area::new(egui::Id::new("join")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
         panel.show(ui, |ui| {
-            ui.label(RichText::new(format!("Players: http://{ip}:{}/player.html     Director: /master.html", port.0)).color(Color32::WHITE).size(15.0));
+            ui.label(RichText::new(if cfg!(target_arch = "wasm32") { "Standalone browser · drag pan · right/Shift-drag rotate · wheel zoom".into() } else { format!("Players: http://{ip}:{}/player.html     Director: /master.html", port.0) }).color(Color32::WHITE).size(15.0));
             ui.label(RichText::new(format!("AI: {}   ·   drag rotate · right-drag pan · wheel zoom · A auto-orbit · F fire · G grid · R reset", if snap.llm_model.is_empty() { "see Director page" } else { &snap.llm_model })).color(Color32::GRAY).size(12.0));
         });
     });

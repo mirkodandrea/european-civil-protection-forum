@@ -4,7 +4,7 @@ La [pagina iniziale](https://mirkodandrea.github.io/european-civil-protection-fo
 permette di aprire o scaricare due app HTML indipendenti:
 
 - [main](https://mirkodandrea.github.io/european-civil-protection-forum/main/):
-  interfaccia HTML/JavaScript originale, mappa 2D, scenario
+  interfaccia HTML/JavaScript originale, renderer Bevy 3D originale, mappe 2D, scenario
   `synthetic_valley.json`, modello storico predefinito del branch.
 - [dev](https://mirkodandrea.github.io/european-civil-protection-forum/dev/):
   interfaccia Rust/Yew, renderer Bevy 3D, scenario `valverde_factory.json`,
@@ -18,7 +18,7 @@ Per partecipanti su dispositivi diversi serve la versione con server.
 
 Il file `web/standalone/ttx.html` contiene codice WASM, scenario, interfaccia e
 asset necessari. Può essere aperto con `file://` senza rete; usare un browser
-moderno con WebAssembly e DecompressionStream. La vista 3D di dev richiede
+moderno con WebAssembly e DecompressionStream. Le viste 3D richiedono
 anche supporto GPU/WebGL. L’AI è opzionale, richiede rete e contatta direttamente
 OpenRouter con la chiave inserita nell’app. La chiave resta in memoria e non
 entra nel debrief. Senza chiave è disponibile il flusso manuale EXCON.

@@ -15,3 +15,7 @@ rand.workspace = true
 rand_chacha.workspace = true
 bevy = { version = "0.14", default-features = true }
 bevy_egui = { version = "0.28", default-features = false, features = ["open_url", "default_fonts", "render"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+uuid = { version = "1", features = ["js"] }
