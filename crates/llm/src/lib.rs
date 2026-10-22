@@ -12,7 +12,9 @@
 //! - **Off**, every call fails fast so callers fall back to manual flow.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use web_time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use web_time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -73,10 +75,30 @@ pub enum Backend {
 #[derive(Clone)]
 pub struct Llm {
     backend: Backend,
+    #[cfg(target_arch = "wasm32")]
+    runtime: Option<Arc<std::sync::RwLock<Option<Llm>>>>,
     cassette: Option<Arc<cassette::Cassette>>,
 }
 
 impl Llm {
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_runtime_config(mut self) -> Self {
+        self.runtime = Some(Arc::new(std::sync::RwLock::new(None)));
+        self
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn configure_runtime(&self, configured: Llm) {
+        if let Some(runtime) = &self.runtime {
+            *runtime.write().unwrap() = Some(configured);
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn configured(&self) -> Option<Llm> {
+        self.runtime
+            .as_ref()
+            .and_then(|r| r.read().unwrap().clone())
+    }
+
     /// OpenRouter if `OPENROUTER_API_KEY` is set, otherwise off.
     pub fn from_env() -> Llm {
         match std::env::var("OPENROUTER_API_KEY") {
@@ -108,9 +130,12 @@ impl Llm {
     }
 
     pub fn openrouter(api_key: String, model: String, base_url: String) -> Llm {
-        let client = reqwest::Client::builder().timeout(Duration::from_secs(90)).build().expect("http client");
+        let builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(Duration::from_secs(90));
+        let client = builder.build().expect("http client");
         let providers = DEFAULT_PROVIDERS.iter().map(|p| p.to_string()).collect();
-        Llm { backend: Backend::OpenRouter { client, api_key, model, base_url, providers }, cassette: None }
+        Llm { #[cfg(target_arch = "wasm32")] runtime: None, backend: Backend::OpenRouter { client, api_key, model, base_url, providers }, cassette: None }
     }
 
     /// Preferred OpenRouter hosts in order (empty = let OpenRouter choose). No effect on other backends.
@@ -122,18 +147,22 @@ impl Llm {
     }
 
     pub fn mock(f: impl Fn(&str, &str, &str) -> Result<String> + Send + Sync + 'static) -> Llm {
-        Llm { backend: Backend::Mock(Arc::new(f)), cassette: None }
+        Llm { #[cfg(target_arch = "wasm32")] runtime: None, backend: Backend::Mock(Arc::new(f)), cassette: None }
     }
 
     pub fn off() -> Llm {
-        Llm { backend: Backend::Off, cassette: None }
+        Llm { #[cfg(target_arch = "wasm32")] runtime: None, backend: Backend::Off, cassette: None }
     }
 
     pub fn is_available(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() { return configured.is_available(); }
         !matches!(self.backend, Backend::Off) || self.cassette.as_ref().is_some_and(|c| !c.is_empty())
     }
 
     pub fn model(&self) -> String {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() { return configured.model(); }
         match &self.backend {
             Backend::OpenRouter { model, .. } => model.clone(),
             Backend::Mock(_) => "mock".into(),
@@ -148,6 +177,10 @@ impl Llm {
 
     /// A completion over a whole conversation (`messages` after the system prompt).
     pub async fn complete_chat(&self, task: &str, system: &str, messages: &[ChatMessage], json_mode: bool) -> Result<String> {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(configured) = self.configured() {
+            return Box::pin(configured.complete_chat(task, system, messages, json_mode)).await;
+        }
         let messages = merge_consecutive(messages);
         let Some(tape) = self.cassette.clone() else {
             return self.complete_live(task, system, &messages, json_mode).await;

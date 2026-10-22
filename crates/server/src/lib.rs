@@ -8,15 +8,23 @@
 //!
 //! See `docs/api.md` for the endpoint reference.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use web_time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::extract::{Path, Query, State};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::http::StatusCode;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::response::{IntoResponse, Response};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::routing::{get, post};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::{Extension, Json, Router};
 use access::{Access, Principal};
 use exercise::{Decision, Exercise, ProposalStatus};
@@ -24,8 +32,17 @@ use llm::Llm;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sim::Command;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::watch;
 
+#[cfg(target_arch = "wasm32")]
+pub mod browser;
+#[cfg(target_arch = "wasm32")]
+mod browser_runtime;
+#[cfg(target_arch = "wasm32")]
+use browser_runtime as tokio;
+#[cfg(target_arch = "wasm32")]
+use browser::{State, Extension, Path, Query, Json, StatusCode};
 pub mod flow;
 pub mod access;
 mod assessment;
@@ -35,6 +52,7 @@ pub struct AppState {
     pub ex: Arc<Mutex<Exercise>>,
     pub llm: Llm,
     pub access: Arc<Access>,
+    #[cfg(not(target_arch = "wasm32"))]
     generation: watch::Receiver<u64>,
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
 }
@@ -47,11 +65,13 @@ impl AppState {
 
 /// Build the application router. Spawns the generation watcher, so call it
 /// inside a Tokio runtime.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn router(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>) -> (Router, AppState) {
     let access = Access::new(ex.lock().unwrap_or_else(|p| p.into_inner()).role_ids());
     router_with_access(ex, llm, web_dir, access)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<PathBuf>, access: Access) -> (Router, AppState) {
     let (tx, rx) = watch::channel(0u64);
     let watched = ex.clone();
@@ -118,6 +138,7 @@ pub fn router_with_access(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: Option<Pa
 }
 
 /// Serve until the process exits.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn serve(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: PathBuf, addr: std::net::SocketAddr) -> anyhow::Result<()> {
     let (app, state) = router(ex, llm, Some(web_dir));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -131,6 +152,7 @@ pub async fn serve(ex: Arc<Mutex<Exercise>>, llm: Llm, web_dir: PathBuf, addr: s
 
 pub struct ApiError(StatusCode, String);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error": self.1}))).into_response()
@@ -195,7 +217,7 @@ async fn get_evaluator(State(s): State<AppState>, Query(filter): Query<exercise:
 async fn get_state(State(s): State<AppState>) -> ApiResult {
     let ex = s.lock();
     Ok(Json(json!({
-        "wall_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
+        "wall_ms": web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
         "exercise_phase":ex.exercise_phase,
         "phase_history":ex.phase_history,
         "resource_limits":ex.resource_limits,
@@ -537,16 +559,19 @@ async fn post_settings(State(s): State<AppState>, Json(b): Json<SettingsBody>) -
 
 // ---------------------------------------------------------------- ws
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Deserialize)]
 struct WsQuery {
     #[allow(dead_code)]
     role: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn ws(State(s): State<AppState>, Query(_q): Query<WsQuery>, up: WebSocketUpgrade) -> Response {
     up.on_upgrade(move |socket| ws_loop(socket, s.generation.clone()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn ws_loop(mut socket: WebSocket, mut rx: watch::Receiver<u64>) {
     let g = *rx.borrow();
     if socket.send(WsMessage::Text(json!({"generation": g}).to_string())).await.is_err() {

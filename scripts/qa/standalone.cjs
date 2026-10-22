@@ -1,0 +1,59 @@
+// Invisible offline fixture for main's original views and real Rust controllers.
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
+const fs=require('fs'),path=require('path'),assert=require('assert/strict'),{execFileSync}=require('child_process');
+const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().toISOString().replace(/[:.]/g,'-'));
+(async()=>{
+ fs.mkdirSync(out,{recursive:true});
+ const reference=JSON.parse(execFileSync('cargo',['run','--locked','--release','--offline','-p','exercise','--example','standalone_reference'],{encoding:'utf8',maxBuffer:8*1024*1024}));
+ const browser=await chromium.launch({headless:true,channel:process.env.TTX_BROWSER_CHANNEL||'chrome'});
+ const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[],requests=[];
+ page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));
+ const api=(role,url,body)=>page.evaluate(async({role,url,body})=>JSON.parse(await window.ttxRequest(role,url,body===undefined?undefined:JSON.stringify(body))),{role,url,body});
+ const wait=async predicate=>{const deadline=Date.now()+60000;while(!await predicate()){if(Date.now()>deadline)throw Error('State timeout');await page.waitForTimeout(100);}};
+ const select=async role=>page.locator(`#tabs [data-role="${role}"]`).click();
+ const master=page.frameLocator('iframe[data-role="master"]'),mayor=page.frameLocator('iframe[data-role="mayor"]');
+ try {
+  await page.context().setOffline(true);
+  await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE||'web/standalone/ttx.html'));
+  await master.locator('#start').waitFor({timeout:30000});
+  await page.screenshot({path:path.join(out,'desktop.png')});
+  await master.locator('#start').click();
+  await wait(async()=>(await api('master','/api/state')).phase==='orders');
+  await select('mayor');await mayor.locator('#joinlang').selectOption('en');await mayor.locator('#confirmlang').click();
+  await mayor.locator('#languagejoin').waitFor({state:'hidden'});
+  await api('master','/api/master/inject',{title:'Standalone fixture',sender:'EXCON',recipients:['mayor'],text:'Issue a warning for F4.'});
+  await mayor.locator('#replyto option').filter({hasText:'Standalone fixture'}).waitFor({state:'attached'});
+  await mayor.locator('#replyto').selectOption({index:1});await mayor.locator('#reply').fill('Issue a warning for F4.');
+  await mayor.locator('#basiskind').selectOption({index:1});await mayor.locator('#basis').fill('Standalone exercise fixture');await mayor.locator('#send').click();
+  await wait(async()=>(await api('master','/api/master')).proposals.some(p=>p.status==='pending'));
+  const proposals=(await api('master','/api/master')).proposals;const id=proposals.at(-1).id;
+  await select('master');await master.locator('#tb-proposals').click();
+  await master.locator(`#edit-${id}`).locator('..').evaluate(el=>el.open=true);
+  await master.locator(`#edit-${id}`).fill('[{"type":"IssueWarning","zone":"F4"}]');await master.locator(`[data-approve="${id}"]`).click();
+  await wait(async()=>(await api('master','/api/master')).proposals.find(p=>p.id===id).status==='approved');
+  await master.locator('#minutes').fill('1');await master.locator('#resolve').click();
+  await wait(async()=>{const s=await api('master','/api/state');return s.turn===2 && s.phase==='orders';});
+  const resolved=await api('master','/api/debrief');fs.writeFileSync(path.join(out,'resolved.json'),JSON.stringify(resolved));assert.deepEqual(resolved.physical_state,reference.resolved,'native and WASM states match');
+  await master.locator('#turn').filter({hasText:'Turn 2 · orders'}).waitFor();await page.screenshot({path:path.join(out,'approved-turn.png')});
+  await api('master','/api/master/rollback',{turn:1});assert.deepEqual((await api('master','/api/debrief')).physical_state,reference.rollback);
+  await assert.rejects(()=>api('mayor','/api/master'));await assert.rejects(()=>api('evaluator','/api/master/start',{}));
+  await select('evaluator');await page.frameLocator('iframe[data-role="evaluator"]').locator('#context').filter({hasText:'Day'}).waitFor();
+  assert(!requests.some(u=>/^https?:|^wss?:/.test(u)),'offline has no network dependencies');
+  await page.locator('details').click();await page.locator('#key').fill('fixture-key-not-a-secret');await page.locator('#configure').click();assert.equal(await page.locator('#key').inputValue(),'');
+  assert.equal((await api('master','/api/state')).llm.available,true);
+  const ai=[];await page.context().setOffline(false);
+  await page.route('https://openrouter.ai/api/v1/chat/completions',async route=>{
+   ai.push(route.request().headers().authorization);
+   await route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({choices:[{message:{content:'Traduzione fixture'}}]})});
+  });
+  await api('mayor','/api/player/mayor/language',{language:'it'});
+  await api('master','/api/master/inject',{title:'AI fixture',sender:'EXCON',recipients:['mayor'],text:'Translation fixture'});
+  assert(ai.includes('Bearer fixture-key-not-a-secret'),'OpenRouter called directly with runtime credential');
+  assert(!JSON.stringify(await api('master','/api/debrief')).includes('fixture-key-not-a-secret'));
+  await page.locator('#clear').click();assert.equal((await api('master','/api/state')).llm.available,false);
+  await page.locator('summary').click();await select('mayor');await page.setViewportSize({width:820,height:1180});await page.screenshot({path:path.join(out,'tablet.png')});
+  assert.equal(errors.length,0,errors.join('\n'));
+  fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({scenario:'synthetic_valley.json',seed:1,realizations:32,commands:[{type:'IssueWarning',zone:'F4'}],minutes:1,rollback:1,pairedNativeStateIdentical:true,requests,errors},null,2));
+  console.log('PASS main standalone: offline original UI, inject, player reply, manual approval, turn, paired physics, rollback, evaluator, runtime AI settings and secret-free debrief');
+ } catch(e) {await page.screenshot({path:path.join(out,'failure.png')});console.log({errors});throw e;} finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1)});

@@ -1,7 +1,10 @@
 //! Optional evaluator interpretation of a bounded, immutable evidence snapshot.
 use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{bail, Result};
-use axum::extract::{Query, State};
+#[cfg(not(target_arch = "wasm32"))]
+use axum::{extract::{Query, State}, Json};
+#[cfg(target_arch = "wasm32")]
+use crate::{browser::{Query, State, Json}, browser_runtime as tokio};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use crate::{AppState, ApiResult};
@@ -62,17 +65,17 @@ fn snapshot(view: Value, generation: u64) -> Value {
 
 pub async fn get(State(s): State<AppState>, Query(filter): Query<exercise::evaluation::EvidenceFilter>) -> ApiResult {
     let (generation, view) = { let ex = s.lock(); (ex.generation, ex.evaluator_view(&filter)?) };
-    let captured_wall_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let captured_wall_ms = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let key = format!("{generation}:{}", serde_json::to_string(&filter).map_err(anyhow::Error::from)?);
     // Only the optional analysis cache is locked during inference. Exercise,
     // renderer and controller remain free, and simultaneous evaluators share work.
     let mut cache = s.assessments.lock().await;
-    if let Some(report) = cache.get(&key) { return Ok(axum::Json(report.clone())); }
+    if let Some(report) = cache.get(&key) { return Ok(Json(report.clone())); }
     let mut pack = snapshot(view, generation);
     pack["filters"] = serde_json::to_value(&filter).map_err(anyhow::Error::from)?;
     let evidence: BTreeMap<String, Value> = serde_json::from_value(pack["evidence"].clone()).map_err(anyhow::Error::from)?;
     let result = if s.llm.is_available() {
-        match tokio::time::timeout(std::time::Duration::from_secs(45), s.llm.complete_json("evaluator_assessment", SYSTEM, &pack.to_string())).await {
+        match tokio::time::timeout(web_time::Duration::from_secs(45), s.llm.complete_json("evaluator_assessment", SYSTEM, &pack.to_string())).await {
             Ok(Ok(value)) => validate(value, &evidence).map_err(|_| "AI output failed evidence/schema validation"),
             Ok(Err(_)) => Err("AI assessment unavailable; recorded evidence remains accessible"),
             Err(_) => Err("AI assessment timed out; recorded evidence remains accessible"),
@@ -85,7 +88,7 @@ pub async fn get(State(s): State<AppState>, Query(filter): Query<exercise::evalu
         if cache.len() >= 32 { cache.clear(); }
         cache.insert(key, report.clone());
     }
-    Ok(axum::Json(report))
+    Ok(Json(report))
 }
 
 #[cfg(test)]

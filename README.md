@@ -16,6 +16,12 @@ never create team markers. See [deployment semantics](docs/api.md#deployed-team-
 
 Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md) (methodology) and [`TTX_Software_Spec.md`](TTX_Software_Spec.md) (target spec, with an as-built section).
 
+## Standalone WebAssembly
+
+Le versioni pubblicate sono disponibili su [GitHub Pages](https://mirkodandrea.github.io/european-civil-protection-forum/): [main](https://mirkodandrea.github.io/european-civil-protection-forum/main/) e [dev](https://mirkodandrea.github.io/european-civil-protection-forum/dev/). Build, differenze e verifica: [docs/standalone-pages.md](docs/standalone-pages.md).
+
+`./scripts/build_standalone.sh` genera `web/standalone/ttx.html`: interfaccia originale, mappe 2D e modello Rust eseguiti interamente nel browser, senza backend. La configurazione OpenRouter è opzionale e avviene nell’app.
+
 ## Demo
 
 [![Demo: one phone plays every role next to the 3D simulator, narrated (4 min)](docs/media/ttx_demo_poster.jpg)](docs/media/ttx_demo.mp4)

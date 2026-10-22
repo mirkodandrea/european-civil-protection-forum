@@ -4,3 +4,6 @@
 /target
 node_modules/
 scripts/record/.cache/
+
+/web/standalone/
+/_site/

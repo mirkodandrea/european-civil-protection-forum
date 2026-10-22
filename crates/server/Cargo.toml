@@ -13,12 +13,22 @@ llm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 rand.workspace = true
 futures = "0.3"
+
+web-time = "1"
+serde_urlencoded = "0.7"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
 axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

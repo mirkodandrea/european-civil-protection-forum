@@ -184,7 +184,7 @@ pub struct ExecutionRecord {
 }
 
 fn wall_ms() -> u128 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -472,7 +472,7 @@ impl Exercise {
             exercise_phase:self.exercise_phase,
             phase: self.phase,
             seq: self.log.len() as u64 + 1,
-            wall_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
+            wall_ms: web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
             turn: self.turn,
             t_s: self.world.time_s(),
             clock: self.world.clock(),
@@ -691,7 +691,7 @@ impl Exercise {
             inject_id,
             reply_to,
             recipients,
-            wall_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
+            wall_ms: web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
             id,
             turn: self.turn,
             t_s: self.world.time_s(),

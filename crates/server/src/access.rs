@@ -1,9 +1,12 @@
 //! Per-run capability keys. Player identities are bound to keys, never URL claims.
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::{extract::{Request, State}, http::StatusCode, middleware::Next, response::{IntoResponse, Response}, Json};
 use rand::RngCore;
 use serde::Serialize;
+#[cfg(not(target_arch = "wasm32"))]
 use serde_json::json;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::AppState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -34,6 +37,7 @@ impl Access {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn authorize(State(s): State<AppState>, mut req: Request, next: Next) -> Response {
     let path = req.uri().path();
     if path == "/api/health" { return next.run(req).await; }
@@ -45,18 +49,23 @@ pub async fn authorize(State(s): State<AppState>, mut req: Request, next: Next) 
     let Some(principal) = bearer.or(ws_token).and_then(|t| s.access.principal(t)) else {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error":"access key required"}))).into_response();
     };
-    let allowed = match &principal {
+    let allowed = allows(&principal, path, req.method() == axum::http::Method::GET);
+    if !allowed { return (StatusCode::FORBIDDEN, Json(json!({"error":"access key does not authorize this endpoint"}))).into_response(); }
+    req.extensions_mut().insert(principal);
+    next.run(req).await
+}
+
+/// The same role boundary applies to both local and HTTP transports.
+pub(crate) fn allows(principal: &Principal, path: &str, is_get: bool) -> bool {
+    match principal {
         Principal::Master => true,
         Principal::Evaluator { .. } => {
-            req.method() == axum::http::Method::GET && matches!(path, "/api/access" | "/api/static" | "/api/state" | "/api/master" | "/api/debrief" | "/api/catalogue" | "/api/evaluator" | "/api/evaluator/assessment" | "/ws")
+            is_get && matches!(path, "/api/access" | "/api/static" | "/api/state" | "/api/master" | "/api/debrief" | "/api/catalogue" | "/api/evaluator" | "/api/evaluator/assessment" | "/ws")
         }
         Principal::Player { role } => {
             let own = format!("/api/player/{role}");
             path == "/api/static" || path == "/api/access" || path == "/ws" || path == own
                 || path == format!("{own}/reply") || path == format!("{own}/language")
         }
-    };
-    if !allowed { return (StatusCode::FORBIDDEN, Json(json!({"error":"access key does not authorize this endpoint"}))).into_response(); }
-    req.extensions_mut().insert(principal);
-    next.run(req).await
+    }
 }

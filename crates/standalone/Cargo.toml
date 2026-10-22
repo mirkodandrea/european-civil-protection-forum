@@ -1,0 +1,18 @@
+[package]
+name = "standalone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+server.workspace = true
+scenario.workspace = true
+sim.workspace = true
+exercise.workspace = true
+llm.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
