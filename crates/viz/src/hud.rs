@@ -87,6 +87,17 @@ pub fn draw(
                         .size(26.0)
                         .strong(),
                 );
+                // Always say whether time is moving or the game is held in the turn.
+                let (badge, color) = if snap.resolving.is_some() {
+                    ("▶ SIMULATION RUNNING", Color32::from_rgb(255, 120, 80))
+                } else if snap.clock_running {
+                    ("▶ CLOCK RUNNING", Color32::from_rgb(255, 120, 80))
+                } else if snap.phase == "orders" {
+                    ("⏸ PAUSED · ORDERS OPEN", Color32::from_rgb(120, 220, 150))
+                } else {
+                    ("⏸ PAUSED", Color32::from_rgb(170, 180, 190))
+                };
+                ui.label(RichText::new(badge).color(color).size(16.0).strong());
                 if let Some((turn, from_s, to_s)) = snap.resolving {
                     let done = (frame.display_s - from_s) as f32 / (to_s - from_s).max(1) as f32;
                     ui.label(

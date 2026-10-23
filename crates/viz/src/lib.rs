@@ -94,6 +94,8 @@ pub struct Snapshot {
     pub last_turn: Option<exercise::TurnWindow>,
     /// `(turn, from_s, to_s)` while a turn is being simulated.
     pub resolving: Option<(u32, i64, i64)>,
+    /// EXCON free-running clock between turns (distinct from `resolving`).
+    pub clock_running: bool,
     pub feed: Vec<String>,
     pub llm_model: String,
     pub ensemble: Option<fire::FireOptions>,
@@ -326,6 +328,7 @@ fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
         snap.log_seen = e.seq;
     }
     snap.resolving = ex.resolving.as_ref().map(|r| (r.turn, r.from_s, r.to_s));
+    snap.clock_running = ex.clock_control.running;
 }
 
 /// Where an order acts, and how big an area it covers.

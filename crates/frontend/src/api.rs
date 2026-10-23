@@ -153,6 +153,8 @@ pub fn download_as(value: &Value, filename: &str) -> Result<(), String> {
     let _ = web_sys::Url::revoke_object_url(&url);
     Ok(())
 }
+/// EXCON console languages: a subset of the player languages.
+pub const EXCON_LANGUAGES: &[(&str, &str)] = &[("it", "Italiano"), ("en", "English")];
 pub const LANGUAGES: &[(&str, &str)] = &[
     ("en", "English"),
     ("it", "Italiano"),

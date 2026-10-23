@@ -184,3 +184,5 @@ body:has(.standalone){height:100dvh;overflow:hidden}.standalone{height:100dvh;di
 .tactical-event.response-event.rejected{border-left-color:#a3312c;background:#fbf1ef}.event-replied.rejected{color:#a3312c;font-weight:600}
 #error:not(:empty){position:sticky;top:0;z-index:40;padding:8px 16px;background:#fbeceb;border-bottom:1px solid #e3b5b1}.modal-backdrop{align-items:flex-start;padding-top:6dvh}
 .decision-reason{border:1px solid var(--danger,#c0392b);border-radius:6px;padding:6px 8px;font-weight:600}
+
+.sim-state{font-weight:700;margin-left:8px}.sim-state.running{background:#ffe3d6;color:#a3312c;animation:sim-pulse 1.4s ease-in-out infinite}.sim-state.paused{background:#dcf1e3;color:#1c5a3d}@keyframes sim-pulse{50%{opacity:.6}}@media(prefers-reduced-motion:reduce){.sim-state.running{animation:none}}

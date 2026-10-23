@@ -1,10 +1,31 @@
 //! Player-facing UI strings: Italian and English complete; other languages use English.
 //! EXCON and evaluator views never call this (App::lang is always "it" for them).
+pub use crate::i18n_excon::{ex, exf, is_en, set_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
     if lang == "it" {
         it(key)
     } else {
-        en(key)
+        crate::i18n_lang::lookup(lang, key).unwrap_or_else(|| en(key))
+    }
+}
+/// Localized command field name (`zone`, `qty`, ...); unknown names pass through.
+pub fn field<'a>(lang: &str, s: &'a str) -> &'a str {
+    match s {
+        "zone" => t(lang, "f_zone"),
+        "destination" => t(lang, "f_destination"),
+        "building" => t(lang, "f_building"),
+        "road" => t(lang, "f_road"),
+        "from" => t(lang, "f_from"),
+        "to" => t(lang, "f_to"),
+        "width_m" => t(lang, "f_width_m"),
+        "at" => t(lang, "f_at"),
+        "qty" => t(lang, "f_qty"),
+        "resource" => t(lang, "f_resource"),
+        "radius_m" => t(lang, "f_radius_m"),
+        "area" => t(lang, "f_area"),
+        "role" => t(lang, "f_role"),
+        "minutes" => t(lang, "f_minutes"),
+        _ => s,
     }
 }
 /// Replaces each `{}` in the translated template with the next argument.
@@ -157,6 +178,37 @@ fn it(key: &'static str) -> &'static str {
         "sending" => "Invio…",
         "send" => "Invia →",
         "inject_info" => "Gli inject sono informazioni di EXCON. Rispondi usando le conversazioni tra partecipanti o le proposte operative dalla mappa.",
+        "map_tactical" => "Mappa tattica · solo informazioni ricevute",
+        "map_situation" => "Mappa della situazione",
+        "map_legend" => "Rosso: incendio · scuro: bruciato · arancio tenue: possibile · giallo: linea · blu: acqua/evacuazione · viola tratteggiato: previsione EXCON",
+        "map_reported" => "Incendio segnalato",
+        "sim_running" => "▶ Simulazione in corso",
+        "sim_paused" => "⏸ Gioco fermo",
+        "sim_paused_orders" => "⏸ Gioco fermo · ordini aperti",
+        "f_zone" => "Zona",
+        "f_destination" => "Destinazione",
+        "f_building" => "Edificio o struttura",
+        "f_road" => "Strada",
+        "f_from" => "Da",
+        "f_to" => "A",
+        "f_width_m" => "Larghezza (metri)",
+        "f_at" => "Luogo",
+        "f_qty" => "Quantità",
+        "f_resource" => "Risorsa",
+        "f_radius_m" => "Raggio (metri)",
+        "f_area" => "Area",
+        "f_role" => "Ruolo",
+        "f_minutes" => "Minuti",
+        "yes" => "sì",
+        "no" => "no",
+        "nav_timeline" => "Timeline",
+        "nav_map" => "Mappa",
+        "nav_tools" => "Strumenti",
+        "nav_history" => "Cronologia",
+        "start_exercise" => "Avvia esercitazione",
+        "advance_turn" => "Avanza turno →",
+        "tools_link" => "Strumenti avanzati ↗",
+        "map_road_cut" => "× Strada interrotta da incendio",
         _ => key,
     }
 }
@@ -265,6 +317,56 @@ fn en(key: &'static str) -> &'static str {
         "sending" => "Sending…",
         "send" => "Send →",
         "inject_info" => "Injects are information from EXCON. Reply through conversations with participants or operational proposals from the map.",
+        "map_tactical" => "Tactical map · received information only",
+        "map_situation" => "Situation map",
+        "map_legend" => "Red: fire · dark: burnt · pale orange: possible · yellow: line · blue: water/evacuation · dashed purple: EXCON forecast",
+        "map_reported" => "Fire reported",
+        "sim_running" => "▶ Simulation running",
+        "sim_paused" => "⏸ Game paused",
+        "sim_paused_orders" => "⏸ Game paused · orders open",
+        "f_zone" => "Zone",
+        "f_destination" => "Destination",
+        "f_building" => "Building or facility",
+        "f_road" => "Road",
+        "f_from" => "From",
+        "f_to" => "To",
+        "f_width_m" => "Width (metres)",
+        "f_at" => "Place",
+        "f_qty" => "Quantity",
+        "f_resource" => "Resource",
+        "f_radius_m" => "Radius (metres)",
+        "f_area" => "Area",
+        "f_role" => "Role",
+        "f_minutes" => "Minutes",
+        "yes" => "yes",
+        "no" => "no",
+        "nav_timeline" => "Timeline",
+        "nav_map" => "Map",
+        "nav_tools" => "Tools",
+        "nav_history" => "History",
+        "start_exercise" => "Start exercise",
+        "advance_turn" => "Advance turn →",
+        "tools_link" => "Advanced tools ↗",
+        "map_road_cut" => "× Road cut by fire",
         _ => key,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn every_language_translates_every_key() {
+        let keys: Vec<&str> = crate::i18n_lang::KEYS.to_vec();
+        for l in ["fr", "de", "es", "pt", "ro", "el", "uk", "hy", "ka", "az"] {
+            for k in &keys {
+                let k: &'static str = k;
+                assert!(crate::i18n_lang::lookup(l, k).is_some(), "{l}/{k}");
+                if !["yes", "no"].contains(&k) {
+                    assert_ne!(en(k), k, "en missing {k}");
+                    assert_ne!(it(k), k, "it missing {k}");
+                }
+            }
+        }
     }
 }

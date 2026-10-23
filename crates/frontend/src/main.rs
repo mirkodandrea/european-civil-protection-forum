@@ -4,6 +4,8 @@ mod chat;
 mod evaluator;
 mod history;
 mod i18n;
+mod i18n_excon;
+mod i18n_lang;
 mod map;
 #[cfg(feature = "standalone")]
 mod standalone;
@@ -100,6 +102,8 @@ pub struct App {
     busy: bool,
     reading: bool,
     resolving_request: bool,
+    /// EXCON console language; stored in this browser only.
+    excon_lang: String,
     refresh_again: bool,
     drafts: BTreeMap<String, Draft>,
     dismissed: BTreeSet<u64>,
@@ -138,6 +142,7 @@ pub enum Msg {
     Action(Action),
     Done(ActionKind, Result<Value, String>),
     Select(String),
+    ExconLang(String),
     OpenInject(String),
     OpenWork(Option<String>),
     CloseInject,
@@ -158,10 +163,12 @@ impl App {
     fn is_evaluator(&self) -> bool {
         self.page == "evaluator"
     }
-    /// UI language: the player's selected language; EXCON and evaluator stay Italian.
+    /// UI language: the player's selected language, the EXCON's browser choice; the evaluator stays Italian.
     fn lang(&self) -> String {
         match text(&self.state["player"]["language"]) {
-            l if !l.is_empty() && !self.is_master() && !self.is_evaluator() => l.to_string(),
+            _ if self.is_evaluator() => "it".into(),
+            _ if self.is_master() => self.excon_lang.clone(),
+            l if !l.is_empty() => l.to_string(),
             _ => "it".into(),
         }
     }
@@ -360,6 +367,11 @@ impl Component for App {
             busy: false,
             reading: false,
             resolving_request: false,
+            excon_lang: web_sys::window()
+                .and_then(|w| w.local_storage().ok().flatten())
+                .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
+                .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+                .unwrap_or_else(|| "it".into()),
             refresh_again: false,
             drafts: BTreeMap::new(),
             dismissed: BTreeSet::new(),
@@ -514,11 +526,11 @@ impl Component for App {
                 self.busy = true;
                 self.error.clear();
                 self.notice = match &action.kind {
-                    ActionKind::Prepare(_) => "L’AI sta analizzando il messaggio…",
+                    ActionKind::Prepare(_) => crate::i18n::ex("L’AI sta analizzando il messaggio…"),
                     ActionKind::Submit(_) | ActionKind::Send(_, _) => {
-                        "Traduzione e invio in corso…"
+                        crate::i18n::ex("Traduzione e invio in corso…")
                     }
-                    _ => "Elaborazione…",
+                    _ => crate::i18n::ex("Elaborazione…"),
                 }
                 .into();
                 let key = self.token.clone();
@@ -538,7 +550,7 @@ impl Component for App {
             Msg::ResolutionDone(result) => {
                 self.resolving_request = false;
                 match result {
-                    Ok(_) => self.notice = "Turno risolto".into(),
+                    Ok(_) => self.notice = crate::i18n::ex("Turno risolto").into(),
                     Err(e) => self.error = e,
                 }
                 self.request_refresh(ctx);
@@ -549,10 +561,10 @@ impl Component for App {
                 match result {
                     Err(e) => {
                         self.error = e;
-                        self.notice = "Operazione non riuscita".into()
+                        self.notice = crate::i18n::ex("Operazione non riuscita").into()
                     }
                     Ok(value) => {
-                        self.notice = "Operazione completata".into();
+                        self.notice = crate::i18n::ex("Operazione completata").into();
                         let failures = list(&value["results"])
                             .iter()
                             .filter(|r| r["ok"] == false)
@@ -560,7 +572,7 @@ impl Component for App {
                             .collect::<Vec<_>>();
                         if !failures.is_empty() {
                             self.error = failures.join(" · ");
-                            self.notice = "Operazione con errori: consulta gli esiti".into();
+                            self.notice = crate::i18n::ex("Operazione con errori: consulta gli esiti").into();
                         }
                         if self.is_master() && matches!(&kind, ActionKind::Send(_, _)) {
                             self.inject_open = false;
@@ -568,11 +580,11 @@ impl Component for App {
                         match kind {
                             ActionKind::Store(key) => {
                                 self.notice = match key.as_str() {
-                                    "forecast" => "Bozza privata pronta · non pubblicata",
+                                    "forecast" => crate::i18n::ex("Bozza privata pronta · non pubblicata"),
                                     "assessment" => {
-                                        "Valutazione derivata pronta · richiede revisione umana"
+                                        crate::i18n::ex("Valutazione derivata pronta · richiede revisione umana")
                                     }
-                                    _ => "Anteprima pronta · nessuna modifica applicata",
+                                    _ => crate::i18n::ex("Anteprima pronta · nessuna modifica applicata"),
                                 }
                                 .into();
                                 self.responses.insert(key, value);
@@ -591,25 +603,25 @@ impl Component for App {
                                 let needs_clarification =
                                     d.private["status"] == "needs_clarification";
                                 if d.private["status"] == "ready" && no_actions {
-                                    self.notice = "Nessuna azione operativa rilevata · invio del messaggio tradotto…".into();
+                                    self.notice = crate::i18n::ex("Nessuna azione operativa rilevata · invio del messaggio tradotto…").into();
                                     auto_submit = Some((
                                         to.clone(),
                                         d.private["id"].clone(),
                                         d.private["revision"].clone(),
                                     ));
                                 } else if needs_clarification {
-                                    self.notice = "Serve un chiarimento prima dell’invio".into();
+                                    self.notice = crate::i18n::ex("Serve un chiarimento prima dell’invio").into();
                                 } else if d.private["status"] == "ai_unavailable" {
                                     self.notice =
-                                        "Interpretazione non riuscita · scegli come procedere"
+                                        crate::i18n::ex("Interpretazione non riuscita · scegli come procedere")
                                             .into();
                                 } else {
-                                    self.notice = "Azioni individuate · controlla la bozza".into();
+                                    self.notice = crate::i18n::ex("Azioni individuate · controlla la bozza").into();
                                 }
                             }
                             ActionKind::Send(to, sent) => {
                                 self.notice = if value["translation_failed"] == true {
-                                    "Inviato · traduzione non disponibile"
+                                    crate::i18n::ex("Inviato · traduzione non disponibile")
                                 } else {
                                     "Inviato"
                                 }
@@ -624,11 +636,11 @@ impl Component for App {
                                     self.fields.insert("work:open".into(), "false".into());
                                 }
                                 self.notice = if value["translation_failed"] == true {
-                                    "Inviato · traduzione non disponibile".into()
+                                    crate::i18n::ex("Inviato · traduzione non disponibile").into()
                                 } else if value["proposal"].is_null() {
-                                    "Messaggio tradotto inviato".into()
+                                    crate::i18n::ex("Messaggio tradotto inviato").into()
                                 } else {
-                                    "Decisione inviata per revisione EXCON".into()
+                                    crate::i18n::ex("Decisione inviata per revisione EXCON").into()
                                 };
                                 if let Some(d) = self.drafts.remove(&to) {
                                     if let Some(id) = d.private["id"].as_u64() {
@@ -646,7 +658,7 @@ impl Component for App {
                                 for key in ["work:location", "work:destination", "work:qty", "work:reply_to"] {
                                     self.fields.remove(key);
                                 }
-                                self.notice = "Proposta inviata a EXCON per revisione".into();
+                                self.notice = crate::i18n::ex("Proposta inviata a EXCON per revisione").into();
                             }
                             ActionKind::Ordinary => {}
                         }
@@ -684,6 +696,16 @@ impl Component for App {
                 self.inject_open = true;
                 self.error.clear();
                 focus_when_rendered("#inject-title", 10);
+            }
+            Msg::ExconLang(l) => {
+                if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                    let _ = s.set_item("ttx_excon_lang", &l);
+                }
+                self.excon_lang = l;
+                // Child views are cached; reloading re-renders every string.
+                if let Some(w) = web_sys::window() {
+                    let _ = w.location().reload();
+                }
             }
             Msg::CloseInject => {
                 self.inject_open = false;
@@ -768,9 +790,10 @@ impl Component for App {
         true
     }
     fn view(&self, ctx: &Context<Self>) -> Html {
+        i18n::set_ui_lang(&self.lang());
         if self.access.is_null() {
             #[cfg(feature = "standalone")]
-            return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){"Connessione all’esercitazione…"}else{&self.error}}</p></section></main>};
+            return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){crate::i18n::ex("Connessione all’esercitazione…")}else{&self.error}}</p></section></main>};
             #[cfg(not(feature = "standalone"))]
             {
                 let login = ctx.link().callback(|e: SubmitEvent| {
@@ -780,13 +803,13 @@ impl Component for App {
                     use wasm_bindgen::JsCast;
                     Msg::Login(input.unchecked_into::<web_sys::HtmlInputElement>().value())
                 });
-                return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){"Connessione all’esercitazione…"}else{&self.error}}</p><form onsubmit={login}><label>{"Chiave di accesso ricevuta da EXCON"}<input id="access-key" type="password" required=true/></label><button type="submit">{"Apri esercitazione"}</button></form></section></main>};
+                return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){crate::i18n::ex("Connessione all’esercitazione…")}else{&self.error}}</p><form onsubmit={login}><label>{crate::i18n::ex("Chiave di accesso ricevuta da EXCON")}<input id="access-key" type="password" required=true/></label><button type="submit">{crate::i18n::ex("Apri esercitazione")}</button></form></section></main>};
             }
         }
         let title = if self.is_evaluator() {
-            "Valutatore · sola lettura".into()
+            crate::i18n::ex("Valutatore · sola lettura").into()
         } else if self.is_master() {
-            "Direzione esercitazione".into()
+            crate::i18n::ex("Direzione esercitazione").into()
         } else {
             self.name(&self.own)
         };
@@ -799,17 +822,26 @@ impl Component for App {
         let l = self.lang();
         let l = l.as_str();
         let href = |path: &str| format!("{path}?token={}", api::encode(&self.token));
-        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{"Avvia esercitazione"}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{"Avanza turno →"}</button></div>};
+        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{i18n::t(l,"advance_turn")}</button></div>};
+        let running = phase == "resolving" || self.state["clock_control"]["running"] == true;
+        let sim_badge = if self.state.is_null() || phase == "briefing" || phase == "debrief" {
+            Html::default()
+        } else if running {
+            html! {<span class="pill sim-state running" id="sim-state" role="status">{i18n::t(l,"sim_running")}</span>}
+        } else {
+            html! {<span class="pill sim-state paused" id="sim-state" role="status">{i18n::t(l,if phase=="orders"{"sim_paused_orders"}else{"sim_paused"})}</span>}
+        };
         html! {<>
-            <header class="topbar"><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span><div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div></div><div class="grow"/>
+            <header class="topbar"><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div></div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history"&&(self.active!="timeline"||self.page!="chat") {{time_controls.clone()}}
+            if self.is_master()&&!self.is_evaluator(){<select key={self.excon_lang.clone()} id="language" aria-label={i18n::t(l,"language")} value={self.excon_lang.clone()} onchange={ctx.link().callback(|e|Msg::ExconLang(api::select(e)))}>{for api::EXCON_LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.excon_lang}>{name}</option>})}</select>}
             if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label={i18n::t(l,"language")} value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
-            if self.page=="chat" {if self.is_master(){ {nav("timeline","Timeline")} {nav("map","Mappa")} {nav("advanced","Strumenti")} {nav("history","Cronologia")} }else{{nav("map",i18n::t(l,"nav_work"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
+            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("map",i18n::t(l,"nav_map"))} {nav("advanced",i18n::t(l,"nav_tools"))} {nav("history",i18n::t(l,"nav_history"))} }else{{nav("map",i18n::t(l,"nav_work"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
             <div class="grow"/>
-            if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{"Timeline"}</a><a id="advanced" href={href("advanced.html")}>{"Strumenti avanzati ↗"}</a>}
+            if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
             </nav>
             <div id="error" class="error" role="alert">{&self.error}</div>
             if (self.page=="advanced"||self.active=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
@@ -817,10 +849,10 @@ impl Component for App {
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()}/> }
             else if (self.page=="advanced"||self.active=="advanced")&&self.is_master(){<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}
-            else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{"Apri la console conversazionale"}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
+            else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{crate::i18n::ex("Apri la console conversazionale")}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
             else if self.is_master()&&self.active=="timeline"{<main class="page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy} controls={time_controls.clone()} oninject={ctx.link().callback(Msg::OpenInject)}/></main>}
             else{{self.view_chat(ctx)}}
-            if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{"Inject a tutti".into()}else{format!("Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label="Chiudi modale inject" disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{"Chiudi"}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
+            if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject a tutti").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 
         </>}
     }

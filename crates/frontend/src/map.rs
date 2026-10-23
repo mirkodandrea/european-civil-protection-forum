@@ -18,6 +18,8 @@ pub struct MapProps {
     pub pending: Option<Value>,
     #[prop_or("map".into())]
     pub id: AttrValue,
+    #[prop_or("it".into())]
+    pub lang: AttrValue,
 }
 #[function_component(SituationMap)]
 pub fn situation_map(props: &MapProps) -> Html {
@@ -30,10 +32,11 @@ pub fn situation_map(props: &MapProps) -> Html {
                 props.view.clone(),
                 props.simple,
                 props.pending.clone(),
+                props.lang.clone(),
             ),
-            move |(stat, view, simple, pending)| {
+            move |(stat, view, simple, pending, lang)| {
                 if let Some(canvas) = canvas.cast::<HtmlCanvasElement>() {
-                    let _ = draw(&canvas, stat, view, *simple, pending.as_ref());
+                    let _ = draw(&canvas, stat, view, *simple, pending.as_ref(), lang);
                 }
             },
         );
@@ -62,7 +65,7 @@ pub fn situation_map(props: &MapProps) -> Html {
             }
         })
     };
-    html! {<div class="mapbox"><canvas id={props.id.clone()} ref={canvas} {onclick} style={if props.simple {"max-width:min(100%, calc(100dvh - 280px))"}else{""}} aria-label={if props.simple {"Mappa tattica · solo informazioni ricevute"} else {"Mappa della situazione"}}/><p class="map-legend">{"Rosso: incendio · scuro: bruciato · arancio tenue: possibile · giallo: linea · blu: acqua/evacuazione · viola tratteggiato: previsione EXCON"}</p></div>}
+    html! {<div class="mapbox"><canvas id={props.id.clone()} ref={canvas} {onclick} style={if props.simple {"max-width:min(100%, calc(100dvh - 280px))"}else{""}} aria-label={if props.simple {crate::i18n::t(&props.lang, "map_tactical")} else {crate::i18n::t(&props.lang, "map_situation")}}/><p class="map-legend">{crate::i18n::t(&props.lang, "map_legend")}</p></div>}
 }
 fn n(v: &Value) -> f64 {
     v.as_f64().unwrap_or(0.)
@@ -100,6 +103,7 @@ fn draw(
     v: &Value,
     simple: bool,
     pending: Option<&Value>,
+    lang: &str,
 ) -> Result<(), wasm_bindgen::JsValue> {
     let cols = stat["grid"]["cols"].as_u64().unwrap_or(1) as usize;
     let rows = stat["grid"]["rows"].as_u64().unwrap_or(1) as usize;
@@ -289,7 +293,7 @@ fn draw(
                     &format!(
                         "{}: {}",
                         if cut {
-                            "× Strada interrotta da incendio"
+                            crate::i18n::t(lang, "map_road_cut")
                         } else {
                             "— Chiusura polizia"
                         },
@@ -368,7 +372,7 @@ fn draw(
         ctx.arc(x, y, 9., 0., std::f64::consts::TAU)?;
         ctx.set_stroke_style_str("#e33");
         ctx.stroke();
-        label(&ctx, "Incendio segnalato", x + 12., y, &mut labels);
+        label(&ctx, crate::i18n::t(lang, "map_reported"), x + 12., y, &mut labels);
     }
     if let Some(forecast) = list(&v["forecast_products"]).last() {
         for (idx, horizon) in list(&forecast["horizons"]).iter().enumerate() {
