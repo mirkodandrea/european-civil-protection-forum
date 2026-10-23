@@ -41,11 +41,11 @@ Da sistemare:
 - Riepilogo proposta grezzo e in inglese ("Player submits X for F4."), senza
   risorsa, quantità né inject di origine; duplicato nella scheda EXCON (il fix attuale
   nasconde il riepilogo solo se uguale alla richiesta).
-- Il campo "Zona" modificato nella scheda EXCON non resta (torna al valore originale
-  e l'approvazione viene rifiutata come infattibile).
-- Proposta con linea non raggiungibile ("no reachable route from staging to task"):
-  "Approva azione" resta attivo; il messaggio è in inglese e può restare stantio dopo
-  una modifica.
+- ~~Proposta con verdetto negativo bloccata anche dopo la modifica~~ (risolto: la
+  fattibilità si ricalcola in automatico dopo ogni modifica, `/revalidate`). Il
+  campo "Zona" modificato non resta: da riverificare. Il testo dei verdetti del
+  simulatore ("no reachable route from staging to task", ecc.) è ancora in inglese
+  tranne le note già coperte da `localize_note`.
 - ~~Il form del player non si svuota dopo l'invio~~ (risolto: luogo, secondo punto,
   quantità e "in risposta a" vengono azzerati; il pulsante era già disabilitato
   durante l'invio). Da verificare: la zona predefinita `A1` (nel codice il campo
@@ -54,14 +54,14 @@ Da sistemare:
 - Rollback: la timeline EXCON del turno 1 mostra ancora l'approvazione annullata, il
   selettore Turno offre ancora il turno 2 dopo il ritorno al turno 1, gli inject e le
   vecchie proposte del player restano; nessuna conferma né feedback.
-- Cronologia: manca il messaggio di chat tra player (ids mancanti); etichette in
-  inglese grezzo; nessun filtro per autore/tipo; l'evento "map information acquired"
+- Cronologia: manca il messaggio di chat tra player (ids mancanti); le etichette
+  degli eventi sono ora leggibili (`event_label`), restano quelle non mappate; nessun filtro per autore/tipo; l'evento "map information acquired"
   pesa ~3 MB nel DOM se espanso.
 - Mappa del player: dopo "Pubblica perimetro" manca "Rapporto EXCON" con la fonte.
 - ~~Inject privato ripetuto nei thread di chat player-player~~ (risolto):
   Conversazioni contiene solo messaggi tra player. Gli inject e le informazioni
   EXCON restano nelle viste dedicate e nelle notifiche del ruolo.
-- "Operazione completata" stantio in Conversazioni e nel banner di Strumenti;
+- "Operazione completata" stantio in Conversazioni e nel banner di Controllo;
   nessuna conferma visibile dopo la pubblicazione sulla Mappa.
 - Fire Commander: dopo un lancio d'acqua gli "Air tankers" risultano 0 disponibili
   nonostante "replenished"; una stringa grezza `air_tankers · completed · …` rompe il
@@ -70,9 +70,10 @@ Da sistemare:
 - Il cursore velocità non parte dal massimo (CLAUDE.md: default `speed` 0 = massimo).
 - Il modello OpenRouter nello standalone è `openai/gpt-oss-120b` per scelta (per ora);
   CLAUDE.md indica `deepseek/deepseek-v4.1-flash` per la versione server.
-- Strumenti: pulsanti sopra la mappa e anteprima molto più in basso, "Correggi
-  ultimo intervento" mostrato senza interventi, clock duplicato rispetto alla Timeline,
-  pagina molto lunga; "Proposte da revisionare" è un titolo vuoto.
+- ~~Strumenti: pulsanti sopra la mappa e anteprima in basso, pagina lunga~~ (superato
+  dalla tab Controllo con elenco ricercabile e modali). Da verificare in Controllo:
+  "Correggi ultimo intervento" mostrato senza interventi; clock duplicato rispetto
+  alla Timeline.
 - Regional Civil Protection: "Risorse e missioni" è un titolo vuoto, senza segnaposto.
 - Layout EXCON: colonne fisse da ~265 px con spazio vuoto a destra; il pannello 3D
   occupa ~30% della larghezza su ogni tab. Responsive non verificato.
@@ -87,3 +88,30 @@ Ancora da verificare (`trunk serve` va forzato al rebuild se cambia solo `crates
   tagliafuoco, con risorse "impegnate" nella vista del player.
 - Percorso con testo libero all'AI e modalità "Tutti i player"; persistenza dopo reload.
 - Aspetto responsive a finestra stretta.
+
+## Redesign console EXCON (2026-10-23): lasciato indietro
+
+Fatto: timeline cronologica con pill e invio per destinatari, tab Risposte,
+Controllo (elenco ricercabile + modali), rendering leggibile dei dati,
+chiarimento reale, ricontrollo automatico, `superseded`, retry LLM. Da fare:
+
+- Controllo: nessuno strumento per la temperatura (`SetWeather` non ha il campo);
+  non tutti i percorsi di “Applica” dei 29 strumenti sono stati provati fino in
+  fondo; gli strumenti sulla mappa non hanno più l'anteprima. Il difetto originale
+  della linea tagliafuoco non è stato riprodotto: la causa più probabile era
+  "Applica" disabilitato finché il clock non era fermo e senza motivo scritto.
+- Editor degli inject (impostazioni): manca il campo `event` per raggrupparli.
+- Risposte: non provato nel browser un caso reale di proposta `superseded`
+  (coperto solo da test unitari); il rifiuto dal modale non è stato provato fino
+  in fondo.
+- Ricontrollo: solo automatico (nessun pulsante "Ricontrolla"); ogni ricontrollo
+  scrive un evento nel log; il test sul caso "raggio del tubo oltre 60 m" richiede
+  il modello operativo (il test usa un'evacuazione con pochi autobus).
+- Lingua: con “Tutti i player” più pannelli con lingue diverse condividono la
+  lingua globale (l'UI è una sola istanza di `set_ui_lang`).
+- Nota EXCON per proposta: non sopravvive a un reload della pagina.
+- LLM: nel build wasm il retry è immediato (nessun timer); il troncamento del
+  corpo (`ERR_ABORTED`) non è stato riprodotto in wasm, il retry è testato solo
+  in nativo.
+- `localize_note` copre solo alcune note del simulatore (squadre, edifici,
+  persone, autobus, "to X", "arrive in"); le altre restano in inglese.
