@@ -10,6 +10,7 @@ pub enum DraftStatus {
     Interpreting,
     NeedsClarification,
     Ready,
+    Unsupported,
     AiUnavailable,
 }
 
@@ -80,20 +81,11 @@ impl Exercise {
         reply_to: Option<u64>,
     ) -> Result<PlayerDraft> {
         self.validate_chat(role, to, text, true)?;
+        if to != MASTER {
+            bail!("operational decisions must be addressed to EXCON");
+        }
         if let Some(parent) = reply_to {
-            if to != MASTER
-                || !self.messages.iter().any(|m| {
-                    m.id == parent
-                        && m.to == role
-                        && matches!(
-                            m.kind,
-                            crate::MsgKind::Inject | crate::MsgKind::Clarification
-                        )
-                        && m.inject_id.is_some()
-                })
-            {
-                bail!("reply_to must reference an inject or clarification delivered to your role");
-            }
+            self.validate_action_reference(role, parent)?;
         }
         let mut draft = if let Some((id, revision)) = previous {
             let mut draft = self.private_draft(role, id, revision)?;
@@ -186,13 +178,27 @@ impl Exercise {
             .iter()
             .cloned()
             .map(serde_json::from_value::<Command>)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>();
+        let actions = match actions {
+            Ok(actions) => actions,
+            Err(_) => {
+                draft.status = DraftStatus::Unsupported;
+                draft.message = join_user_turns(&draft.transcript);
+                draft.failure = Some(unsupported_message(&self.language_of(role)).into());
+                self.player_drafts.insert(id, draft.clone());
+                return Ok(draft);
+            }
+        };
         let allowed = &self.world.scn.role(role).unwrap().allowed_actions;
         if actions
             .iter()
             .any(|action| !allowed.iter().any(|kind| kind == action.kind()))
         {
-            bail!("AI extracted an action outside this role's authority");
+            draft.status = DraftStatus::Unsupported;
+            draft.message = join_user_turns(&draft.transcript);
+            draft.failure = Some(unsupported_message(&self.language_of(role)).into());
+            self.player_drafts.insert(id, draft.clone());
+            return Ok(draft);
         }
         draft.actions = actions;
         draft.action_descriptions = draft.actions.iter().map(Command::describe).collect();
@@ -205,6 +211,9 @@ impl Exercise {
             .cloned();
         draft.status = if draft.question.is_some() {
             DraftStatus::NeedsClarification
+        } else if draft.actions.is_empty() {
+            draft.failure = Some(unsupported_message(&self.language_of(role)).into());
+            DraftStatus::Unsupported
         } else {
             DraftStatus::Ready
         };
@@ -251,14 +260,13 @@ impl Exercise {
         english: &str,
         translated: &str,
         translation_failed: bool,
-        manual: bool,
+        _manual: bool,
     ) -> Result<(u64, Option<u64>)> {
         let draft = self.private_draft(role, id, revision)?;
-        let unavailable = draft.status == DraftStatus::AiUnavailable && manual;
-        if draft.status != DraftStatus::Ready && !unavailable {
-            bail!("answer the assistant's question before sending this decision");
+        if draft.status != DraftStatus::Ready || draft.actions.is_empty() {
+            bail!("No simulator action is ready; clarify the decision before sending it to EXCON");
         }
-        let interpreted = draft.reply_to.is_some() || unavailable || !draft.actions.is_empty();
+        let interpreted = true;
         let result = if let Some(parent) = draft.reply_to {
             let pid = self.player_reply(
                 role,
@@ -271,7 +279,10 @@ impl Exercise {
             message.text_en = english.into();
             message.original = Some(draft.message.clone());
             message.translation_failed = translation_failed;
-            (message.id, Some(pid))
+            let mid = message.id;
+            let recorded = message.clone();
+            self.record("reply_source", role, serde_json::json!(recorded));
+            (mid, Some(pid))
         } else {
             self.chat(
                 role,
@@ -284,14 +295,7 @@ impl Exercise {
             )?
         };
         if let Some(pid) = result.1 {
-            if unavailable {
-                self.parse_failed(
-                    pid,
-                    "Player explicitly requested manual EXCON interpretation",
-                )?;
-            } else {
-                self.attach_parse(pid, draft.parsed.clone().unwrap())?;
-            }
+            self.attach_parse(pid, draft.parsed.clone().unwrap())?;
         }
         // Keep rehearsal and clarification private even after submission.
         // Only the confirmed message and its final interpretation enter shared evidence.
@@ -299,7 +303,10 @@ impl Exercise {
             self.converse(
                 role,
                 "user",
-                format!("CONFIRMED MESSAGE to {}: {}", draft.to, draft.message),
+                format!(
+                    "CONFIRMED MESSAGE to {} (reply to {:?}): {}",
+                    draft.to, draft.reply_to, draft.message
+                ),
             );
             self.converse(
                 role,
@@ -307,7 +314,7 @@ impl Exercise {
                 serde_json::json!({"actions":draft.actions,"summary":draft.summary}).to_string(),
             );
         }
-        self.record("player_draft_submitted", role, serde_json::json!({"draft":id,"revision":revision,"message":result.0,"proposal":result.1,"manual":unavailable,"to":draft.to,"reviewer":MASTER}));
+        self.record("player_draft_submitted", role, serde_json::json!({"draft":id,"revision":revision,"message":result.0,"proposal":result.1,"manual":false,"to":draft.to,"reply_to":draft.reply_to,"reviewer":MASTER}));
         self.player_drafts.remove(&id);
         Ok(result)
     }
@@ -334,12 +341,23 @@ pub fn join_user_turns(transcript: &[ChatTurn]) -> String {
     out
 }
 
+fn unsupported_message(language: &str) -> &'static str {
+    match language {
+        "it" => "Questa richiesta non corrisponde ad azioni supportate dal simulatore.",
+        "fr" => "Cette demande ne correspond à aucune action prise en charge par le simulateur.",
+        _ => "This request does not match a supported simulator action.",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn turn(role: &str, content: &str) -> ChatTurn {
-        ChatTurn { role: role.into(), content: content.into() }
+        ChatTurn {
+            role: role.into(),
+            content: content.into(),
+        }
     }
 
     #[test]
@@ -350,7 +368,10 @@ mod tests {
             turn("user", "The main road south"),
         ];
         assert_eq!(join_user_turns(&t), "Close the road. The main road south");
-        let t = vec![turn("user", "Close the road."), turn("user", "The main road")];
+        let t = vec![
+            turn("user", "Close the road."),
+            turn("user", "The main road"),
+        ];
         assert_eq!(join_user_turns(&t), "Close the road. The main road");
     }
 }

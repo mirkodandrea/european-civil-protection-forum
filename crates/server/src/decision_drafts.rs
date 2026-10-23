@@ -49,7 +49,12 @@ pub(crate) async fn prepare(
             .filter(|r| r.id != role)
             .map(|r| (r.id.clone(), r.name.clone()))
             .collect::<Vec<_>>();
-        let digest = json!({"clock":ex.world.clock(),"recipient":body.to,"inject":body.reply_to.and_then(|id|ex.messages.iter().find(|m|m.id==id)),"map":ex.player_map(&role)?,"resources":ex.world.d.pools.get(&role),"deployments":ex.world.d.tasks.iter().filter(|task|task.role==role).collect::<Vec<_>>()});
+        let thread = body
+            .reply_to
+            .map(|id| ex.thread_evidence(&role, id))
+            .transpose()?
+            .unwrap_or_default();
+        let digest = json!({"clock":ex.world.clock(),"recipient":body.to,"thread":thread,"map":ex.player_map(&role)?,"resources":ex.world.d.pools.get(&role),"deployments":ex.world.d.tasks.iter().filter(|task|task.role==role).collect::<Vec<_>>()});
         let history = ex
             .conversation(&role)
             .into_iter()
@@ -156,18 +161,21 @@ pub(crate) async fn submit(
     body: Json<SubmitBody>,
 ) -> ApiResult {
     let Json(body) = body;
-    let (draft, language, target_language) = {
+    if body.manual {
+        return Err(bad(
+            "An operational decision needs a coded simulator action before EXCON review",
+        ));
+    }
+    let target_language = {
         let ex = state.lock();
         let draft = ex.private_draft(&role, body.draft, body.revision)?;
-        if draft.status != exercise::drafts::DraftStatus::Ready
-            && !(body.manual && draft.status == exercise::drafts::DraftStatus::AiUnavailable)
-        {
-            return Err(bad(
-                "answer the assistant's question before sending this decision",
-            ));
+        if draft.status != exercise::drafts::DraftStatus::Ready || draft.actions.is_empty() {
+            return Err(bad(draft.failure.as_deref().unwrap_or(
+                "No simulator action is ready; clarify the decision before sending it to EXCON",
+            )));
         }
         let target = ex.language_of(&draft.to);
-        (draft, ex.language_of(&role), target)
+        target
     };
     // The working English message is produced by the same interpretation the player reviewed.
     let mut failed = false;
@@ -175,21 +183,6 @@ pub(crate) async fn submit(
         // No private parsed data is accepted from the HTTP client.
         let ex = state.lock();
         ex.draft_english(&role, body.draft, body.revision)?
-    };
-    let english = if body.manual && language != "en" {
-        match state
-            .llm
-            .translate_to_english(&draft.message, &language)
-            .await
-        {
-            Ok(text) => text,
-            Err(_) => {
-                failed = true;
-                draft.message.clone()
-            }
-        }
-    } else {
-        english
     };
     let translated = if failed || target_language == "en" {
         english.clone()

@@ -197,6 +197,8 @@ Answer with ONE JSON object:\n{REPLY_SCHEMA}\n\nAllowed actions for this player:
 The player is {} ({}) — {} and writes in {}. The conversation and situation contain only information available to this role. \
 The latest private draft includes the original message and any answers to YOUR clarification questions. Interpret the complete evolving draft, not only the latest answer. \
 Extract only explicit decisions made by this player, using the documented actions below. Reports, acknowledgments, hypotheses, and requests for another role to decide are not executable decisions. \
+If the draft cannot be represented by at least one documented simulator action, return an empty actions array. Never fabricate or approximate a command to make the draft submittable. \
+The application will tell the player that an empty action list cannot be submitted for operational approval. Ordinary peer chat uses a separate literal translation path. \
 Never invent targets, quantities, resources or facts. Never give tactical advice or suggest a better strategy. Do not approve or execute anything. \
 If essential information is missing, set clarification to ONE specific question addressed directly to the player in their own language, naming the missing quantity, destination or other field. Never write only 'needs clarification'. \
 A clarification is private to the player, never for EXCON review. Do not ask for facts already explicit in the draft or the authorized context. \

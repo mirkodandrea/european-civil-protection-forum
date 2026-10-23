@@ -31,6 +31,7 @@ pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
 pub mod summaries;
+pub mod threads;
 pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
 use std::collections::BTreeMap;
@@ -283,6 +284,8 @@ pub struct Proposal {
     pub executions: Vec<ExecutionRecord>,
     pub inject_id: Option<u64>,
     pub reply_to: Option<u64>,
+    /// Connected messages the submitting player could see, frozen at submission.
+    pub thread: Vec<threads::ThreadMessage>,
     pub id: u64,
     pub turn: u32,
     pub t_s: i64,
@@ -964,25 +967,22 @@ impl Exercise {
             bail!("empty reply");
         }
         evidence.validate()?;
-        let parent = self
-            .messages
-            .iter()
-            .find(|m| {
-                m.id == reply_to
-                    && m.to == role
-                    && matches!(m.kind, MsgKind::Inject | MsgKind::Clarification)
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "reply_to must reference an inject or clarification delivered to your role"
-                )
-            })?;
-        let inject_id = parent
-            .inject_id
-            .ok_or_else(|| anyhow::anyhow!("message has no inject thread"))?;
-        let pid =
-            self.open_chat_proposal(role, text, Some(inject_id), Some(reply_to), Some(evidence))?;
-        self.add_message(role, MASTER, MsgKind::Reply, None, text, text, Some(pid));
+        let parent = self.validate_action_reference(role, reply_to)?;
+        let inject_id = parent.inject_id;
+        let thread = self.thread_evidence(role, reply_to)?;
+        let pid = self.open_chat_proposal(role, text, inject_id, Some(reply_to), Some(evidence))?;
+        self.proposal_mut(pid)?.thread = thread;
+        self.add_message_in_thread(
+            role,
+            MASTER,
+            MsgKind::Reply,
+            None,
+            text,
+            text,
+            Some(pid),
+            inject_id.map(|root| (root, Some(reply_to), vec![MASTER.into()])),
+            Some(reply_to),
+        );
         Ok(pid)
     }
 
@@ -997,6 +997,13 @@ impl Exercise {
         self.validate_chat(role, MASTER, text, true)?;
         if commands.is_empty() || commands.len() > 32 {
             bail!("provide 1–32 commands");
+        }
+        let allowed = &self.world.scn.role(role).unwrap().allowed_actions;
+        if commands
+            .iter()
+            .any(|c| !allowed.iter().any(|kind| kind == c.kind()))
+        {
+            bail!("action outside this role's authority");
         }
         let pid = if let Some(parent) = reply_to {
             self.player_reply(
@@ -1049,6 +1056,7 @@ impl Exercise {
             executions: Vec::new(),
             inject_id,
             reply_to,
+            thread: Vec::new(),
             id: pid,
             turn: self.turn,
             t_s: self.world.time_s(),
@@ -1113,6 +1121,9 @@ impl Exercise {
         } else {
             None
         };
+        let thread = reply_to
+            .and_then(|id| self.messages.iter().find(|m| m.id == id))
+            .and_then(|m| m.inject_id.map(|root| (root, Some(m.id), vec![to.into()])));
         let id = self.add_message_in_thread(
             from,
             to,
@@ -1121,7 +1132,7 @@ impl Exercise {
             translated,
             text_en,
             proposal,
-            None,
+            thread,
             reply_to,
         );
         let message = self.messages.last_mut().unwrap();
@@ -1160,10 +1171,12 @@ impl Exercise {
             let parent = self.messages.iter().find(|m| m.id == id).ok_or_else(|| {
                 anyhow::anyhow!("reply_to does not identify a chat message in this conversation")
             })?;
-            if parent.kind != MsgKind::Chat
-                || !((parent.from == from && parent.to == to)
-                    || (parent.from == to && parent.to == from))
-            {
+            let same_pair = parent.kind == MsgKind::Chat
+                && ((parent.from == from && parent.to == to)
+                    || (parent.from == to && parent.to == from));
+            let own_inject =
+                parent.kind == MsgKind::Inject && parent.to == from && parent.inject_id.is_some();
+            if !same_pair && !own_inject {
                 bail!("reply_to does not identify a chat message in this conversation");
             }
         }
@@ -1204,6 +1217,7 @@ impl Exercise {
             executions: Vec::new(),
             inject_id: None,
             reply_to: None,
+            thread: Vec::new(),
             id: pid,
             turn: self.turn,
             t_s: self.world.time_s(),

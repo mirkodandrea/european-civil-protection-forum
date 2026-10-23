@@ -3,14 +3,14 @@ mod api;
 mod chat;
 mod evaluator;
 mod excon_map;
-#[cfg(not(feature = "standalone"))]
-mod maptest;
 mod function;
 mod history;
 mod i18n;
 mod i18n_excon;
 mod i18n_lang;
 mod map;
+#[cfg(not(feature = "standalone"))]
+mod maptest;
 mod notifications;
 #[cfg(feature = "standalone")]
 mod standalone;
@@ -60,6 +60,7 @@ impl Action {
 #[derive(Clone)]
 pub struct Draft {
     pub reply_to: Option<u64>,
+    pub inject_ref: Option<u64>,
     pub text: String,
     pub mode: String,
     pub template: String,
@@ -74,6 +75,7 @@ impl Default for Draft {
     fn default() -> Self {
         Self {
             reply_to: None,
+            inject_ref: None,
             text: String::new(),
             mode: "inject".into(),
             template: String::new(),
@@ -152,6 +154,7 @@ pub enum Msg {
     Select(String),
     ReplyChat(u64),
     CancelChatReply,
+    ChatInject(u64),
     ToggleNotifications,
     ReadNotifications,
     OpenNotification(String),
@@ -562,7 +565,6 @@ impl Component for App {
             }
             Msg::Done(kind, result) => {
                 self.busy = false;
-                let mut auto_submit = None;
                 match result {
                     Err(e) => {
                         self.error = e;
@@ -578,7 +580,8 @@ impl Component for App {
                             .collect::<Vec<_>>();
                         if !failures.is_empty() {
                             self.error = failures.join(" · ");
-                            self.notice = crate::i18n::ex("Operazione con errori: consulta gli esiti").into();
+                            self.notice =
+                                crate::i18n::ex("Operazione con errori: consulta gli esiti").into();
                         }
                         if self.is_master() && matches!(&kind, ActionKind::Send(_, _)) {
                             self.inject_open = false;
@@ -609,25 +612,24 @@ impl Component for App {
                                 } else {
                                     text(&d.private["message"]).into()
                                 };
-                                let no_actions = list(&d.private["actions"]).is_empty();
                                 let needs_clarification =
                                     d.private["status"] == "needs_clarification";
-                                if d.private["status"] == "ready" && no_actions {
-                                    self.notice = crate::i18n::ex("Nessuna azione operativa rilevata · invio del messaggio tradotto…").into();
-                                    auto_submit = Some((
-                                        to.clone(),
-                                        d.private["id"].clone(),
-                                        d.private["revision"].clone(),
-                                    ));
-                                } else if needs_clarification {
-                                    self.notice = crate::i18n::ex("Serve un chiarimento prima dell’invio").into();
-                                } else if d.private["status"] == "ai_unavailable" {
-                                    self.notice =
-                                        crate::i18n::ex("Interpretazione non riuscita · scegli come procedere")
-                                            .into();
-                                } else {
-                                    self.notice = crate::i18n::ex("Azioni individuate · controlla la bozza").into();
+                                if to == "master" && !needs_clarification {
+                                    self.fields.insert("work:free_text".into(), d.text.clone());
                                 }
+                                self.notice = if needs_clarification {
+                                    crate::i18n::ex("Serve un chiarimento prima dell’invio").into()
+                                } else if d.private["status"] == "unsupported"
+                                    || list(&d.private["actions"]).is_empty()
+                                        && d.private["status"] == "ready"
+                                {
+                                    if self.lang() == "it" {"Richiesta non inviabile: non contiene azioni supportate dal simulatore."} else {"Cannot send: this request contains no actions supported by the simulator."}.into()
+                                } else if d.private["status"] == "ai_unavailable" {
+                                    if self.lang() == "it" {"Verifica AI non riuscita: riprova oppure scegli un’azione dal modulo."} else {"AI validation failed: retry or choose a supported action in the form."}.into()
+                                } else {
+                                    crate::i18n::ex("Azioni individuate · controlla la bozza")
+                                        .into()
+                                };
                             }
                             ActionKind::Send(to, sent) => {
                                 self.notice = if value["translation_failed"] == true {
@@ -674,18 +676,12 @@ impl Component for App {
                         }
                     }
                 }
-                if let Some((to, draft, revision)) = auto_submit {
-                    let mut action = Action::post(
-                        format!("/api/player/{}/draft/submit", self.own),
-                        json!({"draft":draft,"revision":revision,"manual":false}),
-                    );
-                    action.kind = ActionKind::Submit(to);
-                    ctx.link().send_message(Msg::Action(action));
-                }
                 self.request_refresh(ctx);
             }
             Msg::OpenWork(parent) => {
-                let parent = parent.unwrap_or_default();
+                let parent = parent
+                    .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
+                    .unwrap_or_default();
                 if self.field("work:reply_to", "") != parent {
                     if let Some(draft) = self.drafts.remove("master") {
                         if let Some(id) = draft.private["id"].as_u64() {
@@ -695,6 +691,8 @@ impl Component for App {
                     self.fields.remove("work:free_text");
                     self.fields.remove("work:reply");
                     self.fields.insert("work:mode".into(), "action".into());
+                    self.fields.remove("work:location");
+                    self.fields.remove("work:destination");
                 }
                 self.fields.insert("work:reply_to".into(), parent);
                 self.fields.insert("work:open".into(), "true".into());
@@ -719,6 +717,17 @@ impl Component for App {
             }
             Msg::CloseInject => {
                 self.inject_open = false;
+            }
+            Msg::ChatInject(id) => {
+                if self
+                    .messages()
+                    .iter()
+                    .any(|m| m["id"] == id && m["kind"] == "inject" && m["to"] == self.own)
+                {
+                    let draft = self.drafts.entry(self.selected.clone()).or_default();
+                    draft.inject_ref = Some(id);
+                    draft.reply_to = None;
+                }
             }
             Msg::ReplyChat(id) => {
                 if self.messages().iter().any(|m| {
@@ -774,6 +783,18 @@ impl Component for App {
                 self.mark_seen();
             }
             Msg::Field(key, value) => {
+                if ["work:free_text", "work:reply_to"].contains(&key.as_str())
+                    && self.fields.get(&key) != Some(&value)
+                {
+                    if let Some(draft) = self.drafts.remove("master") {
+                        if let Some(id) = draft.private["id"].as_u64() {
+                            self.dismissed.insert(id);
+                        }
+                    }
+                    if key == "work:reply_to" {
+                        self.fields.remove("work:reply");
+                    }
+                }
                 if key.starts_with("draft:") {
                     let selected = self.selected.clone();
                     let own = self.own.clone();
@@ -823,7 +844,9 @@ impl Component for App {
                 }
             }
             Msg::Discard => {
-                let key = if self.active == "map" && !self.is_master() {
+                let key = if (self.active == "map" || self.field("work:open", "false") == "true")
+                    && !self.is_master()
+                {
                     "master"
                 } else {
                     &self.selected

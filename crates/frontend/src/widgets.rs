@@ -187,6 +187,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
     html! {<section class="proposal-inline" data-proposal={id.to_string()}>
         <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{api::status(text(&p["status"]))}</span></div>
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
+        if !list(&p["thread"]).is_empty() {<details open=true class="proposal-thread"><summary>{crate::exfmt!("Thread collegato · {} messaggi", "Linked thread · {} messages",list(&p["thread"]).len())}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),text(&m["from"]),text(&m["to"]),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
             html!{<fieldset class="command-card"><legend>{command_name(text(&cmd["type"]))}</legend>

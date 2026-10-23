@@ -48,13 +48,37 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
     let client = Client::tracked(rocket).await.unwrap();
     let (status, _) = post(&client, "/api/master/start", "master-test", json!({})).await;
     assert_eq!(status, Status::Ok);
+    let (_, seeded) = post(
+        &client,
+        "/api/master/inject",
+        "master-test",
+        json!({
+            "title":"Initial update", "recipients":["mayor"], "text":"Assess access."
+        }),
+    )
+    .await;
+    let root = seeded["messages"][0].as_u64().unwrap();
+    let calls_before_missing = translations.load(Ordering::SeqCst);
+    let (status, _) = post(
+        &client,
+        "/api/player/mayor/chat",
+        "mayor-test",
+        json!({"to":"fire_commander","text":"Unreferenced chat"}),
+    )
+    .await;
+    assert_eq!(status, Status::BadRequest);
+    assert_eq!(
+        translations.load(Ordering::SeqCst),
+        calls_before_missing,
+        "missing references are rejected before translation"
+    );
 
     let (status, delivered) = post(
         &client,
         "/api/player/mayor/chat",
         "mayor-test",
         json!({
-            "to":"fire_commander", "text":"The access road is blocked."
+            "to":"fire_commander", "text":"The access road is blocked.", "reply_to":root
         }),
     )
     .await;
@@ -85,7 +109,7 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
         &client,
         "/api/player/mayor/chat",
         "mayor-test",
-        json!({"to":"fire_commander", "text":"Ricevuto! F4 è chiusa."}),
+        json!({"to":"fire_commander", "text":"Ricevuto! F4 è chiusa.", "reply_to":parent}),
     )
     .await;
     assert_eq!(status, Status::Ok);
@@ -127,7 +151,7 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
         "/api/player/mayor/chat",
         "mayor-test",
         json!({
-            "to":"fire_commander", "text":"You are such a b!tch"
+            "to":"fire_commander", "text":"You are such a b!tch", "reply_to":parent
         }),
     )
     .await;
@@ -183,7 +207,7 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
         "/api/master/inject",
         "master-test",
         json!({
-            "title":"Private update", "recipients":["mayor"], "text":"A private update."
+            "title":"Private update", "recipients":["fire_commander"], "text":"A private update."
         }),
     )
     .await;
@@ -201,7 +225,7 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
     assert_eq!(
         status,
         Status::BadRequest,
-        "inject IDs cannot be used as chat parents"
+        "another role's inject cannot be used as a chat parent"
     );
     assert_eq!(
         translations.load(Ordering::SeqCst),

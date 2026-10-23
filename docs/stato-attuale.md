@@ -27,9 +27,13 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
    sono viste interne a EXCON. La Cronologia raccoglie tutti gli eventi operativi
    salvati, con ricerca, dettagli ed esportazione JSON per la valutazione.
 2. I partecipanti comunicano in chat solo con gli altri ruoli. Conversazioni
-   mostra esclusivamente messaggi tra player, separati per turno. Si può
-   rispondere citando una singola bubble; il riferimento è verificato nella
-   stessa conversazione, registrato e incluso nei riepiloghi AI anche tra turni.
+   mostra esclusivamente messaggi tra player, separati per turno. Ogni messaggio
+   cita un messaggio precedente della stessa conversazione oppure un inject
+   ricevuto dal mittente; l’ultimo inject è preselezionato. Il riferimento è
+   verificato, registrato e incluso nei riepiloghi AI anche tra turni. Da una
+   bubble si può anche proporre un’azione: il modale è lo stesso degli inject
+   e la proposta condivide con EXCON il thread collegato visibile al player,
+   congelato al momento dell’invio. Le altre conversazioni restano private.
    L’AI traduce letteralmente i messaggi senza interpretarli come azioni. Un
    filtro lessicale blocca insulti e volgarità prima di tradurre o consegnare il
    testo, lasciando la bozza modificabile al mittente. Non è richiesta conferma
@@ -44,8 +48,13 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
    di altri ruoli o EXCON; se l’AI manca, la scheda lo indica. Il rollback elimina
    i riepiloghi dei turni annullati. Nella scheda “Injects” leggono gli inject
    e propongono azioni
-   tramite moduli e mappa, oppure preparano una decisione con l’AI. L’AI può
-   tradurre il testo, riconoscere azioni proponibili e chiedere chiarimenti.
+   tramite un modale quasi a schermo intero con mappa e modulo affiancati.
+   Il click seleziona zone, coordinate, strade o edifici secondo l’azione; le
+   linee tagliafuoco hanno due estremi selezionabili separatamente. Ogni inject
+   può ricevere più risposte. Il testo libero passa da una verifica AI privata:
+   senza comandi codificati nel simulatore la richiesta è bloccata con un
+   messaggio esplicito. Solo una bozza valida e confermata arriva a EXCON;
+   l’AI può chiedere chiarimenti prima della conferma.
 3. Il partecipante rivede e conferma la bozza AI oppure invia una proposta
    strutturata senza AI. EXCON vede inject e azioni in una timeline per turno,
    suddivisa per ruolo, ne controlla la fattibilità e decide se approvarle.
@@ -84,6 +93,10 @@ lo stato e non prendono decisioni.
 - La simulazione è riproducibile a parità di configurazione e seme. Le risposte
   generate dall'AI possono variare; se l'AI non è disponibile, EXCON può
   interpretare manualmente le proposte.
+
+- I codici delle zone restano visibili a ogni zoom, anche ai bordi della
+  porzione inquadrata, con dimensione percepita costante e indipendente dai
+  livelli facoltativi della mappa.
 
 - Mappa interattiva (EXCON e giocatori): zoom/pan (rotellina, trascinamento, pinch, tastiera), ispezione hover/tocco, livelli, inquadra incendio, schermo intero, barra di scala. Per i giocatori l’ispezione mostra solo le celle riferite (fog of war): altrove «non riferito». Pagina di prova: `/maptest.html` (dati sintetici, selettori funzioni e zone abilitate).
 

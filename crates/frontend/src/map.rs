@@ -5,7 +5,9 @@ use base64::Engine;
 use serde_json::{json, Value};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{closure::Closure, Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, PointerEvent, WheelEvent};
+use web_sys::{
+    CanvasRenderingContext2d, HtmlCanvasElement, PointerEvent, ResizeObserver, WheelEvent,
+};
 use yew::prelude::*;
 
 const SIZE: f64 = 1200.;
@@ -201,8 +203,55 @@ pub fn situation_map(props: &MapProps) -> Html {
             }
             move || {
                 if let Some((el, cb)) = cleanup {
-                    let _ = el.remove_event_listener_with_callback("wheel", cb.as_ref().unchecked_ref());
+                    let _ = el
+                        .remove_event_listener_with_callback("wheel", cb.as_ref().unchecked_ref());
                 }
+            }
+        });
+    }
+    {
+        // Recompute screen-space labels when responsive CSS changes the canvas size.
+        let canvas = canvas.clone();
+        let redraw = tick.dispatcher();
+        use_effect_with((), move |_| {
+            let mut observer: Option<ResizeObserver> = None;
+            let mut callback: Option<Closure<dyn FnMut(js_sys::Array, ResizeObserver)>> = None;
+            if let Some(el) = canvas.cast::<HtmlCanvasElement>() {
+                let rect = el.get_bounding_client_rect();
+                let last_size = Rc::new(RefCell::new((rect.width(), rect.height())));
+                let target = el.clone();
+                let last = last_size.clone();
+                let redraw = redraw.clone();
+                let cb = Closure::<dyn FnMut(js_sys::Array, ResizeObserver)>::new(move |_, _| {
+                    let rect = target.get_bounding_client_rect();
+                    let mut previous = last.borrow_mut();
+                    if (rect.width() - previous.0).abs() > 0.5
+                        || (rect.height() - previous.1).abs() > 0.5
+                    {
+                        *previous = (rect.width(), rect.height());
+                        redraw.dispatch(());
+                    }
+                });
+                if let Ok(obs) = ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+                    obs.observe(el.unchecked_ref());
+                    observer = Some(obs);
+                    callback = Some(cb);
+                }
+            }
+            let win = window();
+            let fallback =
+                Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(move |_| redraw.dispatch(()));
+            let _ =
+                win.add_event_listener_with_callback("resize", fallback.as_ref().unchecked_ref());
+            move || {
+                let _ = win.remove_event_listener_with_callback(
+                    "resize",
+                    fallback.as_ref().unchecked_ref(),
+                );
+                if let Some(obs) = observer {
+                    obs.disconnect();
+                }
+                drop(callback);
             }
         });
     }
@@ -221,7 +270,10 @@ pub fn situation_map(props: &MapProps) -> Html {
             let v = *view.borrow();
             let bx = v.ox + (cx - rect.left()) / rect.width() * SIZE / v.z;
             let by = v.oy + (cy - rect.top()) / rect.height() * bh / v.z;
-            Some(((bx / k).round().clamp(0., w - 1.), (h - by / k).round().clamp(0., h - 1.)))
+            Some((
+                (bx / k).round().clamp(0., w - 1.),
+                (h - by / k).round().clamp(0., h - 1.),
+            ))
         }
     };
     let onclick = {
@@ -230,6 +282,10 @@ pub fn situation_map(props: &MapProps) -> Html {
         let drag = drag.clone();
         let pinned = pinned.clone();
         let locate = locate.clone();
+        let canvas = canvas.clone();
+        let view = view.clone();
+        let hidden = *hidden;
+        let simple = props.simple;
         Callback::from(move |e: MouseEvent| {
             if std::mem::take(&mut drag.borrow_mut().moved) > 5. {
                 return;
@@ -237,7 +293,25 @@ pub fn situation_map(props: &MapProps) -> Html {
             if let Some((x, y)) = locate(e.client_x() as f64, e.client_y() as f64) {
                 let h = n(&stat["grid"]["rows"]) * n(&stat["grid"]["cellsize"]);
                 pinned.set(Some((x, y)));
-                cb.emit(json!({"x":x,"y":y,"zone":zone_name(&stat, x, y, h)}));
+                let mut payload = json!({"x":x,"y":y,"zone":zone_name(&stat, x, y, h)});
+                let tol = canvas
+                    .cast::<HtmlCanvasElement>()
+                    .and_then(|c| {
+                        let rect = c.get_bounding_client_rect();
+                        let (_, _, k, _) = geom(&stat)?;
+                        (rect.width() > 0.)
+                            .then_some(12. / (k * view.borrow().z * rect.width() / SIZE))
+                    })
+                    .unwrap_or(0.);
+                let (building, road) = pick_static(&stat, x, y, tol, hidden, simple);
+                if let Some((id, name)) = building {
+                    payload["building"] = json!(name);
+                    payload["building_id"] = json!(id);
+                }
+                if let Some(id) = road {
+                    payload["road"] = json!(id);
+                }
+                cb.emit(payload);
             }
         })
     };
@@ -276,7 +350,8 @@ pub fn situation_map(props: &MapProps) -> Html {
                 d.moved = 0.;
             }
             d.pts.retain(|p| p.0 != e.pointer_id());
-            d.pts.push((e.pointer_id(), e.client_x() as f64, e.client_y() as f64));
+            d.pts
+                .push((e.pointer_id(), e.client_x() as f64, e.client_y() as f64));
             if let Some(c) = canvas.cast::<HtmlCanvasElement>() {
                 let _ = c.set_pointer_capture(e.pointer_id());
             }
@@ -427,9 +502,23 @@ pub fn situation_map(props: &MapProps) -> Html {
     };
     let lang = props.lang.as_str();
     let t = |k: &'static str| crate::i18n::t(lang, k);
-    let probe = if props.inspect { (*hover).or(*pinned) } else { None };
+    let probe = if props.inspect {
+        (*hover).or(*pinned)
+    } else {
+        None
+    };
     let lines = probe
-        .map(|(x, y)| probe_lines(&props.stat, &props.view, x, y, lang, props.simple, current.z))
+        .map(|(x, y)| {
+            probe_lines(
+                &props.stat,
+                &props.view,
+                x,
+                y,
+                lang,
+                props.simple,
+                current.z,
+            )
+        })
         .unwrap_or_default();
     let clear_pin = {
         let pinned = pinned.clone();
@@ -505,7 +594,10 @@ fn parse_zone(name: &str, cols: u64, rows: u64) -> Option<(u64, u64)> {
 /// A zone is known when disclosed (`known_zones`) or when it holds a reported cell.
 fn fog_zones(stat: &Value, v: &Value) -> Option<Vec<bool>> {
     let known = v["known_zones"].as_array()?;
-    let (cols, rows) = (stat["zones"]["cols"].as_u64()?, stat["zones"]["rows"].as_u64()?);
+    let (cols, rows) = (
+        stat["zones"]["cols"].as_u64()?,
+        stat["zones"]["rows"].as_u64()?,
+    );
     let mut out = vec![false; (cols * rows) as usize];
     for name in known {
         if let Some((c, r)) = parse_zone(text(name), cols, rows) {
@@ -523,6 +615,68 @@ fn seg_dist(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
         0.
     };
     (p.0 - (a.0 + t * dx)).hypot(p.1 - (a.1 + t * dy))
+}
+/// Pick the nearest public static feature within a screen-space tolerance.
+fn pick_static(
+    stat: &Value,
+    x: f64,
+    y: f64,
+    tol: f64,
+    hidden: u8,
+    simple: bool,
+) -> (Option<(String, String)>, Option<String>) {
+    if tol <= 0. {
+        return (None, None);
+    }
+    let mut best_building: Option<(String, String, f64)> = None;
+    for b in list(&stat["buildings"]) {
+        if hidden & L_BUILDINGS != 0 || (simple && text(&b["name"]).is_empty()) {
+            continue;
+        }
+        let (bx, by) = (n(&b["pos"][0]), n(&b["pos"][1]));
+        let (hw, hh) = (n(&b["size"][0]) / 2., n(&b["size"][1]) / 2.);
+        let dx = (x - bx).abs() - hw;
+        let dy = (y - by).abs() - hh;
+        let d = dx.max(0.).hypot(dy.max(0.));
+        let id = b["id"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| b["id"].to_string());
+        let name = if text(&b["name"]).is_empty() {
+            format!("#{id}")
+        } else {
+            text(&b["name"]).to_string()
+        };
+        if d <= tol && best_building.as_ref().map_or(true, |item| d < item.2) {
+            best_building = Some((id, name, d));
+        }
+    }
+    let mut best_road: Option<(String, f64)> = None;
+    for road in list(&stat["roads"]) {
+        if hidden & L_ROADS != 0 || (simple && road["drivable"] == false) {
+            continue;
+        }
+        let points = list(&road["points"]);
+        let mut d = f64::INFINITY;
+        for pair in points.windows(2) {
+            d = d.min(seg_dist(
+                (x, y),
+                (n(&pair[0][0]), n(&pair[0][1])),
+                (n(&pair[1][0]), n(&pair[1][1])),
+            ));
+        }
+        let id = road["id"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| road["id"].to_string());
+        if d <= tol && best_road.as_ref().map_or(true, |item| d < item.1) {
+            best_road = Some((id, d));
+        }
+    }
+    (
+        best_building.map(|(id, name, _)| (id, name)),
+        best_road.map(|(id, _)| id),
+    )
 }
 /// Text lines describing what is at world point `(x, y)`; the tolerance follows the zoom.
 fn probe_lines(
@@ -600,9 +754,20 @@ fn probe_lines(
             };
             let mut line = tf(lang, "insp_building", &[&name]);
             if s["inside"].is_number() {
-                line += &format!(" · {}", tf(lang, "insp_inside", &[&s["inside"].to_string(), &s["evacuated"].to_string()]));
+                line += &format!(
+                    " · {}",
+                    tf(
+                        lang,
+                        "insp_inside",
+                        &[&s["inside"].to_string(), &s["evacuated"].to_string()]
+                    )
+                );
             }
-            let flag = match (s["damage"].as_u64(), s["evacuating"] == true, s["threatened"] == true) {
+            let flag = match (
+                s["damage"].as_u64(),
+                s["evacuating"] == true,
+                s["threatened"] == true,
+            ) {
                 (Some(2), ..) => Some("insp_destroyed"),
                 (Some(1), ..) => Some("insp_damaged"),
                 (_, true, _) => Some("insp_evacuating"),
@@ -620,7 +785,10 @@ fn probe_lines(
         if simple && road["drivable"] == false {
             continue;
         }
-        let pts: Vec<(f64, f64)> = list(&road["points"]).iter().map(|p| (n(&p[0]), n(&p[1]))).collect();
+        let pts: Vec<(f64, f64)> = list(&road["points"])
+            .iter()
+            .map(|p| (n(&p[0]), n(&p[1])))
+            .collect();
         if pts.windows(2).any(|w| seg_dist((x, y), w[0], w[1]) <= tol) {
             let s = &v["roads"][text(&road["id"])];
             let mut line = tf(lang, "insp_road", &[text(&road["name"])]);
@@ -632,13 +800,24 @@ fn probe_lines(
             out.push(line);
         }
     }
-    for d in list(&v["deployments"]).iter().chain(list(&v["observed_units"])) {
+    for d in list(&v["deployments"])
+        .iter()
+        .chain(list(&v["observed_units"]))
+    {
         let tk = &d["task"];
         if d["active_qty"] == 0 || tk["status"] == "cancelled" {
             continue;
         }
         if (n(&d["position_m"][0]) - x).hypot(n(&d["position_m"][1]) - y) <= tol * 1.5 {
-            out.push(tf(lang, "insp_unit", &[&tk["id"].to_string(), text(&tk["status"]), text(&tk["detail"])]));
+            out.push(tf(
+                lang,
+                "insp_unit",
+                &[
+                    &tk["id"].to_string(),
+                    text(&tk["status"]),
+                    text(&tk["detail"]),
+                ],
+            ));
         }
     }
     for place in list(&stat["places"]) {
@@ -810,7 +989,10 @@ fn draw(
     };
     let z = &stat["zones"];
     let zsize = n(&z["size_m"]) * k;
-    let (zcols, zrows) = (z["cols"].as_u64().unwrap_or(0), z["rows"].as_u64().unwrap_or(0));
+    let (zcols, zrows) = (
+        z["cols"].as_u64().unwrap_or(0),
+        z["rows"].as_u64().unwrap_or(0),
+    );
     if let Some(known) = fog_zones(stat, v).filter(|_| on(L_FOG)) {
         // Fog of war: zones the role knows nothing about are veiled.
         ctx.set_fill_style_str("rgba(24,36,40,.55)");
@@ -822,7 +1004,10 @@ fn draw(
             }
         }
     }
-    for (names, fill, dash) in [(marked, "rgba(18,103,82,.10)", true), (selected, "rgba(18,103,82,.28)", false)] {
+    for (names, fill, dash) in [
+        (marked, "rgba(18,103,82,.10)", true),
+        (selected, "rgba(18,103,82,.28)", false),
+    ] {
         for name in names {
             if let Some((col, row)) = parse_zone(name, zcols, zrows) {
                 let (x, y) = (col as f64 * zsize, row as f64 * zsize);
@@ -858,10 +1043,6 @@ fn draw(
             if list(&v["warned"]).contains(&json!(name)) {
                 ctx.set_fill_style_str("rgba(255,200,0,.15)");
                 ctx.fill_rect(col as f64 * zsize, row as f64 * zsize, zsize, zsize);
-            }
-            ctx.set_fill_style_str("#203c3d");
-            if on(L_GRID) {
-                ctx.fill_text(&name, col as f64 * zsize + 5. * u, row as f64 * zsize + 21. * u)?;
             }
         }
     }
@@ -973,7 +1154,12 @@ fn draw(
         }
         if state["threatened"] == true {
             ctx.set_stroke_style_str("#ffb000");
-            ctx.stroke_rect(x - bw / 2. - 2. * s, y - bh / 2. - 2. * s, bw + 4. * s, bh + 4. * s);
+            ctx.stroke_rect(
+                x - bw / 2. - 2. * s,
+                y - bh / 2. - 2. * s,
+                bw + 4. * s,
+                bh + 4. * s,
+            );
         }
     }
     for line in list(&v["lines"]) {
@@ -1004,9 +1190,18 @@ fn draw(
         ctx.arc(x, y, 9. * s, 0., std::f64::consts::TAU)?;
         ctx.set_stroke_style_str("#e33");
         ctx.stroke();
-        label(&ctx, crate::i18n::t(lang, "map_reported"), x + 12. * u, y, &mut labels);
+        label(
+            &ctx,
+            crate::i18n::t(lang, "map_reported"),
+            x + 12. * u,
+            y,
+            &mut labels,
+        );
     }
-    if let Some(forecast) = list(&v["forecast_products"]).last().filter(|_| on(L_FORECAST)) {
+    if let Some(forecast) = list(&v["forecast_products"])
+        .last()
+        .filter(|_| on(L_FORECAST))
+    {
         for (idx, horizon) in list(&forecast["horizons"]).iter().enumerate() {
             let probability = list(&horizon["probability"]);
             if probability.len() != rows * cols {
@@ -1164,6 +1359,52 @@ fn draw(
         ctx.fill();
     }
     scale_bar(&ctx, k * vw.z, h * k, size)?;
+    // Zone identifiers are public geography. Draw them last in CSS-pixel space,
+    // independent of the optional grid/labels layers and the map zoom.
+    let rect = canvas.get_bounding_client_rect();
+    if rect.width() > 0. && rect.height() > 0. && zsize > 0. {
+        let sx = canvas.width() as f64 / rect.width();
+        let sy = canvas.height() as f64 / rect.height();
+        ctx.set_transform(sx, 0., 0., sy, 0., 0.)?;
+        ctx.set_font("600 13px system-ui");
+        ctx.set_text_align("center");
+        ctx.set_text_baseline("middle");
+        for row in 0..zrows {
+            for col in 0..zcols {
+                let x0 = col as f64 * zsize;
+                let y0 = row as f64 * zsize;
+                let left = (x0 - vw.ox) * vw.z / sx;
+                let top = (y0 - vw.oy) * vw.z / sy;
+                let right = (x0 + zsize - vw.ox) * vw.z / sx;
+                let bottom = (y0 + zsize - vw.oy) * vw.z / sy;
+                let (iw, ih) = (
+                    right.min(rect.width()) - left.max(0.),
+                    bottom.min(rect.height()) - top.max(0.),
+                );
+                if iw <= 0. || ih <= 0. {
+                    continue;
+                }
+                let label = format!("{}{}", (b'A' + col as u8) as char, row + 1);
+                let box_w: f64 = label.chars().count() as f64 * 8. + 8.;
+                let box_h: f64 = 19.;
+                let cx = ((left + right) / 2.).clamp(
+                    left.max(0.) + box_w / 2.,
+                    (right.min(rect.width()) - box_w / 2.).max(left.max(0.) + box_w / 2.0),
+                );
+                let cy = ((top + bottom) / 2.).clamp(
+                    top.max(0.) + box_h / 2.,
+                    (bottom.min(rect.height()) - box_h / 2.).max(top.max(0.) + box_h / 2.0),
+                );
+                ctx.set_fill_style_str("rgba(255,255,255,.88)");
+                ctx.fill_rect(cx - box_w / 2., cy - box_h / 2., box_w, box_h);
+                ctx.set_stroke_style_str("rgba(18,43,44,.65)");
+                ctx.set_line_width(1.);
+                ctx.stroke_rect(cx - box_w / 2., cy - box_h / 2., box_w, box_h);
+                ctx.set_fill_style_str("#122b2c");
+                ctx.fill_text(&label, cx, cy)?;
+            }
+        }
+    }
     Ok(())
 }
 /// Metric scale bar in screen space (bitmap pixels), drawn after the world transform is reset.

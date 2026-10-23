@@ -448,7 +448,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "training_design":ex.design_view(),
         "correction":ex.correction_view(),
         "digest": ex.world.digest(None),
-        "conversations": ex.conversations,
+        "conversations": std::collections::BTreeMap::from([(exercise::MASTER, ex.conversation(exercise::MASTER))]),
         "role_knowledge": ex.role_knowledge(),
     })))
 }
@@ -465,7 +465,18 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         .proposals
         .iter()
         .filter(|p| p.source.label() == role)
-        .map(|p| json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence}))
+        .map(|p| {
+            let thread = p.thread.iter().filter_map(|entry| {
+                let message = ex.messages.iter().find(|m| m.id == entry.id)?;
+                if message.from != role && message.to != role { return None; }
+                let mut visible = entry.clone();
+                visible.text = if message.from == role {
+                    message.original.as_ref().unwrap_or(&message.text).clone()
+                } else { message.text.clone() };
+                Some(visible)
+            }).collect::<Vec<_>>();
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence})
+        })
         .collect();
     Ok(Json(json!({
         "map": ex.player_map(&role)?,
@@ -637,6 +648,11 @@ async fn post_player_chat(
     if b.interpret {
         return Err(bad(
             "prepare and confirm the decision privately before sending it",
+        ));
+    }
+    if b.reply_to.is_none() {
+        return Err(bad(
+            "Select a previous chat message or an inject you received before sending peer chat",
         ));
     }
     deliver_chat(s, role, b).await

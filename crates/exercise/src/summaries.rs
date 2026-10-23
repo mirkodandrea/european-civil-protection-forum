@@ -34,12 +34,12 @@ impl Exercise {
                 .map(|m| {
                     let reply_context = m.reply_to.and_then(|parent_id| {
                         let parent = self.messages.iter().find(|p| p.id == parent_id)?;
-                        if parent.turn == m.turn
-                            || parent.kind != MsgKind::Chat
-                            || !((parent.from == m.from && parent.to == m.to)
-                                || (parent.from == m.to && parent.to == m.from))
-                            || (parent.from != role && parent.to != role)
-                        {
+                        let same_chat = parent.kind == MsgKind::Chat
+                            && ((parent.from == m.from && parent.to == m.to)
+                                || (parent.from == m.to && parent.to == m.from));
+                        let own_inject = parent.kind == MsgKind::Inject && parent.to == role;
+                        if parent.turn == m.turn || (!same_chat && !own_inject)
+                            || (parent.from != role && parent.to != role) {
                             return None;
                         }
                         Some(json!({"id":parent.id,"from":parent.from,
@@ -52,6 +52,10 @@ impl Exercise {
                 .collect::<Vec<_>>();
             let actions = self.proposals.iter().filter(|p| p.source.label() == role && p.turn == turn)
                 .map(|p| json!({"text":p.original,"status":p.status,"reply_to":p.reply_to,
+                    "thread":p.thread.iter().filter_map(|entry| self.messages.iter().find(|m| m.id == entry.id))
+                        .map(|m| json!({"id":m.id,"from":m.from,"to":m.to,"kind":m.kind,
+                            "text":if m.from == role {m.original.as_ref().unwrap_or(&m.text)} else {&m.text},
+                            "reply_to":m.reply_to})).collect::<Vec<_>>(),
                     "decision":p.decision.as_ref().map(|d|json!({"approve":d.approve,"note":d.note})),"executions":p.executions}))
                 .collect::<Vec<_>>();
             let evidence = json!({"role":role,"turn":turn,"messages":messages,"own_actions":actions,

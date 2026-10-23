@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use exercise::{Exercise, MsgKind, Phase};
-use sim::World;
+use exercise::{DecisionEvidence, Exercise, MsgKind, Phase};
+use sim::{Command, World};
 
 fn exercise() -> Exercise {
     let scenario = Arc::new(scenario::synthetic::generate(
@@ -161,4 +161,198 @@ fn cross_turn_reply_summary_quotes_parent_in_role_visible_form() {
         .unwrap();
     assert_eq!(reply["reply_context"]["id"], parent);
     assert_eq!(reply["reply_context"]["text"], "Road access is blocked.");
+}
+
+#[test]
+fn action_threads_freeze_selected_chat_and_hide_other_roles_private_injects() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let mayor_inject = ex
+        .send_inject(
+            None,
+            "Private mayor update",
+            "master",
+            &["mayor".into()],
+            "Mayor-only detail",
+            &Default::default(),
+        )
+        .unwrap()[0];
+    let _other_inject = ex
+        .send_inject(
+            None,
+            "Other update",
+            "master",
+            &["regional_cp".into()],
+            "Regional-only detail",
+            &Default::default(),
+        )
+        .unwrap()[0];
+    let first = ex
+        .chat_reply(
+            "mayor",
+            "fire_commander",
+            "Check the road",
+            "Check the road",
+            "Check the road",
+            false,
+            false,
+            Some(mayor_inject),
+        )
+        .unwrap()
+        .0;
+    let answer = ex
+        .chat_reply(
+            "fire_commander",
+            "mayor",
+            "Road blocked",
+            "Road blocked",
+            "Road blocked",
+            false,
+            false,
+            Some(first),
+        )
+        .unwrap()
+        .0;
+    let followup = ex
+        .chat_reply(
+            "mayor",
+            "fire_commander",
+            "Use F4",
+            "Use F4",
+            "Use F4",
+            false,
+            false,
+            Some(answer),
+        )
+        .unwrap()
+        .0;
+    let other_branch = ex
+        .chat_reply(
+            "mayor",
+            "regional_cp",
+            "Separate report",
+            "Separate report",
+            "Separate report",
+            false,
+            false,
+            Some(mayor_inject),
+        )
+        .unwrap()
+        .0;
+
+    let direct = ex
+        .player_reply(
+            "mayor",
+            "Warn F4 directly",
+            mayor_inject,
+            DecisionEvidence::judgment("Based on the inject and peer discussion"),
+        )
+        .unwrap();
+    assert_eq!(
+        ex.proposal(direct)
+            .unwrap()
+            .thread
+            .iter()
+            .map(|m| m.id)
+            .collect::<Vec<_>>(),
+        vec![mayor_inject, first, answer, followup, other_branch]
+    );
+
+    let mayor_proposal = ex
+        .player_reply(
+            "mayor",
+            "Warn F4",
+            answer,
+            DecisionEvidence::judgment("Based on the fire commander's report"),
+        )
+        .unwrap();
+    let fire_proposal = ex
+        .player_reply(
+            "fire_commander",
+            "Deploy to F4",
+            followup,
+            DecisionEvidence::judgment("Based on the mayor's message"),
+        )
+        .unwrap();
+    assert_eq!(
+        ex.proposal(mayor_proposal).unwrap().inject_id,
+        ex.messages
+            .iter()
+            .find(|m| m.id == mayor_inject)
+            .unwrap()
+            .inject_id
+    );
+    assert_eq!(
+        ex.proposal(fire_proposal).unwrap().inject_id,
+        ex.messages
+            .iter()
+            .find(|m| m.id == mayor_inject)
+            .unwrap()
+            .inject_id
+    );
+    let mayor_thread = &ex.proposal(mayor_proposal).unwrap().thread;
+    assert_eq!(
+        mayor_thread.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![mayor_inject, first, answer, followup]
+    );
+    let fire_thread = &ex.proposal(fire_proposal).unwrap().thread;
+    assert_eq!(
+        fire_thread.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![first, answer, followup]
+    );
+    assert!(!serde_json::to_string(fire_thread)
+        .unwrap()
+        .contains("Mayor-only detail"));
+    assert!(!serde_json::to_string(fire_thread)
+        .unwrap()
+        .contains("Regional-only detail"));
+
+    let before = (ex.messages.len(), ex.proposals.len());
+    assert!(ex
+        .player_actions(
+            "fire_commander",
+            "Warn F4",
+            vec![Command::IssueWarning { zone: "F4".into() }],
+            Some(followup)
+        )
+        .is_err());
+    assert_eq!(
+        (ex.messages.len(), ex.proposals.len()),
+        before,
+        "an unauthorized structured action creates no partial record"
+    );
+    let structured = ex
+        .player_actions(
+            "mayor",
+            "Warn F4 again",
+            vec![Command::IssueWarning { zone: "F4".into() }],
+            Some(answer),
+        )
+        .unwrap();
+    assert_eq!(
+        ex.proposal(structured)
+            .unwrap()
+            .thread
+            .iter()
+            .map(|m| m.id)
+            .collect::<Vec<_>>(),
+        vec![mayor_inject, first, answer, followup]
+    );
+
+    ex.chat_reply(
+        "fire_commander",
+        "mayor",
+        "Later update",
+        "Later update",
+        "Later update",
+        false,
+        false,
+        Some(followup),
+    )
+    .unwrap();
+    assert_eq!(
+        ex.proposal(mayor_proposal).unwrap().thread.len(),
+        4,
+        "submitted evidence is immutable when another message arrives"
+    );
 }
