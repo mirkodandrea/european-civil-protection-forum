@@ -41,6 +41,21 @@ impl App {
             .iter()
             .filter(|m| self.in_thread(m, &selected))
             .collect::<Vec<_>>();
+        let reply_quote = if !master {
+            draft.reply_to.and_then(|id| {
+                items
+                    .iter()
+                    .find(|m| {
+                        m["id"].as_u64() == Some(id)
+                            && m["kind"] == "chat"
+                            && m["from"] != "master"
+                            && m["to"] != "master"
+                    })
+                    .copied()
+            })
+        } else {
+            None
+        };
         let visible = props
             .iter()
             .filter(|p| {
@@ -86,7 +101,9 @@ impl App {
                 <p class="muted">{crate::i18n::ex("Il player risponde dalla vista di lavoro; la proposta appare nella timeline per l’approvazione. L’invio dell’inject non cambia la fisica.")}</p>
             </div></div>}
             if self.busy{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
-            <textarea id="text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
+                if let Some(quoted)=reply_quote {<div class="chat-reply-composer" data-reply-preview={quoted["id"].to_string()}><div><b>{i18n::tf(l,"replying_to",&[&self.name(text(&quoted["from"]))])}</b><p>{chat_excerpt(reply_text(quoted,text(&quoted["from"])==own.as_str()))}</p></div><button type="button" class="chat-reply-cancel" aria-label={i18n::t(l,"cancel_reply")} onclick={ctx.link().callback(|_|Msg::CancelChatReply)}>{i18n::t(l,"cancel_reply")}</button></div>}
+                <textarea id="text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
+                if !master {<small class="literal-translation-hint">{i18n::t(l,"literal_translation_hint")}</small>}
             <div class="row">if master{<small>{crate::i18n::ex("Testo EXCON in inglese · tradotto per il destinatario")}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{if self.busy{self.notice.as_str()}else{""}}</span><button id="send" class="primary" disabled={send_disabled}>{if self.busy{i18n::t(l,"sending")}else if master{crate::i18n::ex("Invia inject →")}else{i18n::t(l,"send")}}</button></div>
         </form>}else{<div class="composer"><p class="muted">{i18n::t(l,"inject_info")}</p></div>}};
         if composer_only {
@@ -98,18 +115,26 @@ impl App {
                     let id=text(&r["id"]).to_string();let seen=self.seen.get(&id).copied().unwrap_or(0);let unread=self.messages().iter().filter(|m|self.in_thread(m,&id)&&m["from"]!=own&&m["id"].as_u64().unwrap_or(0)>seen).count();let role=id.clone();
                     html!{<button class={classes!("contact",(selected==id).then_some("active"))} data-contact={id.clone()} onclick={ctx.link().callback(move |_|Msg::Select(role.clone()))}><span>{text(&r["name"])}<small>{if r["id"]=="master"{i18n::t(l,"excon_dir")}else{i18n::t(l,"player_direct")}}</small></span>if unread>0{<span class="unread">{unread}</span>}</button>}
                 })}</div></aside>
-                <section class="conversation"><div class="thread-head"><div><h2 id="thread-name">{text(&contact["name"])}</h2><small id="thread-description">{text(&contact["description"])}</small>{if self.peer_typing{html!{<div class="activity peer-activity" role="status"><span class="loader" aria-hidden="true"></span><span>{i18n::tf(l,"typing",&[text(&contact["name"])])}</span></div>}}else{Html::default()}}</div><div class="grow"/><span class="pill">{if master{crate::i18n::ex("Supervisione EXCON")}else{i18n::t(l,"ai_translation")}}</span></div>
+                <section class="conversation"><div class="thread-head"><div><h2 id="thread-name">{text(&contact["name"])}</h2><small id="thread-description">{text(&contact["description"])}</small>{if self.peer_typing{html!{<div class="activity peer-activity" role="status"><span class="loader" aria-hidden="true"></span><span>{i18n::tf(l,"typing",&[text(&contact["name"])])}</span></div>}}else{Html::default()}}</div><div class="grow"/><span class="pill">{if master{crate::i18n::ex("Supervisione EXCON")}else{i18n::t(l,"literal_translation_short")}}</span></div>
                 <MessageList thread={selected.clone()}>
                 if items.is_empty()&&visible.is_empty(){<div class="empty"><h3>{i18n::t(l,"conv_starts")}</h3><p>{i18n::t(l,"conv_hint")}</p></div>}
-                {for items.iter().map(|m|{
+                {for items.iter().enumerate().map(|(idx,m)|{
                     let proposal=props.iter().find(|p|p["id"]==m["proposal"]).filter(|p|!master||items.iter().find(|other|other["proposal"]==p["id"]).is_some_and(|first|first["id"]==m["id"]));let from=text(&m["from"]);let body=if from==own{if m["original"].is_string(){&m["original"]}else{&m["text"]}}else if master{&m["text_en"]}else{&m["text"]};
-                    html!{<article key={m["id"].to_string()} class={classes!("message",(from==own).then_some("own"),(m["kind"]=="inject").then_some("inject"))}>
+                    let is_chat = m["kind"] == "chat";
+                    let is_peer_chat = is_chat && m["from"] != "master" && m["to"] != "master";
+                    let reply_target = m["reply_to"].as_u64().and_then(|id| items.iter().find(|other|other["id"].as_u64()==Some(id) && other["kind"]=="chat" && other["from"]!="master" && other["to"]!="master").copied());
+                    let is_new_turn = idx == 0 || items[idx-1]["turn"] != m["turn"];
+                    html!{<div class="chat-turn-group" key={m["id"].to_string()}>
+                    if is_new_turn {<div class="chat-turn-separator" data-turn={m["turn"].to_string()}><span>{i18n::tf(l,"turn_label_short",&[&m["turn"].to_string()])}</span></div>}
+                    <article id={format!("chat-message-{}-{}",own,m["id"])} data-chat-message={m["id"].to_string()} key={m["id"].to_string()} class={classes!("message",(from==own).then_some("own"),(m["kind"]=="inject").then_some("inject"))}>
                         <div class="meta">{i18n::tf(l,"meta",&[&self.name(from),text(&m["clock"]),&m["turn"].to_string(),if m["kind"]=="inject"{i18n::t(l,"private_inject")}else{""}])}</div>
+                        if let Some(reply)=reply_target {<a class="message-quote-link" data-reply-target={reply["id"].to_string()} href={format!("#chat-message-{}-{}",own,reply["id"])}><b>{self.name(text(&reply["from"]))}</b><span>{chat_excerpt(reply_text(reply,text(&reply["from"])==own.as_str()))}</span></a>}
                         if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<div class="text">{text(body)}</div>
                         if m["original"]!=*body&&!m["original"].is_null(){<details><summary>{i18n::t(l,"original")}</summary>{text(&m["original"])}</details>}
                         if m["translation_failed"]==true{<p class="danger">{i18n::t(l,"translation_failed")}</p>}
                         if let Some(p)=proposal{if master {<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={self.state["generation"].clone()} preview={self.responses.get(&format!("proposal:{}",p["id"])).cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)}/>}else{<div class="status">{i18n::status(l,text(&p["status"]))}</div>}}
-                    </article>}
+                        if !master && is_peer_chat {<button type="button" class="message-reply-button" data-reply-message={m["id"].to_string()} disabled={self.busy||self.state["phase"]=="debrief"} onclick={ctx.link().callback({let id=m["id"].as_u64().unwrap_or(0);move |_|Msg::ReplyChat(id)})}>{i18n::t(l,"reply_message")}</button>}
+                    </article></div>}
                 })}
                 if master {{for visible.iter().filter(|p|!items.iter().any(|m|m["proposal"]==p["id"])).map(|p|html!{<article class="message" key={format!("orphan:{}",p["id"])}><Proposal proposal={(*p).clone()} generation={self.state["generation"].clone()} preview={self.responses.get(&format!("proposal:{}",p["id"])).cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)}/></article>})}}
                 </MessageList>
@@ -129,13 +154,14 @@ impl App {
         if message.is_empty() {
             return None;
         }
+        let body = json!({"to":to,"text":message,"interpret":false,"reply_to":if self.is_master(){None}else{draft.reply_to}});
         let mut action = Action::post(
             if self.is_master() {
                 "/api/master/chat".into()
             } else {
                 format!("/api/player/{}/chat", self.own)
             },
-            json!({"to":to,"text":message,"interpret":false}),
+            body,
         );
         action.kind = ActionKind::Send(to.clone(), draft.text.clone());
         if self.is_master() {
@@ -160,6 +186,24 @@ impl App {
             }
         }
         Some(action)
+    }
+}
+
+fn reply_text(message: &Value, sent_by_self: bool) -> &str {
+    if sent_by_self && !text(&message["original"]).is_empty() {
+        text(&message["original"])
+    } else {
+        text(&message["text"])
+    }
+}
+
+fn chat_excerpt(message: &str) -> String {
+    let mut chars = message.chars();
+    let excerpt = chars.by_ref().take(160).collect::<String>();
+    if chars.next().is_some() {
+        format!("{excerpt}…")
+    } else {
+        excerpt
     }
 }
 

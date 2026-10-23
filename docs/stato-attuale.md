@@ -26,13 +26,20 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
    principali corrispondono agli attori; Timeline, Mappa, Strumenti e Cronologia
    sono viste interne a EXCON. La Cronologia raccoglie tutti gli eventi operativi
    salvati, con ricerca, dettagli ed esportazione JSON per la valutazione.
-2. I partecipanti comunicano in chat solo con gli altri ruoli. Nelle proprie
-   conversazioni vedono anche gli inject ricevuti dal proprio ruolo, senza
-   condividerli automaticamente con l’interlocutore. Non è richiesta conferma
+2. I partecipanti comunicano in chat solo con gli altri ruoli. Conversazioni
+   mostra esclusivamente messaggi tra player, separati per turno. Si può
+   rispondere citando una singola bubble; il riferimento è verificato nella
+   stessa conversazione, registrato e incluso nei riepiloghi AI anche tra turni.
+   L’AI traduce letteralmente i messaggi senza interpretarli come azioni. Un
+   filtro lessicale blocca insulti e volgarità prima di tradurre o consegnare il
+   testo, lasciando la bozza modificabile al mittente. Non è richiesta conferma
    della lingua predefinita, che resta modificabile dal menu. La scheda iniziale
    “Funzione” è in sola lettura: descrive ruolo, capacità e
    asset, distingue risorse disponibili, prenotate e impiegate e raccoglie i
-   riepiloghi AI dei turni conclusi. I riepiloghi usano solo le evidenze visibili
+   riepiloghi AI dei turni conclusi. La tab Conversazioni conta i messaggi non
+   letti; la campanella conserva gli aggiornamenti del ruolo e le pill temporanee
+   segnalano gli eventi ricevuti mentre si consultano altre schede. Leggere una
+   conversazione azzera soltanto il suo conteggio. I riepiloghi usano solo le evidenze visibili
    al ruolo (azioni proprie e messaggi ricevuti/inviati), senza contesto privato
    di altri ruoli o EXCON; se l’AI manca, la scheda lo indica. Il rollback elimina
    i riepiloghi dei turni annullati. Nella scheda “Injects” leggono gli inject

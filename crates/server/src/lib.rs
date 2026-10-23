@@ -558,12 +558,14 @@ struct ChatBody {
     text: String,
     #[serde(default)]
     interpret: bool,
+    #[serde(default)]
+    reply_to: Option<u64>,
 }
 
 async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
     let (language, turn, revision) = {
         let ex = s.lock();
-        ex.validate_chat(&from, &b.to, &b.text, b.interpret)?;
+        ex.validate_chat_reply(&from, &b.to, &b.text, b.interpret, b.reply_to)?;
         (ex.language_of(&from), ex.turn, ex.clock_control.revision)
     };
     let mut failed = false;
@@ -579,7 +581,11 @@ async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
         }
     };
     let target_language = s.lock().language_of(&b.to);
-    let translated = if failed || target_language == "en" {
+    let translated = if target_language == language {
+        // Peer messages between participants who share a language are literal
+        // copies. The English working copy above remains available for logs/AI.
+        b.text.clone()
+    } else if failed || target_language == "en" {
         text_en.clone()
     } else {
         match s.llm.translate(&text_en, &target_language).await {
@@ -596,7 +602,7 @@ async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
         if ex.turn != turn || ex.clock_control.revision != revision {
             return Err(bad("exercise changed during translation; send again"));
         }
-        ex.chat(
+        ex.chat_reply(
             &from,
             &b.to,
             &b.text,
@@ -604,6 +610,7 @@ async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
             &translated,
             failed,
             b.interpret,
+            b.reply_to,
         )?
     };
     if let Some(pid) = proposal {

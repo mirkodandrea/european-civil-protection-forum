@@ -22,6 +22,7 @@
 
 pub mod limits;
 pub use limits::ResourceLimits;
+pub mod chat_policy;
 pub mod timing;
 pub use timing::{ClockControl, ExercisePhase, PhaseEntry, ScheduleStatus, ScheduledInject};
 pub mod design;
@@ -821,7 +822,7 @@ impl Exercise {
         let thread = proposal
             .and_then(|pid| self.proposal(pid))
             .and_then(|p| p.inject_id.map(|id| (id, p.reply_to, vec![to.into()])));
-        self.add_message_in_thread(from, to, kind, title, text, text_en, proposal, thread)
+        self.add_message_in_thread(from, to, kind, title, text, text_en, proposal, thread, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -835,12 +836,14 @@ impl Exercise {
         text_en: &str,
         proposal: Option<u64>,
         thread: Option<(u64, Option<u64>, Vec<String>)>,
+        message_reply_to: Option<u64>,
     ) -> u64 {
         let id = self.id();
-        let (inject_id, reply_to, recipients) = match thread {
+        let (inject_id, thread_reply_to, recipients) = match thread {
             Some((root, parent, recipients)) => (Some(root), parent, recipients),
             None => (None, None, vec![to.into()]),
         };
+        let reply_to = message_reply_to.or(thread_reply_to);
         let m = Message {
             original: None,
             language_src: None,
@@ -876,11 +879,15 @@ impl Exercise {
                 MsgKind::RoleMessage => "MESSAGE",
                 _ => "NOTICE",
             };
+            let reference = reply_to
+                .map(|id| format!(" · reply to message {id}"))
+                .unwrap_or_default();
             let head = format!(
-                "[{}] {what} from {}{}",
+                "[{}] {what} from {}{}{}",
                 self.world.clock(),
                 from,
-                title.map(|t| format!(" — {t}")).unwrap_or_default()
+                title.map(|t| format!(" — {t}")).unwrap_or_default(),
+                reference
             );
             self.converse(to, "user", format!("{head}:\n{text_en}"));
         }
@@ -919,6 +926,7 @@ impl Exercise {
                 text_en,
                 None,
                 Some((delivery_id, None, to.clone())),
+                None,
             );
             ids.push(mid);
         }
@@ -1080,24 +1088,86 @@ impl Exercise {
         failed: bool,
         interpret: bool,
     ) -> Result<(u64, Option<u64>)> {
-        self.validate_chat(from, to, original, interpret)?;
+        self.chat_reply(
+            from, to, original, text_en, translated, failed, interpret, None,
+        )
+    }
+
+    /// Record a translated chat message with an optional reference to a prior
+    /// message in the same peer conversation.
+    pub fn chat_reply(
+        &mut self,
+        from: &str,
+        to: &str,
+        original: &str,
+        text_en: &str,
+        translated: &str,
+        failed: bool,
+        interpret: bool,
+        reply_to: Option<u64>,
+    ) -> Result<(u64, Option<u64>)> {
+        self.validate_chat_reply(from, to, original, interpret, reply_to)?;
         let language = self.language_of(from);
         let proposal = if interpret {
             Some(self.open_chat_proposal(from, original, None, None, None)?)
         } else {
             None
         };
-        let id = self.add_message(from, to, MsgKind::Chat, None, translated, text_en, proposal);
+        let id = self.add_message_in_thread(
+            from,
+            to,
+            MsgKind::Chat,
+            None,
+            translated,
+            text_en,
+            proposal,
+            None,
+            reply_to,
+        );
         let message = self.messages.last_mut().unwrap();
         message.original = Some(original.into());
         message.language_src = Some(language);
         message.translation_failed = failed;
+        message.reply_to = reply_to;
         let recorded = message.clone();
         self.record("chat_source", from, json!(recorded));
         if from != MASTER && !interpret {
-            self.converse(from, "user", format!("CHAT to {to}: {text_en}"));
+            let reference = reply_to
+                .map(|id| format!(" (reply to message {id})"))
+                .unwrap_or_default();
+            self.converse(from, "user", format!("CHAT to {to}{reference}: {text_en}"));
         }
         Ok((id, proposal))
+    }
+
+    /// Perform all chat checks needed before any AI translation request.
+    pub fn validate_chat_reply(
+        &self,
+        from: &str,
+        to: &str,
+        text: &str,
+        interpret: bool,
+        reply_to: Option<u64>,
+    ) -> Result<()> {
+        self.validate_chat(from, to, text, interpret)?;
+        if from != MASTER && to != MASTER {
+            chat_policy::validate_player_chat(text, &self.language_of(from))?;
+        }
+        if let Some(id) = reply_to {
+            if from == MASTER || to == MASTER {
+                bail!("reply_to is available only for player-to-player chat");
+            }
+            let parent = self.messages.iter().find(|m| m.id == id).ok_or_else(|| {
+                anyhow::anyhow!("reply_to does not identify a chat message in this conversation")
+            })?;
+            if parent.kind != MsgKind::Chat
+                || !((parent.from == from && parent.to == to)
+                    || (parent.from == to && parent.to == from))
+            {
+                bail!("reply_to does not identify a chat message in this conversation");
+            }
+        }
+        Ok(())
     }
 
     pub fn validate_chat(&self, from: &str, to: &str, text: &str, interpret: bool) -> Result<()> {

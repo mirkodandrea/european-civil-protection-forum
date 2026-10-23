@@ -31,8 +31,24 @@ impl Exercise {
             // recipient lists, hidden interpretations or other participants' threads.
             let messages = self.inbox(&role).into_iter()
                 .filter(|m| m.turn == turn && !matches!(m.kind, MsgKind::Situation))
-                .map(|m| json!({"from":m.from,"to":m.to,"kind":m.kind,"clock":m.clock,
-                    "title":m.title,"text":if m.from == role {m.original.as_ref().unwrap_or(&m.text)} else {&m.text},"reply_to":m.reply_to}))
+                .map(|m| {
+                    let reply_context = m.reply_to.and_then(|parent_id| {
+                        let parent = self.messages.iter().find(|p| p.id == parent_id)?;
+                        if parent.turn == m.turn
+                            || parent.kind != MsgKind::Chat
+                            || !((parent.from == m.from && parent.to == m.to)
+                                || (parent.from == m.to && parent.to == m.from))
+                            || (parent.from != role && parent.to != role)
+                        {
+                            return None;
+                        }
+                        Some(json!({"id":parent.id,"from":parent.from,
+                            "text":if parent.from == role {parent.original.as_ref().unwrap_or(&parent.text)} else {&parent.text}}))
+                    });
+                    json!({"id":m.id,"from":m.from,"to":m.to,"kind":m.kind,"clock":m.clock,
+                        "title":m.title,"text":if m.from == role {m.original.as_ref().unwrap_or(&m.text)} else {&m.text},
+                        "reply_to":m.reply_to,"reply_context":reply_context})
+                })
                 .collect::<Vec<_>>();
             let actions = self.proposals.iter().filter(|p| p.source.label() == role && p.turn == turn)
                 .map(|p| json!({"text":p.original,"status":p.status,"reply_to":p.reply_to,

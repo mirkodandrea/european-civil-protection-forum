@@ -11,6 +11,7 @@ mod i18n;
 mod i18n_excon;
 mod i18n_lang;
 mod map;
+mod notifications;
 #[cfg(feature = "standalone")]
 mod standalone;
 mod tactical;
@@ -58,6 +59,7 @@ impl Action {
 }
 #[derive(Clone)]
 pub struct Draft {
+    pub reply_to: Option<u64>,
     pub text: String,
     pub mode: String,
     pub template: String,
@@ -71,6 +73,7 @@ pub struct Draft {
 impl Default for Draft {
     fn default() -> Self {
         Self {
+            reply_to: None,
             text: String::new(),
             mode: "inject".into(),
             template: String::new(),
@@ -120,6 +123,7 @@ pub struct App {
     peer_typing: bool,
     filter: String,
     inject_open: bool,
+    notifications: notifications::NotificationFeed,
 }
 /// Focuses the first element matching `selector`, retrying every ~16 ms
 /// (up to `attempts_left` times) until Yew has rendered the modal.
@@ -146,6 +150,12 @@ pub enum Msg {
     Action(Action),
     Done(ActionKind, Result<Value, String>),
     Select(String),
+    ReplyChat(u64),
+    CancelChatReply,
+    ToggleNotifications,
+    ReadNotifications,
+    OpenNotification(String),
+    DismissToast(String),
     ExconLang(String),
     OpenInject(String),
     OpenWork(Option<String>),
@@ -229,31 +239,16 @@ impl App {
         if self.is_master() {
             return m["from"] == id || m["to"] == id;
         }
-        if m["kind"] == "inject" {
-            return m["to"] == self.own
-                && self
-                    .roles()
-                    .iter()
-                    .any(|r| r["id"] == id && r["id"] != self.own);
-        }
-        let from = text(&m["from"]);
-        let to = text(&m["to"]);
-        let peer = if m["kind"] == "inject"
-            || (to == self.own
-                && (from == "master" || !self.roles().iter().any(|r| r["id"] == from)))
-        {
-            "injects"
-        } else if from == self.own {
-            to
-        } else if from == "master" || !self.roles().iter().any(|r| r["id"] == from) {
-            return false;
-        } else {
-            from
-        };
-        peer == id
+        m["kind"] == "chat"
+            && ((m["from"] == self.own && m["to"] == id)
+                || (m["to"] == self.own && m["from"] == id))
     }
+
     fn mark_seen(&mut self) {
-        if self.active == "chat" {
+        if self.panel_visible() {
+            self.notifications.read_view(&self.active);
+        }
+        if self.active == "chat" && self.panel_visible() {
             let max = self
                 .messages()
                 .iter()
@@ -262,6 +257,7 @@ impl App {
                 .max()
                 .unwrap_or(0);
             self.seen.insert(self.selected.clone(), max);
+            self.notifications.read_thread(&self.selected, max);
         }
     }
     fn request_refresh(&mut self, ctx: &Context<Self>) {
@@ -302,6 +298,9 @@ impl App {
 }
 #[derive(Properties, PartialEq, Default)]
 pub struct AppProps {
+    /// Refresh unread state when the standalone role switcher reveals this panel.
+    #[prop_or(true)]
+    pub visible: bool,
     #[prop_or_default]
     pub token: Option<String>,
     #[prop_or_default]
@@ -388,6 +387,7 @@ impl Component for App {
             peer_typing: false,
             filter: String::new(),
             inject_open: false,
+            notifications: notifications::NotificationFeed::default(),
         }
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
@@ -468,6 +468,7 @@ impl Component for App {
                 self.reading = false;
                 match result {
                     Ok((state, master)) => {
+                        self.update_notifications(ctx, &state, &master);
                         self.state = state;
                         self.master = master;
                         if !self.is_master() && !self.is_evaluator() {
@@ -565,6 +566,7 @@ impl Component for App {
                 match result {
                     Err(e) => {
                         self.error = e;
+                        self.push_failure_notification(ctx);
                         self.notice = crate::i18n::ex("Operazione non riuscita").into()
                     }
                     Ok(value) => {
@@ -584,11 +586,15 @@ impl Component for App {
                         match kind {
                             ActionKind::Store(key) => {
                                 self.notice = match key.as_str() {
-                                    "forecast" => crate::i18n::ex("Bozza privata pronta · non pubblicata"),
-                                    "assessment" => {
-                                        crate::i18n::ex("Valutazione derivata pronta · richiede revisione umana")
+                                    "forecast" => {
+                                        crate::i18n::ex("Bozza privata pronta · non pubblicata")
                                     }
-                                    _ => crate::i18n::ex("Anteprima pronta · nessuna modifica applicata"),
+                                    "assessment" => crate::i18n::ex(
+                                        "Valutazione derivata pronta · richiede revisione umana",
+                                    ),
+                                    _ => crate::i18n::ex(
+                                        "Anteprima pronta · nessuna modifica applicata",
+                                    ),
                                 }
                                 .into();
                                 self.responses.insert(key, value);
@@ -714,12 +720,56 @@ impl Component for App {
             Msg::CloseInject => {
                 self.inject_open = false;
             }
+            Msg::ReplyChat(id) => {
+                if self.messages().iter().any(|m| {
+                    m["id"] == id && self.in_thread(m, &self.selected) && m["kind"] == "chat"
+                }) {
+                    self.drafts
+                        .entry(self.selected.clone())
+                        .or_default()
+                        .reply_to = Some(id);
+                    focus_when_rendered("#chat-view:not([hidden]) #text", 10);
+                }
+            }
+            Msg::CancelChatReply => {
+                self.drafts
+                    .entry(self.selected.clone())
+                    .or_default()
+                    .reply_to = None
+            }
+            Msg::ToggleNotifications => self.notifications.open = !self.notifications.open,
+            Msg::ReadNotifications => {
+                self.notifications.mark_all_read();
+                // The explicit action also clears conversation unread badges.
+                for contact in self.contacts() {
+                    let id = text(&contact["id"]).to_string();
+                    let max = self
+                        .messages()
+                        .iter()
+                        .filter(|m| self.in_thread(m, &id))
+                        .filter_map(|m| m["id"].as_u64())
+                        .max()
+                        .unwrap_or(0);
+                    self.seen.insert(id, max);
+                }
+            }
+            Msg::OpenNotification(key) => {
+                if let Some(item) = self.notifications.open_item(&key) {
+                    self.active = item.view;
+                    if let Some(peer) = item.peer {
+                        self.selected = peer;
+                    }
+                    self.mark_seen();
+                }
+            }
+            Msg::DismissToast(key) => self.notifications.dismiss_toast(&key),
             Msg::Select(id) => {
                 self.selected = id;
                 self.peer_typing = false;
                 self.mark_seen();
             }
             Msg::View(view) => {
+                self.notifications.open = false;
                 self.active = view;
                 self.mark_seen();
             }
@@ -821,7 +871,12 @@ impl Component for App {
         let nav = |id: &str, label: &str| {
             let id = id.to_string();
             let active = self.active == id;
-            html! {<button class={if active{"active"}else{""}} data-view={id.clone()} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}</button>}
+            let unread = if id == "chat" && !self.is_master() {
+                self.chat_unread()
+            } else {
+                0
+            };
+            html! {<button class={if active{"active"}else{""}} data-view={id.clone()} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}if unread>0{<span class="unread" data-chat-unread="true">{unread}</span>}</button>}
         };
         let l = self.lang();
         let l = l.as_str();
@@ -836,10 +891,11 @@ impl Component for App {
             html! {<span class="pill sim-state paused" id="sim-state" role="status">{i18n::t(l,if phase=="orders"{"sim_paused_orders"}else{"sim_paused"})}</span>}
         };
         html! {<>
-            <header class="topbar"><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div></div><div class="grow"/>
+            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div></div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
             if self.is_master()&&!self.is_evaluator(){<select key={self.excon_lang.clone()} id="language" aria-label={i18n::t(l,"language")} value={self.excon_lang.clone()} onchange={ctx.link().callback(|e|Msg::ExconLang(api::select(e)))}>{for api::EXCON_LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.excon_lang}>{name}</option>})}</select>}
             if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label={i18n::t(l,"language")} value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
+            {self.view_notification_bell(ctx)}
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
@@ -847,6 +903,7 @@ impl Component for App {
             <div class="grow"/>
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
             </nav>
+            {self.view_notification_toasts(ctx)}
             <div id="error" class="error" role="alert">{&self.error}</div>
             if (self.page=="advanced"||self.active=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
             if self.state.is_null(){<p class="page">{i18n::t(l,"loading")}</p>}
@@ -859,6 +916,12 @@ impl Component for App {
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject a tutti").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 
         </>}
+    }
+    fn changed(&mut self, ctx: &Context<Self>, old: &Self::Properties) -> bool {
+        if ctx.props().visible && !old.visible {
+            ctx.link().send_message(Msg::Refresh);
+        }
+        true
     }
     fn destroy(&mut self, _ctx: &Context<Self>) {
         if let Some(socket) = self.socket.take() {

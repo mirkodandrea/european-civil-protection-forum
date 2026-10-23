@@ -58,8 +58,9 @@ Da sistemare:
   inglese grezzo; nessun filtro per autore/tipo; l'evento "map information acquired"
   pesa ~3 MB nel DOM se espanso.
 - Mappa del player: dopo "Pubblica perimetro" manca "Rapporto EXCON" con la fonte.
-- Inject privato ripetuto nei thread di chat player-player; "Map information"
-  assente da Conversazioni.
+- ~~Inject privato ripetuto nei thread di chat player-player~~ (risolto):
+  Conversazioni contiene solo messaggi tra player. Gli inject e le informazioni
+  EXCON restano nelle viste dedicate e nelle notifiche del ruolo.
 - "Operazione completata" stantio in Conversazioni e nel banner di Strumenti;
   nessuna conferma visibile dopo la pubblicazione sulla Mappa.
 - Fire Commander: dopo un lancio d'acqua gli "Air tankers" risultano 0 disponibili
