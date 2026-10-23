@@ -44,6 +44,45 @@ pub fn command_name(s: &str) -> &str {
         _ => s,
     }
 }
+/// Player-language one-line summary of a serialized command, built from the
+/// localized command and field names; no English server text is used.
+pub fn command_summary(cmd: &Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(obj) = cmd.as_object() {
+        for (key, value) in obj {
+            if key == "type" || value.is_null() {
+                continue;
+            }
+            let shown = match value {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => if *b { "sì" } else { "no" }.into(),
+                Value::Object(o) if o.contains_key("x") && o.contains_key("y") => format!(
+                    "({:.0}, {:.0})",
+                    o["x"].as_f64().unwrap_or(0.),
+                    o["y"].as_f64().unwrap_or(0.)
+                ),
+                other => other.to_string(),
+            };
+            parts.push(format!("{}: {}", field_name(key), shown));
+        }
+    }
+    let name = command_name(text(&cmd["type"]));
+    if parts.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} · {}", parts.join(" · "))
+    }
+}
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    #[test]
+    fn summary_is_italian() {
+        let s = command_summary(&json!({"type":"EvacuateBuilding","building":"Scuola Pineta","destination":null}));
+        assert_eq!(s, "Evacuare un edificio · Edificio o struttura: Scuola Pineta");
+    }
+}
 pub fn field_name(s: &str) -> &str {
     match s {
         "zone" => "Zona",
