@@ -2724,4 +2724,26 @@ async fn factory_operational_fire_line_endpoints_are_fast() {
     call(&app, "GET", "/api/master", None).await;
     eprintln!("master2 {:?}", t.elapsed());
     assert!(t.elapsed() < std::time::Duration::from_secs(10));
+
+async fn invalid_ai_answer_after_clarification_reports_reason_and_keeps_readable_message() {
+    let llm = llm::Llm::mock(|task, _system, user| {
+        Ok(match task {
+            "prepare_decision" if !user.contains("main road") => r#"{"message":"x","detected_language":"en","translation_en":"x","actions":[],"messages":[],"clarification":"Which road?","summary":"road missing"}"#.into(),
+            "prepare_decision" => r#"{"message":"x","detected_language":"en","translation_en":"x","actions":[{"type":"NoSuchAction"}],"messages":[],"clarification":null,"summary":"bad"}"#.into(),
+            other => anyhow::bail!("unexpected task {other}"),
+        })
+    });
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "en").unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    let (_, first) = call(&app, "POST", "/api/player/mayor/draft", Some(json!({"to":"master","text":"Close the road"}))).await;
+    let first = first["draft"].clone();
+    assert_eq!(first["status"], "needs_clarification");
+    let (_, second) = call(&app, "POST", "/api/player/mayor/draft", Some(json!({"to":"master","text":"The main road south","draft":first["id"],"revision":first["revision"]}))).await;
+    let second = &second["draft"];
+    assert_eq!(second["status"], "ai_unavailable");
+    assert_eq!(second["message"], "Close the road. The main road south");
+    assert!(second["failure"].as_str().unwrap().contains("risposta AI non valida"));
 }

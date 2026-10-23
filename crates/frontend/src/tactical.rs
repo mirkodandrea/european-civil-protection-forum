@@ -140,6 +140,7 @@ impl App {
                     <b>{if work_private["status"]=="needs_clarification"{"Chiarimento richiesto"}else if work_private["status"]=="ai_unavailable"{"AI non disponibile"}else{"Bozza privata"}}</b>
                     if work_private["status"]=="needs_clarification" {<p>{text(&work_private["question"])}</p>}
                     else {<p>{text(&work_private["message"])}</p>}
+                    if work_private["status"]=="ai_unavailable" && !text(&work_private["failure"]).is_empty() {<p class="muted">{format!("Motivo: {}",text(&work_private["failure"]))}</p>}
                     {for list(&work_private["action_descriptions"]).iter().map(|d|html!{<p>{text(d)}</p>})}
                     <button disabled={self.busy||!((work_private["status"]=="ready"&&!list(&work_private["actions"]).is_empty())||work_private["status"]=="ai_unavailable")} onclick={ctx.link().callback({let draft=work_private["id"].clone();let revision=work_private["revision"].clone();let manual=work_private["status"]=="ai_unavailable";let own=own.clone();move |_|{let mut a=Action::post(format!("/api/player/{own}/draft/submit"),json!({"draft":draft,"revision":revision,"manual":manual}));a.kind=ActionKind::Submit("master".into());Msg::Action(a)}})}>{if work_private["status"]=="ai_unavailable"{"Invia a EXCON per revisione manuale"}else{"Conferma e invia a EXCON"}}</button>
                     <button disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Discard)}>{"Scarta"}</button>
