@@ -90,6 +90,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let id = p["id"].as_u64().unwrap_or(0);
     let editable = ["pending", "needs_clarification"].contains(&text(&p["status"]));
     let needs_preview = p["source"]["kind"] == "master" && !commands.is_empty();
+    let needs_reason = p["source"]["kind"] == "player" && note.trim().is_empty();
     let valid_preview = props.preview["generation"] == props.generation
         && props.preview["_request"]["commands"] == json!(*commands)
         && !props.preview.is_null();
@@ -163,11 +164,12 @@ pub fn proposal(props: &ProposalProps) -> Html {
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{"Inject proposti"}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
         <label class="proposal-note"><span>{"Nota EXCON (facoltativa)"}</span><input data-note="" aria-label="Nota EXCON" value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|note.set(api::input(e)))}}/></label>
         <p class="error">{&*error}</p>
+        if editable&&needs_reason{<p class="danger proposal-reason-hint" role="status">{"Spiega il motivo al player"}</p>}
         if blocked{<p class="danger proposal-blocked" role="status">{if no_actions{"Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta."}else{"Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta."}}</p>}
         if needs_preview {<button disabled={props.busy||!editable} onclick={{let cb=props.action.clone();let commands=(*commands).clone();Callback::from(move |_|cb.emit(Action::store("/api/master/preview",Some(json!({"commands":commands})),format!("proposal:{id}"))))}}>{"Esamina anteprima fisica"}</button>
             if !props.preview.is_null(){{preview(&props.preview)}}
         }
-        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{"Approva azione"}</button><button data-reject="" disabled={props.busy||!editable} onclick={decide(false)}>{"Rifiuta"}</button>
+        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{"Approva azione"}</button><button data-reject="" disabled={props.busy||!editable||needs_reason} title={needs_reason.then_some("Spiega il motivo al player")} onclick={decide(false)}>{"Rifiuta"}</button>
         if p["status"]=="approved"{<button disabled={props.busy} data-execute={id.to_string()} onclick={{let cb=props.action.clone();Callback::from(move |_|cb.emit(Action::post(format!("/api/master/proposals/{id}/execute"),json!({}))))}}>{"Esegui ora ordine approvato"}</button>}
         </div>{details("Cronologia ed esiti effettivi",&json!({"history":p["history"],"executions":p["executions"]}))}
     </section>}
