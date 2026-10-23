@@ -610,3 +610,29 @@ fn named_place_fire_line_player_action_terminates() {
     let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None).unwrap();
     assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
 }
+
+/// The standalone WASM build runs the Valverde factory scenario with the
+/// operational model, where ground crews walk with a 1.5 km access radius.
+/// Validating their staging route used to run one Dijkstra and rebuild one
+/// path per anchor pair (> 60 s native, a frozen browser tab in WASM).
+#[test]
+fn factory_operational_fire_line_validation_is_fast() {
+    let mut scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    scn.enable_operational_model();
+    let world = World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = Exercise::new(world);
+    ex.start().unwrap();
+    let t = std::time::Instant::now();
+    let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"F4","to":"G4"})).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea · F4", vec![cmd], None).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
+}

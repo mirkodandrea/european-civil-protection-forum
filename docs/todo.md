@@ -11,15 +11,12 @@ scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](
 
 ## Problemi emersi dal playthrough del 2026-10-23
 
-- **Blocco della scheda (alta priorità).** Nella build standalone, inviare una
-  proposta `CutFireLine` come Fire Commander (da/a con zone `F4`→`G4` o con luoghi
-  con nome) manda il renderer al 100% di CPU con memoria in crescita (> 4 GB)
-  finché la scheda non viene terminata. Un lancio d'acqua indipendente non lo fa.
-  Le stesse chiamate in headless (`exercise::player_actions` e gli endpoint HTTP
-  `/api/master`, `/api/state`, `/api/player/…`) terminano subito: test
-  `named_place_fire_line_player_action_terminates` e
-  `structured_fire_line_action_endpoints_terminate`. Il ciclo va quindi cercato
-  nel solo percorso WASM/UI (renderer 3D o rendering Yew della proposta).
+- ~~Blocco della scheda con `CutFireLine`~~ (risolto). Con lo scenario factory e il
+  modello operativo, `Network::route` (percorso a piedi, raggio 1,5 km) eseguiva un
+  Dijkstra per ogni ancora di partenza e ricostruiva ogni coppia di percorsi: ~67 s
+  in nativo, mai terminato in WASM. Ora usa un solo Dijkstra multi-sorgente
+  (`crates/sim/src/network.rs`); test `factory_operational_fire_line_validation_is_fast`.
+  Nota: `trunk serve` non ricostruisce quando cambia solo `crates/sim`.
 - **Lingua dell'interfaccia.** La UI dovrebbe essere localizzata con la lingua
   selezionata dal player; oggi il selettore cambia solo i contenuti (inject,
   messaggi) mentre etichette, bottoni e stati restano in italiano.

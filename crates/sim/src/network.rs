@@ -295,6 +295,10 @@ impl Network {
             .iter()
             .all(|l| self.leg_open(l, states, civilian))
     }
+    /// Fastest route from `from` to `to`. All access anchors are seeded into a
+    /// single multi-source Dijkstra and only the chosen path is rebuilt: with
+    /// the 1.5 km walking access radius there can be hundreds of anchors at
+    /// each end, and a search plus a path per anchor pair was quadratic.
     pub fn route(
         &self,
         from: Pos,
@@ -311,90 +315,117 @@ impl Network {
         let max_access = if walk { 1500.0 } else { 300.0 };
         let starts = self.anchors(from, states, civilian, walk, max_access);
         let ends = self.anchors(to, states, civilian, walk, max_access);
-        let mut best: Option<(f32, Route)> = None;
-        for (si, sq, sa) in &starts {
+        let access_speed = if walk { 1.1 } else { 3.0 };
+        let mut costs = vec![f32::INFINITY; self.nodes.len()];
+        let mut prev: Vec<Option<(usize, usize)>> = vec![None; self.nodes.len()];
+        // Start anchor that seeded a root node (a node whose `prev` is None).
+        let mut seed: Vec<Option<usize>> = vec![None; self.nodes.len()];
+        let mut heap = BinaryHeap::new();
+        for (k, (si, sq, _)) in starts.iter().enumerate() {
             let se = &self.edges[*si];
-            let mut costs = vec![f32::INFINITY; self.nodes.len()];
-            let mut prev = vec![None; self.nodes.len()];
-            let mut heap = BinaryHeap::new();
             for n in [se.a, se.b] {
                 if se.oneway && n == se.a && distance(*sq, self.nodes[n]) > 0.01 {
                     continue;
                 }
-                let cost = Self::access(from, *sq, walk).length_m
-                    / Self::access(from, *sq, walk).speed_mps
-                    + self.leg(*si, *sq, self.nodes[n], walk).length_m
-                        / self.leg(*si, *sq, self.nodes[n], walk).speed_mps;
-                costs[n] = cost;
-                heap.push(Visit(cost, n));
-            }
-            while let Some(Visit(cost, n)) = heap.pop() {
-                if cost > costs[n] {
-                    continue;
-                }
-                for &(next, eid) in &self.adj[n] {
-                    let e = &self.edges[eid];
-                    if !self.open(eid, states, civilian, walk) {
-                        continue;
-                    }
-                    let c = cost
-                        + distance(self.nodes[n], self.nodes[next])
-                            / if walk { 3.0 } else { e.speed * e.travel_factor };
-                    if c < costs[next] {
-                        costs[next] = c;
-                        prev[next] = Some((n, eid));
-                        heap.push(Visit(c, next));
-                    }
-                }
-            }
-            for (ei, eq, ea) in &ends {
-                let ee = &self.edges[*ei];
-                let mut candidates = Vec::new();
-                if si == ei
-                    && (!se.oneway
-                        || (eq[0] - sq[0]) * (self.nodes[se.b][0] - self.nodes[se.a][0])
-                            + (eq[1] - sq[1]) * (self.nodes[se.b][1] - self.nodes[se.a][1])
-                            >= 0.0)
-                {
-                    candidates.push((
-                        sa / if walk { 1.1 } else { 3.0 }
-                            + distance(*sq, *eq) / self.leg(*si, *sq, *eq, walk).speed_mps
-                            + ea / if walk { 1.1 } else { 3.0 },
-                        vec![self.leg(*si, *sq, *eq, walk)],
-                    ));
-                }
-                for n in [ee.a, ee.b] {
-                    if ee.oneway && n == ee.b && distance(*eq, self.nodes[n]) > 0.01 {
-                        continue;
-                    }
-                    if !costs[n].is_finite() {
-                        continue;
-                    }
-                    let cost = costs[n]
-                        + distance(self.nodes[n], *eq)
-                            / self.leg(*ei, self.nodes[n], *eq, walk).speed_mps
-                        + ea / if walk { 1.1 } else { 3.0 };
-                    let mut path = vec![];
-                    let mut cur = n;
-                    while let Some((p, id)) = prev[cur] {
-                        path.push(self.leg(id, self.nodes[p], self.nodes[cur], walk));
-                        cur = p;
-                    }
-                    path.push(self.leg(*si, *sq, self.nodes[cur], walk));
-                    path.reverse();
-                    path.push(self.leg(*ei, self.nodes[n], *eq, walk));
-                    candidates.push((cost, path));
-                }
-                for (cost, mut legs) in candidates {
-                    if best.as_ref().is_none_or(|(c, _)| cost < *c) {
-                        legs.insert(0, Self::access(from, *sq, walk));
-                        legs.push(Self::access(*eq, to, walk));
-                        legs.retain(|l| l.length_m > 0.01);
-                        best = Some((cost, Route { legs }));
-                    }
+                let access = Self::access(from, *sq, walk);
+                let leg = self.leg(*si, *sq, self.nodes[n], walk);
+                let cost = access.length_m / access.speed_mps + leg.length_m / leg.speed_mps;
+                if cost < costs[n] {
+                    costs[n] = cost;
+                    seed[n] = Some(k);
+                    heap.push(Visit(cost, n));
                 }
             }
         }
-        best.map(|(_, r)| r)
+        while let Some(Visit(cost, n)) = heap.pop() {
+            if cost > costs[n] {
+                continue;
+            }
+            for &(next, eid) in &self.adj[n] {
+                let e = &self.edges[eid];
+                if !self.open(eid, states, civilian, walk) {
+                    continue;
+                }
+                let c = cost
+                    + distance(self.nodes[n], self.nodes[next])
+                        / if walk { 3.0 } else { e.speed * e.travel_factor };
+                if c < costs[next] {
+                    costs[next] = c;
+                    prev[next] = Some((n, eid));
+                    heap.push(Visit(c, next));
+                }
+            }
+        }
+        enum Choice {
+            /// Start and end anchors lie on the same edge.
+            Direct(usize, usize),
+            /// End anchor reached through graph node `n`.
+            Via(usize, usize),
+        }
+        let start_on: BTreeMap<usize, usize> = starts
+            .iter()
+            .enumerate()
+            .map(|(k, (si, _, _))| (*si, k))
+            .collect();
+        let mut best: Option<(f32, Choice)> = None;
+        for (j, (ei, eq, ea)) in ends.iter().enumerate() {
+            let ee = &self.edges[*ei];
+            if let Some(&k) = start_on.get(ei) {
+                let (_, sq, sa) = &starts[k];
+                if !ee.oneway
+                    || (eq[0] - sq[0]) * (self.nodes[ee.b][0] - self.nodes[ee.a][0])
+                        + (eq[1] - sq[1]) * (self.nodes[ee.b][1] - self.nodes[ee.a][1])
+                        >= 0.0
+                {
+                    let cost = sa / access_speed
+                        + distance(*sq, *eq) / self.leg(*ei, *sq, *eq, walk).speed_mps
+                        + ea / access_speed;
+                    if best.as_ref().is_none_or(|(c, _)| cost < *c) {
+                        best = Some((cost, Choice::Direct(k, j)));
+                    }
+                }
+            }
+            for n in [ee.a, ee.b] {
+                if ee.oneway && n == ee.b && distance(*eq, self.nodes[n]) > 0.01 {
+                    continue;
+                }
+                if !costs[n].is_finite() {
+                    continue;
+                }
+                let cost = costs[n]
+                    + distance(self.nodes[n], *eq)
+                        / self.leg(*ei, self.nodes[n], *eq, walk).speed_mps
+                    + ea / access_speed;
+                if best.as_ref().is_none_or(|(c, _)| cost < *c) {
+                    best = Some((cost, Choice::Via(j, n)));
+                }
+            }
+        }
+        let (_, choice) = best?;
+        let (sq, eq, mut legs) = match choice {
+            Choice::Direct(k, j) => {
+                let (si, sq, _) = starts[k];
+                let (_, eq, _) = ends[j];
+                (sq, eq, vec![self.leg(si, sq, eq, walk)])
+            }
+            Choice::Via(j, n) => {
+                let (ei, eq, _) = ends[j];
+                let mut path = vec![];
+                let mut cur = n;
+                while let Some((p, id)) = prev[cur] {
+                    path.push(self.leg(id, self.nodes[p], self.nodes[cur], walk));
+                    cur = p;
+                }
+                let (si, sq, _) = starts[seed[cur].expect("route root is a seeded start node")];
+                path.push(self.leg(si, sq, self.nodes[cur], walk));
+                path.reverse();
+                path.push(self.leg(ei, self.nodes[n], eq, walk));
+                (sq, eq, path)
+            }
+        };
+        legs.insert(0, Self::access(from, sq, walk));
+        legs.push(Self::access(eq, to, walk));
+        legs.retain(|l| l.length_m > 0.01);
+        Some(Route { legs })
     }
 }
