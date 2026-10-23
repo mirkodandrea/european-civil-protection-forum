@@ -112,6 +112,23 @@ pub struct App {
     filter: String,
     inject_open: bool,
 }
+/// Focuses the first element matching `selector`, retrying every ~16 ms
+/// (up to `attempts_left` times) until Yew has rendered the modal.
+fn focus_when_rendered(selector: &'static str, attempts_left: u32) {
+    use wasm_bindgen::JsCast;
+    let focused = window()
+        .document()
+        .and_then(|d| d.query_selector(selector).ok().flatten())
+        .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+        .map(|el| el.focus().is_ok())
+        .unwrap_or(false);
+    if !focused && attempts_left > 0 {
+        gloo_timers::callback::Timeout::new(16, move || {
+            focus_when_rendered(selector, attempts_left - 1)
+        })
+        .forget();
+    }
+}
 pub enum Msg {
     Boot(Result<Bootstrap, String>),
     Refresh,
@@ -649,36 +666,13 @@ impl Component for App {
                 self.fields.insert("work:reply_to".into(), parent);
                 self.fields.insert("work:open".into(), "true".into());
                 self.error.clear();
-                gloo_timers::callback::Timeout::new(0, || {
-                    use wasm_bindgen::JsCast;
-                    if let Some(field) = window().document().and_then(|d| {
-                        d.query_selector(".work-modal [role=tab][aria-selected=true]")
-                            .ok()
-                            .flatten()
-                    }) {
-                        if let Some(el) = field.dyn_ref::<web_sys::HtmlElement>() {
-                            let _ = el.focus();
-                        }
-                    }
-                })
-                .forget();
+                focus_when_rendered(".work-modal [role=tab][aria-selected=true]", 10);
             }
             Msg::OpenInject(id) => {
                 self.selected = id;
                 self.inject_open = true;
                 self.error.clear();
-                gloo_timers::callback::Timeout::new(0, || {
-                    use wasm_bindgen::JsCast;
-                    if let Some(field) = window()
-                        .document()
-                        .and_then(|d| d.get_element_by_id("inject-title"))
-                    {
-                        if let Some(el) = field.dyn_ref::<web_sys::HtmlElement>() {
-                            let _ = el.focus();
-                        }
-                    }
-                })
-                .forget();
+                focus_when_rendered("#inject-title", 10);
             }
             Msg::CloseInject => {
                 self.inject_open = false;
