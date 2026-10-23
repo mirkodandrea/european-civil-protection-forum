@@ -5,7 +5,8 @@ use std::{cell::RefCell, sync::Arc};
 use yew::prelude::*;
 
 thread_local! { static RUNTIME: RefCell<Option<server::AppState>> = const { RefCell::new(None) }; }
-const API_KEY_STORAGE: &str = "ttx.standalone.openrouter-key";
+const API_KEY_STORAGE: &str = crate::store::API_KEY;
+const DEFAULT_SCENARIO: &str = include_str!("../../../data/scenarios/valverde_factory.json");
 
 fn key_storage() -> Result<web_sys::Storage, ()> {
     web_sys::window()
@@ -42,10 +43,16 @@ pub fn runtime() -> Result<server::AppState, String> {
         .ok_or_else(|| "Esercitazione non inizializzata".into())
 }
 fn initialize() -> Result<server::AppState, String> {
-    let mut scenario: scenario::Scenario = serde_json::from_str(include_str!(
-        "../../../data/scenarios/valverde_factory.json"
-    ))
-    .map_err(|e| e.to_string())?;
+    let mut scenario: scenario::Scenario =
+        serde_json::from_str(DEFAULT_SCENARIO).map_err(|e| e.to_string())?;
+    // A saved session continues with the injects it started with; a new one
+    // takes the library, if the EXCON edited it.
+    let session = crate::store::load_session();
+    match (&session, crate::store::load_injects()) {
+        (Some(s), _) => scenario.msel = s.msel.clone(),
+        (None, Some(library)) => scenario.msel = library,
+        _ => {}
+    }
     scenario.enable_operational_model();
     let world = sim::World::with_options(
         Arc::new(scenario),
@@ -65,6 +72,10 @@ fn initialize() -> Result<server::AppState, String> {
         server::browser::configure(&mut state, &key, STANDALONE_MODEL, STANDALONE_MODEL);
     }
     RUNTIME.with(|r| *r.borrow_mut() = Some(state.clone()));
+    if let Some(s) = &session {
+        server::browser::load_tape(s.tape.clone());
+    }
+    crate::store::set_pending(session);
     Ok(state)
 }
 
@@ -93,6 +104,44 @@ pub fn standalone() -> Html {
         }
     });
     let revision = use_state_eq(|| 0u64);
+    let restoring = use_state(crate::store::restoring);
+    let notice = use_state(crate::store::take_notice);
+    let backend = use_memo((), |_| crate::store::backend());
+    let default_injects = use_memo((), |_| {
+        serde_json::from_str::<scenario::Scenario>(DEFAULT_SCENARIO)
+            .map(|s| s.msel)
+            .unwrap_or_default()
+    });
+    {
+        // Replay the saved session into the fresh exercise, then start autosaving.
+        let restoring = restoring.clone();
+        let state = initialized.as_ref().ok().cloned();
+        use_effect_with((), move |_| {
+            if let (Some(state), Some(saved)) = (state.clone(), crate::store::take_pending()) {
+                wasm_bindgen_futures::spawn_local(async move {
+                    match server::browser::replay(state, saved.journal, saved.end_t_s).await {
+                        Ok(()) => {
+                            crate::store::finish_restore();
+                            restoring.set(false);
+                        }
+                        Err(e) => {
+                            // The state would differ from the saved one: start clean.
+                            crate::store::freeze();
+                            crate::store::remove(crate::store::SESSION_KEY);
+                            crate::store::set_notice(&format!(
+                                "La sessione salvata non è più riproducibile ed è stata scartata ({e})."
+                            ));
+                            let _ = api::window().location().reload();
+                        }
+                    }
+                });
+            }
+            let interval = state.map(|state| {
+                Interval::new(1000, move || crate::store::autosave(&state, false))
+            });
+            move || drop(interval)
+        });
+    }
     {
         let revision = revision.clone();
         use_effect_with((), move |_| {
@@ -197,14 +246,17 @@ pub fn standalone() -> Html {
           <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{" Tutti i player"}</label>
           <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
         </header>
-        <details class="standalone-settings"><summary>{"OpenRouter · "}{&*ai_notice}</summary>
-          <p>{"La chiave viene salvata nel browser su questo dispositivo e riutilizzata alle prossime aperture. “Rimuovi chiave” elimina la chiave salvata. Ricaricare la pagina avvia una nuova esercitazione. Il debrief è esportabile dagli strumenti EXCON."}</p>
+        <details class="standalone-settings"><summary>{"Impostazioni · OpenRouter · "}{&*ai_notice}</summary>
+          <p>{"La chiave viene salvata nel browser su questo dispositivo e riutilizzata alle prossime aperture. “Rimuovi chiave” elimina la chiave salvata. La sessione viene salvata nel browser e ripresa al ricaricamento della pagina. Il debrief è esportabile dagli strumenti EXCON."}</p>
           <div class="settings-fields"><label>{"Chiave API"}<input id="openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
           <label>{"Modello interpretazione"}<input id="openrouter-model" value={(*model).clone()} oninput={{let model=model.clone();Callback::from(move |e|model.set(api::input(e)))}}/></label>
           <label>{"Modello traduzione"}<input id="openrouter-translator" value={(*translator).clone()} oninput={{let translator=translator.clone();Callback::from(move |e|translator.set(api::input(e)))}}/></label>
           <button id="configure-ai" onclick={onconfigure}>{"Applica"}</button><button id="clear-ai" onclick={onclear}>{"Rimuovi chiave"}</button></div>
           <p>{"L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente."}</p>
+          <crate::settings::Settings roles={roles.iter().map(|r|r.id.clone()).collect::<Vec<_>>()} defaults={(*default_injects).clone()} library={crate::store::load_injects()} session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={crate::store::save_error()} reset_note="Elimina sessione, libreria injects e chiave API di questo browser." backend={(*backend).clone()} revision={*revision}/>
         </details>
+        if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
+        if *restoring {<p class="standalone-notice" role="status" id="restoring">{"Ripristino della sessione salvata…"}</p>} else {
         <div class={classes!("standalone-content",(!*show_map).then_some("without-sim"))} style={format!("--sim-width:{}%",*split)}>
           <aside class="standalone-simulation" hidden={!*show_map}><div class="simulation-heading"><h2>{"Situazione simulata"}</h2><p>{"Vista 3D completa EXCON · le mappe dei player mostrano solo le informazioni ricevute"}</p></div><div class="standalone-3d-frame"><canvas id="standalone-3d" aria-label="Visualizzatore 3D della situazione simulata"/></div></aside>
           <section class="standalone-views"><nav class="role-tabs" aria-label="Ruoli dell’esercitazione">{for panels.iter().map(|(id,name,_)|{
@@ -215,6 +267,7 @@ pub fn standalone() -> Html {
              html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="history"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App visible={visible} role={Some(id.clone())} page={Some(page.to_string())}/></section>}
           })}</div></section>
         </div>
+        }
       </div>
     }
 }

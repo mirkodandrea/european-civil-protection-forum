@@ -6,11 +6,11 @@ license.workspace = true
 description = "Rust/WebAssembly browser UI for the TTX"
 
 [features]
-standalone = ["dep:server", "dep:scenario", "dep:sim", "dep:exercise", "dep:llm", "dep:viz"]
+standalone = ["dep:server", "dep:sim", "dep:exercise", "dep:llm", "dep:viz"]
 
 [dependencies]
 server = { workspace = true, optional = true }
-scenario = { workspace = true, optional = true }
+scenario.workspace = true
 sim = { workspace = true, optional = true }
 exercise = { workspace = true, optional = true }
 llm = { workspace = true, optional = true }
@@ -23,5 +23,6 @@ js-sys = "0.3"
 gloo-net = { version = "0.6", features = ["http", "websocket"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 futures = "0.3"
+serde.workspace = true
 serde_json.workspace = true
 base64 = "0.22"

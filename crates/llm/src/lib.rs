@@ -183,6 +183,16 @@ impl Llm {
         self
     }
 
+    pub fn has_cassette(&self) -> bool {
+        self.cassette.is_some()
+    }
+
+    /// Several `Llm`s (e.g. before and after a reconfiguration) can share one tape.
+    pub fn with_shared_cassette(mut self, c: Arc<cassette::Cassette>) -> Llm {
+        self.cassette = Some(c);
+        self
+    }
+
     pub fn openrouter(api_key: String, model: String, base_url: String) -> Llm {
         let builder = reqwest::Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
@@ -315,8 +325,13 @@ impl Llm {
         } else {
             serde_json::to_string(&messages)?
         };
+        let model = if tape.is_model_agnostic() {
+            String::new()
+        } else {
+            self.model()
+        };
         let key = cassette::key(&[
-            &self.model(),
+            &model,
             task,
             system,
             &flat,
@@ -487,6 +502,20 @@ mod tests {
             m.complete("x", "", "", false).await.unwrap(),
             "hello from x"
         );
+    }
+
+    #[tokio::test]
+    async fn memory_tape_replays_across_models() {
+        let tape = Arc::new(cassette::Cassette::memory([]));
+        let online = Llm::mock(|_, _, u| Ok(format!("answer to {u}"))).with_shared_cassette(tape.clone());
+        assert_eq!(online.complete("t", "s", "hi", false).await.unwrap(), "answer to hi");
+        let saved = tape.entries();
+        assert_eq!(saved.len(), 1);
+        // Restored from saved entries, an offline Llm answers the same request.
+        let offline = Llm::off().with_cassette(cassette::Cassette::memory(saved));
+        assert!(offline.is_available());
+        assert_eq!(offline.complete("t", "s", "hi", false).await.unwrap(), "answer to hi");
+        assert!(offline.complete("t", "s", "other", false).await.is_err());
     }
 
     #[tokio::test]

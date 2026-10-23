@@ -381,7 +381,7 @@ pub struct ReinforcementOffer {
 }
 
 /// One prepared inject of the Master Scenario Events List.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InjectTemplate {
     pub id: String,
     /// Suggested turn (the EXCON decides when to send).

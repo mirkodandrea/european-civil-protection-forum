@@ -44,6 +44,8 @@ use browser::{Json, Status};
 use browser_runtime as tokio;
 pub mod access;
 mod assessment;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod persist;
 mod decision_drafts;
 pub mod flow;
 mod forecast;
@@ -59,6 +61,9 @@ pub struct AppState {
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
     forecast_slot: Arc<tokio::sync::Semaphore>,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
+    /// Saved session and inject library; `None` keeps everything in memory.
+    #[cfg(not(target_arch = "wasm32"))]
+    persist: Option<Arc<persist::Persist>>,
 }
 
 impl AppState {
@@ -86,6 +91,34 @@ pub fn router_with_access(
     web_dir: Option<PathBuf>,
     access: Access,
 ) -> (Rocket<Build>, AppState) {
+    router_inner(ex, llm, web_dir, access, None)
+}
+
+/// Like [`router`], saving the session and inject library through `persist`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn router_persistent(
+    ex: Arc<Mutex<Exercise>>,
+    llm: Llm,
+    web_dir: Option<PathBuf>,
+    persist: Arc<persist::Persist>,
+) -> (Rocket<Build>, AppState) {
+    let access = Access::new(ex.lock().unwrap_or_else(|p| p.into_inner()).role_ids());
+    router_inner(ex, llm, web_dir, access, Some(persist))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn router_inner(
+    ex: Arc<Mutex<Exercise>>,
+    llm: Llm,
+    web_dir: Option<PathBuf>,
+    access: Access,
+    persist: Option<Arc<persist::Persist>>,
+) -> (Rocket<Build>, AppState) {
+    // Answers of the AI are kept with the session, unless a demo cassette is set.
+    let llm = match &persist {
+        Some(p) if !llm.has_cassette() => llm.with_shared_cassette(p.tape.clone()),
+        _ => llm,
+    };
     let (tx, rx) = watch::channel(0u64);
     let watched = ex.clone();
     tokio::spawn(async move {
@@ -110,8 +143,28 @@ pub fn router_with_access(
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         presence: Default::default(),
+        persist,
     };
     tokio::spawn(flow::run_clock(state.clone()));
+    if state.persist.is_some() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if let Some(p) = &state.persist {
+                    p.autosave(&state, false);
+                }
+            }
+        });
+    }
+    let app = assemble(&state, web_dir, state.persist.is_some());
+    (app, state)
+}
+
+/// The Rocket application over `state`. A second instance (no files, no
+/// journal) serves the replay of a saved session.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Rocket<Build> {
     let config = rocket::Config::figment()
         .merge(("log_level", "off"))
         .merge(("limits.json", 2 * 1024 * 1024));
@@ -163,16 +216,28 @@ pub fn router_with_access(
                 post_rollback,
                 post_end,
                 post_settings,
+                persist::get_storage,
+                persist::post_injects,
+                persist::post_delete,
                 get_catalogue,
                 get_debrief,
                 ws
             ],
         )
         .register("/", rocket::catchers![api_catcher]);
+    if journal {
+        app = app.attach(persist::JournalFairing);
+    }
     if let Some(dir) = web_dir {
         app = app.mount("/", rocket::fs::FileServer::from(dir));
     }
-    (app, state)
+    app
+}
+
+/// A fresh Rocket over `state`, for replaying a saved session.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn replay_rocket(state: &AppState) -> Rocket<Build> {
+    assemble(state, None, false)
 }
 
 /// Serve until the process exits.
@@ -183,7 +248,36 @@ pub async fn serve(
     web_dir: PathBuf,
     addr: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
-    let (app, state) = router(ex, llm, Some(web_dir));
+    serve_with(ex, llm, web_dir, addr, None).await
+}
+
+/// [`serve`] with storage: a saved `session` is replayed before listening;
+/// if it can no longer be replayed it is dropped and the exercise starts clean.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn serve_with(
+    ex: Arc<Mutex<Exercise>>,
+    llm: Llm,
+    web_dir: PathBuf,
+    addr: std::net::SocketAddr,
+    storage: Option<(Arc<persist::Persist>, Option<persist::SavedSession>)>,
+) -> anyhow::Result<()> {
+    let (app, state) = match storage {
+        None => router(ex, llm, Some(web_dir)),
+        Some((persist, session)) => {
+            let (app, state) = router_persistent(ex, llm, Some(web_dir), persist.clone());
+            if let Some(session) = session {
+                let steps = session.journal.len();
+                tracing::info!("restoring the saved session ({steps} steps)");
+                if let Err(e) = persist::restore(&state, replay_rocket(&state), session).await {
+                    tracing::warn!("saved session cannot be restored and was discarded: {e}");
+                    persist::reset(&state, persist.load_injects())
+                        .await
+                        .map_err(anyhow::Error::msg)?;
+                }
+            }
+            (app, state)
+        }
+    };
     println!(
         "EXCON access: http://localhost:{}/play.html?token={}",
         addr.port(),

@@ -490,6 +490,71 @@ pub fn dispatch_due(state: &AppState) {
     }
 }
 
+/// Set while a saved session is replayed: the wall-clock pacing below stands
+/// down, because [`advance_to`] reproduces the recorded simulated time instead.
+pub static REPLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Advance an open turn's clock to `target` (simulated seconds) in the same
+/// steps as [`run_clock`], delivering due scheduled injects on the way. The
+/// clock must be running; otherwise nothing moves.
+pub async fn advance_to(state: &AppState, target: i64) {
+    loop {
+        dispatch_due(state);
+        let step = {
+            let mut ex = state.lock();
+            let now = ex.world.time_s();
+            if ex.phase != exercise::Phase::Orders || !ex.clock_control.running || now >= target {
+                None
+            } else {
+                let next_due = ex
+                    .scheduled_injects
+                    .iter()
+                    .filter(|i| i.status == exercise::ScheduleStatus::Pending && i.due_s > now)
+                    .map(|i| i.due_s)
+                    .min()
+                    .unwrap_or(target);
+                let dt = (target - now).min(next_due - now).min(60);
+                (dt > 0).then(|| ex.advance_clock(dt))
+            }
+        };
+        if !matches!(step, Some(Ok(_))) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    settle(state).await;
+}
+
+/// Wait until spawned follow-ups (deliveries, situation updates) stop changing
+/// the exercise.
+pub async fn settle(state: &AppState) {
+    let mut stable = 0;
+    let mut last = state.lock().generation;
+    for _ in 0..2000 {
+        tokio::task::yield_now().await;
+        let (generation, busy) = {
+            let ex = state.lock();
+            (
+                ex.generation,
+                ex.phase == exercise::Phase::Resolving
+                    || ex
+                        .scheduled_injects
+                        .iter()
+                        .any(|i| i.status == exercise::ScheduleStatus::Dispatching),
+            )
+        };
+        if generation == last && !busy {
+            stable += 1;
+            if stable >= 8 {
+                break;
+            }
+        } else {
+            stable = 0;
+            last = generation;
+        }
+    }
+}
+
 /// Wall-time pacing while a decision turn stays open. Revision changes (pause,
 /// ratio edits, explicit time jumps and rollback) always reanchor at the actual world.
 pub async fn run_clock(state: AppState) {
@@ -501,7 +566,10 @@ pub async fn run_clock(state: AppState) {
             let ex = state.lock();
             (ex.clock_control.clone(), ex.phase, ex.world.time_s())
         };
-        if !control.0.running || control.1 != exercise::Phase::Orders {
+        if !control.0.running
+            || control.1 != exercise::Phase::Orders
+            || REPLAYING.load(std::sync::atomic::Ordering::Relaxed)
+        {
             anchor = None;
         } else {
             if anchor.is_none_or(|(revision, _, _)| revision != control.0.revision) {

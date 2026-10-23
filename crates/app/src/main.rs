@@ -4,12 +4,17 @@
 //! ttx [--scenario data/scenarios/valverde_factory.json] [--seed 1]
 //!     [--port 8080] [--web web/dist] [--headless]
 //!     [--realizations 32] [--cutoff 0.5] [--operational-model]
+//!     [--state-dir runs/state | --no-state] [--fresh]
 //! ```
 //!
 //! Loads `.env` (OPENROUTER_API_KEY, optional OPENROUTER_MODEL), builds the
 //! world and the exercise, serves the web UIs on the LAN, and — unless
 //! `--headless` or built without the `viz` feature — opens the Bevy
 //! big-screen window on the main thread.
+//!
+//! The session (journal of accepted requests, AI answers) and the inject
+//! library are kept in `--state-dir`; the session is replayed on startup, so a
+//! restart continues the exercise. `--fresh` discards the saved session.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -25,6 +30,8 @@ struct Args {
     realizations: usize,
     cutoff: f32,
     operational_model: bool,
+    state_dir: Option<PathBuf>,
+    fresh: bool,
 }
 
 fn args() -> Result<Args> {
@@ -37,6 +44,8 @@ fn args() -> Result<Args> {
         realizations: 32,
         cutoff: 0.5,
         operational_model: false,
+        state_dir: Some(PathBuf::from("runs/state")),
+        fresh: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -48,10 +57,13 @@ fn args() -> Result<Args> {
             "--web" => a.web = PathBuf::from(val()?),
             "--operational-model" => a.operational_model = true,
             "--headless" => a.headless = true,
+            "--state-dir" => a.state_dir = Some(PathBuf::from(val()?)),
+            "--no-state" => a.state_dir = None,
+            "--fresh" => a.fresh = true,
             "--realizations" => a.realizations = val()?.parse()?,
             "--cutoff" => a.cutoff = val()?.parse()?,
             "-h" | "--help" => {
-                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model]");
+                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model] [--state-dir DIR | --no-state] [--fresh]");
                 std::process::exit(0);
             }
             other => anyhow::bail!("unknown argument {other}"),
@@ -88,27 +100,75 @@ fn main() -> Result<()> {
     if a.operational_model {
         scn.enable_operational_model();
     }
-    let world = sim::World::with_options(
-        Arc::new(scn),
-        a.seed,
-        sim::FireOptions {
-            realizations: a.realizations,
-            cutoff: a.cutoff,
-        },
-    )?;
     tracing::info!(
         "fire: {}-run Monte Carlo ensemble, cutoff {}",
         a.realizations,
         a.cutoff
     );
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
-    let log = PathBuf::from("runs").join(format!("run-{stamp}.jsonl"));
-    tracing::info!("event log: {}", log.display());
-    let ex = Arc::new(Mutex::new(
-        exercise::Exercise::new(world).with_log_file(log),
-    ));
+    let default_msel = scn.msel.clone();
+    let fingerprint = format!(
+        "{}|{}|{}|{}|{}|{}",
+        a.scenario.display(),
+        std::fs::metadata(&a.scenario).map(|m| m.len()).unwrap_or(0),
+        a.seed,
+        a.realizations,
+        a.cutoff,
+        a.operational_model
+    );
+    // Builds a fresh exercise, optionally with replacement injects. The same
+    // function serves the first start and "start over" from the settings.
+    let factory: server::persist::Factory = {
+        let (seed, realizations, cutoff) = (a.seed, a.realizations, a.cutoff);
+        Arc::new(move |msel| {
+            let mut scn = scn.clone();
+            if let Some(msel) = msel {
+                scn.msel = msel;
+            }
+            let world = sim::World::with_options(
+                Arc::new(scn),
+                seed,
+                sim::FireOptions {
+                    realizations,
+                    cutoff,
+                },
+            )?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let log = PathBuf::from("runs").join(format!("run-{stamp}.jsonl"));
+            tracing::info!("event log: {}", log.display());
+            Ok(exercise::Exercise::new(world).with_log_file(log))
+        })
+    };
+    let snapshot = std::env::var("TTX_SNAPSHOT").is_ok();
+    let storage = a
+        .state_dir
+        .clone()
+        .filter(|_| !snapshot)
+        .map(|dir| {
+            if a.fresh {
+                let _ = std::fs::remove_file(dir.join("session.json"));
+            }
+            server::persist::Persist::new(dir, fingerprint, default_msel, factory.clone())
+        })
+        .map(|persist| {
+            let session = persist.load_session();
+            (persist, session)
+        });
+    let msel = storage.as_ref().and_then(|(persist, session)| {
+        session
+            .as_ref()
+            .map(|s| s.msel.clone())
+            .or_else(|| persist.load_injects())
+    });
+    if let Some((persist, session)) = &storage {
+        tracing::info!(
+            "storage: session {}, inject library {}",
+            if session.is_some() { "found" } else { "none" },
+            if persist.load_injects().is_some() { "found" } else { "none" },
+        );
+    }
+    let ex = Arc::new(Mutex::new(factory(msel)?));
 
     // Reproducible visual fixtures go through the same EXCON authority and
     // exercise turn resolution as the console. No renderer-only invented state.
@@ -202,7 +262,7 @@ fn main() -> Result<()> {
     let headless = a.headless || !cfg!(feature = "viz");
     if headless {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(server::serve(ex, llm, a.web, addr));
+        return rt.block_on(server::serve_with(ex, llm, a.web, addr, storage));
     }
 
     let model = if llm.is_available() {
@@ -216,7 +276,7 @@ fn main() -> Result<()> {
         .name("ttx-server".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            if let Err(e) = rt.block_on(server::serve(server_ex, llm, web, addr)) {
+            if let Err(e) = rt.block_on(server::serve_with(server_ex, llm, web, addr, storage)) {
                 tracing::error!("server stopped: {e}");
             }
         })?;

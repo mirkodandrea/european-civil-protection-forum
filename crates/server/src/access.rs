@@ -8,10 +8,10 @@ use rocket::http::{Method, Status};
 use rocket::request::{FromRequest, Outcome};
 #[cfg(not(target_arch = "wasm32"))]
 use rocket::Request;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Principal {
     Master,

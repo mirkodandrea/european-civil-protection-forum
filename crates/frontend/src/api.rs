@@ -177,7 +177,12 @@ pub fn status(s: &str) -> &str {
 #[cfg(feature = "standalone")]
 pub async fn request(role: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
     let state = crate::standalone::runtime()?;
-    server::browser::request(state, role, path, body).await
+    let changes = body.is_some();
+    let result = server::browser::request(state.clone(), role, path, body).await;
+    if changes && result.is_ok() {
+        crate::store::autosave(&state, false);
+    }
+    result
 }
 #[cfg(feature = "standalone")]
 pub fn live(_token: String, callback: yew::Callback<()>) -> AbortHandle {

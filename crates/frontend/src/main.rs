@@ -12,8 +12,12 @@ mod map;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
+mod server_settings;
+mod settings;
 #[cfg(feature = "standalone")]
 mod standalone;
+#[cfg(feature = "standalone")]
+mod store;
 mod tactical;
 mod timeline;
 mod widgets;

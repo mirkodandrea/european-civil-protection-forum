@@ -25,11 +25,102 @@ fn decode<T: serde::de::DeserializeOwned>(body: Value) -> Result<Json<T>, ApiErr
         .map_err(|e| bad(e.to_string()))
 }
 
+/// One state-changing request, kept so a reload can play the session again.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct JournalEntry {
+    pub role: String,
+    pub url: String,
+    pub body: Value,
+    /// Simulated seconds when the request was made.
+    pub t_s: i64,
+    #[serde(skip)]
+    seq: u64,
+    /// Still running when false; such a request is not part of the saved session.
+    #[serde(skip)]
+    done: bool,
+}
+
+thread_local! {
+    static JOURNAL: std::cell::RefCell<(u64, Vec<JournalEntry>)> = const { std::cell::RefCell::new((0, Vec::new())) };
+    static TAPE: Arc<llm::cassette::Cassette> = Arc::new(llm::cassette::Cassette::memory([]));
+}
+
+/// The requests applied so far, oldest first.
+pub fn journal() -> Vec<JournalEntry> {
+    JOURNAL.with(|j| j.borrow().1.iter().filter(|e| e.done).cloned().collect())
+}
+
+/// The AI answers received so far as `(key, answer)`. Replays use them instead
+/// of calling the model again.
+pub fn tape_entries() -> Vec<(String, String)> {
+    TAPE.with(|t| t.entries())
+}
+
+/// Preload AI answers (before replaying a saved session).
+pub fn load_tape(entries: Vec<(String, String)>) {
+    TAPE.with(|t| {
+        for (key, answer) in entries {
+            t.put(&key, "restored", &answer);
+        }
+    });
+}
+
+fn tape() -> Arc<llm::cassette::Cassette> {
+    TAPE.with(Arc::clone)
+}
+
+fn journaled(url: &str) -> bool {
+    !url.contains("/presence")
+}
+
+/// Play `entries` into a fresh exercise, reaching simulated time `end_t_s`
+/// with the clock paused. Fails at the first request that is no longer accepted,
+/// since the state would then differ from the saved one.
+pub async fn replay(s: AppState, entries: Vec<JournalEntry>, end_t_s: i64) -> Result<(), String> {
+    use std::sync::atomic::Ordering::Relaxed;
+    flow::REPLAYING.store(true, Relaxed);
+    let outcome = async {
+        for (i, e) in entries.iter().enumerate() {
+            flow::advance_to(&s, e.t_s).await;
+            dispatch(s.clone(), &e.role, &e.url, Some(e.body.clone()))
+                .await
+                .map_err(|err| format!("passo {} ({}): {}", i + 1, e.url, err.1))?;
+            flow::settle(&s).await;
+        }
+        flow::advance_to(&s, end_t_s).await;
+        Ok(())
+    }
+    .await;
+    {
+        let mut ex = s.lock();
+        if ex.clock_control.running {
+            let ratio = ex.clock_control.ratio;
+            let _ = ex.configure_clock(false, ratio, "Session restored; clock paused");
+        }
+    }
+    flow::REPLAYING.store(false, Relaxed);
+    if outcome.is_ok() {
+        JOURNAL.with(|j| {
+            let mut j = j.borrow_mut();
+            j.1 = entries;
+            let n = j.1.len() as u64;
+            for (i, e) in j.1.iter_mut().enumerate() {
+                e.seq = i as u64;
+                e.done = true;
+            }
+            j.0 = n;
+        });
+    }
+    outcome
+}
+
 pub fn new(ex: Exercise) -> AppState {
     let access = Access::local(ex.role_ids());
     let state = AppState {
         ex: Arc::new(Mutex::new(ex)),
-        llm: Llm::off().with_runtime_config(),
+        llm: Llm::off()
+            .with_shared_cassette(tape())
+            .with_runtime_config(),
         access: Arc::new(access),
         assessments: Default::default(),
         forecasts: Default::default(),
@@ -52,7 +143,8 @@ pub fn configure(state: &mut AppState, key: &str, model: &str, translator: &str)
         )
         .with_providers(vec![])
         .with_translation_model(translator.trim())
-    };
+    }
+    .with_shared_cassette(tape());
     state.llm.configure_runtime(configured);
 }
 
@@ -79,10 +171,42 @@ pub async fn request(
     url: &str,
     body: Option<Value>,
 ) -> Result<Value, String> {
-    dispatch(s, role, url, body)
+    // Recorded at the start, so the order matches what was asked; dropped again
+    // if the request fails and therefore changed nothing.
+    let seq = body.clone().filter(|_| journaled(url)).map(|body| {
+        let t_s = s.lock().world.time_s();
+        JOURNAL.with(|j| {
+            let mut j = j.borrow_mut();
+            j.0 += 1;
+            let seq = j.0;
+            j.1.push(JournalEntry {
+                role: role.into(),
+                url: url.into(),
+                body,
+                t_s,
+                seq,
+                done: false,
+            });
+            seq
+        })
+    });
+    let result = dispatch(s, role, url, body)
         .await
         .map(|v| v.0)
-        .map_err(|e| e.1)
+        .map_err(|e| e.1);
+    if let Some(seq) = seq {
+        JOURNAL.with(|j| {
+            let mut j = j.borrow_mut();
+            if result.is_ok() {
+                if let Some(e) = j.1.iter_mut().find(|e| e.seq == seq) {
+                    e.done = true;
+                }
+            } else {
+                j.1.retain(|e| e.seq != seq);
+            }
+        });
+    }
+    result
 }
 async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> ApiResult {
     let (path, query) = url.split_once('?').unwrap_or((url, ""));

@@ -26,8 +26,11 @@ pub enum Mode {
 }
 
 pub struct Cassette {
-    path: PathBuf,
+    /// `None` keeps the tape in memory only (the browser persists it itself).
+    path: Option<PathBuf>,
     mode: Mode,
+    /// Keys ignore the model name, so a tape recorded online replays offline.
+    model_agnostic: bool,
     entries: Mutex<HashMap<String, String>>,
 }
 
@@ -58,7 +61,38 @@ impl Cassette {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        Ok(Cassette { path, mode, entries: Mutex::new(entries) })
+        Ok(Cassette { path: Some(path), mode, model_agnostic: false, entries: Mutex::new(entries) })
+    }
+
+    /// An in-memory, model-independent tape holding `entries` (key, answer).
+    pub fn memory(entries: impl IntoIterator<Item = (String, String)>) -> Cassette {
+        Cassette {
+            path: None,
+            mode: Mode::Auto,
+            model_agnostic: true,
+            entries: Mutex::new(entries.into_iter().collect()),
+        }
+    }
+
+    pub fn is_model_agnostic(&self) -> bool {
+        self.model_agnostic
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut e) = self.entries.lock() {
+            e.clear();
+        }
+    }
+
+    /// Every recorded `(key, answer)`, sorted by key.
+    pub fn entries(&self) -> Vec<(String, String)> {
+        let mut all: Vec<_> = self
+            .entries
+            .lock()
+            .map(|e| e.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        all.sort();
+        all
     }
 
     pub fn from_env() -> Option<Cassette> {
@@ -103,7 +137,8 @@ impl Cassette {
         if let Ok(mut e) = self.entries.lock() {
             e.insert(key.to_string(), answer.to_string());
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.path) {
+        let Some(path) = &self.path else { return };
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "{}", json!({"key": key, "task": task, "answer": answer}));
         }
     }

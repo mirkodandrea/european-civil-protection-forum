@@ -49,6 +49,7 @@ pub fn advanced(props: &AdvancedProps) -> Html {
         {form(crate::i18n::ex("Pubblica piani e procedure ai valutatori"),"/api/master/references",json!({"references":[]}))}
         <section class="card"><h2>{crate::i18n::ex("Messaggi e log EXCON")}</h2>{widgets::details(crate::i18n::ex("Messaggi visibili a EXCON"),&p.master["messages"])}{widgets::details("Eventi",&p.master["log"])}</section>
         </section>
+        if !cfg!(feature = "standalone") {<crate::server_settings::ServerSettings revision={p.state["generation"].as_u64().unwrap_or(0)}/>}
     </main>}
 }
 
