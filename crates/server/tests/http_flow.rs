@@ -2724,7 +2724,9 @@ async fn factory_operational_fire_line_endpoints_are_fast() {
     call(&app, "GET", "/api/master", None).await;
     eprintln!("master2 {:?}", t.elapsed());
     assert!(t.elapsed() < std::time::Duration::from_secs(10));
+}
 
+#[tokio::test]
 async fn invalid_ai_answer_after_clarification_reports_reason_and_keeps_readable_message() {
     let llm = llm::Llm::mock(|task, _system, user| {
         Ok(match task {
