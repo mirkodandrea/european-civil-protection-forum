@@ -643,6 +643,9 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 self.fields.insert("work:open".into(), "false".into());
+                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to"] {
+                                    self.fields.remove(key);
+                                }
                                 self.notice = "Proposta inviata a EXCON per revisione".into();
                             }
                             ActionKind::Ordinary => {}

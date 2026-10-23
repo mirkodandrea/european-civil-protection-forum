@@ -46,8 +46,10 @@ Da sistemare:
 - Proposta con linea non raggiungibile ("no reachable route from staging to task"):
   "Approva azione" resta attivo; il messaggio è in inglese e può restare stantio dopo
   una modifica.
-- Il form del player non si svuota dopo l'invio e non c'è protezione dal doppio invio
-  (due proposte identiche); la zona predefinita `A1` induce errori.
+- ~~Il form del player non si svuota dopo l'invio~~ (risolto: luogo, secondo punto,
+  quantità e "in risposta a" vengono azzerati; il pulsante era già disabilitato
+  durante l'invio). Da verificare: la zona predefinita `A1` (nel codice il campo
+  parte vuoto, forse arriva da un clic sulla mappa).
 - Fire Commander: nessun "Rispondi →" sull'inject in alcune viste (solo il menu a tendina).
 - Rollback: la timeline EXCON del turno 1 mostra ancora l'approvazione annullata, il
   selettore Turno offre ancora il turno 2 dopo il ritorno al turno 1, gli inject e le
@@ -65,8 +67,8 @@ Da sistemare:
   layout della colonna Ground crews.
 - Messaggio "Turn resolved" in inglese e generico per tutti i ruoli.
 - Il cursore velocità non parte dal massimo (CLAUDE.md: default `speed` 0 = massimo).
-- Il modello OpenRouter nei campi è `openai/gpt-oss-120b`, CLAUDE.md dice
-  `deepseek/deepseek-v4.1-flash`.
+- Il modello OpenRouter nello standalone è `openai/gpt-oss-120b` per scelta (per ora);
+  CLAUDE.md indica `deepseek/deepseek-v4.1-flash` per la versione server.
 - Strumenti: pulsanti sopra la mappa e anteprima molto più in basso, "Correggi
   ultimo intervento" mostrato senza interventi, clock duplicato rispetto alla Timeline,
   pagina molto lunga; "Proposte da revisionare" è un titolo vuoto.
