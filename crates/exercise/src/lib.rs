@@ -1755,7 +1755,7 @@ impl Exercise {
             t_s: self.world.time_s(),
             wall_ms: wall_ms(),
             note: note.clone(),
-            edited: d.commands.is_some(),
+            edited: d.commands.is_some() && p.commands != proposed_commands,
             proposed_commands,
             effective_commands: p.commands.clone(),
         });

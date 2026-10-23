@@ -402,27 +402,18 @@ impl Llm {
                 if json_mode {
                     body["response_format"] = json!({"type": "json_object"});
                 }
-                let resp = client
-                    .post(format!("{base_url}/chat/completions"))
-                    .timeout(Duration::from_secs(90))
-                    .bearer_auth(api_key)
-                    .header("X-Title", "PPRD East TTX")
-                    .json(&body)
-                    .send()
-                    .await
-                    .context("calling OpenRouter")?;
-                let status = resp.status();
-                let v: Value = resp.json().await.context("decoding OpenRouter response")?;
-                if !status.is_success() {
-                    anyhow::bail!(
-                        "OpenRouter {status}: {}",
-                        v["error"]["message"].as_str().unwrap_or(&v.to_string())
-                    );
+                let mut attempt = 0u32;
+                loop {
+                    match openrouter_once(client, base_url, api_key, &body).await {
+                        Ok(t) => break Ok(t),
+                        Err((e, retry)) if retry && attempt < MAX_RETRIES => {
+                            attempt += 1;
+                            tracing::warn!(task, attempt, error = %e, "llm transient failure, retrying");
+                            backoff(attempt).await;
+                        }
+                        Err((e, _)) => break Err(e),
+                    }
                 }
-                v["choices"][0]["message"]["content"]
-                    .as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| anyhow::anyhow!("OpenRouter response has no content: {v}"))
             }
         };
         match &out {
@@ -599,6 +590,133 @@ mod tests {
         });
         assert_eq!(m.complete_json("t", "", "").await.unwrap()["ok"], true);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+}
+
+/// Extra attempts after a transient failure (transport, truncated body, 5xx, 429).
+const MAX_RETRIES: u32 = 2;
+
+/// Whether an HTTP status is worth retrying: rate limits and server errors only,
+/// never client errors such as bad credentials.
+fn retryable_status(status: u16) -> bool {
+    status == 429 || status >= 500
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn backoff(attempt: u32) {
+    tokio::time::sleep(Duration::from_millis(400 * u64::from(attempt))).await;
+}
+
+/// No timer is available in the browser build without extra dependencies: retry at once.
+#[cfg(target_arch = "wasm32")]
+async fn backoff(_attempt: u32) {}
+
+/// One OpenRouter request. The error carries whether a retry is sensible.
+async fn openrouter_once(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    body: &Value,
+) -> std::result::Result<String, (anyhow::Error, bool)> {
+    let resp = client
+        .post(format!("{base_url}/chat/completions"))
+        .timeout(Duration::from_secs(90))
+        .bearer_auth(api_key)
+        .header("X-Title", "PPRD East TTX")
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| (anyhow::Error::new(e).context("calling OpenRouter"), true))?;
+    let status = resp.status();
+    let retry_status = retryable_status(status.as_u16());
+    let bytes = resp.bytes().await.map_err(|e| {
+        (anyhow::Error::new(e).context("decoding OpenRouter response"), status.is_success() || retry_status)
+    })?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+        (anyhow::Error::new(e).context("decoding OpenRouter response"), status.is_success() || retry_status)
+    })?;
+    if !status.is_success() {
+        return Err((
+            anyhow::anyhow!(
+                "OpenRouter {status}: {}",
+                v["error"]["message"].as_str().unwrap_or(&v.to_string())
+            ),
+            retry_status,
+        ));
+    }
+    v["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| (anyhow::anyhow!("OpenRouter response has no content: {v}"), false))
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+
+    #[test]
+    fn only_transient_statuses_are_retried() {
+        for s in [429, 500, 502, 503, 504] {
+            assert!(retryable_status(s), "{s}");
+        }
+        for s in [200, 400, 401, 402, 403, 404] {
+            assert!(!retryable_status(s), "{s}");
+        }
+    }
+
+    async fn serve(responses: Vec<Vec<u8>>) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h = hits.clone();
+        tokio::spawn(async move {
+            for r in responses {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = vec![0u8; 65536];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(&r).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        (url, hits)
+    }
+
+    fn http(status: &str, declared_len: usize, body: &str) -> Vec<u8> {
+        format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {declared_len}\r\nConnection: close\r\n\r\n{body}").into_bytes()
+    }
+
+    const GOOD: &str = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
+
+    #[tokio::test]
+    async fn truncated_body_is_retried_then_succeeds() {
+        let (url, hits) = serve(vec![
+            http("200 OK", GOOD.len(), &GOOD[..10]),
+            http("200 OK", GOOD.len(), GOOD),
+        ])
+        .await;
+        let llm = Llm::openrouter("k".into(), "m".into(), url);
+        let out = llm.complete_live("t", "", &[ChatMessage::user("x")], false).await.unwrap();
+        assert_eq!(out, "hi");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn auth_errors_are_not_retried() {
+        let body = r#"{"error":{"message":"bad key"}}"#;
+        let (url, hits) = serve(vec![http("401 Unauthorized", body.len(), body)]).await;
+        let llm = Llm::openrouter("k".into(), "m".into(), url);
+        assert!(llm.complete_live("t", "", &[ChatMessage::user("x")], false).await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_are_bounded() {
+        let (url, hits) = serve(vec![http("503 Service Unavailable", 2, "{}"); 3]).await;
+        let llm = Llm::openrouter("k".into(), "m".into(), url);
+        assert!(llm.complete_live("t", "", &[ChatMessage::user("x")], false).await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 }
 

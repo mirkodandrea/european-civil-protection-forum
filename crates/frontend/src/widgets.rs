@@ -115,6 +115,8 @@ pub struct ProposalProps {
     pub preview: Value,
     pub action: Callback<Action>,
     pub busy: bool,
+    #[prop_or_default]
+    pub roles: Vec<Value>,
 }
 #[function_component(Proposal)]
 pub fn proposal(props: &ProposalProps) -> Html {
@@ -138,6 +140,15 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let valid_preview = props.preview["generation"] == props.generation
         && props.preview["_request"]["commands"] == json!(*commands)
         && !props.preview.is_null();
+    let clarify = {
+        let action = props.action.clone();
+        let note = note.clone();
+        let commands = commands.clone();
+        Callback::from(move |_| {
+            let body = json!({"approve":false,"commands":*commands,"note":format!("{}: {}",crate::i18n::ex("Chiarimento richiesto"),note.trim())});
+            action.emit(Action::post(format!("/api/master/proposals/{id}/decide"), body));
+        })
+    };
     let decide = |approve: bool| {
         let action = props.action.clone();
         let commands = commands.clone();
@@ -187,7 +198,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
     html! {<section class="proposal-inline" data-proposal={id.to_string()}>
         <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{api::status(text(&p["status"]))}</span></div>
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
-        if !list(&p["thread"]).is_empty() {<details open=true class="proposal-thread"><summary>{crate::exfmt!("Thread collegato · {} messaggi", "Linked thread · {} messages",list(&p["thread"]).len())}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),text(&m["from"]),text(&m["to"]),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
+        if !list(&p["thread"]).is_empty() {<details open=true class="proposal-thread"><summary>{crate::exfmt!("Thread collegato · {} messaggi", "Linked thread · {} messages",list(&p["thread"]).len())}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
             html!{<fieldset class="command-card"><legend>{command_name(text(&cmd["type"]))}</legend>
@@ -200,7 +211,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 });
                 html!{<label class="command-field"><span>{field_name(&label_key)}</span><input aria-label={field_name(&label_key).to_string()} data-command={i.to_string()} data-field={label_key.clone()} value={display} {onchange} disabled={!editable||props.busy}/></label>}
             })}
-            <small class={if p["verdicts"][i]["verdict"]=="rejected"{"danger"}else{"verdict-ok"}}>{if p["verdicts"][i]["verdict"]=="ok"{crate::exfmt!("✓ Verifica: {}","✓ Check: {}",if list(&p["verdicts"][i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&p["verdicts"][i]["notes"]).iter().map(text).collect::<Vec<_>>().join(" · ")})}else{text(&p["verdicts"][i]["reason"]).into()}}</small></fieldset>}
+            <small class={if p["verdicts"][i]["verdict"]=="rejected"{"danger"}else{"verdict-ok"}}>{if p["verdicts"][i]["verdict"]=="ok"{crate::exfmt!("✓ Verifica: {}","✓ Check: {}",if list(&p["verdicts"][i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&p["verdicts"][i]["notes"]).iter().map(|n|crate::render::localize_note(text(n))).collect::<Vec<_>>().join(" · ")})}else{text(&p["verdicts"][i]["reason"]).into()}}</small></fieldset>}
         })}</div>
         if editable{<details class="manual-commands"><summary>{crate::i18n::ex("Modifica o aggiungi comandi JSON (interpretazione manuale EXCON)")}</summary><textarea data-manual-commands="" aria-label={crate::i18n::ex("Comandi manuali EXCON")} value={pretty(&json!(*commands))} oninput={{let commands=commands.clone();let error=error.clone();Callback::from(move |e|match serde_json::from_str::<Vec<Value>>(&api::input(e)){Ok(next)=>{commands.set(next);error.set(String::new());},Err(e)=>error.set(crate::exfmt!("Comandi non validi: {e}","Invalid commands: {e}"))})}}/></details>}
         if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<div class="danger">{crate::render::render_value("",&p["invalid"])}</div>}
@@ -215,6 +226,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
             if !props.preview.is_null(){{preview(&props.preview)}}
         }
         <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{crate::i18n::ex("Approva azione")}</button><button data-reject="" disabled={props.busy||!editable||needs_reason} title={needs_reason.then_some(crate::i18n::ex("Spiega il motivo al player"))} onclick={decide(false)}>{crate::i18n::ex("Rifiuta")}</button>
+        if p["source"]["kind"]=="player"{<button data-clarify="" disabled={props.busy||!editable||note.trim().is_empty()} title={note.trim().is_empty().then_some(crate::i18n::ex("Spiega cosa chiarire al player"))} onclick={clarify}>{crate::i18n::ex("Chiedi chiarimento")}</button>}
         if p["status"]=="approved"{<button disabled={props.busy} data-execute={id.to_string()} onclick={{let cb=props.action.clone();Callback::from(move |_|cb.emit(Action::post(format!("/api/master/proposals/{id}/execute"),json!({}))))}}>{crate::i18n::ex("Esegui ora ordine approvato")}</button>}
         </div>{details(crate::i18n::ex("Cronologia ed esiti effettivi"),&json!({"history":p["history"],"executions":p["executions"]}))}
     </section>}

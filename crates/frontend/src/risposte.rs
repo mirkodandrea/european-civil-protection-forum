@@ -99,7 +99,7 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
             match full{
                 Some(p)=>{let key=format!("proposal:{}",p["id"]);
-                    html!{<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={props.responses.get(&key).cloned().unwrap_or_default()} busy={props.busy} action={props.action.clone()}/>}}
+                    html!{<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={props.responses.get(&key).cloned().unwrap_or_default()} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()}/>}}
                 None=>html!{<p class="muted">{text(&pp["summary"])}</p>},
             }
         })}

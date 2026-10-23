@@ -321,7 +321,7 @@ impl App {
                 let mut n = Notice::new(
                     format!("log:{}", event["seq"]),
                     tr(lang, "Evento dell’esercitazione", "Exercise event").into(),
-                    kind.replace('_', " "),
+                    crate::render::event_label(kind),
                     text(&event["clock"]),
                     view,
                 );

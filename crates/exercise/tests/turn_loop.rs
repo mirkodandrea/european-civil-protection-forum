@@ -698,3 +698,27 @@ fn private_turn_summaries_freeze_role_evidence_and_discard_rollback_results() {
     let response = serde_json::to_value(ex.player_turn_summaries("mayor")).unwrap();
     assert!(response[0].get("evidence").is_none());
 }
+
+#[test]
+fn edited_flag_is_true_only_when_actions_actually_change() {
+    let acts = json!([{"type":"IssueWarning","zone":"F4"}]);
+    // Note only, and re-submitting identical commands: not edited.
+    for resubmit in [false, true] {
+        let mut ex = exercise();
+        ex.start().unwrap();
+        let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
+        ex.attach_parse(pid, parsed(acts.clone())).unwrap();
+        let same = ex.proposal(pid).unwrap().commands.clone();
+        let commands = if resubmit { Some(same) } else { None };
+        ex.decide(pid, Decision { approve: true, commands, note: Some("ok".into()) }).unwrap();
+        assert!(!ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
+    }
+    // Real change: edited.
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
+    ex.attach_parse(pid, parsed(acts)).unwrap();
+    let other: Vec<Command> = serde_json::from_value(json!([{"type":"IssueWarning","zone":"G4"}])).unwrap();
+    ex.decide(pid, Decision { approve: true, commands: Some(other), note: None }).unwrap();
+    assert!(ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
+}

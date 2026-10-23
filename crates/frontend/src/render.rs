@@ -9,6 +9,98 @@ const MAX_DEPTH: usize = 6;
 
 // ---------------------------------------------------------------- pure helpers
 
+/// Human label for an exercise log event kind; unknown kinds are humanised.
+pub fn event_label(kind: &str) -> String {
+    let known = match kind {
+        "proposal_declared" => crate::i18n::ex("Proposta dichiarata"),
+        "proposal_decided" => crate::i18n::ex("Proposta decisa dall’EXCON"),
+        "proposal_parsed" => crate::i18n::ex("Proposta interpretata"),
+        "proposal_parse_failed" => crate::i18n::ex("Interpretazione non riuscita"),
+        "proposal_status" => crate::i18n::ex("Stato proposta aggiornato"),
+        "master_command" => crate::i18n::ex("Comando EXCON"),
+        "master_prompt" => crate::i18n::ex("Richiesta EXCON all’AI"),
+        "inject_scheduled" => crate::i18n::ex("Inject programmato"),
+        "inject_sent" => crate::i18n::ex("Inject inviato"),
+        "inject_schedule_cancelled" => crate::i18n::ex("Programmazione inject annullata"),
+        "scheduled_inject_triggered" => crate::i18n::ex("Inject programmato attivato"),
+        "scheduled_inject_completed" => crate::i18n::ex("Inject programmato completato"),
+        "turn_opened" => crate::i18n::ex("Turno aperto"),
+        "turn_resolving" => crate::i18n::ex("Risoluzione del turno"),
+        "turn_resolved" => crate::i18n::ex("Turno risolto"),
+        "exercise_created" => crate::i18n::ex("Esercitazione creata"),
+        "exercise_ended" => crate::i18n::ex("Esercitazione terminata"),
+        "exercise_phase_changed" => crate::i18n::ex("Fase dell’esercitazione cambiata"),
+        "action_executed" => crate::i18n::ex("Azione eseguita"),
+        "approved_communication_delivered" => crate::i18n::ex("Comunicazione approvata consegnata"),
+        "communications_reviewed" => crate::i18n::ex("Comunicazioni riviste"),
+        "forecast_published" => crate::i18n::ex("Previsione pubblicata"),
+        "language_set" => crate::i18n::ex("Lingua impostata"),
+        "map_information_acquired" => crate::i18n::ex("Informazione di mappa acquisita"),
+        "physical_intervention_corrected" => crate::i18n::ex("Intervento fisico corretto"),
+        "player_draft_submitted" => crate::i18n::ex("Bozza del player inviata"),
+        "reference_materials_updated" => crate::i18n::ex("Materiali di riferimento aggiornati"),
+        "resource_limit_draft_reviewed" => crate::i18n::ex("Limiti di risorse rivisti"),
+        "resource_limits_changed" => crate::i18n::ex("Limiti di risorse modificati"),
+        "resource_event" => crate::i18n::ex("Evento sulle risorse"),
+        "rollback" => crate::i18n::ex("Ripristino a un turno precedente"),
+        "settings" => crate::i18n::ex("Impostazioni modificate"),
+        "training_design_configured" => crate::i18n::ex("Percorso formativo configurato"),
+        "training_path_approved" => crate::i18n::ex("Percorso formativo approvato"),
+        "clock_configured" => crate::i18n::ex("Orologio configurato"),
+        "clock_paused" => crate::i18n::ex("Orologio in pausa"),
+        "clock_physical_events" => crate::i18n::ex("Eventi fisici dell’orologio"),
+        "message" => crate::i18n::ex("Messaggio"),
+        "chat_source" => crate::i18n::ex("Messaggio chat"),
+        "reply_source" => crate::i18n::ex("Risposta del player"),
+        _ => return humanize_key(kind),
+    };
+    known.to_string()
+}
+
+/// Role display name; `master` is shown as EXCON and unknown ids pass through.
+pub fn role_label(roles: &[Value], id: &str) -> String {
+    if id == "master" {
+        return "EXCON".into();
+    }
+    roles
+        .iter()
+        .find(|r| r["id"] == id)
+        .and_then(|r| r["name"].as_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or(id)
+        .to_string()
+}
+
+/// Localises the English validation notes produced by the simulator
+/// ("500 m line, 1 crew(s)") for the console; unknown notes pass through.
+pub fn localize_note(note: &str) -> String {
+    let n = note.trim();
+    if let Some((a, b)) = n.split_once(" m line, ") {
+        if let Some(c) = b.strip_suffix(" crew(s)") {
+            return exfmt!("linea di {} m, {} squadre", "{} m line, {} crew(s)", a, c);
+        }
+    }
+    if let Some((a, b)) = n.split_once(" buildings, ") {
+        if let Some(p) = b.strip_suffix(" people") {
+            return exfmt!("{} edifici, {} persone", "{} buildings, {} people", a, p);
+        }
+    }
+    if let Some((a, b)) = n.split_once(" bus(es) for ") {
+        if let Some(p) = b.strip_suffix(" people") {
+            return exfmt!("{} autobus per {} persone", "{} bus(es) for {} people", a, p);
+        }
+    }
+    if let Some(d) = n.strip_prefix("to ") {
+        return exfmt!("verso {}", "to {}", d);
+    }
+    if let Some((q, rest)) = n.split_once(" arrive in ") {
+        if let Some((m, src)) = rest.split_once(" min from ") {
+            return exfmt!("{} in arrivo tra {} min da {}", "{} arrive in {} min from {}", q, m, src);
+        }
+    }
+    n.to_string()
+}
+
 /// "fire_front_km" -> "Fire front km" (Italian labels for the common keys).
 pub fn humanize_key(k: &str) -> String {
     let known = match k {
@@ -384,6 +476,18 @@ mod tests {
         let t = inline_text(&json!({"a": 1, "b": {"c": [1, 2]}, "d": null}));
         assert!(!t.contains('{') && !t.contains('"'), "{t}");
         assert_eq!(t, "A: 1 · B: C: 1, 2");
+    }
+    #[test]
+    fn notes_and_event_labels() {
+        assert_eq!(localize_note("500 m line, 1 crew(s)"), "linea di 500 m, 1 squadre");
+        assert_eq!(localize_note("3 buildings, 40 people"), "3 edifici, 40 persone");
+        assert_eq!(localize_note("something else"), "something else");
+        assert_eq!(event_label("proposal_decided"), "Proposta decisa dall’EXCON");
+        assert_eq!(event_label("brand_new_kind"), "Brand new kind");
+        let roles = vec![json!({"id":"fire_commander","name":"Comandante VVF"})];
+        assert_eq!(role_label(&roles, "fire_commander"), "Comandante VVF");
+        assert_eq!(role_label(&roles, "master"), "EXCON");
+        assert_eq!(role_label(&roles, "x"), "x");
     }
     #[test]
     fn id_keys() {
