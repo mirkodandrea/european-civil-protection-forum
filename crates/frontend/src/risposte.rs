@@ -19,8 +19,13 @@ pub enum ReplyState {
     Pending,
 }
 
+/// Proposals replaced by a newer player reply are history, never pending.
+fn is_open(p: &Value) -> bool {
+    p["status"] != "superseded"
+}
+
 pub fn reply_state(r: &Value) -> ReplyState {
-    let open = list(&r["pending_proposals"]);
+    let open = list(&r["pending_proposals"]).iter().filter(|p| is_open(p)).collect::<Vec<_>>();
     if open.iter().any(|p| p["awaiting_clarification"] != true) {
         ReplyState::Pending
     } else if !open.is_empty() {
@@ -48,7 +53,7 @@ pub fn pending_count(master: &Value) -> usize {
         .map(|r| {
             list(&r["pending_proposals"])
                 .iter()
-                .filter(|p| p["awaiting_clarification"] != true)
+                .filter(|p| is_open(p) && p["awaiting_clarification"] != true)
                 .count()
         })
         .sum()
@@ -61,7 +66,7 @@ pub fn clarifying_count(master: &Value) -> usize {
         .map(|r| {
             list(&r["pending_proposals"])
                 .iter()
-                .filter(|p| p["awaiting_clarification"] == true)
+                .filter(|p| is_open(p) && p["awaiting_clarification"] == true)
                 .count()
         })
         .sum()
@@ -118,8 +123,8 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
         if list(&r["replies"]).is_empty(){<p class="muted">{crate::i18n::ex("Nessuna risposta")}</p>}
         <ol class="reply-list">{for list(&r["replies"]).iter().map(|m|html!{<li key={m["id"].to_string()}><small>{text(&m["clock"])}</small><p>{text(&m["text"])}</p>
             if !text(&m["original"]).is_empty()&&text(&m["original"])!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",text(&m["original"]))}</small>}</li>})}</ol>
-        if !list(&r["pending_proposals"]).is_empty(){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
-        {for list(&r["pending_proposals"]).iter().map(|pp|{
+        if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
+        {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
             match full{
                 Some(p)=>{let key=format!("proposal:{}",p["id"]);
@@ -143,6 +148,9 @@ mod tests {
         assert_eq!(reply_state(&c), ReplyState::Clarifying);
         let mixed = json!({"replies":[],"pending_proposals":[{"id":1,"awaiting_clarification":true},{"id":2}]});
         assert_eq!(reply_state(&mixed), ReplyState::Pending);
+        let old = json!({"replies":[{}],"pending_proposals":[{"id":1,"status":"superseded"}]});
+        assert_eq!(reply_state(&old), ReplyState::Replied);
+        assert_eq!(pending_count(&json!({"inject_responses":[old]})), 0);
     }
     #[test]
     fn counts_pending() {

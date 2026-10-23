@@ -431,6 +431,15 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/proposals/<id>/revalidate") => {
+            post_revalidate(
+                principal.clone(),
+                s.clone(),
+                captures["id"].parse().map_err(|_| bad("invalid id"))?,
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/master/preview") => {
             post_preview(
                 principal.clone(),
@@ -580,6 +589,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/prompt"),
     ("POST", "/api/master/proposals/<id>/decide"),
     ("POST", "/api/master/proposals/<id>/clarify"),
+    ("POST", "/api/master/proposals/<id>/revalidate"),
     ("POST", "/api/master/preview"),
     ("POST", "/api/master/correct-intervention"),
     ("POST", "/api/master/design"),

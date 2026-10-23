@@ -9,6 +9,22 @@ pub fn is_en() -> bool {
 pub fn set_ui_lang(lang: &str) {
     EN.with(|c| c.set(lang == "en"));
 }
+/// Standalone mounts one `App` per role, all alive at once. Only the visible
+/// one may own the global language, otherwise a hidden panel re-rendering in
+/// the background flips every label of the active one.
+pub fn set_ui_lang_if_visible(visible: bool, lang: &str) {
+    if visible {
+        set_ui_lang(lang);
+    }
+}
+/// Runs `f` under `lang`, restoring the previous global language afterwards.
+pub fn with_ui_lang<R>(lang: &str, f: impl FnOnce() -> R) -> R {
+    let previous = is_en();
+    set_ui_lang(lang);
+    let out = f();
+    EN.with(|c| c.set(previous));
+    out
+}
 /// Translates an Italian console string when the console language is English.
 pub fn ex(it: &'static str) -> &'static str {
     if EN.with(|c| c.get()) {
@@ -417,6 +433,16 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Risposta del player" => "Player reply",
         "Chiedi chiarimento" => "Ask for clarification",
         "Spiega cosa chiarire al player" => "Explain to the player what to clarify",
+        "Proposta ricontrollata" => "Proposal rechecked",
+        "sostituita" => "superseded",
+        "Verifica in corso…" => "Checking…",
+        "Verifica non riuscita" => "Check failed",
+        "Proposta sostituita" => "Proposal superseded",
+        "Consegna comunicazione non riuscita" => "Communication delivery failed",
+        "Inject approvato consegnato" => "Approved inject delivered",
+        "Consegna inject non riuscita" => "Inject delivery failed",
+        "Anteprima fisica approvata" => "Physical preview approved",
+        "Orologio non riuscito" => "Clock failed",
         "Chiarimento richiesto" => "Clarification requested",
         // END timeline.rs / risposte.rs
         _ => return None,
@@ -428,4 +454,19 @@ macro_rules! exfmt {
     ($it:literal, $en:literal $(, $a:expr)* $(,)?) => {
         if $crate::i18n::is_en() { format!($en $(, $a)*) } else { format!($it $(, $a)*) }
     };
+}
+
+#[cfg(test)]
+mod lang_tests {
+    use super::*;
+    #[test]
+    fn hidden_panel_does_not_change_language() {
+        set_ui_lang_if_visible(true, "it");
+        set_ui_lang_if_visible(false, "en");
+        assert!(!is_en());
+        set_ui_lang_if_visible(true, "en");
+        set_ui_lang_if_visible(false, "it");
+        assert!(is_en());
+        set_ui_lang("it");
+    }
 }

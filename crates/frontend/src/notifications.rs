@@ -140,6 +140,12 @@ impl App {
             .count()
     }
     pub fn update_notifications(&mut self, ctx: &Context<Self>, state: &Value, master: &Value) {
+        // Strings from `i18n::ex` (event labels) are baked into the notice:
+        // build them under this panel's own language, not whichever panel rendered last.
+        let own_lang = self.lang();
+        i18n::with_ui_lang(&own_lang, || self.build_notifications(ctx, state, master));
+    }
+    fn build_notifications(&mut self, ctx: &Context<Self>, state: &Value, master: &Value) {
         let lang = self.lang();
         let lang = lang.as_str();
         let visible = self.panel_visible();
@@ -197,7 +203,7 @@ impl App {
         } else {
             list(&state["proposals"])
         };
-        for p in proposals {
+        for p in proposals.iter().filter(|p| p["status"] != "superseded") {
             let status = text(&p["status"]);
             let view = if master_view { "timeline" } else { "map" };
             let mut n = Notice::new(

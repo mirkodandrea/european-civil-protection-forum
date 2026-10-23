@@ -207,6 +207,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_prompt,
                 post_decide,
                 post_clarify,
+                post_revalidate,
                 post_command,
                 post_preview,
                 post_preview_apply,
@@ -1154,6 +1155,37 @@ async fn post_clarify(
         req.text_en.clone(),
     ));
     Ok(Json(json!(req)))
+}
+
+#[derive(Deserialize)]
+struct RevalidateBody {
+    #[serde(default)]
+    commands: Option<Vec<Value>>,
+}
+
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/proposals/<id>/revalidate", data = "<b>")
+)]
+async fn post_revalidate(
+    _principal: Principal,
+    s: AppState,
+    id: u64,
+    b: Json<RevalidateBody>,
+) -> ApiResult {
+    let Json(b) = b;
+    let commands = match b.commands {
+        Some(vals) => Some(
+            vals.into_iter()
+                .map(serde_json::from_value::<Command>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| bad(format!("invalid command: {e}")))?,
+        ),
+        None => None,
+    };
+    let mut ex = s.lock();
+    ex.revalidate_proposal(id, commands)?;
+    Ok(Json(json!(ex.proposal(id))))
 }
 
 #[derive(Deserialize)]

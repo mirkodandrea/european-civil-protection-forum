@@ -655,6 +655,7 @@ impl Component for App {
                             ActionKind::Submit(to) => {
                                 if to == "master" && !self.is_master() {
                                     self.fields.insert("work:open".into(), "false".into());
+                                    self.fields.remove("work:clarify");
                                 }
                                 self.notice = if value["translation_failed"] == true {
                                     crate::i18n::ex("Inviato · traduzione non disponibile").into()
@@ -676,7 +677,7 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to"] {
+                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify"] {
                                     self.fields.remove(key);
                                 }
                                 self.notice = crate::i18n::ex("Proposta inviata a EXCON per revisione").into();
@@ -688,6 +689,7 @@ impl Component for App {
                 self.request_refresh(ctx);
             }
             Msg::OpenWork(parent) => {
+                self.fields.remove("work:clarify");
                 let parent = parent
                     .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
                     .unwrap_or_default();
@@ -873,10 +875,12 @@ impl Component for App {
             Msg::Login(key) => api::save_token(&key),
             Msg::ClearError => self.error.clear(),
         }
-        true
+        // Hidden role panels do not re-render: their labels would otherwise be
+        // drawn under another panel's language (see `set_ui_lang_if_visible`).
+        ctx.props().visible
     }
     fn view(&self, ctx: &Context<Self>) -> Html {
-        i18n::set_ui_lang(&self.lang());
+        i18n::set_ui_lang_if_visible(ctx.props().visible, &self.lang());
         if self.access.is_null() {
             #[cfg(feature = "standalone")]
             return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){crate::i18n::ex("Connessione all’esercitazione…")}else{&self.error}}</p></section></main>};
@@ -956,7 +960,8 @@ impl Component for App {
         if ctx.props().visible && !old.visible {
             ctx.link().send_message(Msg::Refresh);
         }
-        true
+        // A panel that just became hidden must not re-render under the new active panel's language.
+        ctx.props().visible
     }
     fn destroy(&mut self, _ctx: &Context<Self>) {
         if let Some(socket) = self.socket.take() {

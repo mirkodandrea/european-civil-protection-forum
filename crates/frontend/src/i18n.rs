@@ -1,6 +1,6 @@
 //! Player-facing UI strings: Italian and English complete; other languages use English.
 //! EXCON and evaluator views never call this (App::lang is always "it" for them).
-pub use crate::i18n_excon::{ex, is_en, set_ui_lang};
+pub use crate::i18n_excon::{ex, is_en, set_ui_lang_if_visible, with_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
     if lang == "it" {
         it(key)
@@ -46,6 +46,7 @@ pub fn status<'a>(lang: &str, s: &'a str) -> &'a str {
         "failed" => t(lang, "st_failed"),
         "rolled_back" => t(lang, "st_rolled_back"),
         "rejected" => t(lang, "st_rejected"),
+        "superseded" => t(lang, "st_superseded"),
         _ => s,
     }
 }
@@ -111,6 +112,7 @@ fn it(key: &'static str) -> &'static str {
         "st_failed" => "Esecuzione fallita",
         "st_rolled_back" => "Annullata dal rollback",
         "st_rejected" => "Rifiutata",
+        "st_superseded" => "sostituita",
         "ph_briefing" => "briefing",
         "ph_orders" => "orders",
         "ph_resolving" => "resolving",
@@ -328,6 +330,7 @@ fn en(key: &'static str) -> &'static str {
         "st_failed" => "Execution failed",
         "st_rolled_back" => "Cancelled by rollback",
         "st_rejected" => "Rejected",
+        "st_superseded" => "superseded",
         "ph_briefing" => "briefing",
         "ph_orders" => "orders",
         "ph_resolving" => "resolving",

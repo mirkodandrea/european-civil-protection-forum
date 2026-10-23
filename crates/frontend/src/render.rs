@@ -52,6 +52,14 @@ pub fn event_label(kind: &str) -> String {
         "message" => crate::i18n::ex("Messaggio"),
         "chat_source" => crate::i18n::ex("Messaggio chat"),
         "reply_source" => crate::i18n::ex("Risposta del player"),
+        "clarification_requested" => crate::i18n::ex("Chiarimento richiesto"),
+        "proposal_revalidated" => crate::i18n::ex("Proposta ricontrollata"),
+        "proposal_superseded" => crate::i18n::ex("Proposta sostituita"),
+        "approved_communication_failed" => crate::i18n::ex("Consegna comunicazione non riuscita"),
+        "approved_inject_delivered" => crate::i18n::ex("Inject approvato consegnato"),
+        "approved_inject_failed" => crate::i18n::ex("Consegna inject non riuscita"),
+        "physical_preview_approved" => crate::i18n::ex("Anteprima fisica approvata"),
+        "clock_failed" => crate::i18n::ex("Orologio non riuscito"),
         _ => return humanize_key(kind),
     };
     known.to_string()

@@ -75,6 +75,37 @@ pub fn command_summary(lang: &str, cmd: &Value) -> String {
     }
 }
 #[cfg(test)]
+mod recheck_tests {
+    use super::*;
+    #[test]
+    fn verdicts_follow_the_edited_commands() {
+        let stored = json!([{"type":"WaterDrop","at":"far"}]);
+        let edited = json!([{"type":"WaterDrop","at":"near"}]);
+        let bad = json!([{"verdict":"rejected","reason":"too far"}]);
+        let good = json!([{"verdict":"ok","notes":[]}]);
+        let idle = Recheck::Idle;
+        // unedited: stored (failing) verdicts apply and block approval
+        let v = current_verdicts(&stored, &stored, &bad, &idle);
+        assert!(!all_ok(&v, 1));
+        // edited, nothing answered yet: stale verdicts must not be used
+        assert!(current_verdicts(&edited, &stored, &bad, &idle).is_none());
+        assert!(!all_ok(&None, 1));
+        // server answered for the edit: approvable
+        let done = Recheck::Done { commands: edited.clone(), proposal: json!({"verdicts": good}) };
+        assert!(all_ok(&current_verdicts(&edited, &stored, &bad, &done), 1));
+        // further typing makes that answer stale again
+        let again = json!([{"type":"WaterDrop","at":"nearer"}]);
+        assert!(current_verdicts(&again, &stored, &bad, &done).is_none());
+    }
+    #[test]
+    fn note_survives_remount_until_cleared() {
+        save_note(7, "motivo");
+        assert_eq!(saved_note(7), "motivo");
+        save_note(7, "");
+        assert_eq!(saved_note(7), "");
+    }
+}
+#[cfg(test)]
 mod summary_tests {
     use super::*;
     #[test]
@@ -108,6 +139,54 @@ pub fn field_name(s: &str) -> &str {
     }
 }
 
+thread_local! {
+    /// EXCON note per proposal id, so closing/reopening the dialog (which
+    /// remounts `Proposal`) keeps what was typed until the decision is sent.
+    static NOTES: std::cell::RefCell<std::collections::BTreeMap<u64, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+pub fn saved_note(id: u64) -> String {
+    NOTES.with(|n| n.borrow().get(&id).cloned().unwrap_or_default())
+}
+pub fn save_note(id: u64, note: &str) {
+    NOTES.with(|n| {
+        if note.is_empty() {
+            n.borrow_mut().remove(&id);
+        } else {
+            n.borrow_mut().insert(id, note.to_string());
+        }
+    });
+}
+/// Identity used for EXCON requests: the EXCON role in standalone, the stored access key otherwise.
+fn excon_token() -> String {
+    #[cfg(feature = "standalone")]
+    return "master".into();
+    #[cfg(not(feature = "standalone"))]
+    api::token()
+}
+/// Outcome of re-checking the edited commands against the server.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Recheck {
+    /// Nothing sent yet for the current edit.
+    Idle,
+    Done { commands: Value, proposal: Value },
+    Failed { commands: Value, error: String },
+}
+/// Verdicts that belong to exactly the commands currently shown, if any.
+pub fn current_verdicts(local: &Value, stored_commands: &Value, stored: &Value, re: &Recheck) -> Option<Value> {
+    match re {
+        Recheck::Done { commands, proposal } if commands == local => Some(proposal["verdicts"].clone()),
+        _ if local == stored_commands => Some(stored.clone()),
+        _ => None,
+    }
+}
+/// True when every command has an `ok` verdict (stale or missing verdicts block).
+pub fn all_ok(verdicts: &Option<Value>, commands: usize) -> bool {
+    match verdicts {
+        Some(v) => list(v).len() >= commands && list(v).iter().all(|v| v["verdict"] == "ok"),
+        None => false,
+    }
+}
+
 #[derive(Properties, PartialEq)]
 pub struct ProposalProps {
     pub proposal: Value,
@@ -122,19 +201,54 @@ pub struct ProposalProps {
 pub fn proposal(props: &ProposalProps) -> Html {
     let p = &props.proposal;
     let commands = use_state(|| list(&p["commands"]).to_vec());
+    // Last commands known from the server; local edits that differ from it are never overwritten.
+    let synced = use_mut_ref(|| p["commands"].clone());
     {
         let commands = commands.clone();
+        let synced = synced.clone();
         use_effect_with(p["commands"].clone(), move |next| {
-            commands.set(list(next).to_vec());
+            let mut known = synced.borrow_mut();
+            if json!(*commands) == *known {
+                commands.set(list(next).to_vec());
+            }
+            *known = next.clone();
         });
     }
-    let note = use_state(String::new);
+    let recheck = use_state(|| Recheck::Idle);
+    let editable = ["pending", "needs_clarification"].contains(&text(&p["status"]));
+    {
+        let recheck = recheck.clone();
+        let proposal_id = p["id"].as_u64().unwrap_or(0);
+        use_effect_with((json!(*commands), editable, p["commands"].clone()), move |(local, editable, stored)| {
+            let local = local.clone();
+            let stored = stored.clone();
+            let timer = (*editable && local != stored && !local.as_array().is_some_and(Vec::is_empty)).then(|| {
+                gloo_timers::callback::Timeout::new(500, move || {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let body = json!({"commands": local});
+                        let result = api::request(&excon_token(), &format!("/api/master/proposals/{proposal_id}/revalidate"), Some(body)).await;
+                        recheck.set(match result {
+                            Ok(proposal) => Recheck::Done { commands: local, proposal },
+                            Err(error) => Recheck::Failed { commands: local, error },
+                        });
+                    });
+                })
+            });
+            move || drop(timer)
+        });
+    }
+    let note = use_state(|| saved_note(p["id"].as_u64().unwrap_or(0)));
     let error = use_state(String::new);
     let comms = use_state(|| pretty(&p["communication_drafts"]));
     let injects = use_state(|| pretty(&p["inject_drafts"]));
     let limits = use_state(|| pretty(&p["resource_limit_draft"]));
     let id = p["id"].as_u64().unwrap_or(0);
-    let editable = ["pending", "needs_clarification"].contains(&text(&p["status"]));
+    let local_commands = json!(*commands);
+    let verdicts = current_verdicts(&local_commands, &p["commands"], &p["verdicts"], &recheck);
+    let recheck_error = match &*recheck {
+        Recheck::Failed { commands: c, error } if *c == local_commands => Some(error.clone()),
+        _ => None,
+    };
     let needs_preview = p["source"]["kind"] == "master" && !commands.is_empty();
     let needs_reason = p["source"]["kind"] == "player" && note.trim().is_empty();
     let valid_preview = props.preview["generation"] == props.generation
@@ -144,6 +258,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
         let action = props.action.clone();
         let note = note.clone();
         Callback::from(move |_| {
+            save_note(id, "");
             action.emit(Action::post(
                 format!("/api/master/proposals/{id}/clarify"),
                 json!({"note": note.trim()}),
@@ -188,6 +303,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
                     }
                 }
             }
+            save_note(id, "");
             action.emit(Action::post(
                 format!("/api/master/proposals/{id}/decide"),
                 body,
@@ -195,9 +311,10 @@ pub fn proposal(props: &ProposalProps) -> Html {
         })
     };
     let no_actions=editable&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
-    let blocked=no_actions||editable&&list(&p["verdicts"]).iter().any(|v|v["verdict"]!="ok");
-    html! {<section class="proposal-inline" data-proposal={id.to_string()}>
-        <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else{api::status(text(&p["status"]))}}</span></div>
+    let blocked=no_actions||editable&&!all_ok(&verdicts,commands.len());
+    html! {<section class={classes!("proposal-inline",(p["status"]=="superseded").then_some("superseded"))} data-proposal={id.to_string()}>
+        <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{if p["status"]=="superseded"{crate::i18n::ex("sostituita")}else if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else{api::status(text(&p["status"]))}}</span></div>
+        if p["status"]=="superseded"{<p class="muted proposal-superseded" data-superseded="">{if p["superseded_by"].is_number(){crate::exfmt!("Sostituita dalla proposta #{}","Superseded by proposal #{}",p["superseded_by"])}else{crate::i18n::ex("sostituita").to_string()}}</p>}
         if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){<p class="proposal-clarification" data-clarification-request="">{format!("{}: {}",crate::i18n::ex("Domanda inviata al player"),text(&p["clarification_request"]))}</p>}
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
         if !list(&p["thread"]).is_empty() {<details open=true class="proposal-thread"><summary>{crate::exfmt!("Thread collegato · {} messaggi", "Linked thread · {} messages",list(&p["thread"]).len())}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
@@ -213,15 +330,19 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 });
                 html!{<label class="command-field"><span>{field_name(&label_key)}</span><input aria-label={field_name(&label_key).to_string()} data-command={i.to_string()} data-field={label_key.clone()} value={display} {onchange} disabled={!editable||props.busy}/></label>}
             })}
-            <small class={if p["verdicts"][i]["verdict"]=="rejected"{"danger"}else{"verdict-ok"}}>{if p["verdicts"][i]["verdict"]=="ok"{crate::exfmt!("✓ Verifica: {}","✓ Check: {}",if list(&p["verdicts"][i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&p["verdicts"][i]["notes"]).iter().map(|n|crate::render::localize_note(text(n))).collect::<Vec<_>>().join(" · ")})}else{text(&p["verdicts"][i]["reason"]).into()}}</small></fieldset>}
+            {match &verdicts {
+                None=>html!{<small class="verdict-checking" data-verdict-checking="">{if recheck_error.is_some(){crate::i18n::ex("Verifica non riuscita")}else{crate::i18n::ex("Verifica in corso…")}}</small>},
+                Some(v)=>html!{<small class={if v[i]["verdict"]=="ok"{"verdict-ok"}else{"danger"}}>{if v[i]["verdict"]=="ok"{crate::exfmt!("✓ Verifica: {}","✓ Check: {}",if list(&v[i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&v[i]["notes"]).iter().map(|n|crate::render::localize_note(text(n))).collect::<Vec<_>>().join(" · ")})}else{text(&v[i]["reason"]).into()}}</small>},
+            }}</fieldset>}
         })}</div>
         if editable{<details class="manual-commands"><summary>{crate::i18n::ex("Modifica o aggiungi comandi JSON (interpretazione manuale EXCON)")}</summary><textarea data-manual-commands="" aria-label={crate::i18n::ex("Comandi manuali EXCON")} value={pretty(&json!(*commands))} oninput={{let commands=commands.clone();let error=error.clone();Callback::from(move |e|match serde_json::from_str::<Vec<Value>>(&api::input(e)){Ok(next)=>{commands.set(next);error.set(String::new());},Err(e)=>error.set(crate::exfmt!("Comandi non validi: {e}","Invalid commands: {e}"))})}}/></details>}
         if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<div class="danger">{crate::render::render_value("",&p["invalid"])}</div>}
         if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
-        <label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|note.set(api::input(e)))}}/></label>
+        <label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
         <p class="error">{&*error}</p>
+        if let Some(e)=&recheck_error{<p class="danger proposal-recheck-error" role="status">{format!("{}: {}",crate::i18n::ex("Verifica non riuscita"),e)}</p>}
         if editable&&needs_reason{<p class="danger proposal-reason-hint" role="status">{crate::i18n::ex("Spiega il motivo al player")}</p>}
         if blocked{<p class="danger proposal-blocked" role="status">{if no_actions{crate::i18n::ex("Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta.")}else{crate::i18n::ex("Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta.")}}</p>}
         if needs_preview {<button disabled={props.busy||!editable} onclick={{let cb=props.action.clone();let commands=(*commands).clone();Callback::from(move |_|cb.emit(Action::store("/api/master/preview",Some(json!({"commands":commands})),format!("proposal:{id}"))))}}>{crate::i18n::ex("Esamina anteprima fisica")}</button>

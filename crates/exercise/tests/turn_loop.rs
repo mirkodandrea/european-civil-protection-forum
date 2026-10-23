@@ -757,3 +757,57 @@ fn excon_clarification_request_keeps_the_proposal_open() {
     let mp = ex.master_prompt("do something");
     assert!(ex.request_clarification(mp, "what?").is_err());
 }
+
+#[test]
+fn revalidate_updates_verdicts_without_deciding() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "evacuate F4").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"EvacuateZone","zone":"F4"}]))).unwrap();
+    assert!(!ex.proposal(pid).unwrap().verdicts[0].is_ok(), "needs more buses than the mayor has");
+    // Same commands: still infeasible, status untouched.
+    ex.revalidate_proposal(pid, None).unwrap();
+    assert!(!ex.proposal(pid).unwrap().verdicts[0].is_ok());
+    // Edited commands: feasible, descriptions follow, still undecided.
+    let edited: Vec<Command> = serde_json::from_value(json!([{"type":"IssueWarning","zone":"F4"}])).unwrap();
+    ex.revalidate_proposal(pid, Some(edited)).unwrap();
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.status, ProposalStatus::Pending);
+    assert!(p.decision.is_none());
+    assert!(p.verdicts.iter().all(|v| v.is_ok()));
+    assert_eq!(p.descriptions.len(), 1);
+    assert!(ex.log.iter().any(|e| e.kind == "proposal_revalidated"));
+    // Decided proposals cannot be revalidated.
+    ex.decide(pid, Decision { approve: false, ..Default::default() }).unwrap();
+    assert!(ex.revalidate_proposal(pid, None).is_err());
+}
+
+#[test]
+fn player_answer_supersedes_the_clarified_proposal() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let old = reply(&mut ex, "fire_commander", "warn").unwrap();
+    ex.attach_parse(old, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    ex.request_clarification(old, "Which zone?").unwrap();
+    let qid = ex.deliver_clarification(old, "Quale zona?", "Which zone?").unwrap();
+    let before = ex.inject_responses();
+    assert!(before.iter().any(|r| r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old)));
+    let new = ex
+        .player_reply("fire_commander", "F4", qid, DecisionEvidence::judgment("answer"))
+        .unwrap();
+    ex.attach_parse(new, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    let (o, n) = (ex.proposal(old).unwrap(), ex.proposal(new).unwrap());
+    assert_eq!(o.status, ProposalStatus::Superseded);
+    assert_eq!(o.superseded_by, Some(new));
+    assert_eq!(n.supersedes, Some(old));
+    assert_eq!(n.status, ProposalStatus::Pending);
+    assert_eq!(serde_json::to_value(o.status).unwrap(), "superseded");
+    assert!(ex.log.iter().any(|e| e.kind == "proposal_superseded"));
+    assert!(ex.decide(old, Decision { approve: true, ..Default::default() }).is_err());
+    for r in ex.inject_responses() {
+        assert!(!r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old));
+    }
+    // An unrelated reply supersedes nothing.
+    let other = reply(&mut ex, "mayor", "x").unwrap();
+    assert_eq!(ex.proposal(other).unwrap().supersedes, None);
+}

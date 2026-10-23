@@ -127,6 +127,8 @@ pub enum ProposalStatus {
     Failed,
     /// Undone by a rollback.
     RolledBack,
+    /// Replaced by the player's answer to the EXCON's clarification question.
+    Superseded,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -306,6 +308,12 @@ pub struct Proposal {
     /// Question the EXCON put to the proposing player (status `NeedsClarification`).
     #[serde(default)]
     pub clarification_request: Option<String>,
+    /// Earlier proposal this one replaces (the player answered its clarification question).
+    #[serde(default)]
+    pub supersedes: Option<u64>,
+    /// Newer proposal that replaced this one (status `superseded`).
+    #[serde(default)]
+    pub superseded_by: Option<u64>,
     pub results: Vec<String>,
     /// Injects drafted by the LLM for a EXCON prompt; sent when approved.
     pub inject_drafts: Vec<Value>,
@@ -1001,8 +1009,20 @@ impl Exercise {
         let parent = self.validate_action_reference(role, reply_to)?;
         let inject_id = parent.inject_id;
         let thread = self.thread_evidence(role, reply_to)?;
+        let old = self.clarification_target(role, reply_to);
         let pid = self.open_chat_proposal(role, text, inject_id, Some(reply_to), Some(evidence))?;
         self.proposal_mut(pid)?.thread = thread;
+        if let Some(old) = old {
+            self.proposal_mut(pid)?.supersedes = Some(old);
+            self.proposal_mut(old)?.superseded_by = Some(pid);
+            self.transition(
+                old,
+                ProposalStatus::Superseded,
+                role,
+                &format!("Superseded by the player's answer (proposal {pid})"),
+            )?;
+            self.record("proposal_superseded", role, json!({"proposal": old, "superseded_by": pid}));
+        }
         self.add_message_in_thread(
             role,
             MASTER,
@@ -1065,6 +1085,27 @@ impl Exercise {
         Ok(pid)
     }
 
+    /// The EXCON-questioned proposal of `role` that a reply to message `parent` answers.
+    fn clarification_target(&self, role: &str, parent: u64) -> Option<u64> {
+        let live = |p: &Proposal| {
+            p.status == ProposalStatus::NeedsClarification
+                && p.clarification_request.is_some()
+                && matches!(&p.source, Source::Player(r) if r == role)
+        };
+        let m = self.messages.iter().find(|m| m.id == parent)?;
+        if m.kind == MsgKind::Clarification {
+            if let Some(p) = m.proposal.and_then(|pid| self.proposal(pid)).filter(|p| live(p)) {
+                return Some(p.id);
+            }
+        }
+        // Replying to the original inject again also answers the open question.
+        self.proposals
+            .iter()
+            .filter(|p| live(p) && p.reply_to == Some(parent))
+            .map(|p| p.id)
+            .max()
+    }
+
     fn open_chat_proposal(
         &mut self,
         role: &str,
@@ -1104,6 +1145,8 @@ impl Exercise {
             status: ProposalStatus::Parsing,
             master_note: None,
             clarification_request: None,
+            supersedes: None,
+            superseded_by: None,
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
@@ -1266,6 +1309,8 @@ impl Exercise {
             status: ProposalStatus::Parsing,
             master_note: None,
             clarification_request: None,
+            supersedes: None,
+            superseded_by: None,
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
@@ -1755,6 +1800,29 @@ impl Exercise {
             format!("[{}] EXCON CLARIFICATION REQUEST:\n{text_en}", self.world.clock()),
         );
         Ok(id)
+    }
+
+    /// Re-run feasibility on an undecided proposal, optionally with edited commands,
+    /// without deciding or changing its status.
+    pub fn revalidate_proposal(&mut self, pid: u64, commands: Option<Vec<Command>>) -> Result<()> {
+        if self.phase != Phase::Orders {
+            bail!("revalidation requires an open exercise turn");
+        }
+        let p = self
+            .proposal(pid)
+            .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
+        if !matches!(p.status, ProposalStatus::Pending | ProposalStatus::NeedsClarification) {
+            bail!("proposal {pid} is already {:?}", p.status);
+        }
+        let cmds = commands.unwrap_or_else(|| p.commands.clone());
+        let actor = p.source.label().to_string();
+        self.set_commands(pid, cmds)?;
+        self.record(
+            "proposal_revalidated",
+            MASTER,
+            json!({"proposal": pid, "source": actor, "commands": self.proposal(pid).map(|p| p.commands.clone()), "verdicts": self.proposal(pid).map(|p| p.verdicts.clone())}),
+        );
+        Ok(())
     }
 
     /// The EXCON decides on a proposal.

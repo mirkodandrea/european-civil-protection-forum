@@ -644,10 +644,12 @@ async fn openrouter_once(
             retry_status,
         ));
     }
+    // A 2xx with null/empty content is an intermittent provider glitch that often clears on retry.
     v["choices"][0]["message"]["content"]
         .as_str()
+        .filter(|t| !t.trim().is_empty())
         .map(str::to_string)
-        .ok_or_else(|| (anyhow::anyhow!("OpenRouter response has no content: {v}"), false))
+        .ok_or_else(|| (anyhow::anyhow!("OpenRouter response has no content: {v}"), true))
 }
 
 #[cfg(test)]
@@ -700,6 +702,24 @@ mod retry_tests {
         let out = llm.complete_live("t", "", &[ChatMessage::user("x")], false).await.unwrap();
         assert_eq!(out, "hi");
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn null_content_is_retried_then_succeeds() {
+        let null = r#"{"choices":[{"message":{"content":null}}]}"#;
+        let (url, hits) = serve(vec![http("200 OK", null.len(), null), http("200 OK", GOOD.len(), GOOD)]).await;
+        let llm = Llm::openrouter("k".into(), "m".into(), url);
+        assert_eq!(llm.complete_live("t", "", &[ChatMessage::user("x")], false).await.unwrap(), "hi");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn null_content_retries_are_bounded() {
+        let null = r#"{"choices":[{"message":{"content":null}}]}"#;
+        let (url, hits) = serve(vec![http("200 OK", null.len(), null); 3]).await;
+        let llm = Llm::openrouter("k".into(), "m".into(), url);
+        assert!(llm.complete_live("t", "", &[ChatMessage::user("x")], false).await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[tokio::test]

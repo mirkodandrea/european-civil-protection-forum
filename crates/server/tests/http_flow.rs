@@ -155,7 +155,7 @@ async fn master_player_llm_round_trip() {
         .unwrap()
         .clone();
     assert_eq!(p["commands"][0]["type"], "IssueWarning");
-    assert_eq!(p["verdicts"][0]["verdict"], "ok");
+    assert_eq!(p["verdicts"][0]["verdict"], "ok", "{p}");
     let (_, before) = call(&app, "GET", "/api/player/fire_commander", None).await;
     assert!(
         !before["inbox"]
@@ -3083,5 +3083,53 @@ async fn excon_clarify_endpoint_asks_the_player_and_keeps_the_proposal_open() {
     assert_eq!(s, Status::Ok);
     // Decided proposals cannot be sent back.
     let (s, _) = call(&app, "POST", &uri, Some(json!({"note": "again"}))).await;
+    assert_ne!(s, Status::Ok);
+}
+
+#[tokio::test]
+async fn revalidate_and_supersede_endpoints() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-03/send", None).await;
+    let parent = reply_parent(&app, "fire_commander").await;
+    call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "Warn F4", "reply_to": parent}))).await;
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["status"] == "pending")
+    })
+    .await;
+    let old = m["proposals"].as_array().unwrap().iter().find(|p| p["status"] == "pending").unwrap()["id"].as_u64().unwrap();
+    // Revalidate with an infeasible edit, then a feasible one; status never changes.
+    let uri = format!("/api/master/proposals/{old}/revalidate");
+    let (s, p) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"IssueWarning","zone":"F4"}]}))).await;
+    assert_eq!(s, Status::Ok, "{p}");
+    assert_eq!(p["status"], "pending");
+    assert_eq!(p["commands"][0]["type"], "IssueWarning");
+    assert!(p["descriptions"].as_array().unwrap().len() == 1 && p["verdicts"][0]["verdict"] == "rejected");
+    let (s, p) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"CutFireLine","along":"F4:E"}]}))).await;
+    assert_eq!(s, Status::Ok);
+    assert_eq!(p["commands"][0]["type"], "CutFireLine");
+    assert_eq!(p["verdicts"][0]["verdict"], "ok", "{p}");
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"Nope"}]}))).await;
+    assert_ne!(s, Status::Ok);
+    // EXCON asks; the player's answer supersedes the old proposal.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{old}/clarify"), Some(json!({"note":"Which zone?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let inbox = eventually(&app, "/api/player/fire_commander", |p| {
+        p["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")
+    })
+    .await;
+    let q = inbox["inbox"].as_array().unwrap().iter().rev().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
+    call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "Warn F4 now", "reply_to": q}))).await;
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["supersedes"] == old && p["status"] == "pending")
+    })
+    .await;
+    let ps = m["proposals"].as_array().unwrap();
+    let o = ps.iter().find(|p| p["id"] == old).unwrap();
+    assert_eq!(o["status"], "superseded");
+    let n = ps.iter().find(|p| p["supersedes"] == old).unwrap();
+    assert_eq!(o["superseded_by"], n["id"]);
+    // Superseded proposals can no longer be revalidated.
+    let (s, _) = call(&app, "POST", &uri, Some(json!({}))).await;
     assert_ne!(s, Status::Ok);
 }
