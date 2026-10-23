@@ -976,6 +976,13 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
     assert!(!acquired["map"]["cells"].as_array().unwrap().is_empty());
     let (_, debrief) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(debrief["knowledge_events"].as_array().unwrap().len(), 3);
+    // Zone disclosure: only the chosen zone becomes known; a bad zone is rejected untouched.
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"x","zones":["ZZ99"]}))).await.0, Status::BadRequest);
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"mayor","source":"Zone patrol","zones":["G5"],"layers":["fire","buildings","roads","lines","units"]}))).await.0, Status::Ok);
+    let (_, zoned) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(zoned["map"]["known_zones"], json!(["G5"]));
+    assert!(zoned["map"]["cells"].as_array().unwrap().len() > 2);
+    assert!(zoned["map"].get("stats").is_none());
 }
 
 #[tokio::test]

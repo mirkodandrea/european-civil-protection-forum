@@ -121,6 +121,7 @@ fn fog_view(enabled: &[bool], data: bool) -> Value {
     let mut v = json!({
         "cells":cells,"roads":{},"buildings":[],"lines":[],"drops":[],"warned":[],
         "reported_locations":[[1000,1050]],"forecast_products":[],"deployments":[],
+        "known_zones":(0..ZONES * ZONES).filter(|i| enabled[*i]).map(|i| zone_name(i % ZONES, i / ZONES)).collect::<Vec<_>>(),
     });
     if data {
         v["forecast_products"] = json!([forecast()]);

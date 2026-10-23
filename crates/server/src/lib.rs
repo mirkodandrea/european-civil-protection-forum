@@ -311,6 +311,11 @@ struct KnowledgeBody {
     observation: Option<exercise::MapObservation>,
     #[serde(default)]
     current_perimeter: bool,
+    /// Zones to disclose, with `layers` among fire/buildings/roads/lines/units (default: fire).
+    #[serde(default)]
+    zones: Vec<String>,
+    #[serde(default)]
+    layers: Vec<String>,
 }
 #[cfg_attr(
     not(target_arch = "wasm32"),
@@ -326,10 +331,22 @@ async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBod
         {
             return Err(bad("known role and information source required"));
         }
-        if b.current_perimeter && b.observation.is_some() {
-            return Err(bad("choose an observation or current_perimeter"));
+        if [b.current_perimeter, b.observation.is_some(), !b.zones.is_empty()]
+            .into_iter()
+            .filter(|x| *x)
+            .count()
+            > 1
+        {
+            return Err(bad("choose an observation, current_perimeter or zones"));
         }
-        let observation = if b.current_perimeter {
+        let observation = if !b.zones.is_empty() {
+            let layers = if b.layers.is_empty() {
+                vec!["fire".to_string()]
+            } else {
+                b.layers.clone()
+            };
+            ex.zone_observation(&b.zones, &layers)?
+        } else if b.current_perimeter {
             ex.current_perimeter()
         } else {
             b.observation.ok_or_else(|| bad("observation required"))?
@@ -432,6 +449,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "correction":ex.correction_view(),
         "digest": ex.world.digest(None),
         "conversations": ex.conversations,
+        "role_knowledge": ex.role_knowledge(),
     })))
 }
 

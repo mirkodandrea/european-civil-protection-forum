@@ -21,98 +21,10 @@ pub struct AdvancedProps {
 }
 #[function_component(Advanced)]
 pub fn advanced(props: &AdvancedProps) -> Html {
-    let tool = use_state(|| "none".to_string());
-    let pending = use_state(|| None::<Value>);
-    let damage = use_state(|| "destroyed".to_string());
-    let reason = use_state(String::new);
-    let hover = use_state(String::new);
     let p = props;
-    let preview = props
-        .responses
-        .get("intervention")
-        .cloned()
-        .unwrap_or_default();
-    let preview_valid = !preview.is_null()
-        && preview["generation"] == props.state["generation"]
-        && list(&preview["results"])
-            .iter()
-            .all(|r| r["result"]["Err"].is_null());
-    let paused =
-        props.state["clock_control"]["running"] != true && props.state["phase"] != "resolving";
-    let onmap = {
-        let stat = props.stat.clone();
-        let tool = tool.clone();
-        let pending = pending.clone();
-        let cb = props.action.clone();
-        let damage = damage.clone();
-        let hover = hover.clone();
-        Callback::from(move |point: Value| {
-            hover.set(format!(
-                "{} · {}, {} m",
-                text(&point["zone"]),
-                point["x"],
-                point["y"]
-            ));
-            let at = json!({"x":point["x"],"y":point["y"]});
-            let cmd = match tool.as_str() {
-                "ignite" => json!({"type":"Ignite","at":at,"radius_m":80}),
-                "drop" => json!({"type":"WaterDrop","at":at}),
-                "ext" => json!({"type":"Extinguish","area":{"at":at,"radius_m":150}}),
-                "extzone" => json!({"type":"Extinguish","area":point["zone"]}),
-                "warn" => json!({"type":"IssueWarning","zone":point["zone"]}),
-                "evac" => json!({"type":"EvacuateZone","zone":point["zone"]}),
-                "line" => {
-                    if let Some(from) = &*pending {
-                        let cmd = json!({"type":"CutFireLine","from":from,"to":at});
-                        pending.set(None);
-                        cmd
-                    } else {
-                        pending.set(Some(at));
-                        return;
-                    }
-                }
-                "bstatus" => {
-                    let x = point["x"].as_f64().unwrap_or(0.);
-                    let y = point["y"].as_f64().unwrap_or(0.);
-                    let b = list(&stat["buildings"])
-                        .iter()
-                        .filter_map(|b| {
-                            let d = (b["pos"][0].as_f64()? - x).powi(2)
-                                + (b["pos"][1].as_f64()? - y).powi(2);
-                            (d < 3600.).then_some((d, b))
-                        })
-                        .min_by(|a, b| a.0.total_cmp(&b.0));
-                    if let Some((_, b)) = b {
-                        json!({"type":"SetBuildingStatus","building":format!("#{}",b["id"]),"damage":*damage})
-                    } else {
-                        return;
-                    }
-                }
-                _ => return,
-            };
-            cb.emit(Action::store(
-                "/api/master/preview",
-                Some(json!({"commands":[cmd]})),
-                "intervention",
-            ));
-        })
-    };
     let form = |title: &str, endpoint: &str, initial: Value| html! {<ApiForm title={title.to_string()} endpoint={endpoint.to_string()} {initial} action={p.action.clone()} busy={p.busy}/>};
     html! {<main class="page advanced-grid">
-        <section><section class="card"><h2>{crate::i18n::ex("Situazione e interventi EXCON")}</h2><p class="muted">{crate::i18n::ex("I clic preparano un’anteprima. L’effetto richiede revisione e applicazione esplicita.")}</p><div id="tools" class="row">{for [("none","Ispeziona"),("ignite","Innesco"),("line",crate::i18n::ex("Linea tagliafuoco")),("drop",crate::i18n::ex("Lancio acqua")),("extzone","Spegni zona"),("ext",crate::i18n::ex("Spegni 150 m")),("evac","Evacua zona"),("warn","Avvisa zona"),("bstatus",crate::i18n::ex("Stato edificio"))].iter().map(|(id,label)|{let id=id.to_string();let tool=tool.clone();let pending=pending.clone();html!{<button class={if *tool==id{"primary"}else{""}} onclick={Callback::from(move |_|{tool.set(id.clone());pending.set(None);})}>{label}</button>}})}</div>
-        <select aria-label={crate::i18n::ex("Stato edificio")} onchange={{let damage=damage.clone();Callback::from(move|e|damage.set(api::select(e)))}}><option value="destroyed" selected={*damage=="destroyed"}>{"Distrutto"}</option><option value="damaged" selected={*damage=="damaged"}>{"Danneggiato"}</option><option value="intact" selected={*damage=="intact"}>{"Integro"}</option></select>
-        if pending.is_some(){<button onclick={{let pending=pending.clone();Callback::from(move |_|pending.set(None))}}>{crate::i18n::ex("Annulla primo punto")}</button>}
-        <SituationMap stat={p.stat.clone()} view={p.state["world"].clone()} onclick={onmap} pending={(*pending).clone()}/><p>{&*hover}</p>{widgets::stats(&p.state["world"]["stats"])}
-        </section>
-        <section class="card" id="physicalpreview"><h2>{crate::i18n::ex("Anteprima intervento fisico")}</h2>
-        if !preview.is_null(){{widgets::preview(&preview)}<p class="muted">{if preview_valid{crate::i18n::ex("Anteprima corrente")}else{crate::i18n::ex("Anteprima scaduta o non applicabile: calcola una nuova anteprima.")}}</p>}
-        <label>{crate::i18n::ex("Motivazione dell’intervento")}<input id="interventionreason" value={(*reason).clone()} oninput={{let reason=reason.clone();Callback::from(move|e|reason.set(api::input(e)))}}/></label>
-        <button id="applypreview" class="primary" disabled={p.busy||!preview_valid||!paused||reason.trim().is_empty()} onclick={{let cb=p.action.clone();let preview=preview.clone();let reason=reason.clone();Callback::from(move |_|cb.emit(Action::post("/api/master/preview/apply",json!({"generation":preview["generation"],"commands":preview["_request"]["commands"],"reason":*reason}))))}}>{crate::i18n::ex("Applica anteprima revisionata")}</button>
-        <p class="muted">{crate::i18n::ex("Richiede clock fermo e generazione ancora corrente.")}</p>{widgets::details(crate::i18n::ex("Correzione disponibile"),&p.master["correction"])}</section>
-        {form(crate::i18n::ex("Correggi ultimo intervento"),"/api/master/correct-intervention",json!({"reason":""}))}
-        <Forecast stat={p.stat.clone()} state={p.state.clone()} draft={p.responses.get("forecast").cloned().unwrap_or_default()} action={p.action.clone()} busy={p.busy}/>
-        <section class="card"><h2>{crate::i18n::ex("Modello operativo e missioni effettive")}</h2>{widgets::details(crate::i18n::ex("Stato operativo"),&p.state["world"]["operations"])}{widgets::details(crate::i18n::ex("Missioni: stato, posizione, arrivo ed esiti"),&p.state["world"]["deployments"])}{widgets::details(crate::i18n::ex("Risorse e impegni"),&p.state["resource_accounting"])}
-        {for list(&p.state["world"]["allocations"]).iter().filter(|a|a["returned"]!=a["qty"]).map(|a|{let cb=p.action.clone();let id=a["id"].clone();let qty=a["qty"].as_u64().unwrap_or(0).saturating_sub(a["returned"].as_u64().unwrap_or(0));html!{<button disabled={p.busy||qty==0} onclick={Callback::from(move |_|cb.emit(Action::post("/api/master/command",json!({"type":"ReturnResource","allocation":id,"qty":qty}))))}>{crate::exfmt!("Conferma ritorno #{} · {} unità","Confirm return #{} · {} units",a["id"],qty)}</button>}})}</section>
+        <section>
         <section class="card"><h2>{crate::i18n::ex("Collegamenti partecipanti")}</h2>{widgets::participant_links(&p.links,list(&p.stat["roles"]))}</section>
         </section>
         <section>
@@ -149,7 +61,7 @@ pub struct ForecastProps {
     pub busy: bool,
 }
 #[function_component(Forecast)]
-fn forecast(props: &ForecastProps) -> Html {
+pub fn forecast(props: &ForecastProps) -> Html {
     let members = use_state(|| "4".to_string());
     let horizons = use_state(|| "60,180".to_string());
     let direction = use_state(|| "10".to_string());

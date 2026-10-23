@@ -29,7 +29,7 @@ pub mod drafts;
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
-pub use knowledge::{FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
+pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
 use std::collections::BTreeMap;
 use std::io::Write;

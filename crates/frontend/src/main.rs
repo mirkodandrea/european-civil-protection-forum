@@ -2,6 +2,7 @@ mod advanced;
 mod api;
 mod chat;
 mod evaluator;
+mod excon_map;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod history;
@@ -850,7 +851,7 @@ impl Component for App {
             if self.state.is_null(){<p class="page">{i18n::t(l,"loading")}</p>}
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()}/> }
-            else if (self.page=="advanced"||self.active=="advanced")&&self.is_master(){<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}
+            else if (self.page=="advanced"||self.active=="advanced")&&self.is_master(){if self.page=="advanced"{<excon_map::ExconMap stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}
             else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{crate::i18n::ex("Apri la console conversazionale")}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
             else if self.is_master()&&self.active=="timeline"{<main class="page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy} oninject={ctx.link().callback(Msg::OpenInject)}/></main>}
             else{{self.view_chat(ctx)}}

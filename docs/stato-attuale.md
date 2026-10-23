@@ -73,3 +73,5 @@ lo stato e non prendono decisioni.
   interpretare manualmente le proposte.
 
 - Mappa interattiva (EXCON e giocatori): zoom/pan (rotellina, trascinamento, pinch, tastiera), ispezione hover/tocco, livelli, inquadra incendio, schermo intero, barra di scala. Per i giocatori l’ispezione mostra solo le celle riferite (fog of war): altrove «non riferito». Pagina di prova: `/maptest.html` (dati sintetici, selettori funzioni e zone abilitate).
+
+- Console EXCON unificata: la scheda Mappa è un’unica area di lavoro (mappa interattiva + pannello a schede Intervento / Informazioni ai ruoli / Previsione / Missioni). Le informazioni ai ruoli si rivelano per zona e per livello (incendio, edifici, strade, linee e lanci, squadre) con `POST /api/master/knowledge {role, source, zones, layers}`; il giocatore vede il resto velato (fog of war, `known_zones`). `GET /api/master` espone `role_knowledge`. Gli occupanti degli edifici restano sempre nascosti.

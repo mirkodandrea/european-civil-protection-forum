@@ -1,8 +1,7 @@
 use crate::{
     api::{self, list, text},
     i18n,
-    map::SituationMap,
-    widgets::{self, Proposal},
+    widgets::Proposal,
     Action, ActionKind, App, Msg,
 };
 use serde_json::{json, Value};
@@ -78,13 +77,6 @@ impl App {
                 }
             })
         };
-        let map_view = if master {
-            self.state["world"].clone()
-        } else {
-            let mut v = self.state["map"].clone();
-            v["deployments"] = self.state["deployments"].clone();
-            v
-        };
         let composer = html! {                    if master || selected!="injects" {<form class="composer" id="composer" onsubmit={submit}>
             if master{<div id="conversation-injects"><div class="row conversation-message-kind"><b>{crate::i18n::ex("Inject dell’esercitazione")}</b></div>
             <div id="inject-options" hidden={draft.mode!="inject"}>
@@ -124,7 +116,7 @@ impl App {
                     {composer}
                 </section>
             </main>
-            if master {<main id="map-view" class="page" hidden={self.active!="map"}><div class="map-layout"><section class="card"><h2>{text(&self.stat["name"])}</h2><SituationMap stat={self.stat.clone()} view={map_view}/>{widgets::stats(&self.state["world"]["stats"])}</section><aside><section class="card"><h3>{crate::i18n::ex("Condividi una rilevazione")}</h3><select id="report-role" value={self.field("report-role",&selected)} onchange={select("report-role")}>{for self.roles().iter().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={r["id"]==self.field("report-role",&selected)}>{text(&r["name"])}</option>})}</select><input id="report-source" placeholder={crate::i18n::ex("Fonte del rapporto")} value={self.field("report-source","")} oninput={field("report-source")}/><button id="publish" disabled={self.busy} onclick={{let role=self.field("report-role",&selected);let source=self.field("report-source","");ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/knowledge",json!({"role":role,"source":source,"current_perimeter":true}))))}}>{crate::i18n::ex("Pubblica perimetro")}</button></section><section class="card">{widgets::participant_links(&self.links,&self.roles())}</section></aside></div></main>}else{{self.view_tactical(ctx)}}
+            if master {<div id="map-view" hidden={self.active!="map"}><crate::excon_map::ExconMap stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/></div>}else{{self.view_tactical(ctx)}}
         </>}
     }
     fn chat_action(&self) -> Option<Action> {

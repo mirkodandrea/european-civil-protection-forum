@@ -91,8 +91,9 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   const peer=await api('/api/player/fire_commander');assert(peer.inbox.some(m=>m.original?.startsWith('F4 warning submitted')));
   await player.screenshot({path:path.join(out,'player-mobile-chat.png'),fullPage:true});
   await master.locator('[data-view="map"]').click();
+  await master.getByRole('tab',{name:'Informazioni ai ruoli'}).click();
   await master.locator('#report-source').fill('EXCON verified perimeter');
-  await master.locator('#publish').click();
+  await master.locator('#publish-all').click();
   await player.locator('[data-view="map"]').click();
   await player.locator('#map-status').filter({hasText:'Ultimo rapporto'}).waitFor();
   await player.screenshot({path:path.join(out,'player-mobile-map.png'),fullPage:true});

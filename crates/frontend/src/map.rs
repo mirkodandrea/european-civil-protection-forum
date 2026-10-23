@@ -18,7 +18,8 @@ const L_LABELS: u8 = 8;
 const L_GRID: u8 = 16;
 const L_FORECAST: u8 = 32;
 const L_UNITS: u8 = 64;
-const LAYERS: [(u8, &str); 7] = [
+const L_FOG: u8 = 128;
+const LAYERS: [(u8, &str); 8] = [
     (L_FIRE, "l_fire"),
     (L_ROADS, "l_roads"),
     (L_BUILDINGS, "l_buildings"),
@@ -26,6 +27,7 @@ const LAYERS: [(u8, &str); 7] = [
     (L_GRID, "l_grid"),
     (L_FORECAST, "l_forecast"),
     (L_UNITS, "l_units"),
+    (L_FOG, "l_fog"),
 ];
 
 /// Visible window in bitmap pixels: top-left `(ox, oy)`, width `SIZE / z`.
@@ -104,6 +106,12 @@ pub struct MapProps {
     /// Zoom/fit/fullscreen buttons and the layer menu.
     #[prop_or(true)]
     pub tools: bool,
+    /// Zones EXCON is composing a selection of (solid teal).
+    #[prop_or_default]
+    pub selected_zones: Vec<String>,
+    /// Zones already known to the role EXCON is looking at (dashed teal).
+    #[prop_or_default]
+    pub marked_zones: Vec<String>,
 }
 #[function_component(SituationMap)]
 pub fn situation_map(props: &MapProps) -> Html {
@@ -134,10 +142,11 @@ pub fn situation_map(props: &MapProps) -> Html {
                 props.lang.clone(),
                 tick.0,
                 *hidden,
+                (props.selected_zones.clone(), props.marked_zones.clone()),
             ),
             {
                 let view = view.clone();
-                move |(stat, v, simple, pending, lang, _, hidden)| {
+                move |(stat, v, simple, pending, lang, _, hidden, (selected, marked))| {
                     if let Some(canvas) = canvas.cast::<HtmlCanvasElement>() {
                         let _ = draw(
                             &canvas,
@@ -148,6 +157,8 @@ pub fn situation_map(props: &MapProps) -> Html {
                             lang,
                             *view.borrow(),
                             *hidden,
+                            selected,
+                            marked,
                         );
                     }
                 }
@@ -484,6 +495,25 @@ fn fire_bounds(stat: &Value, v: &Value) -> Option<(f64, f64, f64, f64)> {
     let y1 = (cells.iter().map(|c| c.1).max()? + 1) as f64 * cs;
     Some((x0, y0, x1, y1))
 }
+fn parse_zone(name: &str, cols: u64, rows: u64) -> Option<(u64, u64)> {
+    let name = name.trim().to_uppercase();
+    let col = name.as_bytes().first()?.checked_sub(b'A')? as u64;
+    let row = name.get(1..)?.parse::<u64>().ok()?;
+    (col < cols && row > 0 && row <= rows).then_some((col, row - 1))
+}
+/// Per-zone "known" flags (row-major) for player views, `None` for authoritative views.
+/// A zone is known when disclosed (`known_zones`) or when it holds a reported cell.
+fn fog_zones(stat: &Value, v: &Value) -> Option<Vec<bool>> {
+    let known = v["known_zones"].as_array()?;
+    let (cols, rows) = (stat["zones"]["cols"].as_u64()?, stat["zones"]["rows"].as_u64()?);
+    let mut out = vec![false; (cols * rows) as usize];
+    for name in known {
+        if let Some((c, r)) = parse_zone(text(name), cols, rows) {
+            out[(r * cols + c) as usize] = true;
+        }
+    }
+    Some(out)
+}
 fn seg_dist(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len2 = dx * dx + dy * dy;
@@ -577,6 +607,7 @@ fn probe_lines(
                 (Some(1), ..) => Some("insp_damaged"),
                 (_, true, _) => Some("insp_evacuating"),
                 (_, _, true) => Some("insp_threatened"),
+                _ if s["fully_evacuated"] == true => Some("insp_evacuated"),
                 _ => None,
             };
             if let Some(f) = flag {
@@ -601,7 +632,7 @@ fn probe_lines(
             out.push(line);
         }
     }
-    for d in list(&v["deployments"]) {
+    for d in list(&v["deployments"]).iter().chain(list(&v["observed_units"])) {
         let tk = &d["task"];
         if d["active_qty"] == 0 || tk["status"] == "cancelled" {
             continue;
@@ -660,6 +691,8 @@ fn draw(
     lang: &str,
     vw: View,
     hidden: u8,
+    selected: &[String],
+    marked: &[String],
 ) -> Result<(), wasm_bindgen::JsValue> {
     let on = |bit: u8| hidden & bit == 0;
     let (z, u) = (vw.z, 1. / vw.z);
@@ -777,6 +810,34 @@ fn draw(
     };
     let z = &stat["zones"];
     let zsize = n(&z["size_m"]) * k;
+    let (zcols, zrows) = (z["cols"].as_u64().unwrap_or(0), z["rows"].as_u64().unwrap_or(0));
+    if let Some(known) = fog_zones(stat, v).filter(|_| on(L_FOG)) {
+        // Fog of war: zones the role knows nothing about are veiled.
+        ctx.set_fill_style_str("rgba(24,36,40,.55)");
+        for row in 0..zrows {
+            for col in 0..zcols {
+                if !known[(row * zcols + col) as usize] {
+                    ctx.fill_rect(col as f64 * zsize, row as f64 * zsize, zsize, zsize);
+                }
+            }
+        }
+    }
+    for (names, fill, dash) in [(marked, "rgba(18,103,82,.10)", true), (selected, "rgba(18,103,82,.28)", false)] {
+        for name in names {
+            if let Some((col, row)) = parse_zone(name, zcols, zrows) {
+                let (x, y) = (col as f64 * zsize, row as f64 * zsize);
+                ctx.set_fill_style_str(fill);
+                ctx.fill_rect(x, y, zsize, zsize);
+                ctx.set_stroke_style_str("#126752");
+                ctx.set_line_width(3. * s);
+                if dash {
+                    ctx.set_line_dash(&js_sys::Array::of2(&(10. * s).into(), &(6. * s).into()))?;
+                }
+                ctx.stroke_rect(x + 2. * s, y + 2. * s, zsize - 4. * s, zsize - 4. * s);
+                ctx.set_line_dash(&js_sys::Array::new())?;
+            }
+        }
+    }
     ctx.set_line_width(u);
     ctx.set_stroke_style_str("rgba(0,0,0,.25)");
     for col in (0..=z["cols"].as_u64().unwrap_or(0)).filter(|_| on(L_GRID)) {
@@ -891,7 +952,9 @@ fn draw(
             "#ff7a00"
         } else if state["evacuating"] == true {
             "#00c8ff"
-        } else if state["inside"] == 0 && n(&state["evacuated"]) > 0. {
+        } else if state["fully_evacuated"] == true
+            || (state["inside"] == 0 && n(&state["evacuated"]) > 0.)
+        {
             "#2e6bff"
         } else {
             "#334144"
@@ -1002,7 +1065,11 @@ fn draw(
             ctx.set_line_dash(&js_sys::Array::new())?;
         }
     }
-    for d in list(&v["deployments"]).iter().filter(|_| on(L_UNITS)) {
+    for d in list(&v["deployments"])
+        .iter()
+        .chain(list(&v["observed_units"]))
+        .filter(|_| on(L_UNITS))
+    {
         let t = &d["task"];
         if d["active_qty"] == 0 || t["status"] == "cancelled" {
             continue;
