@@ -17,6 +17,7 @@ const SHADER_HANDLE: Handle<Shader> =
 /// Surface finish of a structure, drawn over its base colour in world (or
 /// object) metres. A shader def each: one pipeline per finish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[allow(dead_code)]
 pub enum Finish {
     /// StandardMaterial as Bevy draws it.
     #[default]

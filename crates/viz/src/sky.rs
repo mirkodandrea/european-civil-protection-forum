@@ -3,6 +3,8 @@
 //! this is not scenario meteorology or a georeferenced solar ephemeris.
 //! Scenario civil-clock hours drive the presentation as local solar hours.
 //! TTX_START_HOUR optionally overrides the initial hour for visual review.
+// ShaderType's generated `check` fns are never called.
+#![allow(dead_code)]
 
 use bevy::asset::load_internal_asset;
 use bevy::pbr::{
@@ -70,6 +72,7 @@ impl Default for DayClock {
 /// The sun's direction and colour as of the last [`update_sky`] run, shared
 /// with anything else that needs to agree with it — currently `crate::sea`.
 #[derive(Resource, Clone, Copy)]
+#[allow(dead_code)]
 pub struct SunState {
     /// Unit vector from the ground toward the sun, in Bevy world space.
     pub direction: Vec3,

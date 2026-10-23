@@ -116,6 +116,7 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .expect("exercise lock");
     let quality = quality::Quality::from_env();
     let capture = std::env::var("TTX_SNAPSHOT").is_ok();
+    #[allow(unused_mut)] // mutated only on wasm32
     let mut primary_window = Window {
         title: "PPRD East TTX — simulator".into(),
         visible: !capture,

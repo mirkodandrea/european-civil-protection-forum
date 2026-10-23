@@ -36,6 +36,7 @@ pub fn select(e: web_sys::Event) -> String {
     e.target_unchecked_into::<web_sys::HtmlSelectElement>()
         .value()
 }
+#[cfg(not(feature = "standalone"))]
 pub fn token() -> String {
     let w = window();
     let url = web_sys::Url::new(&w.location().href().unwrap_or_default()).unwrap();

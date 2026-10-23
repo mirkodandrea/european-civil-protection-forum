@@ -186,3 +186,9 @@ body:has(.standalone){height:100dvh;overflow:hidden}.standalone{height:100dvh;di
 .decision-reason{border:1px solid var(--danger,#c0392b);border-radius:6px;padding:6px 8px;font-weight:600}
 
 .sim-state{font-weight:700;margin-left:8px}.sim-state.running{background:#ffe3d6;color:#a3312c;animation:sim-pulse 1.4s ease-in-out infinite}.sim-state.paused{background:#dcf1e3;color:#1c5a3d}@keyframes sim-pulse{50%{opacity:.6}}@media(prefers-reduced-motion:reduce){.sim-state.running{animation:none}}
+
+.role-tabs{align-items:flex-end;gap:2px;padding:6px 10px 0;border-bottom:1px solid #bac9c0}
+.role-tabs button{border:1px solid #bac9c0;border-bottom:0;border-radius:8px 8px 0 0;background:#f1f5f1;color:var(--ink);margin-bottom:-1px;padding:6px 14px}
+.role-tabs button:hover{background:#fff}
+.role-tabs button.active{background:var(--ink);color:#fff;border-color:var(--ink);font-weight:600}
+.role-tabs button:first-child{margin-right:auto}

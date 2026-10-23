@@ -40,6 +40,7 @@ pub struct FoliageMaterial {
     pub plant_state: Handle<Image>,
 }
 
+#[allow(dead_code)]
 impl FoliageMaterial {
     pub fn new(plant_state: Handle<Image>) -> Self {
         FoliageMaterial {

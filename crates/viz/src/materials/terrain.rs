@@ -1,5 +1,7 @@
 //! The terrain's material (`shaders/terrain.wgsl`): the same on the desktop and
 //! in the browser.
+// ShaderType's generated `check` fns are never called.
+#![allow(dead_code)]
 
 use bevy::asset::load_internal_asset;
 use bevy::prelude::*;
@@ -39,6 +41,7 @@ pub struct TerrainMaterial {
     pub fire_state: Handle<Image>,
 }
 
+#[allow(dead_code)]
 impl TerrainMaterial {
     /// `mask_rect`: world metres to mask coordinates
     /// (`ground_mask::RoadMask::rect`). `ground_rect`: world metres to the

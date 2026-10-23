@@ -17,14 +17,6 @@ pub fn ex(it: &'static str) -> &'static str {
         it
     }
 }
-/// Like [`ex`] for templates: each `{}` takes the next argument.
-pub fn exf(it: &'static str, args: &[&str]) -> String {
-    let mut out = ex(it).to_string();
-    for a in args {
-        out = out.replacen("{}", a, 1);
-    }
-    out
-}
 pub fn en(it: &str) -> Option<&'static str> {
     Some(match it {
         "L’AI sta analizzando il messaggio…" => "The AI is analysing the message…",

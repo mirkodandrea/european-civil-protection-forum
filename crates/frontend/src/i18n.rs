@@ -1,6 +1,6 @@
 //! Player-facing UI strings: Italian and English complete; other languages use English.
 //! EXCON and evaluator views never call this (App::lang is always "it" for them).
-pub use crate::i18n_excon::{ex, exf, is_en, set_ui_lang};
+pub use crate::i18n_excon::{ex, is_en, set_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
     if lang == "it" {
         it(key)

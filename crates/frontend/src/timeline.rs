@@ -15,7 +15,6 @@ pub struct ExconTimelineProps {
     pub responses: BTreeMap<String, Value>,
     pub action: Callback<Action>,
     pub busy: bool,
-    pub controls: Html,
     pub oninject: Callback<String>,
 }
 
@@ -107,7 +106,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         .iter()
         .map(|r| (text(&r["id"]).to_string(), text(&r["name"]).to_string()))
         .collect::<Vec<_>>();
-    html! {<section class="card" id="excon-timeline"><div class="row"><h2>{crate::i18n::ex("Timeline EXCON")}</h2><div class="grow"/>{props.controls.clone()}<button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject a tutti")}</button><label>{crate::i18n::ex("Turno ")}<select aria-label={crate::i18n::ex("Turno timeline")} value={turn.to_string()} onchange={{let selected=selected.clone();Callback::from(move |e|selected.set(api::select(e)))}}>{for turns.iter().rev().map(|t|html!{<option value={t.to_string()} selected={*t==turn}>{t}</option>})}</select></label></div>
+    html! {<section class="card" id="excon-timeline"><div class="row"><h2>{crate::i18n::ex("Timeline EXCON")}</h2><div class="grow"/><button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject a tutti")}</button><label>{crate::i18n::ex("Turno ")}<select aria-label={crate::i18n::ex("Turno timeline")} value={turn.to_string()} onchange={{let selected=selected.clone();Callback::from(move |e|selected.set(api::select(e)))}}>{for turns.iter().rev().map(|t|html!{<option value={t.to_string()} selected={*t==turn}>{t}</option>})}</select></label></div>
         <div class="row timeline-clock"><span>{format!("{} · clock {}",text(&props.state["world"]["stats"]["clock"]),if running{crate::i18n::ex("in esecuzione")}else{crate::i18n::ex("fermo")})}</span><label>{crate::i18n::ex("Velocità clock × ")}<input aria-label={crate::i18n::ex("Velocità clock")} type="number" min="0.1" step="1" value={(*ratio).clone()} oninput={{let ratio=ratio.clone();Callback::from(move |e|ratio.set(api::input(e)))}}/></label><button id="timeline-clock-toggle" disabled={props.busy||props.state["phase"]=="resolving"||props.state["phase"]=="debrief"||ratio.parse::<f64>().map_or(true,|r|!r.is_finite()||r<=0.)} onclick={{let cb=props.action.clone();let ratio=ratio.parse::<f64>().unwrap_or(60.);Callback::from(move |_|cb.emit(Action::post("/api/master/clock",json!({"running":!running,"ratio":ratio,"reason":crate::i18n::ex("Controllo clock dalla timeline EXCON")}))))}}>{if running{crate::i18n::ex("Ferma clock")}else{crate::i18n::ex("Avvia clock")}}</button></div>
         <div class="row timeline-columns" style="align-items:flex-start; overflow-x:auto">{for columns.iter().map(|(id,name)|{
             let items=events.iter().filter(|e|e.turn==turn&&e.actor==*id).collect::<Vec<_>>();
