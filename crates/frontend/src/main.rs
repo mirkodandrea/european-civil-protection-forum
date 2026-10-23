@@ -5,6 +5,7 @@ mod evaluator;
 mod excon_map;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
+mod function;
 mod history;
 mod i18n;
 mod i18n_excon;
@@ -409,7 +410,7 @@ impl Component for App {
                     self.active = "timeline".into();
                 } else if !self.is_master() {
                     self.page = "chat".into();
-                    self.active = "map".into();
+                    self.active = "function".into();
                     if !cfg!(feature = "standalone") {
                         let _ = window()
                             .document()
@@ -842,7 +843,7 @@ impl Component for App {
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
-            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("map",i18n::t(l,"nav_map"))} {nav("advanced",i18n::t(l,"nav_tools"))} {nav("history",i18n::t(l,"nav_history"))} }else{{nav("map",i18n::t(l,"nav_work"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
+            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("map",i18n::t(l,"nav_map"))} {nav("advanced",i18n::t(l,"nav_tools"))} {nav("history",i18n::t(l,"nav_history"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
             <div class="grow"/>
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
             </nav>

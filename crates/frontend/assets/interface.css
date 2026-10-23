@@ -232,3 +232,23 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
   .tactical-view .mapbox canvas{max-height:100%!important}
   .excon-map{overflow:auto}
 }
+
+.function-view{max-width:1100px}
+.function-view .card>h2{margin-bottom:16px}
+.function-role .eyebrow{margin-bottom:6px}
+.function-role h2{margin-bottom:8px}
+.function-role h3{margin:20px 0 8px}
+.function-role ul{margin:0;padding-left:22px}
+.function-resource-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.function-resource{padding:14px;border:1px solid var(--line);border-radius:10px;min-width:0}
+.function-resource h3{margin-bottom:4px}
+.function-resource dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0 0}
+.function-resource dl div{min-width:0}
+.function-resource dt{font-size:12px;color:var(--muted)}
+.function-resource dd{margin:2px 0 0;font-size:18px;font-weight:700}
+.function-missions,.function-summaries{list-style:none;padding:0;margin:0}
+.function-missions li,.function-summaries li{padding:14px 0;border-top:1px solid var(--line)}
+.function-mission-heading,.function-summaries header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.function-missions p,.function-summaries p{margin-top:6px}
+.function-summaries header strong{font-size:14px}
+@media(max-width:520px){.function-view .card{padding:16px}.function-resource dl{gap:5px}.function-resource dt{font-size:11px}.function-resource dd{font-size:16px}}

@@ -386,6 +386,19 @@ pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
             None,
         );
     }
+    let summaries = state.lock().claim_turn_summaries();
+    futures::future::join_all(summaries.into_iter().map(|(id, lang, evidence)| {
+        let state = state.clone();
+        async move {
+            let result = if state.llm.is_available() {
+                state.llm.player_turn_summary(&lang, &evidence).await.ok()
+            } else {
+                None
+            };
+            state.lock().complete_turn_summary(id, result);
+        }
+    }))
+    .await;
 }
 
 /// Simulate the resolving turn one simulated second at a time. The lock is

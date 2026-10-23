@@ -29,6 +29,7 @@ pub mod drafts;
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
+pub mod summaries;
 pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
 use std::collections::BTreeMap;
@@ -391,6 +392,7 @@ pub struct TurnWindow {
 }
 
 pub struct Exercise {
+    pub(crate) turn_summaries: Vec<summaries::TurnSummary>,
     player_drafts: BTreeMap<u64, drafts::PlayerDraft>,
     pub training_design: design::TrainingDesign,
     pub current_path: Option<String>,
@@ -451,6 +453,7 @@ impl Exercise {
             })
             .collect();
         let mut ex = Exercise {
+            turn_summaries: Vec::new(),
             player_drafts: BTreeMap::new(),
             training_design: Default::default(),
             current_path: None,
@@ -713,6 +716,7 @@ impl Exercise {
             from_s: r.from_s,
             to_s: r.to_s,
         });
+        self.prepare_turn_summaries(r.turn);
         self.turn += 1;
         self.phase = Phase::Orders;
         self.world.new_turn();
@@ -733,6 +737,7 @@ impl Exercise {
         self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
         self.player_drafts.clear();
+        self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self

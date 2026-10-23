@@ -662,3 +662,35 @@ fn factory_operational_fire_line_reply_to_inject_is_fast() {
     }
     assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
 }
+
+#[test]
+fn private_turn_summaries_freeze_role_evidence_and_discard_rollback_results() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    ex.send_inject(None, "Visible", "EXCON", &["mayor".into()], "MAYOR_VISIBLE", &BTreeMap::new()).unwrap();
+    ex.send_inject(None, "Private", "EXCON", &["fire_commander".into()], "FIRE_PRIVATE", &BTreeMap::new()).unwrap();
+    ex.add_message("fire_commander", "regional_cp", MsgKind::Chat, None, "PRIVATE_THREAD", "PRIVATE_THREAD", None);
+    ex.add_message("mayor", "regional_cp", MsgKind::Chat, None, "OWN_CONVERSATION", "OWN_CONVERSATION", None);
+    ex.resolve_turn(Some(1)).unwrap();
+    let summaries = ex.claim_turn_summaries();
+    let (id, _, evidence) = summaries.iter().find(|(_, _, evidence)| evidence.to_string().contains("MAYOR_VISIBLE")).unwrap();
+    let evidence_text = evidence.to_string();
+    assert!(evidence_text.contains("OWN_CONVERSATION"));
+    assert!(!evidence_text.contains("FIRE_PRIVATE"));
+    assert!(!evidence_text.contains("PRIVATE_THREAD"));
+    assert!(!evidence_text.contains("text_en"));
+    assert_eq!(evidence["turn"], 1);
+    assert!(ex.claim_turn_summaries().is_empty(), "one AI call per role and turn");
+    ex.complete_turn_summary(*id, Some("Private recap".into()));
+    assert_eq!(ex.player_turn_summaries("mayor")[0].text, "Private recap");
+    assert!(ex.player_turn_summaries("fire_commander").iter().all(|s| s.text != "Private recap"));
+    ex.rollback(1).unwrap();
+    ex.resolve_turn(Some(1)).unwrap();
+    ex.claim_turn_summaries();
+    ex.complete_turn_summary(*id, Some("Stale response".into()));
+    assert!(ex.player_turn_summaries("mayor").iter().all(|s| s.text != "Stale response"));
+    assert_eq!(ex.player_turn_summaries("mayor").len(), 1);
+    // Serialized role responses contain no hidden prompt/evidence.
+    let response = serde_json::to_value(ex.player_turn_summaries("mayor")).unwrap();
+    assert!(response[0].get("evidence").is_none());
+}

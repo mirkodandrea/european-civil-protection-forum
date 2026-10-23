@@ -480,6 +480,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "time_s":ex.world.time_s(),
         "inbox": ex.inbox(&role),
         "drafts": ex.player_drafts(&role),
+        "turn_summaries": ex.player_turn_summaries(&role),
         "resources": ex.world.d.pools.get(&role),
         "resource_accounting": ex.resource_accounting(Some(&role))[&role],
         "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),

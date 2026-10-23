@@ -29,8 +29,14 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
 2. I partecipanti comunicano in chat solo con gli altri ruoli. Nelle proprie
    conversazioni vedono anche gli inject ricevuti dal proprio ruolo, senza
    condividerli automaticamente con l’interlocutore. Non è richiesta conferma
-   della lingua predefinita, che resta modificabile dal menu. Nella vista di
-   lavoro leggono gli inject, consultano risorse e missioni e propongono azioni
+   della lingua predefinita, che resta modificabile dal menu. La scheda iniziale
+   “Funzione” è in sola lettura: descrive ruolo, capacità e
+   asset, distingue risorse disponibili, prenotate e impiegate e raccoglie i
+   riepiloghi AI dei turni conclusi. I riepiloghi usano solo le evidenze visibili
+   al ruolo (azioni proprie e messaggi ricevuti/inviati), senza contesto privato
+   di altri ruoli o EXCON; se l’AI manca, la scheda lo indica. Il rollback elimina
+   i riepiloghi dei turni annullati. Nella scheda “Injects” leggono gli inject
+   e propongono azioni
    tramite moduli e mappa, oppure preparano una decisione con l’AI. L’AI può
    tradurre il testo, riconoscere azioni proponibili e chiedere chiarimenti.
 3. Il partecipante rivede e conferma la bozza AI oppure invia una proposta

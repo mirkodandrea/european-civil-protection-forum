@@ -116,7 +116,7 @@ impl App {
                     {composer}
                 </section>
             </main>
-            if master {<div id="map-view" hidden={self.active!="map"}><crate::excon_map::ExconMap stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/></div>}else{{self.view_tactical(ctx)}}
+            if master {<div id="map-view" hidden={self.active!="map"}><crate::excon_map::ExconMap stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/></div>}else{{self.view_tactical(ctx)}{self.view_function()}}
         </>}
     }
     fn chat_action(&self) -> Option<Action> {
