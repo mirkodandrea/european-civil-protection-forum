@@ -28,3 +28,15 @@ scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](
 - Richiesta e chiarimento vengono concatenati senza punteggiatura nella bozza
   inviata a EXCON.
 - Il motivo di un rifiuto EXCON è visibile al player solo se EXCON scrive una nota.
+
+## Playthrough da completare
+
+Non ancora percorso a causa del blocco ormai risolto; da rifare sulla build corrente
+(attenzione: `trunk serve` va forzato al rebuild se cambia solo `crates/sim`):
+
+- Approvazione riuscita di una proposta fattibile (es. linea tagliafuoco, evacuazione
+  con bus sufficienti) e consegna al simulatore.
+- Avanzamento del turno e risoluzione live; verifica di missioni in corso e risorse
+  impegnate nella vista tattica del player.
+- Tab EXCON Mappa, Strumenti e Cronologia; ruolo Regional Civil Protection.
+- Rollback e riproposta dopo un rifiuto ("Rispondi di nuovo").
