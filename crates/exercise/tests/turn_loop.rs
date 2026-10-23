@@ -601,3 +601,12 @@ fn rollback_cannot_restore_deployments_above_current_reviewed_limits() {
     ex.set_resource_limits(serde_json::from_value(json!({"total":{"ground_crews":1}})).unwrap(),"Review restoration capacity",None).unwrap();
     ex.rollback(2).unwrap();assert_eq!(ex.world.d.pools["fire_commander"]["ground_crews"].used,1);
 }
+
+#[test]
+fn named_place_fire_line_player_action_terminates() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"Pineta Fuel Station","to":"Pineta Primary School"})).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
+}

@@ -491,7 +491,26 @@ fn draw(
             );
         }
     }
-    if let Some(p) = pending {
+    if let Some(p) = pending.filter(|p| p["zone"].is_string()) {
+        let zone = text(&p["zone"]).trim().to_uppercase();
+        if let Some(col) = zone.as_bytes().first().and_then(|c| c.checked_sub(b'A')) {
+            if let Ok(row) = zone.get(1..).unwrap_or("").parse::<u64>() {
+                if (col as u64) < z["cols"].as_u64().unwrap_or(0)
+                    && row > 0
+                    && row <= z["rows"].as_u64().unwrap_or(0)
+                {
+                    let x = col as f64 * zsize;
+                    let y = (row - 1) as f64 * zsize;
+                    ctx.set_fill_style_str("rgba(18,103,82,.16)");
+                    ctx.fill_rect(x, y, zsize, zsize);
+                    ctx.set_stroke_style_str("#126752");
+                    ctx.set_line_width(4.);
+                    ctx.stroke_rect(x + 2., y + 2., zsize - 4., zsize - 4.);
+                }
+            }
+        }
+    }
+    if let Some(p) = pending.filter(|p| p["x"].is_number() && p["y"].is_number()) {
         ctx.begin_path();
         ctx.arc(
             n(&p["x"]) * k,

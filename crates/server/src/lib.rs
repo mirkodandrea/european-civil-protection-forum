@@ -447,7 +447,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         .proposals
         .iter()
         .filter(|p| p.source.label() == role)
-        .map(|p| json!({"id": p.id, "turn": p.turn, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence}))
+        .map(|p| json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence}))
         .collect();
     Ok(Json(json!({
         "map": ex.player_map(&role)?,

@@ -2669,3 +2669,22 @@ async fn master_history_retains_all_operational_events() {
     assert_eq!(events[0]["data"]["index"], 0);
     assert_eq!(events[349]["data"]["index"], 349);
 }
+
+#[tokio::test]
+async fn structured_fire_line_action_endpoints_terminate() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let body = json!({"text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
+    let (status, _) = call_key(&app, "POST", "/api/player/fire_commander/actions", Some(body), Some("test-fire")).await;
+    assert_eq!(status, Status::Ok);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["proposals"].as_array().unwrap().len(), 1);
+    let (s, _) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(s, Status::Ok);
+    let (s, _) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert_eq!(s, Status::Ok);
+}

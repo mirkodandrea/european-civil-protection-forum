@@ -6,6 +6,7 @@ mod history;
 mod map;
 #[cfg(feature = "standalone")]
 mod standalone;
+mod tactical;
 mod timeline;
 mod widgets;
 
@@ -19,6 +20,7 @@ use yew::prelude::*;
 #[derive(Clone, PartialEq)]
 pub enum ActionKind {
     Ordinary,
+    WorkSubmit,
     Store(String),
     Send(String, String),
     Prepare(String),
@@ -119,6 +121,7 @@ pub enum Msg {
     Done(ActionKind, Result<Value, String>),
     Select(String),
     OpenInject(String),
+    OpenWork(Option<String>),
     CloseInject,
     View(String),
     Field(String, String),
@@ -592,6 +595,9 @@ impl Component for App {
                                 }
                             }
                             ActionKind::Submit(to) => {
+                                if to == "master" && !self.is_master() {
+                                    self.fields.insert("work:open".into(), "false".into());
+                                }
                                 self.notice = if value["translation_failed"] == true {
                                     "Inviato · traduzione non disponibile".into()
                                 } else if value["proposal"].is_null() {
@@ -610,6 +616,10 @@ impl Component for App {
                                     self.error = e
                                 }
                             }
+                            ActionKind::WorkSubmit => {
+                                self.fields.insert("work:open".into(), "false".into());
+                                self.notice = "Proposta inviata a EXCON per revisione".into();
+                            }
                             ActionKind::Ordinary => {}
                         }
                     }
@@ -623,6 +633,35 @@ impl Component for App {
                     ctx.link().send_message(Msg::Action(action));
                 }
                 self.request_refresh(ctx);
+            }
+            Msg::OpenWork(parent) => {
+                let parent = parent.unwrap_or_default();
+                if self.field("work:reply_to", "") != parent {
+                    if let Some(draft) = self.drafts.remove("master") {
+                        if let Some(id) = draft.private["id"].as_u64() {
+                            self.dismissed.insert(id);
+                        }
+                    }
+                    self.fields.remove("work:free_text");
+                    self.fields.remove("work:reply");
+                    self.fields.insert("work:mode".into(), "action".into());
+                }
+                self.fields.insert("work:reply_to".into(), parent);
+                self.fields.insert("work:open".into(), "true".into());
+                self.error.clear();
+                gloo_timers::callback::Timeout::new(0, || {
+                    use wasm_bindgen::JsCast;
+                    if let Some(field) = window().document().and_then(|d| {
+                        d.query_selector(".work-modal [role=tab][aria-selected=true]")
+                            .ok()
+                            .flatten()
+                    }) {
+                        if let Some(el) = field.dyn_ref::<web_sys::HtmlElement>() {
+                            let _ = el.focus();
+                        }
+                    }
+                })
+                .forget();
             }
             Msg::OpenInject(id) => {
                 self.selected = id;

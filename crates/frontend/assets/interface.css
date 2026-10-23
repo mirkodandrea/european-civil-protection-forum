@@ -149,3 +149,37 @@ body:has(.standalone){height:100dvh;overflow:hidden}.standalone{height:100dvh;di
 .history-table th,.history-table td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid var(--line)}
 .history-table th{background:#edf3ef}.history-table td:nth-child(2){white-space:nowrap}.history-table pre{max-height:300px}
 .history-table details{margin:0}.history-table summary{font-weight:600}
+/* Player tactical workspace: situation and role timeline; responses live in dialogs. */
+.tactical-view{max-width:none}.tactical-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tactical-toolbar>div:first-child{display:flex;align-items:baseline;gap:10px}.tactical-toolbar strong{font-size:18px}
+.tactical-resources{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.resource-token{display:flex;align-items:center;gap:9px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;min-width:150px;flex:1}
+.resource-token>strong{font-size:26px;font-variant-numeric:tabular-nums;line-height:1;color:var(--accent)}
+.resource-token span{font-size:13px;font-weight:600}.resource-token small{display:block;font-size:11px;font-weight:400}
+.tactical-grid{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(310px,1fr);gap:10px;align-items:start}
+.tactical-grid>.card{min-width:0;margin:0}.tactical-map-heading,.tactical-timeline>header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tactical-map h3,.tactical-timeline h3{margin:0}.selection-chip{background:#e0efe7;color:#126752;padding:3px 7px;border-radius:5px;font-weight:600;font-size:12px}
+.observation-status{font-size:12px;margin:7px 0;padding:6px 8px;border-left:3px solid #126752;background:#f0f6f2}
+.observation-status.unknown{background:#fff8e8;border-color:#bd8832;color:#785a21}
+.tactical-view .mapbox canvas{max-height:53dvh!important;max-width:100%!important;width:auto!important;height:auto!important}
+.tactical-view .map-legend{font-size:11px}.map-instruction{font-size:12px;color:var(--muted);margin-top:6px}
+.tactical-timeline>header{padding-bottom:9px;border-bottom:1px solid var(--line)}.tactical-timeline>header label{white-space:nowrap;font-size:12px}
+.tactical-timeline>header small{font-size:11px}.tactical-events{list-style:none;padding:0;margin:0;max-height:calc(100dvh - 380px);min-height:200px;overflow:auto}
+.tactical-event{position:relative;border:1px solid var(--line);border-left:3px solid #c18a3a;border-radius:7px;margin:10px 0 0;padding:10px;background:#fffcf5}
+.tactical-event.response-event{border-left-color:#4d8c76;background:#f6faf7}
+.event-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:10px;color:var(--muted)}.event-meta>span:first-child{font-weight:750;letter-spacing:.08em}
+.event-meta .pill{font-size:10px;padding:2px 6px}.tactical-event h4{margin:7px 0 3px;font-size:15px}.tactical-event p{font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}
+.event-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}.event-footer small{font-size:11px}.event-replied{color:#126752;margin-left:auto}
+.tactical-empty{padding:24px 10px;color:var(--muted);font-size:13px}.tactical-empty p{margin-top:5px}.decision-note{border-top:1px solid var(--line);padding-top:6px}
+.tactical-missions{font-size:13px;border-top:1px solid var(--line);padding-top:8px}.tactical-missions p{padding:6px 0}
+.work-modal{width:min(660px,100%);max-height:90dvh;overflow:auto;padding:16px;border-radius:12px;background:white;box-shadow:0 12px 60px #0005}
+.work-modal>header{display:flex;align-items:center;justify-content:space-between;gap:10px}.work-modal h2{font-size:20px}
+.work-context{margin-top:10px;padding:10px;background:#fff9ec;border-left:3px solid #c18a3a;border-radius:5px}.work-context small{margin-left:8px;font-size:11px}.work-context p{margin-top:4px;font-size:14px;white-space:pre-wrap}
+.work-approval-note{font-size:12px;color:var(--muted);margin:8px 0}.work-modal #player-work{padding:0;border:0;margin:0;background:transparent}
+.work-modes{display:flex;gap:4px;border-bottom:1px solid var(--line);padding-bottom:7px;margin-bottom:10px}.work-modes button[aria-selected=true]{background:var(--ink);color:white;border-color:var(--ink)}
+.work-modal #player-work>div>button.primary{width:100%;margin-top:12px}.work-modal .proposal-preview{margin-top:10px;padding:10px;background:#f0f6f2;border-radius:7px}
+.work-modal .proposal-preview>button{margin:6px 5px 0 0}.work-modal textarea{min-height:115px}
+@media(max-width:1050px){.tactical-grid{grid-template-columns:minmax(0,1fr)}.tactical-view .mapbox canvas{max-height:38dvh!important}.tactical-events{max-height:none;min-height:0}.tactical-toolbar>div:first-child{display:block}.resource-token{min-width:130px}.tactical-resources{gap:5px}.work-modal{max-height:94dvh}}
+
+.tactical-event.response-event.rejected{border-left-color:#a3312c;background:#fbf1ef}.event-replied.rejected{color:#a3312c;font-weight:600}
+#error:not(:empty){position:sticky;top:0;z-index:40;padding:8px 16px;background:#fbeceb;border-bottom:1px solid #e3b5b1}.modal-backdrop{align-items:flex-start;padding-top:6dvh}

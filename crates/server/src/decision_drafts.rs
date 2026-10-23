@@ -14,6 +14,8 @@ pub(crate) struct PrepareBody {
     to: String,
     text: String,
     #[serde(default)]
+    reply_to: Option<u64>,
+    #[serde(default)]
     draft: Option<u64>,
     #[serde(default)]
     revision: Option<u64>,
@@ -37,7 +39,7 @@ pub(crate) async fn prepare(
     };
     let (draft, role_spec, language, catalogue, others, gazetteer, digest, history) = {
         let mut ex = state.lock();
-        let draft = ex.begin_player_draft(&role, &body.to, &body.text, previous)?;
+        let draft = ex.begin_player_draft(&role, &body.to, &body.text, previous, body.reply_to)?;
         let role_spec = ex.world.scn.role(&role).unwrap().clone();
         let others = ex
             .world
@@ -47,7 +49,7 @@ pub(crate) async fn prepare(
             .filter(|r| r.id != role)
             .map(|r| (r.id.clone(), r.name.clone()))
             .collect::<Vec<_>>();
-        let digest = json!({"clock":ex.world.clock(),"recipient":body.to,"map":ex.player_map(&role)?,"resources":ex.world.d.pools.get(&role),"deployments":ex.world.d.tasks.iter().filter(|task|task.role==role).collect::<Vec<_>>()});
+        let digest = json!({"clock":ex.world.clock(),"recipient":body.to,"inject":body.reply_to.and_then(|id|ex.messages.iter().find(|m|m.id==id)),"map":ex.player_map(&role)?,"resources":ex.world.d.pools.get(&role),"deployments":ex.world.d.tasks.iter().filter(|task|task.role==role).collect::<Vec<_>>()});
         let history = ex
             .conversation(&role)
             .into_iter()

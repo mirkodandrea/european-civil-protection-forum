@@ -137,9 +137,11 @@ pub fn proposal(props: &ProposalProps) -> Html {
             ));
         })
     };
+    let no_actions=editable&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
+    let blocked=no_actions||editable&&list(&p["verdicts"]).iter().any(|v|v["verdict"]!="ok");
     html! {<section class="proposal-inline" data-proposal={id.to_string()}>
         <div class="proposal-head"><b>{"Azioni proposte"}</b><span class="pill pending">{api::status(text(&p["status"]))}</span></div>
-        <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p><p class="proposal-summary">{text(&p["summary"])}</p>
+        <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
             html!{<fieldset class="command-card"><legend>{command_name(text(&cmd["type"]))}</legend>
@@ -161,10 +163,11 @@ pub fn proposal(props: &ProposalProps) -> Html {
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{"Inject proposti"}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
         <label class="proposal-note"><span>{"Nota EXCON (facoltativa)"}</span><input data-note="" aria-label="Nota EXCON" value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|note.set(api::input(e)))}}/></label>
         <p class="error">{&*error}</p>
+        if blocked{<p class="danger proposal-blocked" role="status">{if no_actions{"Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta."}else{"Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta."}}</p>}
         if needs_preview {<button disabled={props.busy||!editable} onclick={{let cb=props.action.clone();let commands=(*commands).clone();Callback::from(move |_|cb.emit(Action::store("/api/master/preview",Some(json!({"commands":commands})),format!("proposal:{id}"))))}}>{"Esamina anteprima fisica"}</button>
             if !props.preview.is_null(){{preview(&props.preview)}}
         }
-        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{"Approva azione"}</button><button data-reject="" disabled={props.busy||!editable} onclick={decide(false)}>{"Rifiuta"}</button>
+        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{"Approva azione"}</button><button data-reject="" disabled={props.busy||!editable} onclick={decide(false)}>{"Rifiuta"}</button>
         if p["status"]=="approved"{<button disabled={props.busy} data-execute={id.to_string()} onclick={{let cb=props.action.clone();Callback::from(move |_|cb.emit(Action::post(format!("/api/master/proposals/{id}/execute"),json!({}))))}}>{"Esegui ora ordine approvato"}</button>}
         </div>{details("Cronologia ed esiti effettivi",&json!({"history":p["history"],"executions":p["executions"]}))}
     </section>}

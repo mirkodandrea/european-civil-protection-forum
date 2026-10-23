@@ -18,6 +18,7 @@ pub struct PlayerDraft {
     pub id: u64,
     pub revision: u64,
     pub to: String,
+    pub reply_to: Option<u64>,
     pub status: DraftStatus,
     pub message: String,
     pub question: Option<String>,
@@ -73,11 +74,30 @@ impl Exercise {
         to: &str,
         text: &str,
         previous: Option<(u64, u64)>,
+        reply_to: Option<u64>,
     ) -> Result<PlayerDraft> {
         self.validate_chat(role, to, text, true)?;
+        if let Some(parent) = reply_to {
+            if to != MASTER
+                || !self.messages.iter().any(|m| {
+                    m.id == parent
+                        && m.to == role
+                        && matches!(
+                            m.kind,
+                            crate::MsgKind::Inject | crate::MsgKind::Clarification
+                        )
+                        && m.inject_id.is_some()
+                })
+            {
+                bail!("reply_to must reference an inject or clarification delivered to your role");
+            }
+        }
         let mut draft = if let Some((id, revision)) = previous {
             let mut draft = self.private_draft(role, id, revision)?;
-            if draft.to != to || draft.status != DraftStatus::NeedsClarification {
+            if draft.to != to
+                || draft.reply_to != reply_to
+                || draft.status != DraftStatus::NeedsClarification
+            {
                 bail!("this draft is not awaiting your answer");
             }
             if draft.transcript.len() >= 16 {
@@ -100,6 +120,7 @@ impl Exercise {
                 revision: 1,
                 role: role.into(),
                 to: to.into(),
+                reply_to,
                 status: DraftStatus::Interpreting,
                 message: text.into(),
                 question: None,
@@ -236,16 +257,31 @@ impl Exercise {
         if draft.status != DraftStatus::Ready && !unavailable {
             bail!("answer the assistant's question before sending this decision");
         }
-        let interpreted = unavailable || !draft.actions.is_empty();
-        let result = self.chat(
-            role,
-            &draft.to,
-            &draft.message,
-            english,
-            translated,
-            translation_failed,
-            interpreted,
-        )?;
+        let interpreted = draft.reply_to.is_some() || unavailable || !draft.actions.is_empty();
+        let result = if let Some(parent) = draft.reply_to {
+            let pid = self.player_reply(
+                role,
+                &draft.message,
+                parent,
+                crate::DecisionEvidence::judgment("Player reviewed response to received inject"),
+            )?;
+            let message = self.messages.last_mut().expect("recorded player reply");
+            message.text = translated.into();
+            message.text_en = english.into();
+            message.original = Some(draft.message.clone());
+            message.translation_failed = translation_failed;
+            (message.id, Some(pid))
+        } else {
+            self.chat(
+                role,
+                &draft.to,
+                &draft.message,
+                english,
+                translated,
+                translation_failed,
+                interpreted,
+            )?
+        };
         if let Some(pid) = result.1 {
             if unavailable {
                 self.parse_failed(
