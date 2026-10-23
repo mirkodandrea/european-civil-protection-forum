@@ -3,6 +3,7 @@ mod api;
 mod chat;
 mod evaluator;
 mod history;
+mod i18n;
 mod map;
 #[cfg(feature = "standalone")]
 mod standalone;
@@ -139,6 +140,13 @@ impl App {
     }
     fn is_evaluator(&self) -> bool {
         self.page == "evaluator"
+    }
+    /// UI language: the player's selected language; EXCON and evaluator stay Italian.
+    fn lang(&self) -> String {
+        match text(&self.state["player"]["language"]) {
+            l if !l.is_empty() && !self.is_master() && !self.is_evaluator() => l.to_string(),
+            _ => "it".into(),
+        }
     }
     fn field(&self, key: &str, default: &str) -> String {
         self.fields
@@ -791,22 +799,24 @@ impl Component for App {
             let active = self.active == id;
             html! {<button class={if active{"active"}else{""}} data-view={id.clone()} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}</button>}
         };
+        let l = self.lang();
+        let l = l.as_str();
         let href = |path: &str| format!("{path}?token={}", api::encode(&self.token));
         let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{"Avvia esercitazione"}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{"Avanza turno →"}</button></div>};
         html! {<>
-            <header class="topbar"><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{format!("Turno {} · {}",self.state["turn"],phase)}</span><div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{" · tempo controllato da EXCON"}</div></div><div class="grow"/>
+            <header class="topbar"><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span><div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div></div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history"&&(self.active!="timeline"||self.page!="chat") {{time_controls.clone()}}
-            if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label="Lingua" value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
+            if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label={i18n::t(l,"language")} value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
             </header>
 
-            <nav class="navigation" aria-label="Viste">
-            if self.page=="chat" {if self.is_master(){ {nav("timeline","Timeline")} {nav("map","Mappa")} {nav("advanced","Strumenti")} {nav("history","Cronologia")} }else{{nav("map","Lavoro operativo")} {nav("chat","Conversazioni")}}}
+            <nav class="navigation" aria-label={i18n::t(l,"views")}>
+            if self.page=="chat" {if self.is_master(){ {nav("timeline","Timeline")} {nav("map","Mappa")} {nav("advanced","Strumenti")} {nav("history","Cronologia")} }else{{nav("map",i18n::t(l,"nav_work"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
             <div class="grow"/>
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{"Timeline"}</a><a id="advanced" href={href("advanced.html")}>{"Strumenti avanzati ↗"}</a>}
             </nav>
             <div id="error" class="error" role="alert">{&self.error}</div>
             if (self.page=="advanced"||self.active=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
-            if self.state.is_null(){<p class="page">{"Caricamento della situazione…"}</p>}
+            if self.state.is_null(){<p class="page">{i18n::t(l,"loading")}</p>}
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()}/> }
             else if (self.page=="advanced"||self.active=="advanced")&&self.is_master(){<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}

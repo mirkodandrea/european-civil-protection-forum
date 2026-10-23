@@ -168,17 +168,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("pt", "Português"),
 ];
 pub fn status(s: &str) -> &str {
-    match s {
-        "pending" => "Da revisionare",
-        "parsing" => "Interpretazione AI…",
-        "needs_clarification" => "Serve un chiarimento",
-        "approved" => "Approvata · in attesa del turno",
-        "applied" => "Eseguita / inviata",
-        "failed" => "Esecuzione fallita",
-        "rolled_back" => "Annullata dal rollback",
-        "rejected" => "Rifiutata",
-        _ => s,
-    }
+    crate::i18n::status("it", s)
 }
 
 #[cfg(feature = "standalone")]

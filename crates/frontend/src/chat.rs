@@ -1,5 +1,6 @@
 use crate::{
     api::{self, list, text},
+    i18n,
     map::SituationMap,
     widgets::{self, Proposal},
     Action, ActionKind, App, Msg,
@@ -17,6 +18,8 @@ impl App {
     fn view_chat_content(&self, ctx: &Context<Self>, composer_only: bool) -> Html {
         let draft = self.draft();
         let master = self.is_master();
+        let l = self.lang();
+        let l = l.as_str();
         let field = |key: &str| {
             let key = key.to_string();
             ctx.link()
@@ -91,29 +94,29 @@ impl App {
                 <p class="muted">{"Il player risponde dalla vista di lavoro; la proposta appare nella timeline per l’approvazione. L’invio dell’inject non cambia la fisica."}</p>
             </div></div>}
             if self.busy{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
-            <textarea id="text" maxlength="8000" aria-label="Messaggio" placeholder="Scrivi un messaggio…" required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
-            <div class="row">if master{<small>{"Testo EXCON in inglese · tradotto per il destinatario"}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{if self.busy{self.notice.as_str()}else{""}}</span><button id="send" class="primary" disabled={send_disabled}>{if self.busy{"Invio…"}else if master{"Invia inject →"}else{"Invia →"}}</button></div>
-        </form>}else{<div class="composer"><p class="muted">{"Gli inject sono informazioni di EXCON. Rispondi usando le conversazioni tra partecipanti o le proposte operative dalla mappa."}</p></div>}};
+            <textarea id="text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
+            <div class="row">if master{<small>{"Testo EXCON in inglese · tradotto per il destinatario"}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{if self.busy{self.notice.as_str()}else{""}}</span><button id="send" class="primary" disabled={send_disabled}>{if self.busy{i18n::t(l,"sending")}else if master{"Invia inject →"}else{i18n::t(l,"send")}}</button></div>
+        </form>}else{<div class="composer"><p class="muted">{i18n::t(l,"inject_info")}</p></div>}};
         if composer_only {
             return composer;
         }
         html! {<>
             <main id="chat-view" class="workspace" hidden={self.active!="chat"}>
-                <aside class="contacts"><h3>{"Conversazioni"}</h3><div id="contact-list" style="display:contents">{for self.contacts().iter().map(|r|{
+                <aside class="contacts"><h3>{i18n::t(l,"conversations")}</h3><div id="contact-list" style="display:contents">{for self.contacts().iter().map(|r|{
                     let id=text(&r["id"]).to_string();let seen=self.seen.get(&id).copied().unwrap_or(0);let unread=self.messages().iter().filter(|m|self.in_thread(m,&id)&&m["from"]!=own&&m["id"].as_u64().unwrap_or(0)>seen).count();let role=id.clone();
-                    html!{<button class={classes!("contact",(selected==id).then_some("active"))} data-contact={id.clone()} onclick={ctx.link().callback(move |_|Msg::Select(role.clone()))}><span>{text(&r["name"])}<small>{if r["id"]=="master"{"Direzione esercitazione"}else{"Player · conversazione diretta"}}</small></span>if unread>0{<span class="unread">{unread}</span>}</button>}
+                    html!{<button class={classes!("contact",(selected==id).then_some("active"))} data-contact={id.clone()} onclick={ctx.link().callback(move |_|Msg::Select(role.clone()))}><span>{text(&r["name"])}<small>{if r["id"]=="master"{i18n::t(l,"excon_dir")}else{i18n::t(l,"player_direct")}}</small></span>if unread>0{<span class="unread">{unread}</span>}</button>}
                 })}</div></aside>
-                <section class="conversation"><div class="thread-head"><div><h2 id="thread-name">{text(&contact["name"])}</h2><small id="thread-description">{text(&contact["description"])}</small>{if self.peer_typing{html!{<div class="activity peer-activity" role="status"><span class="loader" aria-hidden="true"></span><span>{format!("{} sta scrivendo…",text(&contact["name"]))}</span></div>}}else{Html::default()}}</div><div class="grow"/><span class="pill">{if master{"Supervisione EXCON"}else{"Traduzione AI"}}</span></div>
+                <section class="conversation"><div class="thread-head"><div><h2 id="thread-name">{text(&contact["name"])}</h2><small id="thread-description">{text(&contact["description"])}</small>{if self.peer_typing{html!{<div class="activity peer-activity" role="status"><span class="loader" aria-hidden="true"></span><span>{i18n::tf(l,"typing",&[text(&contact["name"])])}</span></div>}}else{Html::default()}}</div><div class="grow"/><span class="pill">{if master{"Supervisione EXCON"}else{i18n::t(l,"ai_translation")}}</span></div>
                 <MessageList thread={selected.clone()}>
-                if items.is_empty()&&visible.is_empty(){<div class="empty"><h3>{"La conversazione inizia qui"}</h3><p>{"Invia informazioni, richieste o decisioni."}</p></div>}
+                if items.is_empty()&&visible.is_empty(){<div class="empty"><h3>{i18n::t(l,"conv_starts")}</h3><p>{i18n::t(l,"conv_hint")}</p></div>}
                 {for items.iter().map(|m|{
                     let proposal=props.iter().find(|p|p["id"]==m["proposal"]).filter(|p|!master||items.iter().find(|other|other["proposal"]==p["id"]).is_some_and(|first|first["id"]==m["id"]));let from=text(&m["from"]);let body=if from==own{if m["original"].is_string(){&m["original"]}else{&m["text"]}}else if master{&m["text_en"]}else{&m["text"]};
                     html!{<article key={m["id"].to_string()} class={classes!("message",(from==own).then_some("own"),(m["kind"]=="inject").then_some("inject"))}>
-                        <div class="meta">{format!("{} · {} · turno {}{}",self.name(from),text(&m["clock"]),m["turn"],if m["kind"]=="inject"{" · INJECT PRIVATO"}else{""})}</div>
+                        <div class="meta">{i18n::tf(l,"meta",&[&self.name(from),text(&m["clock"]),&m["turn"].to_string(),if m["kind"]=="inject"{i18n::t(l,"private_inject")}else{""}])}</div>
                         if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<div class="text">{text(body)}</div>
-                        if m["original"]!=*body&&!m["original"].is_null(){<details><summary>{"Testo originale"}</summary>{text(&m["original"])}</details>}
-                        if m["translation_failed"]==true{<p class="danger">{"Traduzione non disponibile · testo di origine o inglese"}</p>}
-                        if let Some(p)=proposal{if master {<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={self.state["generation"].clone()} preview={self.responses.get(&format!("proposal:{}",p["id"])).cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)}/>}else{<div class="status">{api::status(text(&p["status"]))}</div>}}
+                        if m["original"]!=*body&&!m["original"].is_null(){<details><summary>{i18n::t(l,"original")}</summary>{text(&m["original"])}</details>}
+                        if m["translation_failed"]==true{<p class="danger">{i18n::t(l,"translation_failed")}</p>}
+                        if let Some(p)=proposal{if master {<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={self.state["generation"].clone()} preview={self.responses.get(&format!("proposal:{}",p["id"])).cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)}/>}else{<div class="status">{i18n::status(l,text(&p["status"]))}</div>}}
                     </article>}
                 })}
                 if master {{for visible.iter().filter(|p|!items.iter().any(|m|m["proposal"]==p["id"])).map(|p|html!{<article class="message" key={format!("orphan:{}",p["id"])}><Proposal proposal={(*p).clone()} generation={self.state["generation"].clone()} preview={self.responses.get(&format!("proposal:{}",p["id"])).cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)}/></article>})}}
