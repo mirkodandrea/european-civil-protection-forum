@@ -26,6 +26,9 @@ pub struct PlayerDraft {
     pub actions: Vec<Command>,
     pub action_descriptions: Vec<String>,
     pub turn: u32,
+    /// Why interpretation failed (set with `AiUnavailable`), so the player and EXCON can see it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
     #[serde(skip)]
     pub role: String,
     #[serde(skip)]
@@ -128,6 +131,7 @@ impl Exercise {
                 actions: Vec::new(),
                 action_descriptions: Vec::new(),
                 turn: self.turn,
+                failure: None,
                 clock_revision: self.clock_control.revision,
                 transcript: Vec::new(),
                 parsed: None,
@@ -149,6 +153,7 @@ impl Exercise {
             content: text.into(),
         });
         draft.status = DraftStatus::Interpreting;
+        draft.failure = None;
         draft.question = None;
         draft.parsed = None;
         self.player_drafts.insert(draft.id, draft.clone());
@@ -213,19 +218,15 @@ impl Exercise {
         role: &str,
         id: u64,
         revision: u64,
+        reason: &str,
     ) -> Result<PlayerDraft> {
         let mut draft = self.private_draft(role, id, revision)?;
         draft.status = DraftStatus::AiUnavailable;
+        draft.failure = Some(reason.chars().take(300).collect());
         draft.question = None;
         draft.parsed = None;
         // Keep all the player's words if interpretation failed after a clarification.
-        draft.message = draft
-            .transcript
-            .iter()
-            .filter(|turn| turn.role == "user")
-            .map(|turn| turn.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        draft.message = join_user_turns(&draft.transcript);
         self.player_drafts.insert(id, draft.clone());
         Ok(draft)
     }
@@ -309,5 +310,47 @@ impl Exercise {
         self.record("player_draft_submitted", role, serde_json::json!({"draft":id,"revision":revision,"message":result.0,"proposal":result.1,"manual":unavailable,"to":draft.to,"reviewer":MASTER}));
         self.player_drafts.remove(&id);
         Ok(result)
+    }
+}
+
+/// Join the player's request and clarification answers readably: a sentence
+/// break is added only when the previous part does not already end in punctuation.
+pub fn join_user_turns(transcript: &[ChatTurn]) -> String {
+    let mut out = String::new();
+    for part in transcript
+        .iter()
+        .filter(|turn| turn.role == "user")
+        .map(|turn| turn.content.trim())
+        .filter(|text| !text.is_empty())
+    {
+        if !out.is_empty() {
+            if !out.ends_with(['.', '!', '?', ';', ':', ',']) {
+                out.push('.');
+            }
+            out.push(' ');
+        }
+        out.push_str(part);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn(role: &str, content: &str) -> ChatTurn {
+        ChatTurn { role: role.into(), content: content.into() }
+    }
+
+    #[test]
+    fn joins_request_and_answer_with_sentence_break() {
+        let t = vec![
+            turn("user", "Close the road"),
+            turn("assistant", "Which road?"),
+            turn("user", "The main road south"),
+        ];
+        assert_eq!(join_user_turns(&t), "Close the road. The main road south");
+        let t = vec![turn("user", "Close the road."), turn("user", "The main road")];
+        assert_eq!(join_user_turns(&t), "Close the road. The main road");
     }
 }

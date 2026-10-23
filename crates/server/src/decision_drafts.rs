@@ -115,13 +115,23 @@ pub(crate) async fn prepare(
                 Ok(draft) => draft,
                 Err(error) => {
                     tracing::warn!(%error, "invalid private decision interpretation");
-                    ex.player_draft_failed(&role, draft.id, draft.revision)?
+                    ex.player_draft_failed(
+                        &role,
+                        draft.id,
+                        draft.revision,
+                        &format!("risposta AI non valida: {error}"),
+                    )?
                 }
             }
         }
         Err(error) => {
             tracing::warn!(%error, "private decision interpretation unavailable");
-            ex.player_draft_failed(&role, draft.id, draft.revision)?
+            ex.player_draft_failed(
+                &role,
+                draft.id,
+                draft.revision,
+                &format!("richiesta AI fallita: {error}"),
+            )?
         }
     };
     Ok(Json(json!({"draft":completed})))
