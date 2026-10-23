@@ -2688,3 +2688,40 @@ async fn structured_fire_line_action_endpoints_terminate() {
     let (s, _) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
     assert_eq!(s, Status::Ok);
 }
+
+#[tokio::test]
+async fn factory_operational_fire_line_endpoints_are_fast() {
+    let mut scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    scn.enable_operational_model();
+    let world = sim::World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = exercise::Exercise::new(world);
+    ex.start().unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).await.0;
+    let t = std::time::Instant::now();
+    let body = json!({"text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
+    let (status, sent) = call_key(&app, "POST", "/api/player/fire_commander/actions", Some(body), Some("test-fire")).await;
+    assert_eq!(status, Status::Ok);
+    eprintln!("submit {:?}", t.elapsed());
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    eprintln!("master {:?}", t.elapsed());
+    let pid = sent["proposal"].as_u64().unwrap();
+    let p = master["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
+    eprintln!("verdicts {}", p["verdicts"]);
+    call(&app, "GET", "/api/state", None).await;
+    eprintln!("state {:?}", t.elapsed());
+    call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    eprintln!("player {:?}", t.elapsed());
+    let (s, d) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true,"commands":p["commands"],"note":""})), ).await;
+    eprintln!("decide {:?} {:?} {}", t.elapsed(), s, d);
+    call(&app, "GET", "/api/master", None).await;
+    eprintln!("master2 {:?}", t.elapsed());
+    assert!(t.elapsed() < std::time::Duration::from_secs(10));
+}

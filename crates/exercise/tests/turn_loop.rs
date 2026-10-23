@@ -636,3 +636,29 @@ fn factory_operational_fire_line_validation_is_fast() {
     assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
     assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
 }
+
+#[test]
+fn factory_operational_fire_line_reply_to_inject_is_fast() {
+    let mut scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    scn.enable_operational_model();
+    let world = World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = Exercise::new(world);
+    ex.start().unwrap();
+    let parent = ex.send_inject(None, "Fire near Pineta", "EXCON", &["fire_commander".into()], "Report actions", &BTreeMap::new()).unwrap()[0];
+    let t = std::time::Instant::now();
+    for (from, to) in [("Pineta Fuel Station", "Pineta Primary School"), ("F5", "H5")] {
+        let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":from,"to":to})).unwrap();
+        let pid = ex.player_actions("fire_commander", "Linea", vec![cmd], Some(parent)).unwrap();
+        assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
+        eprintln!("{from}->{to}: {:?} verdict={:?}", t.elapsed(), ex.proposal(pid).unwrap().verdicts[0]);
+    }
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
+}
