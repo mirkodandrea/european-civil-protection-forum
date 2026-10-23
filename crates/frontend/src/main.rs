@@ -1,8 +1,8 @@
 mod advanced;
+mod controllo;
 mod api;
 mod chat;
 mod evaluator;
-mod excon_map;
 mod function;
 mod history;
 mod i18n;
@@ -12,6 +12,8 @@ mod map;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
+mod render;
+mod risposte;
 mod server_settings;
 mod settings;
 #[cfg(feature = "standalone")]
@@ -112,6 +114,7 @@ pub struct App {
     page: String,
     error: String,
     notice: String,
+    done: u64,
     busy: bool,
     reading: bool,
     resolving_request: bool,
@@ -374,6 +377,7 @@ impl Component for App {
             }),
             error: String::new(),
             notice: String::new(),
+            done: 0,
             busy: false,
             reading: false,
             resolving_request: false,
@@ -568,6 +572,7 @@ impl Component for App {
                 self.request_refresh(ctx);
             }
             Msg::Done(kind, result) => {
+                self.done += 1;
                 self.busy = false;
                 match result {
                     Err(e) => {
@@ -900,6 +905,8 @@ impl Component for App {
             let active = self.active == id;
             let unread = if id == "chat" && !self.is_master() {
                 self.chat_unread()
+            } else if id == "risposte" && self.is_master() {
+                risposte::pending_count(&self.master)
             } else {
                 0
             };
@@ -926,19 +933,20 @@ impl Component for App {
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
-            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("map",i18n::t(l,"nav_map"))} {nav("advanced",i18n::t(l,"nav_tools"))} {nav("history",i18n::t(l,"nav_history"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
+            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} {nav("history",i18n::t(l,"nav_history"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
             <div class="grow"/>
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
             </nav>
             {self.view_notification_toasts(ctx)}
             <div id="error" class="error" role="alert">{&self.error}</div>
-            if (self.page=="advanced"||self.active=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
+            if (self.page=="advanced"||self.active=="advanced"||(self.is_master()&&self.active=="map")||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
             if self.state.is_null(){<p class="page">{i18n::t(l,"loading")}</p>}
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()}/> }
-            else if (self.page=="advanced"||self.active=="advanced")&&self.is_master(){if self.page=="advanced"{<excon_map::ExconMap stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}
+            else if self.page=="advanced"&&self.is_master(){<controllo::Controllo stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} error={self.error.clone()} done={self.done} action={self.action(ctx)}/>}
             else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{crate::i18n::ex("Apri la console conversazionale")}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
             else if self.is_master()&&self.active=="timeline"{<main class="page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy} oninject={ctx.link().callback(Msg::OpenInject)}/></main>}
+            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy}/></main>}
             else{{self.view_chat(ctx)}}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject a tutti").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 

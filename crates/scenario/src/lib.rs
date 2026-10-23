@@ -394,6 +394,9 @@ pub struct InjectTemplate {
     /// Text in the working language (English).
     pub text: String,
     pub objective: String,
+    /// Incident/event name used only to group injects in the EXCON view.
+    #[serde(default)]
+    pub event: String,
 }
 
 /// Optional supplied visual heightfield, sampled at grid nodes (row 0 north).

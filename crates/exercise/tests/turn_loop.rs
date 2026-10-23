@@ -299,7 +299,11 @@ fn repeated_msel_deliveries_have_distinct_threads_shared_by_recipients() {
     let ids = ex.send_inject(Some("I-01"), "Fire", "112", &["all".into()], "Fire", &BTreeMap::new()).unwrap();
     let first = ex.messages[0].inject_id;
     assert!(ex.messages.iter().all(|m| m.inject_id == first && m.recipients.len() == 3));
-    ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap();
+    // A role that already received the MSEL inject is skipped silently.
+    assert!(ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap().is_empty());
+    assert_eq!(ex.inject_sent_to["I-01"].len(), 3);
+    // Ad-hoc injects still open a distinct thread each time.
+    ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap();
     assert_ne!(ex.messages.last().unwrap().inject_id, first);
     assert_eq!(ids.len(), 3);
 }

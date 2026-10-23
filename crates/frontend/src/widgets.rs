@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use yew::prelude::*;
 
 pub fn details(title: impl Into<AttrValue>, value: &Value) -> Html {
-    html! {<details><summary>{title.into()}</summary><pre>{pretty(value)}</pre></details>}
+    crate::render::details(title, value)
 }
 pub fn participant_links(links: &Value, roles: &[Value]) -> Html {
     if cfg!(feature = "standalone") {
@@ -203,7 +203,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
             <small class={if p["verdicts"][i]["verdict"]=="rejected"{"danger"}else{"verdict-ok"}}>{if p["verdicts"][i]["verdict"]=="ok"{crate::exfmt!("✓ Verifica: {}","✓ Check: {}",if list(&p["verdicts"][i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&p["verdicts"][i]["notes"]).iter().map(text).collect::<Vec<_>>().join(" · ")})}else{text(&p["verdicts"][i]["reason"]).into()}}</small></fieldset>}
         })}</div>
         if editable{<details class="manual-commands"><summary>{crate::i18n::ex("Modifica o aggiungi comandi JSON (interpretazione manuale EXCON)")}</summary><textarea data-manual-commands="" aria-label={crate::i18n::ex("Comandi manuali EXCON")} value={pretty(&json!(*commands))} oninput={{let commands=commands.clone();let error=error.clone();Callback::from(move |e|match serde_json::from_str::<Vec<Value>>(&api::input(e)){Ok(next)=>{commands.set(next);error.set(String::new());},Err(e)=>error.set(crate::exfmt!("Comandi non validi: {e}","Invalid commands: {e}"))})}}/></details>}
-        if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<p class="danger">{pretty(&p["invalid"])}</p>}
+        if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<div class="danger">{crate::render::render_value("",&p["invalid"])}</div>}
         if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}

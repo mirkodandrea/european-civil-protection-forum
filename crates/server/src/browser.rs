@@ -399,7 +399,11 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             .await
         }
         ("POST", "/api/master/msel/<id>/send") => {
-            post_msel_send(principal.clone(), s.clone(), captures["id"].to_string()).await
+            let b = match body.clone() {
+                Some(v) if !v.is_null() => Some(decode(v)?),
+                _ => None,
+            };
+            post_msel_send(principal.clone(), s.clone(), captures["id"].to_string(), b).await
         }
         ("POST", "/api/master/prompt") => {
             post_prompt(

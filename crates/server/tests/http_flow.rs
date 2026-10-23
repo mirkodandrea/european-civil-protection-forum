@@ -3004,3 +3004,34 @@ async fn rejection_note_reaches_the_player() {
     assert_eq!(found["decision"]["approve"], false);
     assert_eq!(found["decision"]["note"], note);
 }
+
+#[tokio::test]
+async fn planned_injects_track_recipients_and_skip_served_roles() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let plan = m["planned_injects"].as_array().unwrap();
+    assert_eq!(plan.len(), 8);
+    let secs: Vec<i64> = plan.iter().map(|p| p["scenario_time_s"].as_i64().unwrap()).collect();
+    assert!(secs.windows(2).all(|w| w[0] <= w[1]), "chronological");
+    assert_eq!(plan[0]["id_inject"], "I-01");
+    assert!(!plan[0]["event"].as_str().unwrap().is_empty());
+    assert_eq!(plan[0]["sent_to"], json!([]));
+    // First send to one role only.
+    let (s, r) = call(&app, "POST", "/api/master/msel/I-01/send", Some(json!({"recipients":["mayor"]}))).await;
+    assert_eq!(s, Status::Ok);
+    assert_eq!(r["messages"].as_array().unwrap().len(), 1);
+    // Planned recipients ("all"): the mayor is skipped silently.
+    let (s, r) = call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    assert_eq!(s, Status::Ok);
+    assert_eq!(r["messages"].as_array().unwrap().len(), 2);
+    // Everyone served: nothing more is delivered.
+    let (_, r) = call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    assert!(r["messages"].as_array().unwrap().is_empty());
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let p = m["planned_injects"].as_array().unwrap().iter().find(|p| p["id_inject"] == "I-01").unwrap();
+    assert_eq!(p["sent_to"].as_array().unwrap().len(), 3);
+    assert_eq!(p["not_yet_sent_to"], json!([]));
+    assert_eq!(m["inject_responses"].as_array().unwrap().len(), 3);
+    assert_eq!(m["sent_injects"], json!(["I-01"]));
+}

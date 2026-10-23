@@ -32,6 +32,7 @@ pub mod interventions;
 pub mod knowledge;
 pub mod summaries;
 pub mod threads;
+pub mod planned;
 pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
 use std::collections::BTreeMap;
@@ -425,6 +426,10 @@ pub struct Exercise {
     pub last_turn: Option<TurnWindow>,
     /// Injects of the MSEL already sent.
     pub sent_injects: Vec<String>,
+    /// MSEL inject id -> roles that received it.
+    pub inject_sent_to: BTreeMap<String, Vec<String>>,
+    /// Delivery id (`Message::inject_id`) -> MSEL inject id.
+    pub delivery_msel: BTreeMap<u64, String>,
     /// The turn currently being simulated, if any.
     pub resolving: Option<Resolution>,
     /// Each role's ongoing conversation with the AI (key: role id, or `"master"`):
@@ -488,6 +493,8 @@ impl Exercise {
             generation: 1,
             last_turn: None,
             sent_injects: Vec::new(),
+            inject_sent_to: BTreeMap::new(),
+            delivery_msel: BTreeMap::new(),
             resolving: None,
             conversations: BTreeMap::new(),
             speed: 0.0,
@@ -912,7 +919,16 @@ impl Exercise {
         if self.phase == Phase::Debrief {
             bail!("the exercise has ended");
         }
-        let to = self.recipients(recipients)?;
+        let mut to = self.recipients(recipients)?;
+        // Roles that already received this MSEL inject are skipped silently.
+        if let Some(id) = inject_id {
+            if let Some(done) = self.inject_sent_to.get(id) {
+                to.retain(|r| !done.contains(r));
+            }
+        }
+        if to.is_empty() {
+            return Ok(Vec::new());
+        }
         let delivery_id = self.id();
         let mut ids = Vec::new();
         for r in &to {
@@ -934,7 +950,11 @@ impl Exercise {
             ids.push(mid);
         }
         if let Some(id) = inject_id {
-            self.sent_injects.push(id.to_string());
+            if !self.sent_injects.iter().any(|s| s == id) {
+                self.sent_injects.push(id.to_string());
+            }
+            self.inject_sent_to.entry(id.to_string()).or_default().extend(to.iter().cloned());
+            self.delivery_msel.insert(delivery_id, id.to_string());
         }
         self.record("inject_sent", MASTER, json!({"inject_id": delivery_id, "msel_id": inject_id, "title": title, "sender": sender, "recipients": to, "messages": ids}));
         Ok(ids)

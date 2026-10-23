@@ -570,6 +570,14 @@ fn msel() -> Vec<InjectTemplate> {
                 recipients: to.iter().map(|s| s.to_string()).collect(),
                 text: text.into(),
                 objective: objective.into(),
+                event: match id {
+                    "I-01" | "I-02" | "I-03" => "Pine Hill fire",
+                    "I-04" => "Weather escalation",
+                    "I-05" => "Evacuation traffic",
+                    "I-06" => "Fuel station threat",
+                    _ => "Capacity and international assistance",
+                }
+                .into(),
             }
         };
     vec![

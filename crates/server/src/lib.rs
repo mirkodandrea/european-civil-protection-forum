@@ -501,6 +501,7 @@ async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
         "last_turn": ex.last_turn,
         "players": ex.players,
         "sent_injects": ex.sent_injects,
+        "planned_injects": ex.planned_injects(),
         "llm": {"available": s.llm.is_available(), "model": s.llm.model(), "translation_model":s.llm.model_for("translate")},
         "world": ex.world.view(),
         "resource_accounting": ex.resource_accounting(None),
@@ -537,6 +538,9 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "proposals": ex.proposals,
+        "planned_injects": ex.planned_injects(),
+        "inject_responses": ex.inject_responses(),
+        "sent_injects": ex.sent_injects,
         "messages": messages,
         "log": log,
         "training_design":ex.design_view(),
@@ -1001,11 +1005,22 @@ async fn post_inject(_principal: Principal, s: AppState, b: Json<InjectBody>) ->
     Ok(Json(json!({"messages": ids})))
 }
 
+#[derive(Deserialize, Default)]
+struct MselSendBody {
+    #[serde(default)]
+    recipients: Option<Vec<String>>,
+}
+
 #[cfg_attr(
     not(target_arch = "wasm32"),
-    rocket::post("/api/master/msel/<id>/send")
+    rocket::post("/api/master/msel/<id>/send", data = "<b>")
 )]
-async fn post_msel_send(_principal: Principal, s: AppState, id: String) -> ApiResult {
+async fn post_msel_send(
+    _principal: Principal,
+    s: AppState,
+    id: String,
+    b: Option<Json<MselSendBody>>,
+) -> ApiResult {
     let t = s
         .lock()
         .world
@@ -1015,9 +1030,14 @@ async fn post_msel_send(_principal: Principal, s: AppState, id: String) -> ApiRe
         .find(|i| i.id == id)
         .cloned()
         .ok_or_else(|| bad(format!("unknown inject {id}")))?;
-    let ids =
-        flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &t.recipients, &t.text).await?;
-    Ok(Json(json!({"messages": ids})))
+    // Default to the planned recipients; roles already served are skipped.
+    let recipients = match b.and_then(|Json(b)| b.recipients) {
+        Some(r) if !r.is_empty() => r,
+        _ => t.recipients.clone(),
+    };
+    let ids = flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &recipients, &t.text).await?;
+    let ex = s.lock();
+    Ok(Json(json!({"messages": ids, "sent_to": ex.inject_sent_to.get(&t.id)})))
 }
 
 #[cfg_attr(

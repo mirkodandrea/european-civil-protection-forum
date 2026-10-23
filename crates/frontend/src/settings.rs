@@ -111,6 +111,7 @@ fn validate(rows: &[Draft], roles: &[String]) -> Result<Vec<InjectTemplate>, Str
             recipients,
             text: r.text.trim().into(),
             objective: r.objective.trim().into(),
+            event: String::new(),
         });
     }
     Ok(out)
