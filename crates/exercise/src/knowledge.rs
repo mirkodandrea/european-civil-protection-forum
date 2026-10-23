@@ -378,20 +378,11 @@ impl Exercise {
         Ok(o)
     }
 
-    /// Zones a role knows something about: disclosed zones plus the zones of any reported cell.
+    /// Zones explicitly disclosed to a role. Point observations do not reveal a whole zone.
     pub fn known_zones(&self, role: &str) -> Vec<String> {
-        let scn = &self.world.scn;
-        let g = &scn.grid;
         let mut out = std::collections::BTreeSet::new();
         for event in self.knowledge_events.iter().filter(|e| e.role == role) {
             out.extend(event.observation.zones.iter().cloned());
-            for c in &event.observation.cells {
-                let centre = [
-                    (c.col as f32 + 0.5) * g.cellsize,
-                    g.height_m() - (c.row as f32 + 0.5) * g.cellsize,
-                ];
-                out.extend(scn.zone_of(centre));
-            }
         }
         out.into_iter().collect()
     }
