@@ -143,10 +143,11 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let clarify = {
         let action = props.action.clone();
         let note = note.clone();
-        let commands = commands.clone();
         Callback::from(move |_| {
-            let body = json!({"approve":false,"commands":*commands,"note":format!("{}: {}",crate::i18n::ex("Chiarimento richiesto"),note.trim())});
-            action.emit(Action::post(format!("/api/master/proposals/{id}/decide"), body));
+            action.emit(Action::post(
+                format!("/api/master/proposals/{id}/clarify"),
+                json!({"note": note.trim()}),
+            ));
         })
     };
     let decide = |approve: bool| {
@@ -196,7 +197,8 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let no_actions=editable&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
     let blocked=no_actions||editable&&list(&p["verdicts"]).iter().any(|v|v["verdict"]!="ok");
     html! {<section class="proposal-inline" data-proposal={id.to_string()}>
-        <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{api::status(text(&p["status"]))}</span></div>
+        <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else{api::status(text(&p["status"]))}}</span></div>
+        if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){<p class="proposal-clarification" data-clarification-request="">{format!("{}: {}",crate::i18n::ex("Domanda inviata al player"),text(&p["clarification_request"]))}</p>}
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
         if !list(&p["thread"]).is_empty() {<details open=true class="proposal-thread"><summary>{crate::exfmt!("Thread collegato · {} messaggi", "Linked thread · {} messages",list(&p["thread"]).len())}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}

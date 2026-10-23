@@ -303,6 +303,9 @@ pub struct Proposal {
     pub clarification: Option<String>,
     pub status: ProposalStatus,
     pub master_note: Option<String>,
+    /// Question the EXCON put to the proposing player (status `NeedsClarification`).
+    #[serde(default)]
+    pub clarification_request: Option<String>,
     pub results: Vec<String>,
     /// Injects drafted by the LLM for a EXCON prompt; sent when approved.
     pub inject_drafts: Vec<Value>,
@@ -327,6 +330,14 @@ pub struct Decision {
     /// Replaces the proposal's commands (the EXCON's edit).
     pub commands: Option<Vec<Command>>,
     pub note: Option<String>,
+}
+
+/// A clarification the EXCON asked of a player, to be delivered.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClarificationRequest {
+    pub proposal: u64,
+    pub role: String,
+    pub text_en: String,
 }
 
 /// Facts about a decision, for the feedback message to the player.
@@ -1092,6 +1103,7 @@ impl Exercise {
             clarification: None,
             status: ProposalStatus::Parsing,
             master_note: None,
+            clarification_request: None,
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
@@ -1253,6 +1265,7 @@ impl Exercise {
             clarification: None,
             status: ProposalStatus::Parsing,
             master_note: None,
+            clarification_request: None,
             results: Vec::new(),
             inject_drafts: Vec::new(),
         });
@@ -1677,6 +1690,71 @@ impl Exercise {
             json!({"proposal": pid, "before": before, "after": after}),
         );
         Ok(())
+    }
+
+    /// The EXCON asks the proposing player a question instead of deciding.
+    /// The proposal stays open (`NeedsClarification`) and can still be
+    /// approved or rejected later. Delivery of the question to the player is
+    /// done by [`Exercise::deliver_clarification`] (after translation).
+    pub fn request_clarification(&mut self, pid: u64, note: &str) -> Result<ClarificationRequest> {
+        if self.phase != Phase::Orders {
+            bail!("clarification requests require an open exercise turn");
+        }
+        let note = note.trim();
+        if note.is_empty() {
+            bail!("a clarification question is required");
+        }
+        let p = self
+            .proposal(pid)
+            .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
+        let Source::Player(role) = p.source.clone() else {
+            bail!("only a player proposal can be sent back for clarification");
+        };
+        if !matches!(p.status, ProposalStatus::Pending | ProposalStatus::NeedsClarification) {
+            bail!("proposal {pid} is already {:?}", p.status);
+        }
+        self.proposal_mut(pid)?.clarification_request = Some(note.to_string());
+        self.transition(
+            pid,
+            ProposalStatus::NeedsClarification,
+            MASTER,
+            &format!("Clarification requested: {note}"),
+        )?;
+        self.record(
+            "clarification_requested",
+            MASTER,
+            json!({"proposal": pid, "role": role, "note": note}),
+        );
+        Ok(ClarificationRequest { proposal: pid, role, text_en: note.to_string() })
+    }
+
+    /// Put the EXCON's question into the player's thread.
+    pub fn deliver_clarification(&mut self, pid: u64, text: &str, text_en: &str) -> Result<u64> {
+        let p = self
+            .proposal(pid)
+            .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
+        let Source::Player(role) = p.source.clone() else {
+            bail!("only a player proposal can be clarified");
+        };
+        if p.status != ProposalStatus::NeedsClarification {
+            bail!("proposal {pid} no longer awaits clarification");
+        }
+        let id = self.add_message(
+            MASTER,
+            &role,
+            MsgKind::Clarification,
+            Some("Clarification requested"),
+            text,
+            text_en,
+            Some(pid),
+        );
+        // The AI conversation must know what the EXCON asked.
+        self.converse(
+            &role,
+            "user",
+            format!("[{}] EXCON CLARIFICATION REQUEST:\n{text_en}", self.world.clock()),
+        );
+        Ok(id)
     }
 
     /// The EXCON decides on a proposal.

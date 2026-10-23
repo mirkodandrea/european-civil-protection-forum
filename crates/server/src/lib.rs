@@ -206,6 +206,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_msel_send,
                 post_prompt,
                 post_decide,
+                post_clarify,
                 post_command,
                 post_preview,
                 post_preview_apply,
@@ -573,7 +574,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
                 } else { message.text.clone() };
                 Some(visible)
             }).collect::<Vec<_>>();
-            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "declaration_kind": p.declaration_kind, "history": p.history, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence})
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence})
         })
         .collect();
     Ok(Json(json!({
@@ -1127,6 +1128,32 @@ async fn post_decide(
         tokio::spawn(async move { flow::send_drafts(&st, id).await });
     }
     Ok(Json(json!(outcome)))
+}
+
+#[derive(Deserialize)]
+struct ClarifyBody {
+    note: String,
+}
+
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/proposals/<id>/clarify", data = "<b>")
+)]
+async fn post_clarify(
+    _principal: Principal,
+    s: AppState,
+    id: u64,
+    b: Json<ClarifyBody>,
+) -> ApiResult {
+    let Json(b) = b;
+    let req = s.lock().request_clarification(id, &b.note)?;
+    tokio::spawn(flow::send_clarification(
+        s.clone(),
+        req.role.clone(),
+        id,
+        req.text_en.clone(),
+    ));
+    Ok(Json(json!(req)))
 }
 
 #[derive(Deserialize)]

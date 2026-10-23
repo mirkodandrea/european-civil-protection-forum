@@ -3035,3 +3035,53 @@ async fn planned_injects_track_recipients_and_skip_served_roles() {
     assert_eq!(m["inject_responses"].as_array().unwrap().len(), 3);
     assert_eq!(m["sent_injects"], json!(["I-01"]));
 }
+
+#[tokio::test]
+async fn excon_clarify_endpoint_asks_the_player_and_keeps_the_proposal_open() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text": "warn the area", "reply_to": reply_parent(&app, "mayor").await})),
+    )
+    .await;
+    let pid = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |v| {
+        v["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid && p["status"] == "pending")
+    })
+    .await;
+    // The note is required.
+    let uri = format!("/api/master/proposals/{pid}/clarify");
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"note": " "}))).await;
+    assert_ne!(s, Status::Ok);
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"note": "Which zone exactly?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let m = eventually(&app, "/api/master", |v| {
+        v["proposals"].as_array().unwrap().iter().any(|p| {
+            p["id"] == pid && p["status"] == "needs_clarification" && p["clarification_request"] == "Which zone exactly?"
+        })
+    })
+    .await;
+    let row = m["inject_responses"].as_array().unwrap().iter()
+        .flat_map(|r| r["pending_proposals"].as_array().unwrap().clone())
+        .find(|p| p["id"] == pid)
+        .expect("still listed as open");
+    assert_eq!(row["awaiting_clarification"], true);
+    let player = eventually(&app, "/api/player/mayor", |v| {
+        v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification" && m["proposal"] == pid)
+    })
+    .await;
+    let q = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "clarification").unwrap();
+    assert!(q["text"].as_str().unwrap().contains("Which zone exactly?"));
+    let mine = player["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
+    assert_eq!(mine["status"], "needs_clarification");
+    assert_eq!(mine["clarification_request"], "Which zone exactly?");
+    // Not rejected: the EXCON can still decide.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": false, "note": "Not needed"}))).await;
+    assert_eq!(s, Status::Ok);
+    // Decided proposals cannot be sent back.
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"note": "again"}))).await;
+    assert_ne!(s, Status::Ok);
+}

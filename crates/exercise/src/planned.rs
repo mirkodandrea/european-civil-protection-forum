@@ -103,7 +103,10 @@ impl Exercise {
                     })
                     .map(|p| {
                         json!({"id": p.id, "status": p.status, "summary": p.summary,
-                        "original": p.original, "reply_to": p.reply_to, "turn": p.turn})
+                        "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
+                        "awaiting_clarification": p.status == ProposalStatus::NeedsClarification
+                            && p.clarification_request.is_some(),
+                        "clarification_request": p.clarification_request})
                     })
                     .collect();
                 json!({

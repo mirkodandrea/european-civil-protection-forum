@@ -284,6 +284,21 @@ pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: St
     );
 }
 
+/// Translate and deliver the EXCON's clarification question to the player.
+pub async fn send_clarification(state: AppState, role: String, pid: u64, text_en: String) {
+    let lang = state.lock().language_of(&role);
+    let text = if state.llm.is_available() {
+        state
+            .llm
+            .translate(&text_en, &lang)
+            .await
+            .unwrap_or_else(|_| text_en.clone())
+    } else {
+        text_en.clone()
+    };
+    let _ = state.lock().deliver_clarification(pid, &text, &text_en);
+}
+
 /// Claim and deliver communications once, only after the reviewed proposal executes.
 pub async fn send_drafts(state: &AppState, pid: u64) {
     let (drafts, injects) = {

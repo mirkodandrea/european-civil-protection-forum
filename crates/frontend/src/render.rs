@@ -71,31 +71,51 @@ pub fn role_label(roles: &[Value], id: &str) -> String {
         .to_string()
 }
 
+/// "1 squadra" / "3 squadre" (or the English pair) for a counted noun.
+fn counted(n: &str, en: bool, it: (&str, &str), eng: (&str, &str)) -> String {
+    let one = n.trim().parse::<f64>().is_ok_and(|v| v == 1.0);
+    let (s, p) = if en { eng } else { it };
+    format!("{} {}", n.trim(), if one { s } else { p })
+}
+
 /// Localises the English validation notes produced by the simulator
 /// ("500 m line, 1 crew(s)") for the console; unknown notes pass through.
 pub fn localize_note(note: &str) -> String {
+    localize_note_in(note, crate::i18n::is_en())
+}
+
+fn localize_note_in(note: &str, en: bool) -> String {
     let n = note.trim();
+    let crews = |c: &str| counted(c, en, ("squadra", "squadre"), ("crew", "crews"));
+    let people = |p: &str| counted(p, en, ("persona", "persone"), ("person", "people"));
     if let Some((a, b)) = n.split_once(" m line, ") {
         if let Some(c) = b.strip_suffix(" crew(s)") {
-            return exfmt!("linea di {} m, {} squadre", "{} m line, {} crew(s)", a, c);
+            let c = crews(c);
+            return if en { format!("{a} m line, {c}") } else { format!("linea di {a} m, {c}") };
         }
     }
     if let Some((a, b)) = n.split_once(" buildings, ") {
         if let Some(p) = b.strip_suffix(" people") {
-            return exfmt!("{} edifici, {} persone", "{} buildings, {} people", a, p);
+            let bld = counted(a, en, ("edificio", "edifici"), ("building", "buildings"));
+            return format!("{bld}, {}", people(p));
         }
     }
     if let Some((a, b)) = n.split_once(" bus(es) for ") {
         if let Some(p) = b.strip_suffix(" people") {
-            return exfmt!("{} autobus per {} persone", "{} bus(es) for {} people", a, p);
+            let bus = counted(a, en, ("autobus", "autobus"), ("bus", "buses"));
+            return if en { format!("{bus} for {}", people(p)) } else { format!("{bus} per {}", people(p)) };
         }
     }
     if let Some(d) = n.strip_prefix("to ") {
-        return exfmt!("verso {}", "to {}", d);
+        return if en { format!("to {d}") } else { format!("verso {d}") };
     }
     if let Some((q, rest)) = n.split_once(" arrive in ") {
         if let Some((m, src)) = rest.split_once(" min from ") {
-            return exfmt!("{} in arrivo tra {} min da {}", "{} arrive in {} min from {}", q, m, src);
+            return if en {
+                format!("{q} arrive in {m} min from {src}")
+            } else {
+                format!("{q} in arrivo tra {m} min da {src}")
+            };
         }
     }
     n.to_string()
@@ -479,9 +499,19 @@ mod tests {
     }
     #[test]
     fn notes_and_event_labels() {
-        assert_eq!(localize_note("500 m line, 1 crew(s)"), "linea di 500 m, 1 squadre");
-        assert_eq!(localize_note("3 buildings, 40 people"), "3 edifici, 40 persone");
-        assert_eq!(localize_note("something else"), "something else");
+        assert_eq!(localize_note_in("500 m line, 1 crew(s)", false), "linea di 500 m, 1 squadra");
+        assert_eq!(localize_note_in("500 m line, 3 crew(s)", false), "linea di 500 m, 3 squadre");
+        assert_eq!(localize_note_in("3 buildings, 40 people", false), "3 edifici, 40 persone");
+        assert_eq!(localize_note_in("1 buildings, 1 people", false), "1 edificio, 1 persona");
+        assert_eq!(localize_note_in("1 bus(es) for 1 people", false), "1 autobus per 1 persona");
+        assert_eq!(localize_note_in("2 bus(es) for 90 people", false), "2 autobus per 90 persone");
+        assert_eq!(localize_note_in("500 m line, 1 crew(s)", true), "500 m line, 1 crew");
+        assert_eq!(localize_note_in("500 m line, 2 crew(s)", true), "500 m line, 2 crews");
+        assert_eq!(localize_note_in("1 buildings, 1 people", true), "1 building, 1 person");
+        assert_eq!(localize_note_in("2 bus(es) for 90 people", true), "2 buses for 90 people");
+        assert_eq!(localize_note_in("to Pineta", false), "verso Pineta");
+        assert_eq!(localize_note_in("2 crews arrive in 12 min from base", false), "2 crews in arrivo tra 12 min da base");
+        assert_eq!(localize_note_in("something else", false), "something else");
         assert_eq!(event_label("proposal_decided"), "Proposta decisa dall’EXCON");
         assert_eq!(event_label("brand_new_kind"), "Brand new kind");
         let roles = vec![json!({"id":"fire_commander","name":"Comandante VVF"})];

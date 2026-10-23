@@ -14,12 +14,17 @@ use yew::prelude::*;
 pub enum ReplyState {
     None,
     Replied,
+    /// Every open proposal waits for the player's answer to an EXCON question.
+    Clarifying,
     Pending,
 }
 
 pub fn reply_state(r: &Value) -> ReplyState {
-    if !list(&r["pending_proposals"]).is_empty() {
+    let open = list(&r["pending_proposals"]);
+    if open.iter().any(|p| p["awaiting_clarification"] != true) {
         ReplyState::Pending
+    } else if !open.is_empty() {
+        ReplyState::Clarifying
     } else if !list(&r["replies"]).is_empty() {
         ReplyState::Replied
     } else {
@@ -31,6 +36,7 @@ fn state_label(s: ReplyState) -> &'static str {
     match s {
         ReplyState::None => crate::i18n::ex("nessuna risposta"),
         ReplyState::Replied => crate::i18n::ex("risposta ricevuta"),
+        ReplyState::Clarifying => crate::i18n::ex("in attesa di chiarimento"),
         ReplyState::Pending => crate::i18n::ex("in attesa di approvazione"),
     }
 }
@@ -39,7 +45,25 @@ fn state_label(s: ReplyState) -> &'static str {
 pub fn pending_count(master: &Value) -> usize {
     list(&master["inject_responses"])
         .iter()
-        .map(|r| list(&r["pending_proposals"]).len())
+        .map(|r| {
+            list(&r["pending_proposals"])
+                .iter()
+                .filter(|p| p["awaiting_clarification"] != true)
+                .count()
+        })
+        .sum()
+}
+
+/// Number of proposals sent back to the player and awaiting their answer.
+pub fn clarifying_count(master: &Value) -> usize {
+    list(&master["inject_responses"])
+        .iter()
+        .map(|r| {
+            list(&r["pending_proposals"])
+                .iter()
+                .filter(|p| p["awaiting_clarification"] == true)
+                .count()
+        })
         .sum()
 }
 
@@ -65,19 +89,19 @@ pub fn risposte(props: &RisposteProps) -> Html {
         .and_then(|k| rows.iter().find(|r| key(r) == *k).cloned());
     let shown = rows
         .iter()
-        .filter(|r| !*only_pending || reply_state(r) == ReplyState::Pending)
+        .filter(|r| !*only_pending || matches!(reply_state(r), ReplyState::Pending | ReplyState::Clarifying))
         .collect::<Vec<_>>();
-    html! {<section class="card" id="risposte"><div class="row"><h2>{crate::i18n::ex("Risposte")}</h2><span class="pill pending-count" hidden={pending_count(&props.master)==0}>{crate::exfmt!("{} in attesa di approvazione","{} awaiting approval",pending_count(&props.master))}</span><div class="grow"/>
+    html! {<section class="card" id="risposte"><div class="row"><h2>{crate::i18n::ex("Risposte")}</h2><span class="pill pending-count" hidden={pending_count(&props.master)==0}>{crate::exfmt!("{} in attesa di approvazione","{} awaiting approval",pending_count(&props.master))}</span><span class="pill clarifying-count" hidden={clarifying_count(&props.master)==0}>{crate::exfmt!("{} in attesa di chiarimento","{} awaiting clarification",clarifying_count(&props.master))}</span><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="only-pending" checked={*only_pending} onchange={{let o=only_pending.clone();Callback::from(move |e:Event|{use yew::TargetCast;o.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("solo in attesa")}</label></div>
         if shown.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject inviato da mostrare")}</p>}
         <ol class="response-list">{for shown.iter().map(|r|{
             let st=reply_state(r);
             let k=key(r);
             let onclick={let opened=opened.clone();let k=k.clone();Callback::from(move |_|opened.set(Some(k.clone())))};
-            html!{<li key={format!("{}:{}",k.0,k.1)} data-response={format!("{}:{}",k.0,k.1)}><button class={classes!("response-row",match st{ReplyState::Pending=>"is-pending",ReplyState::Replied=>"is-replied",ReplyState::None=>"is-none"})} {onclick}>
+            html!{<li key={format!("{}:{}",k.0,k.1)} data-response={format!("{}:{}",k.0,k.1)}><button class={classes!("response-row",match st{ReplyState::Pending=>"is-pending",ReplyState::Replied=>"is-replied",ReplyState::Clarifying=>"is-pending",ReplyState::None=>"is-none"})} {onclick}>
                 <span class="planned-times"><b>{text(&r["clock"])}</b><small>{format_offset(r["t_s"].as_i64().unwrap_or(0))}</small></span>
                 <span class="planned-body"><b>{if text(&r["title"]).is_empty(){crate::i18n::ex("Inject")}else{text(&r["title"])}}</b><span class="planned-text">{text(&r["inject_text"])}</span></span>
-                <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span><span class={classes!("pill","reply-state",match st{ReplyState::Pending=>"pending",ReplyState::Replied=>"sent",ReplyState::None=>"todo"})}>{state_label(st)}</span></span>
+                <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span><span class={classes!("pill","reply-state",match st{ReplyState::Pending|ReplyState::Clarifying=>"pending",ReplyState::Replied=>"sent",ReplyState::None=>"todo"})}>{state_label(st)}</span></span>
             </button></li>}
         })}</ol>
         if let Some(r)=selected{{dialog(props,&r,&roles,{let o=opened.clone();Callback::from(move |_|o.set(None))})}}
@@ -94,7 +118,7 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
         if list(&r["replies"]).is_empty(){<p class="muted">{crate::i18n::ex("Nessuna risposta")}</p>}
         <ol class="reply-list">{for list(&r["replies"]).iter().map(|m|html!{<li key={m["id"].to_string()}><small>{text(&m["clock"])}</small><p>{text(&m["text"])}</p>
             if !text(&m["original"]).is_empty()&&text(&m["original"])!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",text(&m["original"]))}</small>}</li>})}</ol>
-        if !list(&r["pending_proposals"]).is_empty(){<h3>{crate::i18n::ex("In attesa di approvazione")}</h3>}
+        if !list(&r["pending_proposals"]).is_empty(){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
         {for list(&r["pending_proposals"]).iter().map(|pp|{
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
             match full{
@@ -115,10 +139,17 @@ mod tests {
         assert_eq!(reply_state(&json!({"replies":[],"pending_proposals":[]})), ReplyState::None);
         assert_eq!(reply_state(&json!({"replies":[{}],"pending_proposals":[]})), ReplyState::Replied);
         assert_eq!(reply_state(&json!({"replies":[{}],"pending_proposals":[{"id":1}]})), ReplyState::Pending);
+        let c = json!({"replies":[{}],"pending_proposals":[{"id":1,"awaiting_clarification":true}]});
+        assert_eq!(reply_state(&c), ReplyState::Clarifying);
+        let mixed = json!({"replies":[],"pending_proposals":[{"id":1,"awaiting_clarification":true},{"id":2}]});
+        assert_eq!(reply_state(&mixed), ReplyState::Pending);
     }
     #[test]
     fn counts_pending() {
         let m = json!({"inject_responses":[{"pending_proposals":[{"id":1},{"id":2}]},{"pending_proposals":[]},{"pending_proposals":[{"id":3}]}]});
         assert_eq!(pending_count(&m), 3);
+        assert_eq!(clarifying_count(&m), 0);
+        let m = json!({"inject_responses":[{"pending_proposals":[{"id":1,"awaiting_clarification":true},{"id":2}]}]});
+        assert_eq!((pending_count(&m), clarifying_count(&m)), (1, 1));
     }
 }

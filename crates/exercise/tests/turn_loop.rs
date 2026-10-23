@@ -722,3 +722,38 @@ fn edited_flag_is_true_only_when_actions_actually_change() {
     ex.decide(pid, Decision { approve: true, commands: Some(other), note: None }).unwrap();
     assert!(ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
 }
+
+#[test]
+fn excon_clarification_request_keeps_the_proposal_open() {
+    let mut ex = exercise();
+    // Not during briefing.
+    assert!(ex.request_clarification(1, "where?").is_err());
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "fire_commander", "warn F4").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
+    // A note is required.
+    assert!(ex.request_clarification(pid, "  ").is_err());
+    let req = ex.request_clarification(pid, "Which side of F4?").unwrap();
+    assert_eq!((req.role.as_str(), req.text_en.as_str()), ("fire_commander", "Which side of F4?"));
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.status, ProposalStatus::NeedsClarification);
+    assert_eq!(p.clarification_request.as_deref(), Some("Which side of F4?"));
+    assert_eq!(p.history.last().unwrap().actor, MASTER);
+    assert!(ex.log.iter().any(|e| e.kind == "clarification_requested"));
+    // Delivered to the player in the proposal's thread.
+    ex.deliver_clarification(pid, "Quale lato di F4?", "Which side of F4?").unwrap();
+    let m = ex.inbox("fire_commander").last().cloned().unwrap();
+    assert_eq!(m.kind, MsgKind::Clarification);
+    assert_eq!(m.text, "Quale lato di F4?");
+    assert_eq!(m.proposal, Some(pid));
+    assert_eq!(m.inject_id, ex.proposal(pid).unwrap().inject_id);
+    // The proposal can still be decided afterwards.
+    ex.decide(pid, Decision { approve: false, note: Some("no".into()), ..Default::default() }).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Rejected);
+    // Decided proposals and EXCON proposals cannot be sent back.
+    assert!(ex.request_clarification(pid, "again?").is_err());
+    assert!(ex.deliver_clarification(pid, "x", "x").is_err());
+    let mp = ex.master_prompt("do something");
+    assert!(ex.request_clarification(mp, "what?").is_err());
+}
