@@ -134,6 +134,7 @@ impl Principal {
                         "draft/submit",
                         "chat",
                         "reply",
+                        "actions",
                         "language",
                         "presence",
                     ]

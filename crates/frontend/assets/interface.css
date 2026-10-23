@@ -94,3 +94,58 @@ body:has(.standalone){height:100dvh;overflow:hidden}.standalone{height:100dvh;di
 @keyframes ttx-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.loader{animation:none;border-top-color:#126752;box-shadow:inset 0 0 0 2px #bfd3c7}}
 .standalone-simulation{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}.standalone-3d-frame{position:relative;flex:1;min-height:240px;overflow:hidden;border:1px solid #bac9c0;border-radius:10px;background:linear-gradient(#9bb9c2,#d5dfd5 68%,#86947a)}.standalone-3d-frame canvas{display:block;width:100%;height:100%;outline:none;touch-action:none}.standalone-simulation[hidden]{display:none}
+
+/* Keep role columns comparable while preserving the available work area. */
+#excon-timeline{min-width:0;margin:18px}
+#excon-timeline>.timeline-columns{flex-wrap:nowrap;padding-bottom:12px}
+#excon-timeline>.timeline-columns>section{flex:0 0 320px!important;min-width:0!important;max-width:calc(100vw - 64px);padding:12px}
+#excon-timeline ol{padding-left:18px}
+#excon-timeline li{margin-bottom:14px;overflow-wrap:anywhere}
+#excon-timeline .command-list{grid-template-columns:1fr}
+#player-work label{display:grid;gap:5px;margin:10px 0}
+#player-work input,#player-work select,#player-work textarea{width:100%}
+
+.modal-backdrop{position:fixed;inset:0;z-index:1000;background:#142c32a8;display:flex;align-items:center;justify-content:center;padding:24px}
+.inject-modal{width:min(760px,100%);max-height:90dvh;overflow:auto;border-radius:14px;background:white;box-shadow:0 12px 60px #0005;padding:22px}
+.inject-modal .composer{padding:16px 0 0;border:0;background:white}
+.inject-modal h2{font-size:20px;margin:0}.inject-modal textarea#text{min-height:180px}
+.timeline-clock{margin:12px 0;padding:10px;background:#f0f5f2;border-radius:8px}
+.timeline-clock input,#turn-controls input{width:80px}
+@media(max-width:760px){.modal-backdrop{padding:10px}.inject-modal{padding:16px}}
+
+/* Dense working layout: reserve space for maps and decisions. */
+.page{padding:10px}.card{padding:12px;margin-bottom:10px;border-radius:9px}
+.card h2,.card h3{margin-bottom:6px}.map-layout,.advanced-grid{gap:10px}
+.advanced-grid .card{margin-bottom:10px}.row{gap:8px}
+.topbar,.role-panel .topbar{padding:7px 12px;gap:8px}
+.navigation,.role-panel .navigation{padding:4px 8px;gap:5px}
+.standalone-header{padding:7px 12px;gap:12px}.standalone-header h1{font-size:17px}
+.standalone-settings{padding:4px 12px}.standalone-simulation{padding:10px}
+.simulation-heading{margin-bottom:8px}.simulation-heading h2{font-size:15px}
+.role-tabs{padding:5px 8px;gap:5px}.role-tabs button{padding:7px 10px}
+#excon-timeline{margin:0;padding:10px}#excon-timeline>.timeline-columns>section{padding:10px;margin:0}
+#excon-timeline .proposal-inline{padding:9px;margin-top:6px}
+#excon-timeline li{margin-bottom:8px}.timeline-clock{margin:6px 0;padding:6px 8px}
+#player-work label{margin:6px 0 3px}.resources{display:flex;flex-wrap:wrap;gap:8px 14px}
+.resources p{padding:4px 0;flex:1;min-width:90px}
+#map-view .mapbox canvas{width:auto;height:auto;max-width:100%;max-height:58dvh}
+.card form>label{margin:7px 0}.inject-modal{padding:14px}.inject-modal .composer{padding-top:8px}
+.inject-compose-grid{gap:8px;margin:6px 0}.inject-compose-row{margin:6px 0}
+@media(min-width:761px){.map-layout{grid-template-columns:minmax(0,3fr) minmax(290px,2fr)}}
+@media(max-width:760px){.page{padding:8px}.card{padding:10px}.map-layout{gap:8px}#map-view .mapbox canvas{max-height:42dvh}.standalone-header{padding:6px 10px}.standalone-3d-frame{min-height:180px}}
+
+/* The role tabs already name each view; avoid repeating the masthead. */
+.standalone-header>div:first-child{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.standalone-header .eyebrow,.standalone-header>.pill,.standalone .role-panel .brand,.simulation-heading p{display:none}
+.standalone-header h1{font-size:15px}.standalone-header p{font-size:12px}
+.standalone-header{padding:4px 10px;gap:10px}.standalone-header label{font-size:12px}
+.standalone-settings{padding:3px 10px}.role-tabs{padding:4px 6px}
+.role-panel .topbar{padding:4px 10px;gap:8px}
+.role-panel .topbar>div:nth-child(2){display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.role-panel .navigation{padding:3px 6px}.simulation-heading{margin-bottom:5px}
+@media(pointer:fine){.navigation button,.role-tabs button{min-height:32px!important;padding:5px 9px}.role-panel #language{min-height:32px}.standalone-header button{padding:5px 9px}}
+#system-history>.card>.row{margin-bottom:8px}#history-query{flex:1;min-width:160px;max-width:420px}
+.history-table{overflow:auto}.history-table table{border-collapse:collapse;width:100%;font-size:13px}
+.history-table th,.history-table td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid var(--line)}
+.history-table th{background:#edf3ef}.history-table td:nth-child(2){white-space:nowrap}.history-table pre{max-height:300px}
+.history-table details{margin:0}.history-table summary{font-weight:600}

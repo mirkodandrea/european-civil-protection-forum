@@ -128,6 +128,9 @@ pub fn live(token: String, callback: yew::Callback<()>) -> AbortHandle {
     handle
 }
 pub fn download(value: &Value) -> Result<(), String> {
+    download_as(value, "ttx-debrief.json")
+}
+pub fn download_as(value: &Value, filename: &str) -> Result<(), String> {
     use wasm_bindgen::JsCast;
     let parts = js_sys::Array::new();
     parts.push(&JsValue::from_str(&pretty(value)));
@@ -145,7 +148,7 @@ pub fn download(value: &Value) -> Result<(), String> {
         .dyn_into::<web_sys::HtmlAnchorElement>()
         .unwrap();
     anchor.set_href(&url);
-    anchor.set_download("ttx-debrief.json");
+    anchor.set_download(filename);
     anchor.click();
     let _ = web_sys::Url::revoke_object_url(&url);
     Ok(())

@@ -41,7 +41,7 @@ pub fn standalone() -> Html {
     let selected = use_state(|| "master".to_string());
     let show_map = use_state(|| true);
     let all_roles = use_state(|| false);
-    let split = use_state(|| "50".to_string());
+    let split = use_state(|| "30".to_string());
     let key = use_state(String::new);
     let model = use_state(|| STANDALONE_MODEL.to_string());
     let translator = use_state(|| STANDALONE_MODEL.to_string());
@@ -135,11 +135,7 @@ pub fn standalone() -> Html {
             notice.set("AI disattivata · chiave rimossa".into());
         })
     };
-    let mut panels = vec![
-        ("master".to_string(), "EXCON".to_string(), "chat"),
-        ("advanced".into(), "Strumenti EXCON".into(), "advanced"),
-        ("evaluator".into(), "Valutazione".into(), "evaluator"),
-    ];
+    let mut panels = vec![("master".to_string(), "EXCON".to_string(), "chat")];
     for role in &roles {
         panels.push((role.id.clone(), role.name.clone(), "chat"));
     }
@@ -148,7 +144,7 @@ pub fn standalone() -> Html {
         <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{format!("{clock} · {phase} · 32 realizzazioni")}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span>
           <label><input type="checkbox" checked={*show_map} onchange={{let show=show_map.clone();Callback::from(move |_|show.set(!*show))}}/>{" Simulazione"}</label>
           <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{" Tutti i player"}</label>
-          <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="25" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
+          <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
         </header>
         <details class="standalone-settings"><summary>{"OpenRouter · "}{&*ai_notice}</summary>
           <p>{"La chiave resta in memoria in questa pagina. Nessun salvataggio automatico; ricaricare la pagina avvia una nuova esercitazione. Il debrief è esportabile dagli strumenti EXCON."}</p>
@@ -165,7 +161,7 @@ pub fn standalone() -> Html {
           })}</nav>
           <div class={classes!("role-panels",(*all_roles).then_some("all-roles"))}>{for panels.iter().map(|(id,_,page)|{
              let visible = if *all_roles { roles.iter().any(|r|r.id==*id) } else { *selected==*id };
-             html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App role={Some(id.clone())} page={Some(page.to_string())}/></section>}
+             html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="history"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App role={Some(id.clone())} page={Some(page.to_string())}/></section>}
           })}</div></section>
         </div>
       </div>

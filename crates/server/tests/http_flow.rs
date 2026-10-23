@@ -2194,14 +2194,30 @@ async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
         &app,
         "POST",
         "/api/player/mayor/chat",
-        Some(json!({"to":"master","text":"Ricevuto"})),
+        Some(json!({"to":"fire_commander","text":"Ricevuto"})),
     )
     .await;
     assert_eq!(status, Status::Ok);
     assert_eq!(sent["translation_failed"], true);
-    let (_, master) = call(&app, "GET", "/api/master", None).await;
-    assert_eq!(master["messages"][0]["original"], "Ricevuto");
-    assert_eq!(master["messages"][0]["text"], "Ricevuto");
+    let (_, recipient) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    assert_eq!(recipient["inbox"][0]["original"], "Ricevuto");
+    assert_eq!(recipient["inbox"][0]["text"], "Ricevuto");
+    for (endpoint, to) in [
+        ("/api/player/mayor/chat", "master"),
+        ("/api/master/chat", "mayor"),
+    ] {
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                endpoint,
+                Some(json!({"to":to,"text":"Direct chat"}))
+            )
+            .await
+            .0,
+            Status::BadRequest
+        );
+    }
     assert_eq!(
         call(
             &app,
@@ -2285,7 +2301,7 @@ async fn translated_chat_cannot_cross_a_rollback() {
             &worker,
             "POST",
             "/api/player/mayor/chat",
-            Some(json!({"to":"master", "text":"Warn F4", "interpret":false})),
+            Some(json!({"to":"fire_commander", "text":"Warn F4", "interpret":false})),
         )
         .await
     });
@@ -2581,4 +2597,75 @@ async fn request(
     let response = request.dispatch().await;
     let status = response.status();
     (status, response.into_json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn structured_player_actions_wait_for_review_without_ai() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let before = call(&app, "GET", "/api/state", None).await.1["world"].clone();
+    let body = json!({"text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let (status, sent) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/actions",
+        Some(body.clone()),
+        Some("test-mayor"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        call(&app, "GET", "/api/state", None).await.1["world"],
+        before
+    );
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let proposal = master["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == sent["proposal"])
+        .unwrap();
+    assert_eq!(proposal["status"], "pending");
+    assert_eq!(proposal["commands"], body["commands"]);
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/player/mayor/actions",
+            Some(body),
+            Some("test-fire")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
+    let (status, _) = call_key(&app, "POST", "/api/player/mayor/actions", Some(json!({"text":"Invalid parent", "commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":999999})), Some("test-mayor")).await;
+    assert_eq!(status, Status::BadRequest);
+}
+
+#[tokio::test]
+async fn master_history_retains_all_operational_events() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    for i in 0..350 {
+        ex.record("history_fixture", "master", json!({"index":i}));
+    }
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let events = master["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "history_fixture")
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 350);
+    assert_eq!(events[0]["data"]["index"], 0);
+    assert_eq!(events[349]["data"]["index"], 349);
 }

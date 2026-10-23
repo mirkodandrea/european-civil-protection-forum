@@ -189,6 +189,15 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/player/<role>/actions") => {
+            post_player_actions(
+                principal.clone(),
+                s.clone(),
+                captures["role"].to_string(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/player/<role>/reply") => {
             post_reply(
                 principal.clone(),
@@ -420,6 +429,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/player/<role>/chat"),
     ("POST", "/api/master/chat"),
     ("POST", "/api/player/<role>/reply"),
+    ("POST", "/api/player/<role>/actions"),
     ("POST", "/api/player/<role>/language"),
     ("POST", "/api/master/resource-limits"),
     ("POST", "/api/master/clock"),

@@ -432,12 +432,13 @@ fn rollback_keeps_resource_history_even_when_actual_ledger_is_restored() {
 }
 
 #[test]
-fn joining_requires_language_and_evidence_is_validated_before_recording() {
+fn default_language_needs_no_confirmation_and_evidence_is_validated_before_recording() {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
     let mut ex = Exercise::new(World::new(scn, 1).unwrap());
     ex.start().unwrap();
     let mid = ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap()[0];
-    assert!(ex.player_reply("mayor", "warn F4", mid, DecisionEvidence::judgment("Urgent warning based on report")).is_err());
+    assert!(ex.players["mayor"].language_confirmed);
+    assert!(!ex.players["mayor"].language.is_empty());
     assert!(ex.set_language("mayor", "invented-language").is_err());
     ex.set_language("mayor", "it").unwrap();
     assert!(ex.players["mayor"].language_confirmed);

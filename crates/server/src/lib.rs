@@ -146,6 +146,7 @@ pub fn router_with_access(
                 post_player_chat,
                 post_master_chat,
                 post_reply,
+                post_player_actions,
                 post_language,
                 post_start,
                 post_inject,
@@ -398,7 +399,6 @@ async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master"))]
 async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
     let ex = s.lock();
-    let tail = ex.log.len().saturating_sub(300);
     // Peer-to-peer chat is private to its two participants. Operational
     // proposals remain visible to EXCON through the separate review queue.
     let messages = ex
@@ -410,7 +410,8 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
                 && m.to != exercise::MASTER)
         })
         .collect::<Vec<_>>();
-    let log = ex.log[tail..]
+    let log = ex
+        .log
         .iter()
         .filter(|entry| {
             !matches!(entry.kind.as_str(), "message" | "chat_source")
@@ -604,6 +605,9 @@ async fn post_player_chat(
     b: Json<ChatBody>,
 ) -> ApiResult {
     let Json(b) = b;
+    if b.to == exercise::MASTER {
+        return Err(bad("player chat is only available between players; submit an operational decision for EXCON review"));
+    }
     if b.interpret {
         return Err(bad(
             "prepare and confirm the decision privately before sending it",
@@ -615,9 +619,11 @@ async fn post_player_chat(
     not(target_arch = "wasm32"),
     rocket::post("/api/master/chat", data = "<b>")
 )]
-async fn post_master_chat(_principal: Principal, s: AppState, b: Json<ChatBody>) -> ApiResult {
-    let Json(b) = b;
-    deliver_chat(s, exercise::MASTER.into(), b).await
+async fn post_master_chat(_principal: Principal, _s: AppState, b: Json<ChatBody>) -> ApiResult {
+    let _ = b;
+    Err(bad(
+        "EXCON communicates through injects; chat is only available between players",
+    ))
 }
 
 // ---------------------------------------------------------------- players
@@ -655,6 +661,29 @@ async fn post_reply(
     };
     tokio::spawn(flow::process_reply(s.clone(), pid));
     Ok(Json(json!({"proposal": pid})))
+}
+
+#[derive(Deserialize)]
+struct PlayerActionsBody {
+    text: String,
+    commands: Vec<Command>,
+    reply_to: Option<u64>,
+}
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/player/<role>/actions", data = "<b>")
+)]
+async fn post_player_actions(
+    _principal: Principal,
+    s: AppState,
+    role: String,
+    b: Json<PlayerActionsBody>,
+) -> ApiResult {
+    let Json(b) = b;
+    let pid = s
+        .lock()
+        .player_actions(&role, &b.text, b.commands, b.reply_to)?;
+    Ok(Json(json!({"proposal":pid})))
 }
 
 #[derive(Deserialize)]

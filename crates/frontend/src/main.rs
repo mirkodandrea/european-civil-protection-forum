@@ -2,9 +2,11 @@ mod advanced;
 mod api;
 mod chat;
 mod evaluator;
+mod history;
 mod map;
 #[cfg(feature = "standalone")]
 mod standalone;
+mod timeline;
 mod widgets;
 
 use api::{list, text, window};
@@ -61,7 +63,7 @@ impl Default for Draft {
     fn default() -> Self {
         Self {
             text: String::new(),
-            mode: "chat".into(),
+            mode: "inject".into(),
             template: String::new(),
             title: String::new(),
             sender: "EXCON".into(),
@@ -106,6 +108,7 @@ pub struct App {
     presence_poll: Option<Interval>,
     peer_typing: bool,
     filter: String,
+    inject_open: bool,
 }
 pub enum Msg {
     Boot(Result<Bootstrap, String>),
@@ -115,6 +118,8 @@ pub enum Msg {
     Action(Action),
     Done(ActionKind, Result<Value, String>),
     Select(String),
+    OpenInject(String),
+    CloseInject,
     View(String),
     Field(String, String),
     Discard,
@@ -168,11 +173,10 @@ impl App {
         if self.is_master() {
             self.roles()
         } else {
-            std::iter::once(
-                json!({"id":"master","name":"EXCON","description":"Direzione esercitazione"}),
-            )
-            .chain(self.roles().into_iter().filter(|r| r["id"] != self.own))
-            .collect()
+            self.roles()
+                .into_iter()
+                .filter(|r| r["id"] != self.own)
+                .collect()
         }
     }
     fn messages(&self) -> &[Value] {
@@ -186,14 +190,24 @@ impl App {
         if self.is_master() {
             return m["from"] == id || m["to"] == id;
         }
+        if m["kind"] == "inject" {
+            return m["to"] == self.own
+                && self
+                    .roles()
+                    .iter()
+                    .any(|r| r["id"] == id && r["id"] != self.own);
+        }
         let from = text(&m["from"]);
         let to = text(&m["to"]);
-        let peer = if m["kind"] == "inject" {
-            "master"
+        let peer = if m["kind"] == "inject"
+            || (to == self.own
+                && (from == "master" || !self.roles().iter().any(|r| r["id"] == from)))
+        {
+            "injects"
         } else if from == self.own {
             to
         } else if from == "master" || !self.roles().iter().any(|r| r["id"] == from) {
-            "master"
+            return false;
         } else {
             from
         };
@@ -329,6 +343,7 @@ impl Component for App {
             presence_poll: None,
             peer_typing: false,
             filter: String::new(),
+            inject_open: false,
         }
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
@@ -347,8 +362,11 @@ impl Component for App {
                 };
                 if self.own == "evaluator" {
                     self.page = "evaluator".into()
+                } else if self.is_master() {
+                    self.active = "timeline".into();
                 } else if !self.is_master() {
                     self.page = "chat".into();
+                    self.active = "map".into();
                     if !cfg!(feature = "standalone") {
                         let _ = window()
                             .document()
@@ -516,6 +534,9 @@ impl Component for App {
                             self.error = failures.join(" · ");
                             self.notice = "Operazione con errori: consulta gli esiti".into();
                         }
+                        if self.is_master() && matches!(&kind, ActionKind::Send(_, _)) {
+                            self.inject_open = false;
+                        }
                         match kind {
                             ActionKind::Store(key) => {
                                 self.notice = match key.as_str() {
@@ -603,6 +624,26 @@ impl Component for App {
                 }
                 self.request_refresh(ctx);
             }
+            Msg::OpenInject(id) => {
+                self.selected = id;
+                self.inject_open = true;
+                self.error.clear();
+                gloo_timers::callback::Timeout::new(0, || {
+                    use wasm_bindgen::JsCast;
+                    if let Some(field) = window()
+                        .document()
+                        .and_then(|d| d.get_element_by_id("inject-title"))
+                    {
+                        if let Some(el) = field.dyn_ref::<web_sys::HtmlElement>() {
+                            let _ = el.focus();
+                        }
+                    }
+                })
+                .forget();
+            }
+            Msg::CloseInject => {
+                self.inject_open = false;
+            }
             Msg::Select(id) => {
                 self.selected = id;
                 self.peer_typing = false;
@@ -662,7 +703,12 @@ impl Component for App {
                 }
             }
             Msg::Discard => {
-                if let Some(d) = self.drafts.remove(&self.selected) {
+                let key = if self.active == "map" && !self.is_master() {
+                    "master"
+                } else {
+                    &self.selected
+                };
+                if let Some(d) = self.drafts.remove(key) {
                     if let Some(id) = d.private["id"].as_u64() {
                         self.dismissed.insert(id);
                     }
@@ -707,24 +753,29 @@ impl Component for App {
             html! {<button class={if active{"active"}else{""}} data-view={id.clone()} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}</button>}
         };
         let href = |path: &str| format!("{path}?token={}", api::encode(&self.token));
+        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{"Avvia esercitazione"}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{"Avanza turno →"}</button></div>};
         html! {<>
             <header class="topbar"><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{format!("Turno {} · {}",self.state["turn"],phase)}</span><div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{" · tempo controllato da EXCON"}</div></div><div class="grow"/>
-            if self.is_master()&&!self.is_evaluator(){<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{"Avvia esercitazione"}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{"Avanza turno →"}</button></div>}
+            if self.is_master()&&!self.is_evaluator()&&self.page!="history"&&(self.active!="timeline"||self.page!="chat") {{time_controls.clone()}}
             if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label="Lingua" value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
             </header>
-            if !self.is_master()&&!self.is_evaluator()&&self.state["player"]["language_confirmed"]!=true{<div id="join" class="notice">{"Scegli la lingua dei messaggi. "}<button id="confirm-language" onclick={{let own=self.own.clone();let language=self.field("language",text(&self.state["player"]["language"]));ctx.link().callback(move |_|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":language}))))}}>{"Conferma lingua"}</button></div>}
+
             <nav class="navigation" aria-label="Viste">
-            if self.page=="chat" { {nav("chat","Conversazioni")} {nav("map",if self.is_master(){"Mappa dettagliata"}else{"Mappa tattica"})} }
+            if self.page=="chat" {if self.is_master(){ {nav("timeline","Timeline")} {nav("map","Mappa")} {nav("advanced","Strumenti")} {nav("history","Cronologia")} }else{{nav("map","Lavoro operativo")} {nav("chat","Conversazioni")}}}
             <div class="grow"/>
-            if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{"Conversazioni"}</a><a id="advanced" href={href("advanced.html")}>{"Strumenti avanzati ↗"}</a><a href={href("evaluator.html")}>{"Valutazione"}</a>}
+            if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{"Timeline"}</a><a id="advanced" href={href("advanced.html")}>{"Strumenti avanzati ↗"}</a>}
             </nav>
             <div id="error" class="error" role="alert">{&self.error}</div>
-            if (self.page=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
+            if (self.page=="advanced"||self.active=="advanced"||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
             if self.state.is_null(){<p class="page">{"Caricamento della situazione…"}</p>}
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
-            else if self.page=="advanced"&&self.is_master(){<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}
+            else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()}/> }
+            else if (self.page=="advanced"||self.active=="advanced")&&self.is_master(){<advanced::Advanced stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} action={self.action(ctx)}/>}
             else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{"Apri la console conversazionale"}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
+            else if self.is_master()&&self.active=="timeline"{<main class="page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy} controls={time_controls.clone()} oninject={ctx.link().callback(Msg::OpenInject)}/></main>}
             else{{self.view_chat(ctx)}}
+            if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{"Inject a tutti".into()}else{format!("Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label="Chiudi modale inject" disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{"Chiudi"}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
+
         </>}
     }
     fn destroy(&mut self, _ctx: &Context<Self>) {

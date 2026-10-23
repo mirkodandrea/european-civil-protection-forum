@@ -30,14 +30,26 @@ pub fn draw(
     grid: Res<ShowGrid>,
     quality: Res<crate::quality::Quality>,
     fire_style: Res<crate::fire_field::FirePresentation>,
+    keys: Res<ButtonInput<KeyCode>>,
     cam: Query<(&Camera, &GlobalTransform)>,
     mut ip: Local<Option<String>>,
+    mut show_labels: Local<Option<bool>>,
 ) {
+    // The embedded viewer shares its small viewport with the browser controls.
+    // Operational information is already rendered by the surrounding role UI.
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
     if std::env::var("TTX_SNAPSHOT_UI").as_deref() == Ok("0") {
         return;
     }
     let ip = ip.get_or_insert_with(local_ip).clone();
     let s = &scn.0;
+    let show_labels =
+        show_labels.get_or_insert_with(|| std::env::var("TTX_MAP_LABELS").as_deref() == Ok("1"));
+    if keys.just_pressed(KeyCode::KeyL) {
+        *show_labels = !*show_labels;
+    }
     let ctx = ctx.ctx_mut();
     let fire_caption = format!(
         "Fire display: {} · model {:.0} m · V toggles",
@@ -188,7 +200,10 @@ pub fn draw(
        ui.label(RichText::new(format!("Quality: {} · orange travelling/refilling/withdrawing · cyan working · green complete · red failed", quality.name)).color(Color32::from_rgb(195, 205, 215)).size(11.0));
       });
     });
-    // Map labels.
+    // Map labels are optional because they can obscure the scene at overview scale.
+    if !*show_labels {
+        return;
+    }
     let Ok((camera, gt)) = cam.get_single() else {
         return;
     };

@@ -20,11 +20,22 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
 
 ## Flusso dell'esercitazione
 
-1. EXCON invia informazioni e inject ai ruoli selezionati.
-2. Un partecipante comunica con EXCON o con un altro ruolo. L'AI può tradurre il
-   testo, riconoscere azioni proponibili e chiedere chiarimenti.
-3. Il partecipante rivede e conferma la bozza di azioni. EXCON ne controlla la
-   fattibilità e decide se approvarle.
+1. EXCON controlla tempo e turni dalla timeline e apre il modale inject dalla
+   colonna di un player oppure con “Inject a tutti”. Il form riusa i template
+   dello scenario e permette di modificare titolo, mittente e testo. Le tab
+   principali corrispondono agli attori; Timeline, Mappa, Strumenti e Cronologia
+   sono viste interne a EXCON. La Cronologia raccoglie tutti gli eventi operativi
+   salvati, con ricerca, dettagli ed esportazione JSON per la valutazione.
+2. I partecipanti comunicano in chat solo con gli altri ruoli. Nelle proprie
+   conversazioni vedono anche gli inject ricevuti dal proprio ruolo, senza
+   condividerli automaticamente con l’interlocutore. Non è richiesta conferma
+   della lingua predefinita, che resta modificabile dal menu. Nella vista di
+   lavoro leggono gli inject, consultano risorse e missioni e propongono azioni
+   tramite moduli e mappa, oppure preparano una decisione con l’AI. L’AI può
+   tradurre il testo, riconoscere azioni proponibili e chiedere chiarimenti.
+3. Il partecipante rivede e conferma la bozza AI oppure invia una proposta
+   strutturata senza AI. EXCON vede inject e azioni in una timeline per turno,
+   suddivisa per ruolo, ne controlla la fattibilità e decide se approvarle.
 4. Le azioni approvate vengono eseguite o applicate durante l'avanzamento del
    tempo simulato. Le mappe, gli aggiornamenti ai ruoli, il registro e il debrief
    mostrano gli effetti.

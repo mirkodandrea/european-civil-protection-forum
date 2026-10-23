@@ -198,24 +198,13 @@ pub struct ApiFormProps {
 }
 #[function_component(ApiForm)]
 pub fn api_form(props: &ApiFormProps) -> Html {
-    let values = use_state(|| {
-        props
-            .initial
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    if v.is_string() {
-                        text(v).to_string()
-                    } else {
-                        pretty(v)
-                    },
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>()
-    });
+    let values = use_state(|| form_values(&props.initial));
+    {
+        let values = values.clone();
+        use_effect_with(props.initial.clone(), move |initial| {
+            values.set(form_values(initial))
+        });
+    }
     let error = use_state(String::new);
     let onsubmit = {
         let values = values.clone();
@@ -254,4 +243,22 @@ pub fn api_form(props: &ApiFormProps) -> Html {
         let key=key.clone();let val=values.get(&key).cloned().unwrap_or_default();let onchange={let key=key.clone();let values=values.clone();Callback::from(move|e|{let mut next=(*values).clone();next.insert(key.clone(),api::input(e));values.set(next);})};
         html!{<label>{field_name(&key)} if initial.is_boolean(){<input type="checkbox" checked={val=="true"} onchange={{let key=key.clone();let values=values.clone();Callback::from(move |e:Event|{use yew::TargetCast;let mut next=(*values).clone();next.insert(key.clone(),e.target_unchecked_into::<web_sys::HtmlInputElement>().checked().to_string());values.set(next);})}}/>}else if initial.is_array()||initial.is_object()||val.contains('\n'){<textarea value={val} oninput={onchange}/>}else{<input type={if initial.is_number(){"number"}else{"text"}} step="any" value={val} oninput={onchange}/>}</label>}
     })}<p class="error">{&*error}</p><button type="submit" class="primary" disabled={props.busy}>{props.button.clone()}</button></form></section>}
+}
+
+fn form_values(initial: &Value) -> std::collections::BTreeMap<String, String> {
+    initial
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                if v.is_string() {
+                    text(v).to_string()
+                } else {
+                    pretty(v)
+                },
+            )
+        })
+        .collect()
 }

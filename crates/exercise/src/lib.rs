@@ -445,7 +445,7 @@ impl Exercise {
                         role: r.id.clone(),
                         name: r.name.clone(),
                         language: r.language.clone(),
-                        language_confirmed: false,
+                        language_confirmed: true,
                     },
                 )
             })
@@ -950,9 +950,6 @@ impl Exercise {
         if text.trim().is_empty() {
             bail!("empty reply");
         }
-        if !self.players[role].language_confirmed {
-            bail!("select your language before submitting a declaration");
-        }
         evidence.validate()?;
         let parent = self
             .messages
@@ -973,6 +970,47 @@ impl Exercise {
         let pid =
             self.open_chat_proposal(role, text, Some(inject_id), Some(reply_to), Some(evidence))?;
         self.add_message(role, MASTER, MsgKind::Reply, None, text, text, Some(pid));
+        Ok(pid)
+    }
+
+    /// Structured player input enters the same review queue without requiring AI.
+    pub fn player_actions(
+        &mut self,
+        role: &str,
+        text: &str,
+        commands: Vec<Command>,
+        reply_to: Option<u64>,
+    ) -> Result<u64> {
+        self.validate_chat(role, MASTER, text, true)?;
+        if commands.is_empty() || commands.len() > 32 {
+            bail!("provide 1–32 commands");
+        }
+        let pid = if let Some(parent) = reply_to {
+            self.player_reply(
+                role,
+                text,
+                parent,
+                DecisionEvidence::judgment("Structured operational decision"),
+            )?
+        } else {
+            self.open_chat_proposal(role, text, None, None, None)?
+        };
+        self.attach_parse(
+            pid,
+            ParsedInput {
+                resource_limit_draft: None,
+                communication_drafts: Vec::new(),
+                language: self.language_of(role),
+                translation_en: text.into(),
+                actions: commands
+                    .iter()
+                    .map(|c| serde_json::to_value(c).expect("command serialization"))
+                    .collect(),
+                clarification: None,
+                summary: text.into(),
+                inject_drafts: Vec::new(),
+            },
+        )?;
         Ok(pid)
     }
 
@@ -1069,9 +1107,6 @@ impl Exercise {
         }
         if text.trim().is_empty() || text.chars().count() > 8000 {
             bail!("message must contain 1–8000 characters");
-        }
-        if from != MASTER && !self.players[from].language_confirmed {
-            bail!("select your language before chatting");
         }
         if interpret && (from == MASTER || self.phase != Phase::Orders) {
             bail!("operational interpretation requires a player and an open turn");

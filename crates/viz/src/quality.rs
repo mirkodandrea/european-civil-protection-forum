@@ -28,6 +28,14 @@ impl Quality {
                 vegetation_distance: 9000.0,
                 fire_lights: 8,
             },
+            _ if cfg!(target_arch = "wasm32") => Self {
+                name: "low",
+                shadows: false,
+                bloom: 0.0,
+                vegetation: 0.35,
+                vegetation_distance: 2500.0,
+                fire_lights: 0,
+            },
             _ => Self {
                 name: "projector",
                 shadows: true,
