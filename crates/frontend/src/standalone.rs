@@ -5,6 +5,35 @@ use std::{cell::RefCell, sync::Arc};
 use yew::prelude::*;
 
 thread_local! { static RUNTIME: RefCell<Option<server::AppState>> = const { RefCell::new(None) }; }
+const API_KEY_STORAGE: &str = "ttx.standalone.openrouter-key";
+
+fn key_storage() -> Result<web_sys::Storage, ()> {
+    web_sys::window()
+        .ok_or(())?
+        .local_storage()
+        .map_err(|_| ())?
+        .ok_or(())
+}
+
+fn saved_key() -> Option<String> {
+    key_storage()
+        .ok()?
+        .get_item(API_KEY_STORAGE)
+        .ok()
+        .flatten()
+        .filter(|key| !key.trim().is_empty())
+}
+
+fn persist_key(key: &str) -> Result<(), ()> {
+    let storage = key_storage()?;
+    if key.trim().is_empty() {
+        storage.remove_item(API_KEY_STORAGE)
+    } else {
+        storage.set_item(API_KEY_STORAGE, key.trim())
+    }
+    .map_err(|_| ())
+}
+
 const STANDALONE_MODEL: &str = "openai/gpt-oss-120b";
 
 pub fn runtime() -> Result<server::AppState, String> {
@@ -28,7 +57,11 @@ fn initialize() -> Result<server::AppState, String> {
     )
     .map_err(|e| e.to_string())?;
     let mut state = server::browser::new(exercise::Exercise::new(world));
-    if let Some(key) = option_env!("OPENROUTER_API_KEY").filter(|key| !key.trim().is_empty()) {
+    if let Some(key) = saved_key().or_else(|| {
+        option_env!("OPENROUTER_API_KEY")
+            .filter(|key| !key.trim().is_empty())
+            .map(str::to_string)
+    }) {
         server::browser::configure(&mut state, &key, STANDALONE_MODEL, STANDALONE_MODEL);
     }
     RUNTIME.with(|r| *r.borrow_mut() = Some(state.clone()));
@@ -39,7 +72,7 @@ fn initialize() -> Result<server::AppState, String> {
 pub fn standalone() -> Html {
     let initialized = use_state(initialize);
     let selected = use_state(|| "master".to_string());
-    let show_map = use_state(|| true);
+    let show_map = use_state(|| false);
     let all_roles = use_state(|| false);
     let split = use_state(|| "30".to_string());
     let key = use_state(String::new);
@@ -50,7 +83,11 @@ pub fn standalone() -> Html {
             .as_ref()
             .is_ok_and(|state| state.llm.is_available())
         {
-            "AI configurata da .env · OpenRouter".to_string()
+            if saved_key().is_some() {
+                "AI configurata · chiave salvata nel browser".to_string()
+            } else {
+                "AI configurata da .env · OpenRouter".to_string()
+            }
         } else {
             "AI disattivata · modalità manuale".to_string()
         }
@@ -79,11 +116,15 @@ pub fn standalone() -> Html {
     #[cfg(target_arch = "wasm32")]
     {
         let exercise = state.ex.clone();
-        use_effect_with((), move |_| {
-            wasm_bindgen_futures::spawn_local(async move {
-                gloo_timers::future::TimeoutFuture::new(100).await;
-                viz::run(exercise, 0, "standalone".into());
-            });
+        let started = use_mut_ref(|| false);
+        use_effect_with(*show_map, move |visible| {
+            if *visible && !*started.borrow() {
+                *started.borrow_mut() = true;
+                wasm_bindgen_futures::spawn_local(async move {
+                    gloo_timers::future::TimeoutFuture::new(100).await;
+                    viz::run(exercise, 0, "standalone".into());
+                });
+            }
             || ()
         });
     }
@@ -107,11 +148,14 @@ pub fn standalone() -> Html {
             }
             if let Ok(mut state) = runtime() {
                 server::browser::configure(&mut state, &key, &model, &translator);
+                let saved = persist_key(&key).is_ok();
                 notice.set(
-                    if key.trim().is_empty() {
-                        "AI disattivata · modalità manuale"
+                    if !saved {
+                        "Archiviazione browser non disponibile · modifica valida solo per questa pagina"
+                    } else if key.trim().is_empty() {
+                        "AI disattivata · chiave rimossa"
                     } else {
-                        "AI configurata · connessione diretta a OpenRouter"
+                        "AI configurata · chiave salvata nel browser"
                     }
                     .into(),
                 );
@@ -132,7 +176,14 @@ pub fn standalone() -> Html {
                 );
             }
             key.set(String::new());
-            notice.set("AI disattivata · chiave rimossa".into());
+            notice.set(
+                if persist_key("").is_ok() {
+                    "AI disattivata · chiave rimossa"
+                } else {
+                    "AI disattivata · impossibile rimuovere la chiave dal browser"
+                }
+                .into(),
+            );
         })
     };
     let mut panels = vec![("master".to_string(), "EXCON".to_string(), "chat")];
@@ -147,7 +198,7 @@ pub fn standalone() -> Html {
           <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
         </header>
         <details class="standalone-settings"><summary>{"OpenRouter · "}{&*ai_notice}</summary>
-          <p>{"La chiave resta in memoria in questa pagina. Nessun salvataggio automatico; ricaricare la pagina avvia una nuova esercitazione. Il debrief è esportabile dagli strumenti EXCON."}</p>
+          <p>{"La chiave viene salvata nel browser su questo dispositivo e riutilizzata alle prossime aperture. “Rimuovi chiave” elimina la chiave salvata. Ricaricare la pagina avvia una nuova esercitazione. Il debrief è esportabile dagli strumenti EXCON."}</p>
           <div class="settings-fields"><label>{"Chiave API"}<input id="openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
           <label>{"Modello interpretazione"}<input id="openrouter-model" value={(*model).clone()} oninput={{let model=model.clone();Callback::from(move |e|model.set(api::input(e)))}}/></label>
           <label>{"Modello traduzione"}<input id="openrouter-translator" value={(*translator).clone()} oninput={{let translator=translator.clone();Callback::from(move |e|translator.set(api::input(e)))}}/></label>

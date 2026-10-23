@@ -28,6 +28,8 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   await page.context().setOffline(true);
   await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE||'web/standalone/ttx.html'));
   await master.locator('#start').waitFor({timeout:30000});
+  assert.equal(await page.getByLabel('Simulazione',{exact:true}).isChecked(),false,'simulation view starts disabled');
+  assert(await page.locator('.standalone-simulation').isHidden());
   await page.screenshot({path:path.join(out,'desktop.png')});
   await master.locator('#start').click();await master.locator('#turn').filter({hasText:'orders'}).waitFor();
   await select('mayor');await mayor.locator('#language').selectOption('en');await mayor.locator('[data-view="chat"]').click();assert.equal(await mayor.locator('[data-contact="master"]').count(),0,'players have no EXCON chat contact');await mayor.locator('[data-view="map"]').click();await page.screenshot({path:path.join(out,'player-work.png')});

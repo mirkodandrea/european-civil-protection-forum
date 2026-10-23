@@ -20,8 +20,13 @@ Il file `web/standalone/ttx.html` contiene codice WASM, scenario, interfaccia e
 asset necessari. Può essere aperto con `file://` senza rete; usare un browser
 moderno con WebAssembly e DecompressionStream. Le viste 3D richiedono
 anche supporto GPU/WebGL. L’AI è opzionale, richiede rete e contatta direttamente
-OpenRouter con la chiave inserita nell’app. La chiave resta in memoria e non
-entra nel debrief. Senza chiave è disponibile il flusso manuale EXCON.
+OpenRouter con la chiave inserita nell’app. Su dev la chiave viene salvata nel
+local storage del browser, riutilizzata
+alle aperture successive e cancellata con “Rimuovi chiave”; se il browser blocca
+il salvataggio, resta valida solo nella pagina corrente. Non entra nel debrief.
+La vista 3D di dev è disattivata inizialmente e si avvia alla prima attivazione
+di “Simulazione”, con vegetazione e particelle ridotte e senza anti-aliasing SMAA. Senza chiave è
+disponibile il flusso manuale EXCON.
 Esportare il debrief JSON per conservare le evidenze; non è un salvataggio
 ripristinabile della sessione.
 
@@ -36,6 +41,7 @@ cargo test --locked --release -p server -p exercise -p llm
 npm ci --prefix scripts/record
 scripts/record/node_modules/.bin/playwright install chromium
 TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone.cjs
+TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone-settings.cjs
 ```
 
 La verifica è headless e offline: attraversa inject, risposta, approvazione,

@@ -32,8 +32,8 @@ impl Quality {
                 name: "low",
                 shadows: false,
                 bloom: 0.0,
-                vegetation: 0.35,
-                vegetation_distance: 2500.0,
+                vegetation: 0.15,
+                vegetation_distance: 1500.0,
                 fire_lights: 0,
             },
             _ => Self {

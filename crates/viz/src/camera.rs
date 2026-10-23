@@ -304,7 +304,7 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality:
             ),
         },
     ));
-    if quality.name == "low" {
+    if quality.name == "low" && !cfg!(target_arch = "wasm32") {
         camera.insert(bevy::core_pipeline::smaa::SmaaSettings {
             preset: bevy::core_pipeline::smaa::SmaaPreset::Medium,
         });
