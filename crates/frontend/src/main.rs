@@ -2,6 +2,8 @@ mod advanced;
 mod api;
 mod chat;
 mod evaluator;
+#[cfg(not(feature = "standalone"))]
+mod maptest;
 mod history;
 mod i18n;
 mod i18n_excon;
@@ -864,7 +866,16 @@ impl Component for App {
 }
 fn main() {
     #[cfg(not(feature = "standalone"))]
-    yew::Renderer::<App>::new().render();
+    if api::window()
+        .location()
+        .pathname()
+        .unwrap_or_default()
+        .ends_with("maptest.html")
+    {
+        yew::Renderer::<maptest::MapTest>::new().render();
+    } else {
+        yew::Renderer::<App>::new().render();
+    }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();
 }

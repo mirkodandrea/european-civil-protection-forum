@@ -71,3 +71,5 @@ lo stato e non prendono decisioni.
 - La simulazione è riproducibile a parità di configurazione e seme. Le risposte
   generate dall'AI possono variare; se l'AI non è disponibile, EXCON può
   interpretare manualmente le proposte.
+
+- Mappa interattiva (EXCON e giocatori): zoom/pan (rotellina, trascinamento, pinch, tastiera), ispezione hover/tocco, livelli, inquadra incendio, schermo intero, barra di scala. Per i giocatori l’ispezione mostra solo le celle riferite (fog of war): altrove «non riferito». Pagina di prova: `/maptest.html` (dati sintetici, selettori funzioni e zone abilitate).
