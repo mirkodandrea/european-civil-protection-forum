@@ -47,15 +47,7 @@ impl App {
                         .contains(&text(&p["status"]))
             })
             .collect::<Vec<_>>();
-        let preparation =
-            !master && self.field("interpret", "true") == "true" && self.state["phase"] == "orders";
-        let private = &draft.private;
-        let ready = private["status"] == "ready";
-        let clarification = private["status"] == "needs_clarification";
-        let manual_fallback = private["status"] == "ai_unavailable";
-        let has_actions = !list(&private["actions"]).is_empty();
-        let send_disabled =
-            self.busy || self.state["phase"] == "debrief" || (preparation && ready && !draft.dirty);
+        let send_disabled = self.busy || self.state["phase"] == "debrief";
         let contact = self
             .contacts()
             .into_iter()
@@ -198,18 +190,9 @@ impl App {
                 <div class="inject-compose-row"><label>{"Destinatari"}</label><select key={format!("scope:{selected}:{}",draft.scope)} id="inject-scope" value={draft.scope.clone()} onchange={select("draft:scope")}><option value="conversation" selected={draft.scope=="conversation"}>{if selected=="all"{"Tutti i player".to_string()}else{format!("Solo {}",self.name(&selected))}}</option>if !draft.template.is_empty(){<option value="scenario" selected={draft.scope=="scenario"}>{"Destinatari dello scenario"}</option>}</select></div>
                 <p class="muted">{"Il player risponde dalla vista di lavoro; la proposta appare nella timeline per l’approvazione. L’invio dell’inject non cambia la fisica."}</p>
             </div></div>}
-            if preparation&&!private.is_null()&&(clarification||manual_fallback||has_actions){<div id="private-preparation"><div class="private-draft-head"><b>{if clarification{"Chiarimento richiesto"}else if manual_fallback{"Interpretazione non riuscita"}else{"Azioni individuate · verifica e conferma"}}</b><span class="pill">{"Bozza privata · non inviata"}</span></div>
-                if clarification{<p class="draft-question">{text(&private["question"])}</p><p class="muted">{"Rispondi nel campo qui sotto. EXCON e il destinatario non hanno ancora ricevuto il messaggio."}</p>}
-                else if manual_fallback{<p>{"La bozza non è stata interpretata. Puoi riprovare oppure inviarla a EXCON per l’interpretazione manuale."}</p>}
-                else{<p class="draft-message">{text(&private["message"])}</p>{for list(&private["action_descriptions"]).iter().map(|s|html!{<p class="draft-action">{text(s)}</p>})}}
-                if draft.dirty{<p class="muted">{"Hai modificato il testo: analizzalo di nuovo prima di confermare."}</p>}
-                <div class="row">if !clarification{<button id="confirm-prepared" type="button" class="primary" disabled={self.busy||draft.dirty} onclick={{let mut a=Action::post(format!("/api/player/{own}/draft/submit"),json!({"draft":private["id"],"revision":private["revision"],"manual":manual_fallback}));a.kind=ActionKind::Submit(selected.clone());ctx.link().callback(move |_|Msg::Action(a.clone()))}}>{if manual_fallback{"Invia a EXCON per interpretazione manuale"}else{"Conferma azioni e invia"}}</button>}<button type="button" id="discard-prepared" disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Discard)}>{"Scarta bozza"}</button></div>
-            </div>}
-            if preparation&&self.busy{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
-            if self.busy&&!preparation{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
-            <textarea id="text" maxlength="8000" aria-label="Messaggio" placeholder={if clarification{"Rispondi alla domanda dell’assistente…"}else{"Scrivi un messaggio…"}} required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
-            <div class="row">if !master{<label><input type="checkbox" id="interpret" checked={self.field("interpret","true")=="true"} disabled={self.state["phase"]!="orders"||self.busy} onchange={ctx.link().callback(|e:Event|{use yew::TargetCast;Msg::Field("interpret".into(),e.target_unchecked_into::<web_sys::HtmlInputElement>().checked().to_string())})}/>{" Distingui automaticamente chat e azioni con l’AI"}</label>}else{<small>{"Testo EXCON in inglese · tradotto per il destinatario"}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{&self.notice}</span><button id="send" class="primary" disabled={send_disabled}>{if self.busy{"Elaborazione…"}else if preparation {if clarification{"Rispondi →"}else if ready&&has_actions{"Rianalizza modifiche"}else{"Invia →"}}else if draft.mode=="inject"{"Invia inject →"}else{"Invia →"}}</button></div>
-            <small>{"Le azioni fisiche richiedono approvazione EXCON. Chat tra player visibili solo ai partecipanti. Le bozze restano private."}</small>
+            if self.busy{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
+            <textarea id="text" maxlength="8000" aria-label="Messaggio" placeholder="Scrivi un messaggio…" required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
+            <div class="row">if master{<small>{"Testo EXCON in inglese · tradotto per il destinatario"}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{&self.notice}</span><button id="send" class="primary" disabled={send_disabled}>{if self.busy{"Invio…"}else if master{"Invia inject →"}else{"Invia →"}}</button></div>
         </form>}else{<div class="composer"><p class="muted">{"Gli inject sono informazioni di EXCON. Rispondi usando le conversazioni tra partecipanti o le proposte operative dalla mappa."}</p></div>}};
         if composer_only {
             return composer;
@@ -289,14 +272,6 @@ impl App {
             return None;
         }
         let draft = self.draft();
-        if !self.is_master()
-            && self.field("interpret", "true") == "true"
-            && self.state["phase"] == "orders"
-            && draft.private["status"] == "ready"
-            && !draft.dirty
-        {
-            return None;
-        }
         let to = self.selected.clone();
         let message = draft.text.trim();
         if message.is_empty() {
@@ -311,21 +286,7 @@ impl App {
             json!({"to":to,"text":message,"interpret":false}),
         );
         action.kind = ActionKind::Send(to.clone(), draft.text.clone());
-        if !self.is_master()
-            && self.field("interpret", "true") == "true"
-            && self.state["phase"] == "orders"
-        {
-            let mut body = json!({"to":to,"text":message});
-            if draft.private["status"] == "needs_clarification" && !draft.dirty {
-                body["draft"] = draft.private["id"].clone();
-                body["revision"] = draft.private["revision"].clone();
-            }
-            action = Action {
-                path: format!("/api/player/{}/draft", self.own),
-                body: Some(body),
-                kind: ActionKind::Prepare(to),
-            };
-        } else if self.is_master() {
+        if self.is_master() {
             let template = list(&self.stat["msel"])
                 .iter()
                 .find(|t| t["id"] == draft.template);
