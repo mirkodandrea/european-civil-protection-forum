@@ -2749,3 +2749,38 @@ async fn invalid_ai_answer_after_clarification_reports_reason_and_keeps_readable
     assert_eq!(second["message"], "Close the road. The main road south");
     assert!(second["failure"].as_str().unwrap().contains("risposta AI non valida"));
 }
+
+/// A rejected player proposal carries the EXCON reason back to the player.
+#[tokio::test]
+async fn rejection_note_reaches_the_player() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let body = json!({"text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let (status, sent) = call_key(&app, "POST", "/api/player/mayor/actions", Some(body), Some("test-mayor")).await;
+    assert_eq!(status, Status::Ok);
+    let pid = sent["proposal"].as_u64().unwrap();
+    let note = "Zona gia' evacuata: riformula";
+    let (s, out) = call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve": false, "note": note})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok, "{out}");
+    let (s, player) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(s, Status::Ok);
+    let found = player["proposals"]
+        .as_array()
+        .expect("proposals")
+        .iter()
+        .find(|p| p["id"] == pid)
+        .unwrap_or_else(|| panic!("proposal {pid} missing: {player}"));
+    assert_eq!(found["status"], "rejected");
+    assert_eq!(found["decision"]["approve"], false);
+    assert_eq!(found["decision"]["note"], note);
+}
