@@ -469,3 +469,19 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .gen-grid input:invalid{border-color:#a3312c;background:#fff4f2}
 .gen-grid input:invalid+.hint::before{content:"⚠ ";color:#a3312c}
 @media(max-width:600px){.gen-grid{grid-template-columns:minmax(0,1fr)}.gen-grid input[type=number],.gen-grid input[type=time]{max-width:none}}
+
+/* Master-detail for the scenario editor tabs Ruoli, Risorse and Inject: a compact selectable list on the left, only the selected item's editor on the right. Desktop only. */
+.md{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start}
+.md-list{min-width:0;display:grid;gap:8px;position:sticky;top:8px;align-self:start}
+.md-items{display:grid;gap:4px;max-height:calc(100dvh - 190px);overflow-y:auto;min-width:0;padding:2px}
+.md-item{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;width:100%;text-align:left;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#f6f9f6;cursor:pointer;font-size:13px;min-width:0}
+.md-item:hover{background:#e6efe8}
+.md-item.active{background:#eaf4ee;border-color:var(--accent);box-shadow:0 0 0 2px #cfe6dc}
+.md-id{font-family:ui-monospace,monospace;font-size:12px}
+.md-name{flex:1 1 90px;min-width:0;overflow-wrap:anywhere;font-weight:600}
+.md-sub{flex:1 0 100%;min-width:0;overflow-wrap:anywhere;color:var(--muted);font-size:11px;font-weight:400}
+.md-group{margin:8px 0 2px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line)}
+.md-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.md-detail{min-width:0;border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px 14px 14px}
+.md-detail .rr-body,.md-detail .inject-body{padding:0}
+.scenario-json{margin:12px 0}.scenario-json>summary{cursor:pointer;font-weight:600}.scenario-json textarea{width:100%;box-sizing:border-box;max-width:100%}

@@ -212,7 +212,44 @@ fn compass(deg: f64) -> &'static str {
     POINTS[((deg.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
 }
 
+#[derive(Properties, Clone)]
+struct ListProps {
+    o: Open,
+    open: UseStateHandle<Option<Open>>,
+}
+
+impl PartialEq for ListProps {
+    fn eq(&self, _: &Self) -> bool {
+        false // the scenario changes with every edit
+    }
+}
+
+/// Master-detail layout shared by the Ruoli, Risorse and Inject tabs: a compact
+/// selectable list (items, then tools such as "Aggiungi") and the editor of the
+/// selected item only. The classes are the `md-*` block at the end of interface.css.
+fn master_detail(items: Html, tools: Html, detail: Html) -> Html {
+    html! {<div class="md">
+        <div class="md-list">
+            <div class="md-items">{items}</div>
+            <div class="md-tools">{tools}</div>
+        </div>
+        <div class="md-detail">{detail}</div>
+    </div>}
+}
+
+/// One selectable line of the master list.
+fn md_item(active: bool, onclick: Callback<MouseEvent>, content: Html) -> Html {
+    html! {<button type="button" class={classes!("md-item", active.then_some("active"))} aria-pressed={active.to_string()} onclick={onclick}>{content}</button>}
+}
+
 fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
+    html! {<RolesTab o={o.clone()} open={open.clone()}/>}
+}
+
+#[function_component(RolesTab)]
+fn roles_view(props: &ListProps) -> Html {
+    let (o, open) = (&props.o, &props.open);
+    let selected = use_state(|| 0usize);
     let e = &o.pack.edits;
     let roles = e.roles.clone().unwrap_or_default();
     let resources = e.resource_types.clone().unwrap_or_default();
@@ -225,24 +262,44 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
         .map(|(id, name)| (id.to_string(), name.to_string()))
         .collect();
     let actions: Vec<String> = list(&o.reference["actions"]).iter().map(|a| text(a).to_string()).collect();
-    html! {<div class="rr-tab">
-        <p class="muted">{ex("Ogni ruolo è una pagina player. Azioni e risorse decidono cosa può proporre; l’EXCON approva comunque ogni azione.")}</p>
+    let n = roles.len();
+    let sel = (*selected).min(n.saturating_sub(1));
+    let items = html! {<>
         {for roles.iter().enumerate().map(|(i, r)| {
+            let stock: Vec<String> = resources.iter().filter_map(|res| r.resources.get(&res.id).map(|q| format!("{} ×{q}", res.name))).collect();
+            let level = levels.iter().find(|(v, _)| *v == r.level).map(|(_, n)| n.clone()).unwrap_or_else(|| r.level.clone());
+            let bad = r.id.is_empty() || roles.iter().filter(|x| x.id == r.id).count() > 1;
+            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set(i)) }, html!{<>
+                <b class="md-id">{ if r.id.is_empty() { ex("nuovo").to_string() } else { r.id.clone() } }</b>
+                <span class="pill">{level}</span>
+                { if bad { html!{<span class="pill pending" title={ex("Identificativo non valido o duplicato.")}>{"!"}</span>} } else { Html::default() } }
+                <span class="md-name">{r.name.clone()}</span>
+                <small class="md-sub">{crate::exfmt!("{} azioni", "{} actions", r.allowed_actions.len())}
+                    {" · "}{ if stock.is_empty() { ex("nessuna risorsa").to_string() } else { stock.join(", ") } }</small>
+            </>})
+        })}
+        { if n == 0 { html!{<p class="muted">{ex("Nessun ruolo definito.")}</p>} } else { Html::default() } }
+    </>};
+    let tools = html! {
+        <button class="primary" onclick={{
+            let (selected, add) = (selected.clone(), upd(open, |p, _: MouseEvent| {
+                let l = p.edits.roles.get_or_insert_with(Vec::new);
+                let n = l.len() + 1;
+                l.push(Role {
+                    id: format!("role_{n}"), name: format!("Ruolo {n}"), level: "local".into(), language: "en".into(),
+                    description: String::new(), allowed_actions: vec![], resources: Default::default(),
+                });
+            }));
+            Callback::from(move |e| { selected.set(n); add.emit(e) })
+        }}>{ex("Aggiungi ruolo")}</button>
+    };
+    let detail = match roles.get(sel) {
+        Some(r) => {
+            let i = sel;
             let r = r.clone();
             let duplicate = roles.iter().filter(|x| x.id == r.id).count() > 1;
             let bad_id = r.id.is_empty() || !r.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
-            let fresh = r.id.starts_with("role_") && r.description.is_empty() && r.allowed_actions.is_empty();
-            let stock: Vec<String> = resources.iter().filter_map(|res| r.resources.get(&res.id).map(|q| format!("{} ×{q}", res.name))).collect();
-            let level = levels.iter().find(|(v, _)| *v == r.level).map(|(_, n)| n.clone()).unwrap_or_else(|| r.level.clone());
-            html!{<details class="rr-item" key={i} open={fresh}>
-                <summary>
-                    <b class="rr-id">{ if r.id.is_empty() { ex("nuovo").to_string() } else { r.id.clone() } }</b>
-                    <span class="rr-name">{r.name.clone()}</span>
-                    <span class="pill">{level}</span>
-                    <small class="rr-sum">{crate::exfmt!("{} azioni", "{} actions", r.allowed_actions.len())}
-                        {" · "}{ if stock.is_empty() { ex("nessuna risorsa").to_string() } else { stock.join(", ") } }</small>
-                </summary>
-                <div class="rr-body">
+            html! {<div class="rr-body" key={i}>
                 <div class="settings-fields">
                     {field("Identificativo", "Codice breve del ruolo: compare negli indirizzi delle pagine player e come destinatario degli inject. Solo a-z, 0-9, _ e -; deve essere unico.", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
                     {field("Nome", "Nome mostrato ai partecipanti e all’EXCON, ad esempio «Protezione civile regionale».", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
@@ -286,38 +343,59 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                 </div>
                 {confirm_delete("Elimina ruolo", "Elimina il ruolo e la sua pagina player. Se un inject, un rinforzo o un luogo lo cita ancora, «Controlla» lo segnala.",
                     upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.roles.as_mut() { if i < l.len() { l.remove(i); } } }))}
-                </div>
-            </details>}
-        })}
-        <button onclick={upd(open, |p, _: MouseEvent| {
-            let l = p.edits.roles.get_or_insert_with(Vec::new);
-            let n = l.len() + 1;
-            l.push(Role {
-                id: format!("role_{n}"), name: format!("Ruolo {n}"), level: "local".into(), language: "en".into(),
-                description: String::new(), allowed_actions: vec![], resources: Default::default(),
-            });
-        })}>{ex("Aggiungi ruolo")}</button>
+            </div>}
+        }
+        None => html! {<p class="muted">{ex("Aggiungi un ruolo per iniziare.")}</p>},
+    };
+    html! {<div class="rr-tab">
+        <p class="muted">{ex("Ogni ruolo è una pagina player. Azioni e risorse decidono cosa può proporre; l’EXCON approva comunque ogni azione.")}</p>
+        {master_detail(items, tools, detail)}
     </div>}
 }
 
 fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
+    html! {<ResourcesTab o={o.clone()} open={open.clone()}/>}
+}
+
+#[function_component(ResourcesTab)]
+fn resources_view(props: &ListProps) -> Html {
+    let (o, open) = (&props.o, &props.open);
+    let selected = use_state(|| 0usize);
     let resources = o.pack.edits.resource_types.clone().unwrap_or_default();
     let roles = o.pack.edits.roles.clone().unwrap_or_default();
-    html! {<div class="rr-tab">
-        <p class="muted">{ex("Tipi di risorsa del lancio: acqua, squadre, mezzi. La velocità è quella con cui raggiungono il luogo dalla base di partenza.")}</p>
+    let n = resources.len();
+    let sel = (*selected).min(n.saturating_sub(1));
+    let users_of = |id: &str| -> Vec<String> { roles.iter().filter(|x| x.resources.contains_key(id)).map(|x| x.id.clone()).collect() };
+    let items = html! {<>
         {for resources.iter().enumerate().map(|(i, r)| {
+            let bad = r.id.is_empty() || resources.iter().filter(|x| x.id == r.id).count() > 1;
+            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set(i)) }, html!{<>
+                <b class="md-id">{r.id.clone()}</b>
+                { if bad { html!{<span class="pill pending" title={ex("Identificativo vuoto o duplicato.")}>{"!"}</span>} } else { Html::default() } }
+                <span class="md-name">{r.name.clone()}</span>
+                <small class="md-sub">{ match r.speed_mps { Some(s) => format!("{s} m/s"), None => ex("velocità predefinita").to_string() } }
+                    {" · "}{crate::exfmt!("{} ruoli", "{} roles", users_of(&r.id).len())}</small>
+            </>})
+        })}
+        { if n == 0 { html!{<p class="muted">{ex("Nessun tipo di risorsa definito.")}</p>} } else { Html::default() } }
+    </>};
+    let tools = html! {
+        <button class="primary" onclick={{
+            let (selected, add) = (selected.clone(), upd(open, |p, _: MouseEvent| {
+                let l = p.edits.resource_types.get_or_insert_with(Vec::new);
+                let n = l.len() + 1;
+                l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None });
+            }));
+            Callback::from(move |e| { selected.set(n); add.emit(e) })
+        }}>{ex("Aggiungi risorsa")}</button>
+    };
+    let detail = match resources.get(sel) {
+        Some(r) => {
+            let i = sel;
             let r = r.clone();
             let duplicate = resources.iter().filter(|x| x.id == r.id).count() > 1;
-            let users: Vec<String> = roles.iter().filter(|x| x.resources.contains_key(&r.id)).map(|x| x.id.clone()).collect();
-            let fresh = r.id.starts_with("resource_") && r.description.is_empty();
-            html!{<details class="rr-item" key={i} open={fresh}>
-                <summary>
-                    <b class="rr-id">{r.id.clone()}</b>
-                    <span class="rr-name">{r.name.clone()}</span>
-                    <small class="rr-sum">{ match r.speed_mps { Some(s) => format!("{s} m/s"), None => ex("velocità predefinita").to_string() } }
-                        {" · "}{crate::exfmt!("{} ruoli", "{} roles", users.len())}</small>
-                </summary>
-                <div class="rr-body">
+            let users = users_of(&r.id);
+            html! {<div class="rr-body" key={i}>
                 <div class="settings-fields">
                     {field("Identificativo", "Codice breve della risorsa, usato nelle quantità dei ruoli, nei rinforzi e negli ordini. Deve essere unico.", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
                     {field("Nome", "Nome leggibile mostrato ai giocatori, ad esempio «Squadra AIB».", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
@@ -328,14 +406,13 @@ fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                 <p class="muted">{ if users.is_empty() { ex("Nessun ruolo la possiede.").to_string() } else { crate::exfmt!("Assegnata ai ruoli: {}", "Assigned to roles: {}", users.join(", ")) } }</p>
                 {confirm_delete("Elimina risorsa", "Elimina il tipo di risorsa. Se un ruolo o un rinforzo la usa ancora, «Controlla» lo segnala.",
                     upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.resource_types.as_mut() { if i < l.len() { l.remove(i); } } }))}
-                </div>
-            </details>}
-        })}
-        <button onclick={upd(open, |p, _: MouseEvent| {
-            let l = p.edits.resource_types.get_or_insert_with(Vec::new);
-            let n = l.len() + 1;
-            l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None });
-        })}>{ex("Aggiungi risorsa")}</button>
+            </div>}
+        }
+        None => html! {<p class="muted">{ex("Aggiungi un tipo di risorsa per iniziare.")}</p>},
+    };
+    html! {<div class="rr-tab">
+        <p class="muted">{ex("Tipi di risorsa del lancio: acqua, squadre, mezzi. La velocità è quella con cui raggiungono il luogo dalla base di partenza.")}</p>
+        {master_detail(items, tools, detail)}
     </div>}
 }
 
@@ -723,30 +800,71 @@ fn places_view(props: &PlacesProps) -> Html {
     </div>}
 }
 
+#[derive(Properties, Clone)]
+struct InjectsProps {
+    o: Open,
+    open: UseStateHandle<Option<Open>>,
+    json: UseStateHandle<String>,
+    message: UseStateHandle<String>,
+}
+
+impl PartialEq for InjectsProps {
+    fn eq(&self, _: &Self) -> bool {
+        false // the scenario changes with every edit
+    }
+}
+
 fn injects_tab(o: &Open, open: &UseStateHandle<Option<Open>>, json: &UseStateHandle<String>, message: &UseStateHandle<String>) -> Html {
+    html! {<InjectsTab o={o.clone()} open={open.clone()} json={json.clone()} message={message.clone()}/>}
+}
+
+#[function_component(InjectsTab)]
+fn injects_view(props: &InjectsProps) -> Html {
+    let (o, open, json, message) = (&props.o, &props.open, &props.json, &props.message);
+    let selected = use_state(|| 0usize);
     let msel = o.pack.edits.msel.clone().unwrap_or_default();
     let roles: Vec<(String, String)> = o.pack.edits.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
     let n = msel.len();
-    html! {<div class="inject-tab">
-        <p class="muted">{ex("Inject preparati (MSEL). L’EXCON decide quando inviarli; il turno è solo un suggerimento.")}</p>
-        <div class="inject-toolbar">
-            <span class="muted">{format!("{n} inject")}</span>
-            <button title={ex("Riordina l’elenco per turno, mantenendo l’ordine attuale a parità di turno.")} onclick={upd(open, |p, _: MouseEvent| {
-                if let Some(l) = p.edits.msel.as_mut() { l.sort_by_key(|m| m.turn); }
-            })}>{ex("Ordina per turno")}</button>
-            {add_inject_button(open)}
-        </div>
-        {if n == 0 { html!{<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>} } else { Html::default() }}
+    let sel = (*selected).min(n.saturating_sub(1));
+    let items = html! {<>
         {for msel.iter().enumerate().map(|(i, m)| {
             let new_turn = i == 0 || msel[i - 1].turn != m.turn;
+            let title = if m.title.trim().is_empty() { ex("(senza titolo)").to_string() } else { m.title.clone() };
             html!{<>
-                {if new_turn { html!{<h4 class="inject-turn">{format!("{} {}", ex("Turno"), m.turn)}</h4>} } else { Html::default() }}
-                {inject_row(i, n, m, &roles, open)}
+                {if new_turn { html!{<h4 class="md-group inject-turn">{format!("{} {}", ex("Turno"), m.turn)}</h4>} } else { Html::default() }}
+                {md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set(i)) }, html!{<>
+                    <span class="md-id">{m.id.clone()}</span>
+                    <span class="md-name">{title}</span>
+                    {if m.event.trim().is_empty() { Html::default() } else { html!{<small class="md-sub">{m.event.clone()}</small>} }}
+                </>})}
             </>}
         })}
+        {if n == 0 { html!{<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>} } else { Html::default() }}
+    </>};
+    let tools = html! {<>
+        <span class="muted">{format!("{n} inject")}</span>
+        {add_inject_button(open, &selected, n)}
+        <button title={ex("Riordina l’elenco per turno, mantenendo l’ordine attuale a parità di turno.")} onclick={{
+            // The selection follows the inject it points at.
+            let mut sorted = msel.clone();
+            sorted.sort_by_key(|m| m.turn);
+            let target = msel.get(sel).and_then(|cur| sorted.iter().position(|m| m.id == cur.id && m.title == cur.title && m.text == cur.text));
+            let (selected, sort) = (selected.clone(), upd(open, |p, _: MouseEvent| {
+                if let Some(l) = p.edits.msel.as_mut() { l.sort_by_key(|m| m.turn); }
+            }));
+            Callback::from(move |e| { if let Some(k) = target { selected.set(k); } sort.emit(e) })
+        }}>{ex("Ordina per turno")}</button>
+    </>};
+    let detail = match msel.get(sel) {
+        Some(m) => inject_detail(sel, n, m, &roles, open, &selected),
+        None => html! {<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>},
+    };
+    html! {<div class="inject-tab">
+        <p class="muted">{ex("Inject preparati (MSEL). L’EXCON decide quando inviarli; il turno è solo un suggerimento.")}</p>
+        {master_detail(items, tools, detail)}
         <details class="inject-json">
-            <summary title={ex("Copia o sostituisci l’intera lista degli inject come testo JSON.")}>{ex("Avanzate: JSON")}</summary>
-            <p class="hint">{ex("Esporta mostra gli inject qui sotto per copiarli. Importa sostituisce l’intera lista nell’editor: non viene salvato nulla finché non premi Salva.")}</p>
+            <summary title={ex("Copia o sostituisci l’intera lista degli inject come testo JSON.")}>{ex("Avanzate: JSON (solo inject)")}</summary>
+            <p class="hint">{ex("Riguarda solo la lista degli inject, non l’intero scenario (per quello usa «Avanzate: JSON» in fondo all’editor). Esporta mostra gli inject qui sotto per copiarli. Importa sostituisce l’intera lista nell’editor: non viene salvato nulla finché non premi Salva.")}</p>
             <div class="settings-fields">
                 <button title={ex("Scrive nel riquadro il JSON degli inject attuali.")} onclick={{
                     let (json, msel) = (json.clone(), msel.clone());
@@ -768,8 +886,9 @@ fn injects_tab(o: &Open, open: &UseStateHandle<Option<Open>>, json: &UseStateHan
     </div>}
 }
 
-fn add_inject_button(open: &UseStateHandle<Option<Open>>) -> Html {
-    html! {<button title={ex("Aggiunge un inject in fondo all’elenco, con il turno dell’ultimo e destinatari «tutti».")} onclick={upd(open, |p, _: MouseEvent| {
+fn add_inject_button(open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>, n: usize) -> Html {
+    let selected = selected.clone();
+    let add = upd(open, |p, _: MouseEvent| {
         let l = p.edits.msel.get_or_insert_with(Vec::new);
         let turn = l.iter().map(|m| m.turn).max().unwrap_or(1);
         let mut k = l.len() + 1;
@@ -778,82 +897,76 @@ fn add_inject_button(open: &UseStateHandle<Option<Open>>) -> Html {
             id: format!("I-{k:02}"), turn, title: String::new(), sender: String::new(),
             recipients: vec!["all".into()], text: String::new(), objective: String::new(), event: String::new(),
         });
-    })}>{ex("Aggiungi inject")}</button>}
+    });
+    html! {<button class="primary" title={ex("Aggiunge un inject in fondo all’elenco, con il turno dell’ultimo e destinatari «tutti».")} onclick={Callback::from(move |e| { selected.set(n); add.emit(e) })}>{ex("Aggiungi inject")}</button>}
 }
 
-/// One inject: a summary row that expands to the editor.
-fn inject_row(i: usize, n: usize, m: &InjectTemplate, roles: &[(String, String)], open: &UseStateHandle<Option<Open>>) -> Html {
+/// The editor of the selected inject.
+fn inject_detail(i: usize, n: usize, m: &InjectTemplate, roles: &[(String, String)], open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>) -> Html {
     let set = |f: fn(&mut InjectTemplate, String)| upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { f(x, v) });
     let all = m.recipients.is_empty() || m.recipients.iter().any(|r| r == "all");
-    let name_of = |id: &str| roles.iter().find(|(r, _)| r == id).map(|(_, n)| n.clone()).unwrap_or_else(|| id.to_string());
-    let chips: Html = if all {
-        html!{<span class="chip on">{ex("tutti")}</span>}
-    } else {
-        m.recipients.iter().map(|r| html!{<span class="chip on">{name_of(r)}</span>}).collect::<Html>()
-    };
-    let title = if m.title.trim().is_empty() { ex("(senza titolo)").to_string() } else { m.title.clone() };
     let text_len = m.text.chars().count();
     let toggle_all = upd(open, move |p, _: MouseEvent| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.recipients = vec!["all".into()]; });
-    let mv = |d: isize| upd(open, move |p, _: MouseEvent| if let Some(l) = p.edits.msel.as_mut() {
+    let mv = |d: isize| {
         let j = i as isize + d;
-        if j >= 0 && (j as usize) < l.len() { l.swap(i, j as usize); }
-    });
-    let dup = upd(open, move |p, _: MouseEvent| if let Some(l) = p.edits.msel.as_mut() {
-        if let Some(src) = l.get(i).cloned() {
-            let mut c = src.clone();
-            let mut k = 1;
-            let id = |k: usize| if k == 1 { format!("{}-copia", src.id) } else { format!("{}-copia{k}", src.id) };
-            while l.iter().any(|x| x.id == id(k)) { k += 1; }
-            c.id = id(k);
-            l.insert(i + 1, c);
-        }
-    });
-    html!{<details class="inject-item" key={i}>
-        <summary>
-            <span class="inject-id">{m.id.clone()}</span>
-            <span class="inject-title">{title}</span>
-            {if m.event.trim().is_empty() { Html::default() } else { html!{<span class="chip event" title={ex("Evento")}>{m.event.clone()}</span>} }}
-            <span class="inject-chips">{chips}</span>
-        </summary>
-        <div class="inject-body">
-            <div class="settings-fields">
-                {field("Identificativo", "Chiave stabile dell’inject, usata da pianificazioni e report: non riutilizzarla.", m.id.clone(), set(|x, v| x.id = v))}
-                {number("Turno", "Solo un suggerimento: è l’EXCON a decidere quando inviare l’inject.", m.turn.to_string(), upd(open, move |p, v: String| if let (Some(t), Some(x)) = (num(&v), p.edits.msel.as_mut().and_then(|l| l.get_mut(i))) { x.turn = t }))}
-                {field("Mittente", "Chi appare come mittente per i giocatori, ad esempio «Centrale 112».", m.sender.clone(), set(|x, v| x.sender = v))}
-                {field("Evento (raggruppa nella timeline)", "Gli inject con lo stesso evento sono raggruppati nella timeline dell’EXCON.", m.event.clone(), set(|x, v| x.event = v))}
-            </div>
-            <div class="inject-recipients" title={ex("Chi riceve l’inject: tutti i ruoli oppure solo quelli scelti.")}>
-                <span class="label">{ex("Destinatari")}</span>
-                <div class="chips">
-                    <button type="button" class={classes!("chip", all.then_some("on"))} aria-pressed={all.to_string()} onclick={toggle_all}>{ex("tutti")}</button>
-                    {for roles.iter().map(|(id, name)| {
-                        let on = !all && m.recipients.contains(id);
-                        let id2 = id.clone();
-                        html!{<button type="button" class={classes!("chip", on.then_some("on"))} aria-pressed={on.to_string()} onclick={upd(open, move |p, _: MouseEvent| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) {
-                            x.recipients.retain(|r| r != "all");
-                            if let Some(k) = x.recipients.iter().position(|r| *r == id2) { x.recipients.remove(k); } else { x.recipients.push(id2.clone()); }
-                            if x.recipients.is_empty() { x.recipients = vec!["all".into()]; }
-                        })}>{name.clone()}</button>}
-                    })}
-                </div>
-                <small class="hint">{ex("«tutti» invia a ogni ruolo. Scegliendo un ruolo specifico «tutti» si disattiva; senza ruoli scelti torna «tutti».")}</small>
-            </div>
-            {field("Titolo", "Oggetto breve mostrato nell’elenco e nella casella dei giocatori.", m.title.clone(), set(|x, v| x.title = v))}
-            {area("Testo", "Scrivilo in inglese, la lingua di lavoro: i giocatori lo ricevono tradotto. Meglio 2–4 frasi con fatti concreti (luogo, ora, numeri).", m.text.clone(), "4", set(|x, v| x.text = v))}
-            <small class="hint char-count">{format!("{text_len} {}", ex("caratteri"))}{if text_len > 600 { format!(" · {}", ex("testo lungo: valuta di accorciarlo")) } else { String::new() }}</small>
-            {field("Obiettivo formativo", "Che cosa il formatore vuole mettere alla prova con questo inject; guida il debriefing.", m.objective.clone(), set(|x, v| x.objective = v))}
-            <div class="inject-actions">
-                <button title={ex("Sposta l’inject più in alto nell’elenco.")} disabled={i == 0} onclick={mv(-1)}>{"▲"}</button>
-                <button title={ex("Sposta l’inject più in basso nell’elenco.")} disabled={i + 1 >= n} onclick={mv(1)}>{"▼"}</button>
-                <button title={ex("Crea una copia di questo inject subito dopo, con un nuovo identificativo.")} onclick={dup}>{ex("Duplica")}</button>
-                <details class="confirm-inline">
-                    <summary class="danger" title={ex("Elimina l’inject: chiede conferma.")}>{ex("Elimina inject")}</summary>
-                    <span>{ex("Eliminare davvero? Puoi ancora uscire senza salvare.")}</span>
-                    <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.msel.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Conferma eliminazione")}</button>
-                </details>
-            </div>
+        let selected = selected.clone();
+        let cb = upd(open, move |p, _: MouseEvent| if let Some(l) = p.edits.msel.as_mut() {
+            if j >= 0 && (j as usize) < l.len() { l.swap(i, j as usize); }
+        });
+        Callback::from(move |e| { if j >= 0 { selected.set(j as usize); } cb.emit(e) })
+    };
+    let dup = {
+        let selected = selected.clone();
+        let cb = upd(open, move |p, _: MouseEvent| if let Some(l) = p.edits.msel.as_mut() {
+            if let Some(src) = l.get(i).cloned() {
+                let mut c = src.clone();
+                let mut k = 1;
+                let id = |k: usize| if k == 1 { format!("{}-copia", src.id) } else { format!("{}-copia{k}", src.id) };
+                while l.iter().any(|x| x.id == id(k)) { k += 1; }
+                c.id = id(k);
+                l.insert(i + 1, c);
+            }
+        });
+        Callback::from(move |e| { selected.set(i + 1); cb.emit(e) })
+    };
+    html!{<div class="inject-body" key={i}>
+        <div class="settings-fields">
+            {field("Identificativo", "Chiave stabile dell’inject, usata da pianificazioni e report: non riutilizzarla.", m.id.clone(), set(|x, v| x.id = v))}
+            {number("Turno", "Solo un suggerimento: è l’EXCON a decidere quando inviare l’inject.", m.turn.to_string(), upd(open, move |p, v: String| if let (Some(t), Some(x)) = (num(&v), p.edits.msel.as_mut().and_then(|l| l.get_mut(i))) { x.turn = t }))}
+            {field("Mittente", "Chi appare come mittente per i giocatori, ad esempio «Centrale 112».", m.sender.clone(), set(|x, v| x.sender = v))}
+            {field("Evento (raggruppa nella timeline)", "Gli inject con lo stesso evento sono raggruppati nella timeline dell’EXCON.", m.event.clone(), set(|x, v| x.event = v))}
         </div>
-    </details>}
+        <div class="inject-recipients" title={ex("Chi riceve l’inject: tutti i ruoli oppure solo quelli scelti.")}>
+            <span class="label">{ex("Destinatari")}</span>
+            <div class="chips">
+                <button type="button" class={classes!("chip", all.then_some("on"))} aria-pressed={all.to_string()} onclick={toggle_all}>{ex("tutti")}</button>
+                {for roles.iter().map(|(id, name)| {
+                    let on = !all && m.recipients.contains(id);
+                    let id2 = id.clone();
+                    html!{<button type="button" class={classes!("chip", on.then_some("on"))} aria-pressed={on.to_string()} onclick={upd(open, move |p, _: MouseEvent| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) {
+                        x.recipients.retain(|r| r != "all");
+                        if let Some(k) = x.recipients.iter().position(|r| *r == id2) { x.recipients.remove(k); } else { x.recipients.push(id2.clone()); }
+                        if x.recipients.is_empty() { x.recipients = vec!["all".into()]; }
+                    })}>{name.clone()}</button>}
+                })}
+            </div>
+            <small class="hint">{ex("«tutti» invia a ogni ruolo. Scegliendo un ruolo specifico «tutti» si disattiva; senza ruoli scelti torna «tutti».")}</small>
+        </div>
+        {field("Titolo", "Oggetto breve mostrato nell’elenco e nella casella dei giocatori.", m.title.clone(), set(|x, v| x.title = v))}
+        {area("Testo", "Scrivilo in inglese, la lingua di lavoro: i giocatori lo ricevono tradotto. Meglio 2–4 frasi con fatti concreti (luogo, ora, numeri).", m.text.clone(), "4", set(|x, v| x.text = v))}
+        <small class="hint char-count">{format!("{text_len} {}", ex("caratteri"))}{if text_len > 600 { format!(" · {}", ex("testo lungo: valuta di accorciarlo")) } else { String::new() }}</small>
+        {field("Obiettivo formativo", "Che cosa il formatore vuole mettere alla prova con questo inject; guida il debriefing.", m.objective.clone(), set(|x, v| x.objective = v))}
+        <div class="inject-actions">
+            <button title={ex("Sposta l’inject più in alto nell’elenco.")} disabled={i == 0} onclick={mv(-1)}>{"▲"}</button>
+            <button title={ex("Sposta l’inject più in basso nell’elenco.")} disabled={i + 1 >= n} onclick={mv(1)}>{"▼"}</button>
+            <button title={ex("Crea una copia di questo inject subito dopo, con un nuovo identificativo.")} onclick={dup}>{ex("Duplica")}</button>
+            <details class="confirm-inline">
+                <summary class="danger" title={ex("Elimina l’inject: chiede conferma.")}>{ex("Elimina inject")}</summary>
+                <span>{ex("Eliminare davvero? Puoi ancora uscire senza salvare.")}</span>
+                <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.msel.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Conferma eliminazione")}</button>
+            </details>
+        </div>
+    </div>}
 }
 
 fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
@@ -933,6 +1046,8 @@ pub fn scenario_editor(props: &Props) -> Html {
     let busy = use_state(|| false);
     let confirm = use_state(String::new);
     let json = use_state(String::new);
+    let pack_json = use_state(String::new);
+    let pack_json_open = use_state(|| false);
     let map = use_node_ref();
 
     let refresh = {
@@ -1170,15 +1285,17 @@ pub fn scenario_editor(props: &Props) -> Html {
                         <button disabled={*busy} title={ex("Verifica lo scenario senza salvare e segnala gli errori da correggere.")} onclick={validate}>{ex("Controlla")}</button>
                     </div>
                     <div class="row scenario-transfer">
-                        <button title={ex("Mostra lo scenario come testo JSON (nella scheda Inject), per copiarlo o archiviarlo.")} onclick={{
-                            let (json, pack, tab) = (json.clone(), o.pack.clone(), tab.clone());
-                            Callback::from(move |_| { json.set(serde_json::to_string_pretty(&pack).unwrap_or_default()); tab.set("injects".into()) })
+                        <button title={ex("Scrive lo scenario intero come testo JSON nel riquadro «Avanzate: JSON» qui sotto, per copiarlo o archiviarlo.")} onclick={{
+                            let (pack_json, pack_json_open, pack) = (pack_json.clone(), pack_json_open.clone(), o.pack.clone());
+                            Callback::from(move |_| { pack_json.set(serde_json::to_string_pretty(&pack).unwrap_or_default()); pack_json_open.set(true) })
                         }}>{ex("Esporta scenario (JSON)")}</button>
-                        <button title={ex("Sostituisce il contenuto dell’editor con il testo JSON incollato; salva poi per conservarlo.")} onclick={{
-                            let (json, open, message, tab) = (json.clone(), open.clone(), message.clone(), tab.clone());
-                            Callback::from(move |_| { if json.trim().is_empty() { tab.set("injects".into()); message.set(ex("Incolla prima il testo JSON dello scenario (scheda Inject), poi premi Importa.").to_string()); return; } match serde_json::from_str::<ScenarioPack>(&json) {
-                                Ok(pack) => {
+                        <button title={ex("Sostituisce il contenuto dell’editor con il testo JSON incollato; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale.")} onclick={{
+                            let (pack_json, pack_json_open, open, message) = (pack_json.clone(), pack_json_open.clone(), open.clone(), message.clone());
+                            Callback::from(move |_| { if pack_json.trim().is_empty() { pack_json_open.set(true); message.set(ex("Incolla prima il testo JSON dello scenario (riquadro «Avanzate: JSON» qui sotto), poi premi Importa.").to_string()); return; } match serde_json::from_str::<ScenarioPack>(&pack_json) {
+                                Ok(mut pack) => {
                                     if let Some(cur) = &*open {
+                                        // An imported pack never renames the scenario it is imported into.
+                                        pack.id = cur.pack.id.clone();
                                         open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
                                         message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
                                     }
@@ -1187,6 +1304,20 @@ pub fn scenario_editor(props: &Props) -> Html {
                             } })
                         }}>{ex("Importa scenario (JSON)")}</button>
                     </div>
+                    <details class="scenario-json" open={*pack_json_open} ontoggle={{
+                        let pack_json_open = pack_json_open.clone();
+                        Callback::from(move |e: Event| {
+                            use yew::TargetCast;
+                            pack_json_open.set(e.target_unchecked_into::<web_sys::Element>().has_attribute("open"));
+                        })
+                    }}>
+                        <summary title={ex("Testo JSON dell’intero scenario, per Esporta e Importa scenario.")}>{ex("Avanzate: JSON")}</summary>
+                        <p class="hint">{ex("Esporta scenario scrive qui il JSON dell’intero scenario; per importarne uno, incollalo qui e premi Importa scenario. Nulla è salvato finché non premi Salva.")}</p>
+                        <textarea aria-label={ex("JSON dello scenario")} rows="8" value={(*pack_json).clone()} oninput={{
+                            let pack_json = pack_json.clone();
+                            Callback::from(move |e: InputEvent| pack_json.set(api::input(e)))
+                        }}/>
+                    </details>
                 </div>
             </section>
         }
