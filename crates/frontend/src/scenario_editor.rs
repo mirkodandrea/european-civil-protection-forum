@@ -123,6 +123,7 @@ fn general(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
         wind_speed_kmh: 0.0,
         moisture_pct: 10.0,
     });
+    let wind_name = compass(weather.wind_dir_deg);
     let mut places: Vec<(String, String)> = vec![(String::new(), ex("Centro della mappa").to_string())];
     places.extend(e.places.iter().flatten().map(|p| (p.name.clone(), p.name.clone())));
     places.extend(
@@ -142,20 +143,73 @@ fn general(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
             }
         })
     };
-    html! {<div class="settings-fields">
-        {field("Nome", "", o.pack.name.clone(), upd(open, |p, v: String| p.name = v))}
-        {area("Descrizione", "", o.pack.description.clone(), "3", upd(open, |p, v: String| p.description = v))}
-        <label>{ex("Territorio")}<input value={o.pack.base.clone()} disabled=true/></label>
-        {field("Ora di inizio (HH:MM)", "", clock_text(start), upd(open, |p, v: String| {
-            let day = p.edits.start_clock_s.unwrap_or(0) / 86_400 + 1;
-            if let Some(t) = parse_clock(day, &v) { p.edits.start_clock_s = Some(t); }
-        }))}
-        {number("Giorno", "", (start / 86_400 + 1).to_string(), day_cb)}
-        {choice("Base di partenza delle risorse", "", e.staging_base.as_deref().unwrap_or(""), &places, upd(open, |p, v: String| p.edits.staging_base = Some(v)))}
-        {number("Vento da (gradi)", "", fmt(weather.wind_dir_deg), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.wind_dir_deg = x } }))}
-        {number("Vento (km/h)", "", fmt(weather.wind_speed_kmh), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.wind_speed_kmh = x } }))}
-        {number("Umidità del combustibile (%)", "", fmt(weather.moisture_pct), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.moisture_pct = x } }))}
-    </div>}
+    let weather_edit = |f: fn(&mut scenario::WeatherSpec, f64)| {
+        upd(open, move |p, v: String| {
+            if let Some(x) = num(&v) {
+                f(p.edits.weather.get_or_insert(scenario::WeatherSpec { wind_dir_deg: 0.0, wind_speed_kmh: 0.0, moisture_pct: 10.0 }), x)
+            }
+        })
+    };
+    html! {<>
+        {gen_section("Identità", "Come l’esercitazione si presenta nell’elenco e ai partecipanti.", html! {<>
+            {field("Nome", "Titolo dello scenario, mostrato nell’elenco e nelle schermate EXCON.", o.pack.name.clone(), upd(open, |p, v: String| p.name = v))}
+            <label title={ex("Territorio su cui si basa lo scenario (mappa, edifici, strade). Non si modifica qui.")}>{ex("Territorio")}<input value={o.pack.base.clone()} disabled=true/>{hint("Territorio su cui si basa lo scenario (mappa, edifici, strade). Non si modifica qui.")}</label>
+            {area("Descrizione", "Breve sintesi dell’evento e degli obiettivi di addestramento. Compare nell’elenco degli scenari.", o.pack.description.clone(), "3", upd(open, |p, v: String| p.description = v))}
+        </>})}
+        {gen_section("Orario", "Quando comincia l’esercitazione, nell’ora simulata dello scenario.", html! {<>
+            {gen_number("Giorno di inizio", "Giorno simulato in cui parte l’esercitazione: 1 è il primo giorno. Serve per scenari che durano più di una notte.", "1", None, "1", "", (start / 86_400 + 1).to_string(), day_cb)}
+            <label title={ex("Ora del giorno (24 ore) in cui parte la simulazione. Gli inject sono datati rispetto a questo istante.")}>{ex("Ora di inizio (HH:MM)")}
+                <input type="time" required=true value={clock_text(start)} oninput={upd(open, |p, v: String| {
+                    let day = p.edits.start_clock_s.unwrap_or(0) / 86_400 + 1;
+                    if let Some(t) = parse_clock(day, &v) { p.edits.start_clock_s = Some(t); }
+                }).reform(api::input)}/>
+                {hint("Ora del giorno (24 ore) in cui parte la simulazione. Gli inject sono datati rispetto a questo istante.")}</label>
+        </>})}
+        {gen_section("Meteo", "Condizioni iniziali che guidano la propagazione del fuoco. Restano costanti durante l’esercitazione.", html! {<>
+            <div class="gen-wind">
+                {gen_number("Vento: direzione di provenienza (gradi)", "Direzione DA CUI soffia il vento, in gradi dal nord in senso orario: 0 = da nord, 90 = da est, 180 = da sud, 270 = da ovest. Il fuoco avanza nella direzione opposta. Valori da 0 a 360.", "0", Some("360"), "1", "", fmt(weather.wind_dir_deg), weather_edit(|w, x| w.wind_dir_deg = x))}
+                <small class="hint live">{format!("{} {} ({}°)", ex("Vento da"), ex(wind_name), fmt(weather.wind_dir_deg))}</small>
+            </div>
+            {gen_number("Vento: velocità (km/h)", "Velocità media del vento. Ordini di grandezza: 10 brezza, 30 vento teso, 60 o più vento forte che rende il fuoco molto veloce e irregolare.", "0", Some("150"), "1", "", fmt(weather.wind_speed_kmh), weather_edit(|w, x| w.wind_speed_kmh = x))}
+            {gen_number("Umidità del combustibile morto (%)", "Umidità della vegetazione secca fine. Più è bassa, più il fuoco è veloce: sotto il 10% condizioni estreme, 15–20% moderate, oltre il 30% il fuoco si propaga a fatica. Valori da 1 a 60.", "1", Some("60"), "1", "", fmt(weather.moisture_pct), weather_edit(|w, x| w.moisture_pct = x))}
+        </>})}
+        {gen_section("Risorse", "Da dove partono i mezzi quando un dispiegamento viene approvato.", html! {<>
+            {choice("Base di partenza delle risorse", "Luogo da cui partono i dispiegamenti approvati: i mezzi percorrono la distanza fino all’obiettivo e gli effetti sul fuoco iniziano solo all’arrivo. Se non si sceglie un luogo si parte dal centro della mappa.", e.staging_base.as_deref().unwrap_or(""), &places, upd(open, |p, v: String| p.edits.staging_base = Some(v)))}
+        </>})}
+    </>}
+}
+
+/// A titled group of controls with a one-line introduction.
+fn gen_section(title: &'static str, intro: &'static str, body: Html) -> Html {
+    html! {<section class="gen-sec"><h4>{ex(title)}</h4><p class="muted">{ex(intro)}</p><div class="gen-grid">{body}</div></section>}
+}
+
+/// Number input with limits: the browser marks values outside them.
+#[allow(clippy::too_many_arguments)]
+fn gen_number(
+    label: &'static str,
+    tip: &'static str,
+    min: &'static str,
+    max: Option<&'static str>,
+    step: &'static str,
+    placeholder: &'static str,
+    value: String,
+    cb: Callback<String>,
+) -> Html {
+    html! {<label title={ex(tip)}>{ex(label)}
+        <input type="number" inputmode="decimal" min={min} max={max} step={step} placeholder={ex(placeholder)} value={value} oninput={cb.reform(api::input)}/>
+        {hint(tip)}</label>}
+}
+
+/// Checkbox with a visible explanation.
+fn gen_flag(label: &'static str, tip: &'static str, on: bool, cb: Callback<bool>) -> Html {
+    html! {<div class="gen-flag">{check(ex(label).to_string(), tip, on, cb)}{hint(tip)}</div>}
+}
+
+/// Compass point (Italian initials) of a bearing.
+fn compass(deg: f64) -> &'static str {
+    const POINTS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
+    POINTS[((deg.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
 }
 
 fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
@@ -806,48 +860,52 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     let e = &o.pack.edits;
     let ops = e.operations.clone().unwrap_or_default();
     let policy = e.tactical_policy.clone().unwrap_or_default();
-    type Flag = (&'static str, fn(&scenario::Operations) -> bool, fn(&mut scenario::Operations, bool));
+    type Flag = (&'static str, &'static str, fn(&scenario::Operations) -> bool, fn(&mut scenario::Operations, bool));
     let flags: [Flag; 10] = [
-        ("Percorsi stradali", |o| o.road_routing, |o, v| o.road_routing = v),
-        ("Soppressione progressiva", |o| o.progressive_suppression, |o, v| o.progressive_suppression = v),
-        ("Traffico aggregato", |o| o.traffic, |o, v| o.traffic = v),
-        ("Esposizione all’intensità", |o| o.intensity_exposure, |o, v| o.intensity_exposure = v),
-        ("Comunicazioni", |o| o.communications, |o, v| o.communications = v),
-        ("Spotting (brace a distanza)", |o| o.spotting, |o, v| o.spotting = v),
-        ("Chiusure di tratto per fuoco", |o| o.segment_fire_closures, |o, v| o.segment_fire_closures = v),
-        ("Spostamenti fuori strada", |o| o.terrain_travel, |o, v| o.terrain_travel = v),
-        ("Coda dei mezzi di emergenza", |o| o.emergency_congestion, |o, v| o.emergency_congestion = v),
-        ("Autonomia locale delle squadre", |o| o.local_autonomy, |o, v| o.local_autonomy = v),
+        ("Percorsi stradali", "I mezzi seguono la rete stradale reale. Senza un percorso possibile restano in attesa o falliscono: non c’è mai una linea retta di ripiego.", |o| o.road_routing, |o, v| o.road_routing = v),
+        ("Soppressione progressiva", "Il lavoro di squadre e mezzi si accumula nel tempo (linee che si completano a poco a poco) invece di avere effetto istantaneo.", |o| o.progressive_suppression, |o, v| o.progressive_suppression = v),
+        ("Traffico aggregato", "Simula il traffico dei veicoli civili come flusso complessivo: può rallentare le strade e gli spostamenti, senza modellare ogni singola auto.", |o| o.traffic, |o, v| o.traffic = v),
+        ("Esposizione all’intensità", "Squadre e veicoli vicini al fronte accumulano esposizione in base all’intensità del fuoco; oltre certe soglie devono ritirarsi.", |o| o.intensity_exposure, |o, v| o.intensity_exposure = v),
+        ("Comunicazioni", "Gli avvisi e gli ordini dipendono dalla copertura radio/telefonica: dove i siti di comunicazione cadono o mancano, i messaggi arrivano in ritardo o non arrivano.", |o| o.communications, |o, v| o.communications = v),
+        ("Spotting (brace a distanza)", "Il vento trasporta braci che accendono nuovi focolai davanti al fronte. Rende il fuoco più imprevedibile: da attivare solo se lo scenario lo richiede.", |o| o.spotting, |o, v| o.spotting = v),
+        ("Chiusure di tratto per fuoco", "Un tratto di strada raggiunto o minacciato dal fuoco viene chiuso e i percorsi vengono ricalcolati.", |o| o.segment_fire_closures, |o, v| o.segment_fire_closures = v),
+        ("Spostamenti fuori strada", "Alcuni mezzi e squadre possono attraversare il terreno aperto, più lentamente, quando la strada non basta.", |o| o.terrain_travel, |o, v| o.terrain_travel = v),
+        ("Coda dei mezzi di emergenza", "I mezzi di soccorso che usano lo stesso tratto si mettono in coda e si rallentano a vicenda.", |o| o.emergency_congestion, |o, v| o.emergency_congestion = v),
+        ("Autonomia locale delle squadre", "Le squadre sul posto possono adattare il proprio lavoro (spostarsi, ritirarsi, riprendere) entro la missione approvata, senza chiedere ogni volta all’EXCON.", |o| o.local_autonomy, |o, v| o.local_autonomy = v),
     ];
+    let flag = |i: usize| {
+        let (label, tip, get, set) = flags[i];
+        gen_flag(label, tip, get(&ops), upd(open, move |p, on: bool| set(p.edits.operations.get_or_insert_with(Default::default), on)))
+    };
     let run = &o.pack.run;
+    let pol = |f: fn(&mut scenario::TacticalPolicy, f64)| {
+        upd(open, move |p, v: String| if let Some(n) = num(&v) { f(p.edits.tactical_policy.get_or_insert_with(Default::default), n) })
+    };
     html! {<>
-        <h4>{ex("Modello operativo")}</h4>
-        <div class="settings-fields">
-            {for flags.iter().map(|(label, get, set)| {
-                let set = *set;
-                check(ex(label).to_string(), "", get(&ops), upd(open, move |p, on: bool| set(p.edits.operations.get_or_insert_with(Default::default), on)))
-            })}
-            {check(ex("Avvia con il modello operativo attivo").to_string(), "", run.operational_model == Some(true), upd(open, |p, on: bool| p.run.operational_model = on.then_some(true)))}
-        </div>
-        <h4>{ex("Politica tattica (distanze in metri, tempi in secondi simulati)")}</h4>
-        <div class="settings-fields">
-            {number("Raggio del settore", "", policy.sector_radius_m.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).sector_radius_m = n }))}
-            {number("Portata della manichetta", "", policy.hose_reach_m.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).hose_reach_m = n }))}
-            {number("Limite di bagnatura (punti)", "", policy.wet_limit_pts.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).wet_limit_pts = n }))}
-            {number("Rivalutazione (s)", "", policy.reassess_s.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).reassess_s = n }))}
-            {number("Pericolo per sosta (0–1)", "", policy.parking_danger.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).parking_danger = n }))}
-            {number("Pericolo per lavoro (0–1)", "", policy.work_danger.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).work_danger = n }))}
-            {number("Riorganizzazione (s)", "", policy.regroup_s.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).regroup_s = n }))}
-            {check(ex("Lavoro condiviso tra squadre").to_string(), "", policy.share_work, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).share_work = on))}
-            {check(ex("Riprende dopo il ritiro").to_string(), "", policy.resume_after_withdrawal, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).resume_after_withdrawal = on))}
-        </div>
-        <h4>{ex("Simulazione")}</h4>
-        <p class="muted">{ex("Vuoto = valore predefinito. Le opzioni sulla riga di comando hanno la precedenza.")}</p>
-        <div class="settings-fields">
-            {number("Seme casuale", "", run.seed.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.seed = num(&v)))}
-            {number("Realizzazioni dell’ensemble", "", run.realizations.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.realizations = num(&v)))}
-            {number("Soglia del fuoco «reale» (0–1)", "", run.cutoff.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.cutoff = num(&v)))}
-        </div>
+        {gen_section("Modello operativo", "Quanto realistica è la logistica: strade, tempi, comunicazioni. Ogni opzione è indipendente; tutte spente = regole semplificate originali.", html! {<>
+            <div class="gen-group wide">{gen_flag("Avvia con il modello operativo attivo", "Parte con le opzioni sotto attive. Se spento, ci si affida alle regole semplificate o all’opzione --operational-model della riga di comando.", run.operational_model == Some(true), upd(open, |p, on: bool| p.run.operational_model = on.then_some(true)))}</div>
+            <div class="gen-group wide"><h5>{ex("Strade e spostamenti")}</h5>{for [0, 6, 7, 8, 2].map(flag)}</div>
+            <div class="gen-group wide"><h5>{ex("Fuoco e rischio")}</h5>{for [1, 3, 5].map(flag)}</div>
+            <div class="gen-group wide"><h5>{ex("Comando e comunicazioni")}</h5>{for [4, 9].map(flag)}</div>
+        </>})}
+        {gen_section("Politica tattica", "Regole con cui le squadre agiscono sul posto. Distanze in metri, tempi in secondi simulati. Sono ipotesi di addestramento, non indicazioni di sicurezza operativa.", html! {<>
+            {gen_number("Raggio del settore (m)", "Distanza entro cui una squadra considera suo il settore attorno al punto di missione. Tipico: 200–500 m.", "0", None, "any", "", policy.sector_radius_m.to_string(), pol(|p, n| p.sector_radius_m = n as f32))}
+            {gen_number("Portata della manichetta (m)", "Distanza dal mezzo entro cui si può bagnare. Tipico: 40–100 m.", "0", None, "any", "", policy.hose_reach_m.to_string(), pol(|p, n| p.hose_reach_m = n as f32))}
+            {gen_number("Limite di bagnatura (punti)", "Quantità massima di bagnatura che una squadra applica a un punto prima di passare oltre: valore più alto = più acqua per punto.", "0", None, "any", "", policy.wet_limit_pts.to_string(), pol(|p, n| p.wet_limit_pts = n as f32))}
+            {gen_number("Rivalutazione (s)", "Ogni quanti secondi simulati le squadre rivalutano la situazione. 60 = una volta al minuto.", "1", None, "1", "", policy.reassess_s.to_string(), pol(|p, n| p.reassess_s = n as i64))}
+            {gen_number("Riorganizzazione (s)", "Secondi simulati persi per riorganizzarsi dopo un ritiro o un cambio di compito.", "0", None, "1", "", policy.regroup_s.to_string(), pol(|p, n| p.regroup_s = n as i64))}
+            {gen_number("Pericolo per sosta (0–1)", "Livello di pericolo (0 nessuno, 1 massimo) oltre il quale un mezzo non sosta e si sposta. Valori bassi = più prudenti.", "0", Some("1"), "0.05", "", policy.parking_danger.to_string(), pol(|p, n| p.parking_danger = n as f32))}
+            {gen_number("Pericolo per lavoro (0–1)", "Livello di pericolo (0 nessuno, 1 massimo) oltre il quale una squadra smette di lavorare e si ritira. Valori bassi = più prudenti.", "0", Some("1"), "0.05", "", policy.work_danger.to_string(), pol(|p, n| p.work_danger = n as f32))}
+            <div class="gen-group wide">
+            {gen_flag("Lavoro condiviso tra squadre", "Più squadre vicine si dividono lo stesso lavoro invece di ripeterlo.", policy.share_work, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).share_work = on))}
+            {gen_flag("Riprende dopo il ritiro", "Dopo un ritiro per pericolo, la squadra riprende da sola il compito quando le condizioni lo permettono.", policy.resume_after_withdrawal, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).resume_after_withdrawal = on))}
+            </div>
+        </>})}
+        {gen_section("Simulazione", "Opzioni di calcolo. Lasciare vuoto = valore predefinito. Le opzioni sulla riga di comando hanno la precedenza su queste.", html! {<>
+            {gen_number("Seme casuale", "Numero intero che rende ripetibile il caso: stesso seme, stessa evoluzione del fuoco. Vuoto = scelto dal programma.", "0", None, "1", "predefinito", run.seed.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.seed = num(&v)))}
+            {gen_number("Realizzazioni dell’ensemble", "Quante simulazioni del fuoco vengono eseguite in parallelo per stimarne l’incertezza. Predefinito 32. Più realizzazioni = stima più stabile ma più lenta.", "1", None, "1", "32", run.realizations.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.realizations = num(&v)))}
+            {gen_number("Soglia del fuoco «reale» (0–1)", "Frazione di realizzazioni che devono raggiungere una cella perché conti come in fiamme. 0.5 = scenario centrale (predefinito), 0.25 = scenario pessimistico.", "0", Some("1"), "0.05", "0.5", run.cutoff.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.cutoff = num(&v)))}
+        </>})}
     </>}
 }
 

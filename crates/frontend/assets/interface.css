@@ -456,3 +456,16 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .sc-reinf-row~.sc-reinf-row .hint{display:none}
 @media(max-width:900px){.sc-reinf-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.sc-reinf-row .sc-del{grid-column:1/-1}.sc-reinf-row~.sc-reinf-row .hint{display:block}}
 .sc-split .settings-fields label{min-width:120px}
+/* Scenario view: "Generale" and "Avanzate" screens */
+.gen-sec{margin:0 0 22px;padding-bottom:6px}.gen-sec>h4{margin:0 0 2px;font-size:15px}.gen-sec>p.muted{margin:0 0 10px}
+.gen-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:12px 16px;align-items:start}
+.gen-grid>label{display:grid;gap:3px;font-size:13px;align-content:start;min-width:0}.gen-grid>label input,.gen-grid>label select,.gen-grid>label textarea{width:100%;max-width:100%}
+.gen-grid>label.wide,.gen-grid>.wide{grid-column:1/-1}.gen-grid .hint{font-weight:400;line-height:1.35}
+.gen-grid input[type=number],.gen-grid input[type=time]{max-width:12em}
+.gen-wind{display:grid;gap:3px;align-content:start}.gen-wind label{display:grid;gap:3px;font-size:13px}.gen-wind input{max-width:12em}.gen-wind .live{color:var(--accent);font-weight:600}
+.gen-group{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:8px 18px}.gen-group>h5{grid-column:1/-1;margin:4px 0 0;font-size:13px;color:var(--muted)}
+.gen-flag{display:grid;gap:1px;align-content:start}.gen-flag .hint{padding-left:24px}
+.gen-sec:first-of-type .gen-grid>label:first-child{grid-column:span 2}
+.gen-grid input:invalid{border-color:#a3312c;background:#fff4f2}
+.gen-grid input:invalid+.hint::before{content:"⚠ ";color:#a3312c}
+@media(max-width:600px){.gen-grid{grid-template-columns:minmax(0,1fr)}.gen-grid input[type=number],.gen-grid input[type=time]{max-width:none}}
