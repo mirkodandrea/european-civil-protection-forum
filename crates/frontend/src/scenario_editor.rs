@@ -252,79 +252,221 @@ fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     </>}
 }
 
+/// Geometry of the territory for the maps (metres, origin south-west).
+#[derive(Clone, Copy)]
+struct Geom {
+    width: f64,
+    height: f64,
+    zone: f64,
+    cols: usize,
+    rows: usize,
+}
+
+fn geom(o: &Open) -> Geom {
+    Geom {
+        width: o.reference["grid"]["width_m"].as_f64().unwrap_or(1.0),
+        height: o.reference["grid"]["height_m"].as_f64().unwrap_or(1.0),
+        zone: o.reference["zone_grid"]["size_m"].as_f64().unwrap_or(500.0),
+        cols: o.reference["zone_grid"]["cols"].as_u64().unwrap_or(0) as usize,
+        rows: o.reference["zone_grid"]["rows"].as_u64().unwrap_or(0) as usize,
+    }
+}
+
+/// Zone code containing `at`, from the territory's zone centres.
+fn zone_at(o: &Open, g: Geom, at: [f32; 2]) -> Option<String> {
+    o.reference["zone_centres"].as_object()?.iter().find_map(|(name, c)| {
+        let (cx, cy) = (c[0].as_f64()?, c[1].as_f64()?);
+        ((cx - at[0] as f64).abs() <= g.zone / 2.0 && (cy - at[1] as f64).abs() <= g.zone / 2.0).then(|| name.clone())
+    })
+}
+
+/// World position of a click on the map and, when it landed on a marker, the
+/// index in its `data-hit` attribute.
+fn map_click(map: &NodeRef, g: Geom, on: Callback<([f32; 2], Option<usize>)>) -> Callback<MouseEvent> {
+    use wasm_bindgen::JsCast;
+    let map = map.clone();
+    Callback::from(move |e: MouseEvent| {
+        // Yew delegates events: `current_target` is not the map, so keep its node.
+        let Some(svg) = map.cast::<web_sys::Element>() else { return };
+        let rect = svg.get_bounding_client_rect();
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            return;
+        }
+        let x = ((e.client_x() as f64 - rect.left()) / rect.width() * g.width).clamp(0.0, g.width);
+        let y = (g.height - (e.client_y() as f64 - rect.top()) / rect.height() * g.height).clamp(0.0, g.height);
+        let hit = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|el| el.closest("[data-hit]").ok().flatten())
+            .and_then(|el| el.get_attribute("data-hit"))
+            .and_then(|s| s.parse().ok());
+        on.emit(([x.round() as f32, y.round() as f32], hit));
+    })
+}
+
+/// Background, zone grid and zone codes (never interactive).
+fn map_base(o: &Open, g: Geom) -> Html {
+    let stroke = g.width / 500.0;
+    let zones: Vec<String> = list(&o.reference["zones"]).iter().map(|z| text(z).to_string()).collect();
+    let centres = &o.reference["zone_centres"];
+    html! {<>
+        <rect x="0" y="0" width={g.width.to_string()} height={g.height.to_string()} fill="#e9efe6"/>
+        {for (0..=g.cols).map(|c| html!{<line x1={(c as f64 * g.zone).to_string()} y1="0" x2={(c as f64 * g.zone).to_string()} y2={(g.rows as f64 * g.zone).to_string()} stroke="#9db3a6" stroke-width={stroke.to_string()}/>})}
+        {for (0..=g.rows).map(|r| html!{<line x1="0" y1={(g.height - r as f64 * g.zone).to_string()} x2={(g.cols as f64 * g.zone).to_string()} y2={(g.height - r as f64 * g.zone).to_string()} stroke="#9db3a6" stroke-width={stroke.to_string()}/>})}
+        {for zones.iter().map(|z| {
+            let c = &centres[z.as_str()];
+            html!{<text class="zone-lbl" x={c[0].as_f64().unwrap_or(0.0).to_string()} y={(g.height - c[1].as_f64().unwrap_or(0.0)).to_string()}
+                text-anchor="middle" dominant-baseline="central" font-size={(g.zone * 0.2).to_string()}>{z.clone()}</text>}
+        })}
+    </>}
+}
+
+/// Named places as small diamonds. `always` writes the name; otherwise it shows on hover.
+fn map_places(places: &[Place], g: Geom, always: bool, selected: Option<usize>, hit: bool) -> Html {
+    let r = g.zone * 0.07;
+    html! {<>{for places.iter().enumerate().map(|(i, p)| {
+        let (cx, cy) = (p.pos[0] as f64, g.height - p.pos[1] as f64);
+        let sel = selected == Some(i);
+        let d = format!("M{} {}L{} {}L{} {}L{} {}Z", cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy);
+        html!{<g class={classes!("map-place", always.then_some("always"), sel.then_some("selected"))} data-hit={hit.then(|| i.to_string())}>
+            <title>{if p.aliases.is_empty() { p.name.clone() } else { format!("{} ({})", p.name, p.aliases.join(", ")) }}</title>
+            <circle cx={cx.to_string()} cy={cy.to_string()} r={(r * 2.2).to_string()} fill="rgba(0,0,0,.001)"/>
+            <path d={d} fill={if sel {"#0f6b4d"} else {"#617673"}} stroke="#fff" stroke-width={(g.width / 700.0).to_string()}/>
+            <text class="map-lbl" x={cx.to_string()} y={(cy - r * 1.6).to_string()} text-anchor="middle" font-size={(g.zone * 0.15).to_string()} stroke-width={(g.zone * 0.035).to_string()}>{p.name.clone()}</text>
+        </g>}
+    })}</>}
+}
+
+/// A delete button that needs a second click, so a stray tap cannot lose data.
+#[derive(Properties, PartialEq)]
+struct ConfirmProps {
+    label: &'static str,
+    onconfirm: Callback<MouseEvent>,
+}
+
+#[function_component(ConfirmDelete)]
+fn confirm_delete(p: &ConfirmProps) -> Html {
+    let armed = use_state(|| false);
+    if *armed {
+        let (a, cb) = (armed.clone(), p.onconfirm.clone());
+        let b = armed.clone();
+        html! {<span class="confirm-delete">
+            <button class="danger" onclick={Callback::from(move |e| { a.set(false); cb.emit(e) })}>{ex("Conferma eliminazione")}</button>
+            <button onclick={Callback::from(move |_| b.set(false))}>{ex("Annulla")}</button>
+        </span>}
+    } else {
+        let a = armed.clone();
+        html! {<button class="danger" title={ex("Chiede una conferma prima di eliminare")} onclick={Callback::from(move |_| a.set(true))}>{ex(p.label)}</button>}
+    }
+}
+
+/// `options` plus the current value when it is not among them (a dangling reference stays visible).
+fn with_current(options: &[(String, String)], value: &str) -> Vec<(String, String)> {
+    let mut v = options.to_vec();
+    if !options.iter().any(|(id, _)| id == value) {
+        v.insert(0, (value.to_string(), if value.is_empty() { ex("— scegli —").to_string() } else { format!("{value} ⚠") }));
+    }
+    v
+}
+
 /// Zone grid and ignitions; a click on the map moves the selected ignition.
 fn ignitions_tab(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>, map: &NodeRef) -> Html {
     let ignitions = o.pack.edits.initial_ignitions.clone().unwrap_or_default();
-    let width = o.reference["grid"]["width_m"].as_f64().unwrap_or(1.0);
-    let height = o.reference["grid"]["height_m"].as_f64().unwrap_or(1.0);
-    let zone_size = o.reference["zone_grid"]["size_m"].as_f64().unwrap_or(500.0);
-    let cols = o.reference["zone_grid"]["cols"].as_u64().unwrap_or(0) as usize;
-    let rows = o.reference["zone_grid"]["rows"].as_u64().unwrap_or(0) as usize;
+    let g = geom(o);
     let sel = (*selected).min(ignitions.len().saturating_sub(1));
-    let stroke = width / 400.0;
     let onclick = {
-        let (open, map) = (open.clone(), map.clone());
-        Callback::from(move |e: MouseEvent| {
-            let Some(cur) = &*open else { return };
-            // Yew delegates events: `current_target` is not the map, so keep its node.
-            let Some(svg) = map.cast::<web_sys::Element>() else { return };
-            let rect = svg.get_bounding_client_rect();
-            if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        let (open, selected) = (open.clone(), selected.clone());
+        map_click(map, g, Callback::from(move |(at, hit): ([f32; 2], Option<usize>)| {
+            if let Some(i) = hit {
+                selected.set(i);
                 return;
             }
-            let x = (e.client_x() as f64 - rect.left()) / rect.width() * width;
-            let y = height - (e.client_y() as f64 - rect.top()) / rect.height() * height;
+            let Some(cur) = &*open else { return };
             let mut next = cur.clone();
             if let Some(i) = next.pack.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(sel)) {
-                i.at = [x.round() as f32, y.round() as f32];
+                i.at = at;
                 next.dirty = true;
                 open.set(Some(next));
             }
-        })
+        }))
     };
-    let zones: Vec<(String, f64)> = list(&o.reference["zones"]).iter().map(|z| (text(z).to_string(), 0.0)).collect();
-    let centres = &o.reference["zone_centres"];
-    let zone_options: Vec<(String, String)> = std::iter::once((String::new(), ex("Imposta al centro della zona…").to_string()))
-        .chain(zones.iter().map(|(z, _)| (z.clone(), z.clone())))
-        .collect();
-    html! {<>
-        <p class="muted">{ex("Clic sulla mappa per spostare l’innesco selezionato. Sotto i 40 m di raggio l’innesco si spegne da solo.")}</p>
-        <svg ref={map.clone()} class="ignition-map" viewBox={format!("0 0 {width} {height}")} role="img" aria-label={ex("Mappa degli inneschi")} onclick={onclick}>
-            <rect x="0" y="0" width={width.to_string()} height={height.to_string()} fill="#e9efe6"/>
-            {for (0..=cols).map(|c| html!{<line x1={(c as f64 * zone_size).to_string()} y1="0" x2={(c as f64 * zone_size).to_string()} y2={(rows as f64 * zone_size).to_string()} stroke="#9db3a6" stroke-width={stroke.to_string()}/>})}
-            {for (0..=rows).map(|r| html!{<line x1="0" y1={(height - r as f64 * zone_size).to_string()} x2={(cols as f64 * zone_size).to_string()} y2={(height - r as f64 * zone_size).to_string()} stroke="#9db3a6" stroke-width={stroke.to_string()}/>})}
-            {for zones.iter().map(|(z, _)| {
-                let c = &centres[z.as_str()];
-                html!{<text x={c[0].as_f64().unwrap_or(0.0).to_string()} y={(height - c[1].as_f64().unwrap_or(0.0)).to_string()} text-anchor="middle" font-size={(zone_size * 0.18).to_string()} fill="#7d9487">{z.clone()}</text>}
-            })}
-            {for o.pack.edits.places.iter().flatten().map(|p| html!{<circle cx={p.pos[0].to_string()} cy={(height - p.pos[1] as f64).to_string()} r={(zone_size * 0.04).to_string()} fill="#617673"><title>{p.name.clone()}</title></circle>})}
-            {for ignitions.iter().enumerate().map(|(i, g)| html!{
-                <circle cx={g.at[0].to_string()} cy={(height - g.at[1] as f64).to_string()} r={g.radius_m.max(zone_size as f32 * 0.06).to_string()}
-                    fill={if i == sel {"rgba(214,69,20,.65)"} else {"rgba(214,120,20,.4)"}} stroke="#a3312c" stroke-width={(stroke * 2.0).to_string()}/>
-            })}
-        </svg>
-        {for ignitions.iter().enumerate().map(|(i, g)| {
-            let g = g.clone();
-            let selected = selected.clone();
-            let centres = centres.clone();
-            html!{<fieldset class={classes!("inject-row", (i == sel).then_some("selected"))} key={i} onfocusin={Callback::from(move |_| selected.set(i))}>
-                <legend>{format!("{} {}", ex("Innesco"), i + 1)}</legend>
-                <div class="settings-fields">
-                    {number("Est x (m)", "", g.at[0].to_string(), upd(open, move |p, v: String| if let (Some(x), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[0] = x }))}
-                    {number("Nord y (m)", "", g.at[1].to_string(), upd(open, move |p, v: String| if let (Some(y), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[1] = y }))}
-                    {number("Raggio (m)", "", g.radius_m.to_string(), upd(open, move |p, v: String| if let (Some(r), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.radius_m = r }))}
-                    {choice("Zona", "", "", &zone_options, upd(open, move |p, zone: String| {
-                        let c = &centres[zone.as_str()];
-                        if let (Some(x), Some(y), Some(g)) = (c[0].as_f64(), c[1].as_f64(), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at = [x as f32, y as f32]; }
-                    }))}
-                </div>
-                <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.initial_ignitions.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina innesco")}</button>
-            </fieldset>}
-        })}
-        <button onclick={upd(open, |p, _: MouseEvent| {
-            p.edits.initial_ignitions.get_or_insert_with(Vec::new).push(IgnitionSpec { at: [1000.0, 1000.0], radius_m: 100.0 });
-        })}>{ex("Aggiungi innesco")}</button>
-    </>}
+    let zones: Vec<String> = list(&o.reference["zones"]).iter().map(|z| text(z).to_string()).collect();
+    let centres = o.reference["zone_centres"].clone();
+    let places = o.pack.edits.places.clone().unwrap_or_default();
+    let unit = g.zone;
+    html! {<div class="sc-ign">
+        <div class="sc-split">
+            <div class="sc-map">
+                <p class="map-help"><strong>{ex("Mappa: clic su un punto vuoto = sposta l’innesco selezionato · clic su un cerchio = lo seleziona.")}</strong>{" "}
+                    {ex("Origine in basso a sinistra (sud-ovest); i cerchi sono disegnati in scala col raggio. Passa il mouse sui rombi per il nome dei luoghi.")}</p>
+                <svg ref={map.clone()} class="ignition-map" viewBox={format!("0 0 {} {}", g.width, g.height)} style={format!("aspect-ratio:{}/{}", g.width, g.height)}
+                    role="img" aria-label={ex("Mappa degli inneschi")} onclick={onclick}>
+                    {map_base(o, g)}
+                    {map_places(&places, g, false, None, false)}
+                    {for ignitions.iter().enumerate().map(|(i, g_)| {
+                        let (cx, cy) = (g_.at[0] as f64, g.height - g_.at[1] as f64);
+                        let is_sel = i == sel;
+                        let r = g_.radius_m as f64;
+                        let hit_r = r.max(unit * 0.07);
+                        let tiny = g_.radius_m < 40.0;
+                        html!{<g class={classes!("map-ign", is_sel.then_some("selected"), tiny.then_some("tiny"))} data-hit={i.to_string()}>
+                            <title>{format!("{} {} · {} m{}", ex("Innesco"), i + 1, g_.radius_m, if tiny { format!(" · {}", ex("troppo piccolo")) } else { String::new() })}</title>
+                            <circle cx={cx.to_string()} cy={cy.to_string()} r={hit_r.to_string()} fill="rgba(0,0,0,.001)"/>
+                            <circle class="ign-disc" cx={cx.to_string()} cy={cy.to_string()} r={r.to_string()} stroke-width={(g.width / 450.0 * if is_sel {2.0} else {1.0}).to_string()}/>
+                            if is_sel {
+                                <circle class="ign-ring" cx={cx.to_string()} cy={cy.to_string()} r={(hit_r + unit * 0.03).to_string()} stroke-width={(g.width / 300.0).to_string()} stroke-dasharray={format!("{} {}", unit * 0.05, unit * 0.03)}/>
+                            }
+                            <circle cx={cx.to_string()} cy={cy.to_string()} r={(unit * 0.012).to_string()} fill="#7a1d12"/>
+                            <text class="map-lbl ign-num" x={cx.to_string()} y={(cy - hit_r - unit * 0.05).to_string()} text-anchor="middle"
+                                font-size={(unit * if is_sel {0.2} else {0.15}).to_string()} stroke-width={(unit * 0.04).to_string()}>{i + 1}</text>
+                        </g>}
+                    })}
+                </svg>
+                <p class="muted map-legend">{ex("Cerchio pieno = innesco, con anello tratteggiato se selezionato · tratteggio = raggio sotto i 40 m (si spegne) · rombo = luogo con nome.")}</p>
+            </div>
+            <div class="sc-list">
+                {for ignitions.iter().enumerate().map(|(i, g_)| {
+                    let g_ = g_.clone();
+                    let sel_cb = { let selected = selected.clone(); Callback::from(move |_: MouseEvent| selected.set(i)) };
+                    let zone_now = zone_at(o, g, g_.at);
+                    if i != sel {
+                        return html!{<button class="sc-summary" key={i} onclick={sel_cb} title={ex("Seleziona questo innesco (si evidenzia sulla mappa)")}>
+                            <span class="badge">{i + 1}</span>
+                            {format!("{} {} · {} m · E {} N {}{}", ex("Innesco"), i + 1, g_.radius_m, g_.at[0], g_.at[1], zone_now.map(|z| format!(" · {z}")).unwrap_or_default())}
+                        </button>};
+                    }
+                    let mut zone_options: Vec<(String, String)> = vec![(String::new(), match &zone_now {
+                        Some(z) => format!("{} {z} · {}", ex("Ora in zona"), ex("sposta al centro di…")),
+                        None => ex("Sposta al centro della zona…").to_string(),
+                    })];
+                    zone_options.extend(zones.iter().map(|z| (z.clone(), z.clone())));
+                    let centres = centres.clone();
+                    html!{<fieldset class="inject-row selected" key={i}>
+                        <legend><span class="badge sel">{i + 1}</span>{format!(" {} {}", ex("Innesco"), i + 1)}</legend>
+                        <div class="settings-fields">
+                            {number("Est x (m)", "Metri verso est dall’angolo sud-ovest del territorio (origine 0,0). Si imposta anche con un clic sulla mappa.", g_.at[0].to_string(), upd(open, move |p, v: String| if let (Some(x), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[0] = x }))}
+                            {number("Nord y (m)", "Metri verso nord dall’angolo sud-ovest del territorio (origine 0,0). Si imposta anche con un clic sulla mappa.", g_.at[1].to_string(), upd(open, move |p, v: String| if let (Some(y), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[1] = y }))}
+                            {number("Raggio (m)", "Raggio iniziale del fuoco, disegnato in scala sulla mappa. Con meno di 40 m l’innesco si spegne da solo (una sola cella non si propaga): usa 40 m o più.", g_.radius_m.to_string(), upd(open, move |p, v: String| if let (Some(r), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.radius_m = r }))}
+                            {choice("Zona", "Scorciatoia: porta l’innesco al centro di una zona della griglia 8×8 (es. F4), il nome che i giocatori usano nei messaggi.", "", &zone_options, upd(open, move |p, zone: String| {
+                                let c = &centres[zone.as_str()];
+                                if let (Some(x), Some(y), Some(g)) = (c[0].as_f64(), c[1].as_f64(), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at = [x as f32, y as f32]; }
+                            }))}
+                        </div>
+                        if g_.radius_m < 40.0 {<p class="warn" role="alert">{ex("Raggio sotto i 40 m: l’innesco si spegne da solo. Portalo a 40 m o più.")}</p>}
+                        <ConfirmDelete label="Elimina innesco" onconfirm={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.initial_ignitions.as_mut() { if i < l.len() { l.remove(i); } } })}/>
+                    </fieldset>}
+                })}
+                if ignitions.is_empty() {<p class="muted">{ex("Nessun innesco: l’esercitazione parte senza fuoco. Aggiungine uno e clicca sulla mappa.")}</p>}
+                <button class="primary" title={ex("Crea un nuovo innesco al centro della mappa e lo seleziona")} onclick={{
+                    let (selected, n) = (selected.clone(), ignitions.len());
+                    let add = upd(open, |p, _: MouseEvent| {
+                        p.edits.initial_ignitions.get_or_insert_with(Vec::new).push(IgnitionSpec { at: [1000.0, 1000.0], radius_m: 100.0 });
+                    });
+                    Callback::from(move |e: MouseEvent| { selected.set(n); add.emit(e) })
+                }}>{ex("Aggiungi innesco")}</button>
+            </div>
+        </div>
+    </div>}
 }
 
 fn reinforcements_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
@@ -332,21 +474,19 @@ fn reinforcements_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     let list_ = e.reinforcements.clone().unwrap_or_default();
     let resources: Vec<(String, String)> = e.resource_types.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
     let roles: Vec<(String, String)> = e.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
-    html! {<>
-        <p class="muted">{ex("Capacità esterna che un ruolo può richiedere: arriva dopo il ritardo indicato.")}</p>
+    html! {<div class="sc-reinf">
+        <p class="muted">{ex("Capacità esterna che un ruolo può richiedere: arriva dopo il ritardo indicato. L’EXCON approva comunque ogni richiesta e ogni arrivo.")}</p>
+        if resources.is_empty() || roles.is_empty() {<p class="warn" role="alert">{ex("Servono almeno una risorsa e un ruolo (schede Risorse e Ruoli) per definire un rinforzo.")}</p>}
         {for list_.iter().enumerate().map(|(i, r)| {
             let r = r.clone();
-            html!{<fieldset class="inject-row" key={i}>
-                <legend>{format!("{} → {}", r.resource, r.assigned_to)}</legend>
-                <div class="settings-fields">
-                    {choice("Risorsa", "", &r.resource, &resources, upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.resource = v }))}
-                    {number("Quantità massima", "", r.max_qty.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.max_qty = n }))}
-                    {number("Ritardo (min)", "", r.delay_min.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.delay_min = n }))}
-                    {field("Provenienza", "", r.source.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.source = v }))}
-                    {choice("Riceve il ruolo", "", &r.assigned_to, &roles, upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.assigned_to = v }))}
-                </div>
-                <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.reinforcements.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina rinforzo")}</button>
-            </fieldset>}
+            html!{<div class="inject-row sc-reinf-row" role="group" aria-label={format!("{} {} → {}", ex("Rinforzo"), r.resource, r.assigned_to)} key={i}>
+                {choice("Risorsa", "Che cosa arriva: uno dei tipi definiti nella scheda Risorse.", &r.resource, &with_current(&resources, &r.resource), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.resource = v }))}
+                {number("Quantità massima", "Capacità massima che il ruolo può richiedere in totale da questa fonte (unità del tipo di risorsa).", r.max_qty.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.max_qty = n }))}
+                {number("Ritardo (min)", "Minuti simulati tra l’approvazione della richiesta e l’arrivo alla base di partenza.", r.delay_min.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.delay_min = n }))}
+                {field("Provenienza", "Testo libero: da dove arrivano (es. «Colonna mobile regionale»). Compare nei messaggi ai giocatori.", r.source.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.source = v }))}
+                {choice("Riceve il ruolo", "Il ruolo (pagina player) che può richiedere e che riceve le unità all’arrivo.", &r.assigned_to, &with_current(&roles, &r.assigned_to), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.assigned_to = v }))}
+                <div class="sc-del"><ConfirmDelete label="Elimina rinforzo" onconfirm={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.reinforcements.as_mut() { if i < l.len() { l.remove(i); } } })}/></div>
+            </div>}
         })}
         <button onclick={{
             let first_resource = resources.first().map(|r| r.0.clone()).unwrap_or_default();
@@ -357,32 +497,97 @@ fn reinforcements_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                 });
             })
         }}>{ex("Aggiungi rinforzo")}</button>
-    </>}
+    </div>}
+}
+
+#[derive(Properties, Clone)]
+struct PlacesProps {
+    o: Open,
+    open: UseStateHandle<Option<Open>>,
+}
+
+impl PartialEq for PlacesProps {
+    fn eq(&self, _: &Self) -> bool {
+        false // the scenario changes with every edit
+    }
 }
 
 fn places_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
+    html! {<PlacesTab o={o.clone()} open={open.clone()}/>}
+}
+
+#[function_component(PlacesTab)]
+fn places_view(props: &PlacesProps) -> Html {
+    let (o, open) = (&props.o, &props.open);
+    let selected = use_state(|| 0usize);
+    let map = use_node_ref();
     let places = o.pack.edits.places.clone().unwrap_or_default();
-    html! {<>
-        <p class="muted">{ex("Luoghi con nome: l’AI li usa per capire «la cresta» o «il municipio». Gli alias sono separati da virgola.")}</p>
-        {for places.iter().enumerate().map(|(i, pl)| {
-            let pl = pl.clone();
-            html!{<fieldset class="inject-row" key={i}>
-                <legend>{pl.name.clone()}</legend>
-                <div class="settings-fields">
-                    {field("Nome", "", pl.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                    {field("Alias", "", pl.aliases.join(", "), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.aliases = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() }))}
-                    {number("Est x (m)", "", pl.pos[0].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[0] = n }))}
-                    {number("Nord y (m)", "", pl.pos[1].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[1] = n }))}
-                </div>
-                <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.places.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina luogo")}</button>
-            </fieldset>}
-        })}
-        <button onclick={upd(open, |p, _: MouseEvent| {
-            let l = p.edits.places.get_or_insert_with(Vec::new);
-            let n = l.len() + 1;
-            l.push(Place { name: format!("Luogo {n}"), aliases: vec![], pos: [1000.0, 1000.0] });
-        })}>{ex("Aggiungi luogo")}</button>
-    </>}
+    let ignitions = o.pack.edits.initial_ignitions.clone().unwrap_or_default();
+    let g = geom(o);
+    let sel = (*selected).min(places.len().saturating_sub(1));
+    let onclick = {
+        let (open, selected) = (open.clone(), selected.clone());
+        map_click(&map, g, Callback::from(move |(at, hit): ([f32; 2], Option<usize>)| {
+            if let Some(i) = hit {
+                selected.set(i);
+                return;
+            }
+            let Some(cur) = &*open else { return };
+            let mut next = cur.clone();
+            if let Some(p) = next.pack.edits.places.as_mut().and_then(|l| l.get_mut(sel)) {
+                p.pos = at;
+                next.dirty = true;
+                open.set(Some(next));
+            }
+        }))
+    };
+    html! {<div class="sc-places">
+        <p class="muted">{ex("Luoghi con nome: l’AI li usa per capire «la cresta» o «il municipio». Gli alias sono separati da virgola. I luoghi servono anche come base di partenza delle risorse (scheda Generale).")}</p>
+        <div class="sc-split">
+            <div class="sc-map">
+                <p class="map-help"><strong>{ex("Mappa: clic su un punto vuoto = sposta il luogo selezionato · clic su un rombo = lo seleziona.")}</strong>{" "}
+                    {ex("Origine in basso a sinistra (sud-ovest). I cerchi arancioni sono gli inneschi, per orientarti.")}</p>
+                <svg ref={map.clone()} class="ignition-map" viewBox={format!("0 0 {} {}", g.width, g.height)} style={format!("aspect-ratio:{}/{}", g.width, g.height)}
+                    role="img" aria-label={ex("Mappa dei luoghi")} onclick={onclick}>
+                    {map_base(o, g)}
+                    {for ignitions.iter().map(|i| html!{<circle class="ign-disc faint" cx={i.at[0].to_string()} cy={(g.height - i.at[1] as f64).to_string()} r={i.radius_m.to_string()}/>})}
+                    {map_places(&places, g, true, Some(sel), true)}
+                </svg>
+            </div>
+            <div class="sc-list">
+                {for places.iter().enumerate().map(|(i, pl)| {
+                    let pl = pl.clone();
+                    if i != sel {
+                        let selected = selected.clone();
+                        return html!{<button class="sc-summary" key={i} onclick={Callback::from(move |_| selected.set(i))} title={ex("Seleziona questo luogo (si evidenzia sulla mappa)")}>
+                            <span class="badge">{"◆"}</span>
+                            {format!("{} · E {} N {}{}", pl.name, pl.pos[0], pl.pos[1], zone_at(o, g, pl.pos).map(|z| format!(" · {z}")).unwrap_or_default())}
+                        </button>};
+                    }
+                    html!{<fieldset class="inject-row selected" key={i}>
+                        <legend><span class="badge sel">{"◆"}</span>{format!(" {}", pl.name)}</legend>
+                        <div class="settings-fields">
+                            {field("Nome", "Nome ufficiale del luogo, come lo chiamano i giocatori (es. «Cresta di Valverde»).", pl.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
+                            {field("Alias", "Altri modi di chiamarlo, separati da virgola (es. «la cresta, il crinale»). L’AI li usa per riconoscere il luogo nei messaggi.", pl.aliases.join(", "), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.aliases = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() }))}
+                            {number("Est x (m)", "Metri verso est dall’angolo sud-ovest del territorio. Si imposta anche con un clic sulla mappa.", pl.pos[0].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[0] = n }))}
+                            {number("Nord y (m)", "Metri verso nord dall’angolo sud-ovest del territorio. Si imposta anche con un clic sulla mappa.", pl.pos[1].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[1] = n }))}
+                        </div>
+                        <ConfirmDelete label="Elimina luogo" onconfirm={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.places.as_mut() { if i < l.len() { l.remove(i); } } })}/>
+                    </fieldset>}
+                })}
+                if places.is_empty() {<p class="muted">{ex("Nessun luogo definito.")}</p>}
+                <button class="primary" title={ex("Crea un nuovo luogo e lo seleziona: poi clicca sulla mappa per posizionarlo")} onclick={{
+                    let (selected, n) = (selected.clone(), places.len());
+                    let add = upd(open, |p, _: MouseEvent| {
+                        let l = p.edits.places.get_or_insert_with(Vec::new);
+                        let n = l.len() + 1;
+                        l.push(Place { name: format!("Luogo {n}"), aliases: vec![], pos: [1000.0, 1000.0] });
+                    });
+                    Callback::from(move |e: MouseEvent| { selected.set(n); add.emit(e) })
+                }}>{ex("Aggiungi luogo")}</button>
+            </div>
+        </div>
+    </div>}
 }
 
 fn injects_tab(o: &Open, open: &UseStateHandle<Option<Open>>, json: &UseStateHandle<String>, message: &UseStateHandle<String>) -> Html {
