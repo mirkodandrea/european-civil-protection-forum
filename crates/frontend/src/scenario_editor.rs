@@ -1077,8 +1077,10 @@ pub fn scenario_editor(props: &Props) -> Html {
 
     let busy_note = if *busy { html! {<p class="muted" role="status" aria-live="polite">{ex("Operazione in corso…")}</p>} } else { Html::default() };
 
+    // The list and the editor are two pages of one view: opening a scenario
+    // replaces the list, and "← Scenari" goes back.
     html! {<main class="page scenario-editor" id="scenario-editor">
-        <section class="card">
+        if open.is_none() {<section class="card">
             <h2>{ex("Scenari")}</h2>
             <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, inneschi, meteo e inject. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
             <ul class="scenario-legend muted">
@@ -1114,8 +1116,8 @@ pub fn scenario_editor(props: &Props) -> Html {
             })}
             </tbody></table>
             {busy_note}
-            if open.is_none() && !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
-        </section>
+            if !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
+        </section>}
         if let Some(o) = &*open {
             <section class="card" id="scenario-form">
                 <div class="row scenario-head">
@@ -1124,9 +1126,9 @@ pub fn scenario_editor(props: &Props) -> Html {
                     if o.dirty {<span class="pill pending" title={ex("Hai cambiato qualcosa che non è ancora stato salvato.")}>{ex("modifiche non salvate")}</span>}
                     <div class="grow"/>
                     if o.dirty {
-                        {twice("close".into(), ex("Chiudi").to_string(), "", "Chiude l’editor e perde le modifiche non salvate.", {let open = open.clone(); let confirm = confirm.clone(); Callback::from(move |_| { confirm.set(String::new()); open.set(None) })})}
+                        {twice("close".into(), ex("← Scenari").to_string(), "", "Chiude l’editor e perde le modifiche non salvate.", {let open = open.clone(); let confirm = confirm.clone(); Callback::from(move |_| { confirm.set(String::new()); open.set(None) })})}
                     } else {
-                        <button title={ex("Chiude l’editor e torna all’elenco.")} onclick={{let open = open.clone(); Callback::from(move |_| open.set(None))}}>{ex("Chiudi")}</button>
+                        <button title={ex("Chiude l’editor e torna all’elenco.")} onclick={{let open = open.clone(); Callback::from(move |_| open.set(None))}}>{ex("← Scenari")}</button>
                     }
                 </div>
                 if o.saved_id.is_none() {

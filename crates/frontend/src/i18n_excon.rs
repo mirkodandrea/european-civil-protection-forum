@@ -520,6 +520,7 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Elimina il tipo di risorsa. Se un ruolo o un rinforzo la usa ancora, «Controlla» lo segnala." => "Deletes the resource type. If a role or reinforcement still uses it, \"Check\" reports it.",
         "Elimina risorsa" => "Delete resource",
         "Conferma eliminazione" => "Confirm deletion",
+        "← Scenari" => "← Scenarios",
         "Unità al turno (0 = nessuna)" => "Units per turn (0 = none)",
         "Apre una linea tagliafuoco (senza vegetazione) lungo un percorso: ferma l’avanzata se è completata prima del fuoco." => "Clears a fire line (no vegetation) along a path: stops the spread if finished before the fire arrives.",
         "Lancio d’acqua da aerei o elicotteri su una zona: rallenta o spegne il fuoco sotto il passaggio." => "Water drop from aircraft or helicopters on an area: slows or puts out the fire under the pass.",
@@ -562,7 +563,6 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Duplica" => "Duplicate",
         "Elimina l’inject: chiede conferma." => "Deletes the inject: asks for confirmation.",
         "Eliminare davvero? Puoi ancora uscire senza salvare." => "Really delete? You can still leave without saving.",
-        "Conferma eliminazione" => "Confirm deletion",
         // END scenario_editor.rs injects tab
         // scenario view: ignitions / reinforcements / places
         "Mappa: clic su un punto vuoto = sposta l’innesco selezionato · clic su un cerchio = lo seleziona." => "Map: click an empty spot = move the selected ignition · click a circle = select it.",
@@ -580,7 +580,6 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Raggio sotto i 40 m: l’innesco si spegne da solo. Portalo a 40 m o più." => "Radius under 40 m: the ignition fizzles out. Raise it to 40 m or more.",
         "Nessun innesco: l’esercitazione parte senza fuoco. Aggiungine uno e clicca sulla mappa." => "No ignition: the exercise starts with no fire. Add one and click the map.",
         "Crea un nuovo innesco al centro della mappa e lo seleziona" => "Creates a new ignition near the map origin and selects it",
-        "Conferma eliminazione" => "Confirm deletion",
         "Chiede una conferma prima di eliminare" => "Asks for confirmation before deleting",
         "— scegli —" => "— choose —",
         "Mappa dei luoghi" => "Places map",
