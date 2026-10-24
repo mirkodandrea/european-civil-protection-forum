@@ -500,15 +500,15 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
 
 // ------------------------------------------------------------ the view
 
-const TABS: &[(&str, &str)] = &[
-    ("general", "Generale"),
-    ("roles", "Ruoli"),
-    ("resources", "Risorse"),
-    ("ignitions", "Inneschi"),
-    ("reinforcements", "Rinforzi"),
-    ("places", "Luoghi"),
-    ("injects", "Inject"),
-    ("advanced", "Avanzate"),
+const TABS: &[(&str, &str, &str)] = &[
+    ("general", "Generale", "Nome, descrizione, ora di inizio, meteo e durata dell’esercitazione."),
+    ("roles", "Ruoli", "Chi partecipa (squadre, enti, funzioni) e quali azioni ciascuno può proporre."),
+    ("resources", "Risorse", "Tipi di mezzi e squadre disponibili, con quantità e base di partenza."),
+    ("ignitions", "Inneschi", "Dove e quando parte l’incendio, scelti sulla mappa."),
+    ("reinforcements", "Rinforzi", "Risorse extra che i giocatori possono richiedere durante l’esercitazione."),
+    ("places", "Luoghi", "Nomi dei luoghi che giocatori e AI possono citare nei messaggi."),
+    ("injects", "Inject", "Eventi e messaggi programmati (MSEL) che l’EXCON consegna a un orario prefissato."),
+    ("advanced", "Avanzate", "Impostazioni tecniche: modello operativo, seme casuale, realizzazioni dell’ensemble."),
 ];
 
 #[function_component(ScenarioEditor)]
@@ -649,68 +649,89 @@ pub fn scenario_editor(props: &Props) -> Html {
     let active = text(&lib["active"]).to_string();
     let packs = list(&lib["packs"]).to_vec();
 
-    // A destructive or session-dropping button asks twice.
-    let twice = |key: String, label: String, class: &'static str, go: Callback<()>| {
+    // A destructive or session-dropping button asks twice. The second step
+    // says what will happen and can be cancelled.
+    let twice = |key: String, label: String, class: &'static str, tip: &'static str, go: Callback<()>| {
         if *confirm == key {
-            html! {<span class="confirm-delete">
-                <button class="danger" disabled={*busy} onclick={Callback::from(move |_| go.emit(()))}>{format!("{}: {label}", ex("Conferma"))}</button>
-                <button onclick={{let confirm = confirm.clone(); Callback::from(move |_| confirm.set(String::new()))}}>{ex("Annulla")}</button>
+            html! {<span class="confirm-delete" role="group" aria-label={ex("Conferma richiesta")}>
+                <button class="danger" autofocus=true disabled={*busy} title={ex(tip)} onclick={Callback::from(move |_| go.emit(()))}>{format!("{}: {label}", ex("Conferma"))}</button>
+                <button title={ex("Non fare nulla e tornare indietro.")} onclick={{let confirm = confirm.clone(); Callback::from(move |_| confirm.set(String::new()))}}>{ex("Annulla")}</button>
+                <small class="hint warn">{ex(tip)}</small>
             </span>}
         } else {
             let confirm = confirm.clone();
-            html! {<button class={class} disabled={*busy} onclick={Callback::from(move |_| confirm.set(key.clone()))}>{label}</button>}
+            html! {<button class={class} disabled={*busy} title={ex(tip)} onclick={Callback::from(move |_| confirm.set(key.clone()))}>{label}</button>}
         }
     };
+
+    let busy_note = if *busy { html! {<p class="muted" role="status" aria-live="polite">{ex("Operazione in corso…")}</p>} } else { Html::default() };
 
     html! {<main class="page scenario-editor" id="scenario-editor">
         <section class="card">
             <h2>{ex("Scenari")}</h2>
             <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, inneschi, meteo e inject. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
-            <table class="scenario-list"><thead><tr><th>{ex("Nome")}</th><th>{ex("Territorio")}</th><th></th></tr></thead><tbody>
+            <ul class="scenario-legend muted">
+                <li><span class="pill">{ex("in corso")}</span> {ex("è l’esercitazione che sta girando ora.")}</li>
+                <li><span class="pill">{ex("prossimo avvio")}</span> {ex("verrà usato al prossimo riavvio dell’applicazione.")}</li>
+                <li><span class="pill">{ex("incluso")}</span> {ex("fa parte dell’applicazione e non si sovrascrive: usa Personalizza per ottenerne una copia modificabile.")}</li>
+            </ul>
+            <table class="scenario-list"><thead><tr>
+                <th title={ex("Nome e descrizione dello scenario.")}>{ex("Nome")}</th>
+                <th title={ex("La mappa su cui si svolge: terreno, edifici e strade. Non si modifica da qui.")}>{ex("Territorio")}</th>
+                <th><span class="sr-only">{ex("Azioni")}</span></th></tr></thead><tbody>
             {for packs.iter().map(|p| {
                 let id = text(&p["id"]).to_string();
                 let builtin = p["builtin"] == true;
                 let is_running = id == running;
+                let description = text(&p["description"]).to_string();
                 html!{<tr key={id.clone()} class={classes!(is_running.then_some("running"))} data-scenario={id.clone()}>
-                    <td><strong>{text(&p["name"])}</strong>
-                        if is_running {<span class="pill">{ex("in corso")}</span>}
-                        else if id == active {<span class="pill">{ex("prossimo avvio")}</span>}
-                        if builtin {<span class="pill">{ex("incluso")}</span>}
-                        <br/><small class="muted">{text(&p["description"])}</small></td>
-                    <td>{text(&p["base"])}</td>
+                    <td class="scenario-name"><strong>{text(&p["name"])}</strong>
+                        if is_running {<span class="pill" title={ex("È l’esercitazione in corso in questo momento.")}>{ex("in corso")}</span>}
+                        else if id == active {<span class="pill" title={ex("Sarà caricato al prossimo riavvio dell’applicazione.")}>{ex("prossimo avvio")}</span>}
+                        if builtin {<span class="pill" title={ex("Scenario incluso nell’applicazione: non si può sovrascrivere. Usa Personalizza per salvarne una copia tua.")}>{ex("incluso")}</span>}
+                        if !description.is_empty() {<br/><small class="muted">{description}</small>}</td>
+                    <td class="scenario-base">{text(&p["base"])}</td>
                     <td class="row">
-                        <button class="edit-scenario" disabled={*busy} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), false)))}}>{if builtin {ex("Personalizza")} else {ex("Modifica")}}</button>
-                        if !builtin {<button disabled={*busy} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), true)))}}>{ex("Duplica")}</button>}
-                        {twice(format!("start:{id}"), ex("Avvia").to_string(), "primary", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("start", id.clone())))})}
-                        if !builtin && !is_running {{twice(format!("delete:{id}"), ex("Elimina").to_string(), "danger", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("/api/master/scenarios/delete", id.clone())))})}}
+                        <button class="edit-scenario" disabled={*busy}
+                            title={if builtin {ex("Apre una copia modificabile: lo scenario incluso resta com’è.")} else {ex("Apre lo scenario nell’editor. Salvare non tocca l’esercitazione in corso.")}}
+                            onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), false)))}}>{if builtin {ex("Personalizza")} else {ex("Modifica")}}</button>
+                        if !builtin {<button disabled={*busy} title={ex("Apre una copia di questo scenario con un nuovo identificativo.")} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), true)))}}>{ex("Duplica")}</button>}
+                        {twice(format!("start:{id}"), ex("Avvia").to_string(), "primary", "Avvia una nuova esercitazione da questo scenario. La sessione in corso (turni, messaggi, decisioni) viene scartata.", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("start", id.clone())))})}
+                        if !builtin && !is_running {{twice(format!("delete:{id}"), ex("Elimina").to_string(), "danger", "Elimina definitivamente questo scenario dalla libreria. Non si può annullare.", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("/api/master/scenarios/delete", id.clone())))})}}
                     </td>
                 </tr>}
             })}
             </tbody></table>
-            if open.is_none() && !message.is_empty() {<p role="status">{(*message).clone()}</p>}
+            {busy_note}
+            if open.is_none() && !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
         </section>
         if let Some(o) = &*open {
             <section class="card" id="scenario-form">
-                <div class="row">
+                <div class="row scenario-head">
                     <h2>{o.pack.name.clone()}</h2>
-                    <span class="pill">{if o.saved_id.is_some() {o.pack.id.clone()} else {ex("non salvato").to_string()}}</span>
-                    if o.dirty {<span class="pill pending">{ex("modifiche non salvate")}</span>}
+                    <span class="pill" title={if o.saved_id.is_some() {ex("Identificativo con cui lo scenario è salvato nella libreria.")} else {ex("Questo scenario non è ancora nella libreria: salvalo per conservarlo.")}}>{if o.saved_id.is_some() {o.pack.id.clone()} else {ex("non salvato").to_string()}}</span>
+                    if o.dirty {<span class="pill pending" title={ex("Hai cambiato qualcosa che non è ancora stato salvato.")}>{ex("modifiche non salvate")}</span>}
                     <div class="grow"/>
-                    <button onclick={{let open = open.clone(); Callback::from(move |_| open.set(None))}}>{ex("Chiudi")}</button>
+                    if o.dirty {
+                        {twice("close".into(), ex("Chiudi").to_string(), "", "Chiude l’editor e perde le modifiche non salvate.", {let open = open.clone(); let confirm = confirm.clone(); Callback::from(move |_| { confirm.set(String::new()); open.set(None) })})}
+                    } else {
+                        <button title={ex("Chiude l’editor e torna all’elenco.")} onclick={{let open = open.clone(); Callback::from(move |_| open.set(None))}}>{ex("Chiudi")}</button>
+                    }
                 </div>
                 if o.saved_id.is_none() {
                     <div class="settings-fields">
-                        {field("Identificativo (a-z, 0-9, _ -)", "", o.pack.id.clone(), upd(&open, |p, v: String| p.id = v))}
+                        {field("Identificativo (a-z, 0-9, _ -)", "Nome breve che identifica lo scenario nella libreria: solo lettere minuscole, cifre, «_» e «-». Dopo il primo salvataggio non cambia più.", o.pack.id.clone(), upd(&open, |p, v: String| p.id = v))}
                     </div>
                 }
-                <nav class="scenario-tabs" aria-label={ex("Sezioni dello scenario")}>
-                    {for TABS.iter().map(|(id, label)| {
+                <nav class="scenario-tabs" role="tablist" aria-label={ex("Sezioni dello scenario")}>
+                    {for TABS.iter().map(|(id, label, tip)| {
                         let tab = tab.clone();
                         let id = id.to_string();
-                        html!{<button class={classes!((*tab == id).then_some("active"))} data-tab={id.clone()} onclick={Callback::from(move |_| tab.set(id.clone()))}>{ex(label)}</button>}
+                        let on = *tab == id;
+                        html!{<button role="tab" aria-selected={on.to_string()} title={ex(tip)} class={classes!(on.then_some("active"))} data-tab={id.clone()} onclick={Callback::from(move |_| tab.set(id.clone()))}>{ex(label)}</button>}
                     })}
                 </nav>
-                <div class="scenario-tab">
+                <div class="scenario-tab" role="tabpanel">
                     {match tab.as_str() {
                         "roles" => roles_tab(o, &open),
                         "resources" => resources_tab(o, &open),
@@ -723,30 +744,36 @@ pub fn scenario_editor(props: &Props) -> Html {
                     }}
                 </div>
                 if !problems.is_empty() {
-                    <div class="error" role="alert"><strong>{ex("Da correggere prima di salvare:")}</strong>
+                    <div class="error scenario-problems" role="alert"><strong>{format!("{} ({})", ex("Da correggere prima di salvare:"), problems.len())}</strong>
                         <ul>{for problems.iter().map(|p| html!{<li>{p.clone()}</li>})}</ul></div>
                 }
                 if !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
-                <div class="row">
-                    <button disabled={*busy} onclick={validate}>{ex("Controlla")}</button>
-                    <button id="save-scenario" class="primary" disabled={*busy} onclick={{let save = save.clone(); Callback::from(move |_| save.emit(false))}}>{ex("Salva")}</button>
-                    {twice("save-start".into(), ex("Salva e avvia").to_string(), "", {let save = save.clone(); Callback::from(move |_| save.emit(true))})}
-                    <button onclick={{
-                        let (json, pack) = (json.clone(), o.pack.clone());
-                        Callback::from(move |_| json.set(serde_json::to_string_pretty(&pack).unwrap_or_default()))
-                    }}>{ex("Esporta scenario (JSON)")}</button>
-                    <button onclick={{
-                        let (json, open, message) = (json.clone(), open.clone(), message.clone());
-                        Callback::from(move |_| match serde_json::from_str::<ScenarioPack>(&json) {
-                            Ok(pack) => {
-                                if let Some(cur) = &*open {
-                                    open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
-                                    message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
+                <div class="scenario-actions">
+                    <div class="row">
+                        <button id="save-scenario" class="primary" disabled={*busy}
+                            title={ex("Salva lo scenario nella libreria. Non tocca l’esercitazione in corso.")}
+                            onclick={{let save = save.clone(); Callback::from(move |_| save.emit(false))}}>{if *busy {ex("Attendere…")} else {ex("Salva")}}</button>
+                        {twice("save-start".into(), ex("Salva e avvia").to_string(), "", "Salva lo scenario e avvia subito una nuova esercitazione. La sessione in corso viene scartata.", {let save = save.clone(); Callback::from(move |_| save.emit(true))})}
+                        <button disabled={*busy} title={ex("Verifica lo scenario senza salvare e segnala gli errori da correggere.")} onclick={validate}>{ex("Controlla")}</button>
+                    </div>
+                    <div class="row scenario-transfer">
+                        <button title={ex("Mostra lo scenario come testo JSON (nella scheda Inject), per copiarlo o archiviarlo.")} onclick={{
+                            let (json, pack, tab) = (json.clone(), o.pack.clone(), tab.clone());
+                            Callback::from(move |_| { json.set(serde_json::to_string_pretty(&pack).unwrap_or_default()); tab.set("injects".into()) })
+                        }}>{ex("Esporta scenario (JSON)")}</button>
+                        <button title={ex("Sostituisce il contenuto dell’editor con il testo JSON incollato; salva poi per conservarlo.")} onclick={{
+                            let (json, open, message, tab) = (json.clone(), open.clone(), message.clone(), tab.clone());
+                            Callback::from(move |_| { if json.trim().is_empty() { tab.set("injects".into()); message.set(ex("Incolla prima il testo JSON dello scenario (scheda Inject), poi premi Importa.").to_string()); return; } match serde_json::from_str::<ScenarioPack>(&json) {
+                                Ok(pack) => {
+                                    if let Some(cur) = &*open {
+                                        open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
+                                        message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
+                                    }
                                 }
-                            }
-                            Err(e) => message.set(format!("JSON non valido: {e}")),
-                        })
-                    }}>{ex("Importa scenario (JSON)")}</button>
+                                Err(e) => message.set(format!("JSON non valido: {e}")),
+                            } })
+                        }}>{ex("Importa scenario (JSON)")}</button>
+                    </div>
                 </div>
             </section>
         }
