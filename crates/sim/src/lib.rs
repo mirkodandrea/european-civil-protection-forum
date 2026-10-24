@@ -27,7 +27,7 @@ pub mod traffic;
 pub mod travel;
 pub use travel::{DeploymentTask, TaskStatus, TravelSetting};
 
-pub use command::{catalogue, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
+pub use command::{catalogue, catalogue_for, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
 pub use fire::FireOptions;
 
 /// Sub-step of [`World::advance`], seconds. Buildings, evacuations, roads and
@@ -284,7 +284,9 @@ impl World {
             })
             .collect();
         let origin = scn
-            .resolve_place("Valverde Town Hall")
+            .staging_base
+            .as_deref()
+            .and_then(|name| scn.resolve_place(name))
             .unwrap_or([scn.grid.width_m() * 0.5, scn.grid.height_m() * 0.5]);
         let travel_settings = scn
             .roles
@@ -295,11 +297,7 @@ impl World {
                     scn.resource_types
                         .iter()
                         .map(|resource| {
-                            let speed_mps = match resource.id.as_str() {
-                                "air_tankers" => 90.0,
-                                "buses" => 8.0,
-                                _ => 10.0,
-                            };
+                            let speed_mps = resource.speed();
                             (resource.id.clone(), TravelSetting { origin, speed_mps })
                         })
                         .collect(),

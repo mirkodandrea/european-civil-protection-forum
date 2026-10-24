@@ -1,20 +1,23 @@
 //! Browser database of the standalone app (`localStorage`): the session in
-//! progress, the library of editable injects and a one-shot notice.
+//! progress, the scenario library and a one-shot notice.
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub const SESSION_KEY: &str = "ttx.standalone.session";
-pub const INJECTS_KEY: &str = "ttx.standalone.injects";
+pub const PACKS_KEY: &str = "ttx.standalone.packs";
+pub const ACTIVE_KEY: &str = "ttx.standalone.active";
 pub const API_KEY: &str = "ttx.standalone.openrouter-key";
 const NOTICE_KEY: &str = "ttx.standalone.notice";
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
-/// Everything needed to play a session again from the start: the injects it
+/// Everything needed to play a session again from the start: the scenario it
 /// began with, the requests applied since, and the AI answers they received.
 #[derive(Serialize, Deserialize)]
 pub struct SavedSession {
     pub v: u32,
-    pub msel: Vec<scenario::InjectTemplate>,
+    pub pack: scenario::ScenarioPack,
     pub journal: Vec<server::browser::JournalEntry>,
     pub tape: Vec<(String, String)>,
     /// Simulated seconds reached when saved.
@@ -63,15 +66,142 @@ pub fn load_session() -> Option<SavedSession> {
     }
 }
 
-pub fn load_injects() -> Option<Vec<scenario::InjectTemplate>> {
-    serde_json::from_str(&get(INJECTS_KEY)?).ok()
+/// Scenarios the user saved in this browser.
+fn saved_packs() -> BTreeMap<String, scenario::ScenarioPack> {
+    get(PACKS_KEY)
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
-pub fn save_injects(injects: &[scenario::InjectTemplate]) -> Result<(), String> {
+fn store_packs(packs: &BTreeMap<String, scenario::ScenarioPack>) -> Result<(), String> {
     set(
-        INJECTS_KEY,
-        &serde_json::to_string(injects).map_err(|e| e.to_string())?,
+        PACKS_KEY,
+        &serde_json::to_string(packs).map_err(|e| e.to_string())?,
     )
+}
+
+/// Start the next exercise from `id`: forget the session, remember the choice, reload.
+pub fn activate(id: &str) -> Result<(), String> {
+    set(ACTIVE_KEY, id)?;
+    restart(&[SESSION_KEY]);
+    Ok(())
+}
+
+/// The territory shipped inside the app, parsed once.
+fn embedded_base() -> Result<Arc<scenario::Scenario>, String> {
+    thread_local! { static BASE: RefCell<Option<Arc<scenario::Scenario>>> = const { RefCell::new(None) }; }
+    BASE.with(|b| {
+        if let Some(base) = b.borrow().clone() {
+            return Ok(base);
+        }
+        let scn: scenario::Scenario =
+            serde_json::from_str(EMBEDDED_BASE).map_err(|e| e.to_string())?;
+        let base = Arc::new(scn);
+        *b.borrow_mut() = Some(base.clone());
+        Ok(base)
+    })
+}
+
+const EMBEDDED_BASE_ID: &str = "valverde_factory";
+const EMBEDDED_BASE: &str = include_str!("../../../data/scenarios/valverde_factory.json");
+/// Scenarios shipped with the app, besides the bare territory.
+const EMBEDDED_PACKS: &[&str] = &[
+    include_str!("../../../data/scenarios/valverde_night_wind.pack.json"),
+];
+
+fn embedded_packs() -> Vec<scenario::ScenarioPack> {
+    EMBEDDED_PACKS
+        .iter()
+        .filter_map(|t| serde_json::from_str(t).ok())
+        .collect()
+}
+
+/// The scenario library in `localStorage`, over what is embedded in the app.
+pub struct BrowserLibrary;
+
+impl server::library::ScenarioLibrary for BrowserLibrary {
+    fn bases(&self) -> Vec<String> {
+        vec![EMBEDDED_BASE_ID.into()]
+    }
+    fn list(&self) -> Vec<server::library::PackInfo> {
+        use server::library::PackInfo;
+        let info = |p: &scenario::ScenarioPack, builtin| PackInfo {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            description: p.description.clone(),
+            base: p.base.clone(),
+            builtin,
+        };
+        let mut out = vec![info(&self.plain(), true)];
+        out.extend(embedded_packs().iter().map(|p| info(p, true)));
+        out.extend(saved_packs().values().map(|p| info(p, false)));
+        out
+    }
+    fn load(&self, id: &str) -> Option<scenario::ScenarioPack> {
+        if id == EMBEDDED_BASE_ID {
+            return Some(self.plain());
+        }
+        saved_packs()
+            .remove(id)
+            .or_else(|| embedded_packs().into_iter().find(|p| p.id == id))
+    }
+    fn save(&self, pack: &scenario::ScenarioPack) -> Result<(), String> {
+        if pack.id == EMBEDDED_BASE_ID || embedded_packs().iter().any(|p| p.id == pack.id) {
+            return Err(format!("«{}» è uno scenario incluso nell’app", pack.id));
+        }
+        let mut packs = saved_packs();
+        packs.insert(pack.id.clone(), pack.clone());
+        store_packs(&packs)
+    }
+    fn delete(&self, id: &str) -> Result<(), String> {
+        let mut packs = saved_packs();
+        packs.remove(id).ok_or("scenario non trovato")?;
+        store_packs(&packs)?;
+        if get(ACTIVE_KEY).as_deref() == Some(id) {
+            remove(ACTIVE_KEY);
+        }
+        Ok(())
+    }
+    fn active(&self) -> Option<String> {
+        get(ACTIVE_KEY).filter(|id| self.load(id).is_some())
+    }
+    fn set_active(&self, id: &str) -> Result<(), String> {
+        set(ACTIVE_KEY, id)
+    }
+}
+
+impl BrowserLibrary {
+    fn plain(&self) -> scenario::ScenarioPack {
+        scenario::ScenarioPack::plain(EMBEDDED_BASE_ID, EMBEDDED_BASE_ID, EMBEDDED_BASE_ID)
+    }
+}
+
+/// Scenario library, territory loader and exercise factory of the standalone app.
+pub fn scenarios() -> Arc<server::library::Scenarios> {
+    Arc::new(server::library::Scenarios {
+        library: Arc::new(BrowserLibrary),
+        base: Arc::new(|id| {
+            anyhow::ensure!(id == EMBEDDED_BASE_ID, "territorio «{id}» non disponibile nel browser");
+            embedded_base().map_err(anyhow::Error::msg)
+        }),
+        build: Arc::new(|pack| {
+            let base = embedded_base().map_err(anyhow::Error::msg)?;
+            let mut scn = pack.build((*base).clone())?;
+            scn.enable_operational_model();
+            let world = sim::World::with_options(
+                Arc::new(scn),
+                pack.run.seed.unwrap_or(1),
+                sim::FireOptions {
+                    realizations: pack.run.realizations.unwrap_or(32),
+                    cutoff: pack.run.cutoff.unwrap_or(0.5),
+                },
+            )?;
+            Ok(exercise::Exercise::new(world))
+        }),
+        fingerprint: Arc::new(|pack| pack.base.clone()),
+        default_id: EMBEDDED_BASE_ID.into(),
+        running: std::sync::Mutex::new(None),
+    })
 }
 
 /// Session found at startup and waiting to be replayed.
@@ -113,16 +243,16 @@ pub fn save_error() -> Option<String> {
 }
 
 /// Write the session when something changed since the last write (`force`
-/// skips that check). `msel` is what the running exercise was built with.
+/// skips that check). `pack` is what the running exercise was built from.
 pub fn autosave(state: &server::AppState, force: bool) {
     if restoring() || FROZEN.with(Cell::get) {
         return;
     }
     let journal = server::browser::journal();
     let tape = server::browser::tape_entries();
-    let (msel, end_t_s) = {
-        let ex = state.lock();
-        (ex.world.scn.msel.clone(), ex.world.time_s())
+    let end_t_s = state.lock().world.time_s();
+    let Some(pack) = state.scenarios.as_ref().and_then(|s| s.running_pack()) else {
+        return;
     };
     let signature = (journal.len(), tape.len(), end_t_s);
     if !force && LAST_SAVED.with(Cell::get) == signature {
@@ -135,7 +265,7 @@ pub fn autosave(state: &server::AppState, force: bool) {
     }
     let session = SavedSession {
         v: FORMAT,
-        msel,
+        pack,
         journal,
         tape,
         end_t_s,
@@ -172,19 +302,10 @@ pub fn backend() -> crate::settings::Backend {
     crate::settings::Backend(std::rc::Rc::new(|op| {
         Box::pin(async move {
             match op {
-                Op::SaveInjects(list) => save_injects(&list).map(|()| {
-                    "Injects salvati nella libreria · valgono dalla prossima nuova sessione".into()
-                }),
-                Op::NewSession(list) => {
-                    save_injects(&list)?;
-                    restart(&[SESSION_KEY]);
-                    Ok("Nuova sessione…".into())
-                }
                 Op::Delete(target) => {
                     let keys: &[&str] = match target {
                         "session" => &[SESSION_KEY],
-                        "injects" => &[INJECTS_KEY],
-                        _ => &[SESSION_KEY, INJECTS_KEY, API_KEY],
+                        _ => &[SESSION_KEY, PACKS_KEY, ACTIVE_KEY, API_KEY],
                     };
                     restart(keys);
                     Ok("Eliminato".into())

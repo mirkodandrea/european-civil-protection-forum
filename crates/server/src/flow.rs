@@ -102,7 +102,8 @@ pub async fn process_reply(state: AppState, pid: u64) {
         (
             role,
             ex.language_of(&role_id),
-            sim::catalogue(
+            sim::catalogue_for(
+                &ex.world.scn,
                 &ex.world
                     .scn
                     .role(&role_id)
@@ -194,7 +195,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
         let ex = state.lock();
         let all: Vec<String> = sim::ALL_KINDS.iter().map(|s| s.to_string()).collect();
         (
-            sim::catalogue(&all),
+            sim::catalogue_for(&ex.world.scn, &all),
             ex.world
                 .scn
                 .roles

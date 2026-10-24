@@ -49,6 +49,7 @@ pub mod persist;
 mod decision_drafts;
 pub mod flow;
 mod forecast;
+pub mod library;
 pub mod view;
 
 #[derive(Clone)]
@@ -65,9 +66,11 @@ pub struct AppState {
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
     forecast_slot: Arc<tokio::sync::Semaphore>,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
-    /// Saved session and inject library; `None` keeps everything in memory.
+    /// Saved session; `None` keeps everything in memory.
     #[cfg(not(target_arch = "wasm32"))]
     persist: Option<Arc<persist::Persist>>,
+    /// Scenario packs the EXCON can edit and start; `None` hides the editor.
+    pub scenarios: Option<Arc<library::Scenarios>>,
 }
 
 impl AppState {
@@ -95,10 +98,23 @@ pub fn router_with_access(
     web_dir: Option<PathBuf>,
     access: Access,
 ) -> (Rocket<Build>, AppState) {
-    router_inner(ex, llm, web_dir, access, None)
+    router_inner(ex, llm, web_dir, access, None, None)
 }
 
-/// Like [`router`], saving the session and inject library through `persist`.
+/// Like [`router`], with the scenario library (but no saved session).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn router_with_scenarios(
+    ex: Arc<Mutex<Exercise>>,
+    llm: Llm,
+    web_dir: Option<PathBuf>,
+    scenarios: Arc<library::Scenarios>,
+) -> (Rocket<Build>, AppState) {
+    let access = Access::new(ex.lock().unwrap_or_else(|p| p.into_inner()).role_ids());
+    router_inner(ex, llm, web_dir, access, None, Some(scenarios))
+}
+
+/// Like [`router`], saving the session through `persist`, which also brings
+/// the scenario library.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn router_persistent(
     ex: Arc<Mutex<Exercise>>,
@@ -107,7 +123,8 @@ pub fn router_persistent(
     persist: Arc<persist::Persist>,
 ) -> (Rocket<Build>, AppState) {
     let access = Access::new(ex.lock().unwrap_or_else(|p| p.into_inner()).role_ids());
-    router_inner(ex, llm, web_dir, access, Some(persist))
+    let scenarios = Some(persist.scenarios.clone());
+    router_inner(ex, llm, web_dir, access, Some(persist), scenarios)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -117,6 +134,7 @@ fn router_inner(
     web_dir: Option<PathBuf>,
     access: Access,
     persist: Option<Arc<persist::Persist>>,
+    scenarios: Option<Arc<library::Scenarios>>,
 ) -> (Rocket<Build>, AppState) {
     // Answers of the AI are kept with the session, unless a demo cassette is set.
     let llm = match &persist {
@@ -149,6 +167,7 @@ fn router_inner(
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         presence: Default::default(),
         persist,
+        scenarios,
     };
     tokio::spawn(flow::run_clock(state.clone()));
     if state.persist.is_some() {
@@ -224,8 +243,13 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_end,
                 post_settings,
                 persist::get_storage,
-                persist::post_injects,
                 persist::post_delete,
+                library::get_scenarios,
+                library::get_scenario,
+                library::post_validate,
+                library::post_save,
+                library::post_delete_scenario,
+                library::post_activate,
                 get_catalogue,
                 get_view_scene,
                 get_view_state,
@@ -259,7 +283,7 @@ pub async fn serve(
     web_dir: PathBuf,
     addr: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
-    serve_with(ex, llm, web_dir, addr, None).await
+    serve_with(ex, llm, web_dir, addr, None, None).await
 }
 
 /// [`serve`] with storage: a saved `session` is replayed before listening;
@@ -271,9 +295,13 @@ pub async fn serve_with(
     web_dir: PathBuf,
     addr: std::net::SocketAddr,
     storage: Option<(Arc<persist::Persist>, Option<persist::SavedSession>)>,
+    scenarios: Option<Arc<library::Scenarios>>,
 ) -> anyhow::Result<()> {
     let (app, _state) = match storage {
-        None => router(ex, llm, Some(web_dir)),
+        None => match scenarios {
+            Some(sc) => router_with_scenarios(ex, llm, Some(web_dir), sc),
+            None => router(ex, llm, Some(web_dir)),
+        },
         Some((persist, session)) => {
             let (app, state) = router_persistent(ex, llm, Some(web_dir), persist.clone());
             if let Some(session) = session {
@@ -281,7 +309,11 @@ pub async fn serve_with(
                 tracing::info!("restoring the saved session ({steps} steps)");
                 if let Err(e) = persist::restore(&state, replay_rocket(&state), session).await {
                     tracing::warn!("saved session cannot be restored and was discarded: {e}");
-                    persist::reset(&state, persist.load_injects())
+                    let pack = persist
+                        .scenarios
+                        .running_pack()
+                        .ok_or_else(|| anyhow::anyhow!("no scenario to restart from"))?;
+                    persist::reset(&state, &pack)
                         .await
                         .map_err(anyhow::Error::msg)?;
                 }
@@ -403,7 +435,7 @@ async fn get_access(principal: Principal) -> ApiResult {
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(
-        json!({"players": s.access.players.keys().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>()}),
+        json!({"players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>()}),
     ))
 }
 
@@ -629,7 +661,7 @@ async fn post_presence(
     if principal != (Principal::Player { role: role.clone() }) {
         return Err(bad("presence role does not match access key"));
     }
-    if !s.access.players.contains_key(&body.to) || body.to == role {
+    if !s.access.has_player(&body.to) || body.to == role {
         return Err(bad("unknown conversation recipient"));
     }
     let mut presence = s.presence.lock().unwrap_or_else(|p| p.into_inner());
@@ -735,7 +767,7 @@ async fn get_catalogue(_principal: Principal, s: AppState) -> ApiResult {
     let ex = s.lock();
     let all: Vec<String> = sim::ALL_KINDS.iter().map(|k| k.to_string()).collect();
     Ok(Json(
-        json!({"kinds": sim::ALL_KINDS, "master_only": sim::MASTER_ONLY, "doc": sim::catalogue(&all), "roles": ex.world.scn.roles}),
+        json!({"kinds": sim::ALL_KINDS, "master_only": sim::MASTER_ONLY, "doc": sim::catalogue_for(&ex.world.scn, &all), "roles": ex.world.scn.roles}),
     ))
 }
 

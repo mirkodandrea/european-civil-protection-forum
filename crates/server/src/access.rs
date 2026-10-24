@@ -10,6 +10,7 @@ use rocket::request::{FromRequest, Outcome};
 use rocket::Request;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -25,7 +26,8 @@ pub const MASTER_KEY: &str = "master";
 #[derive(Clone)]
 pub struct Access {
     pub master: String,
-    pub players: BTreeMap<String, String>,
+    /// Role id -> key. Replaced when a different scenario starts, hence shared.
+    players: Arc<RwLock<BTreeMap<String, String>>>,
     pub evaluators: BTreeMap<String, String>,
 }
 
@@ -37,24 +39,57 @@ impl Access {
     pub fn new(roles: impl IntoIterator<Item = String>) -> Self {
         Self {
             master: MASTER_KEY.into(),
-            players: roles.into_iter().map(|role| (role.clone(), role)).collect(),
+            players: Arc::new(RwLock::new(
+                roles.into_iter().map(|role| (role.clone(), role)).collect(),
+            )),
             evaluators: (1..=3)
                 .map(|n| format!("evaluator-{n}"))
                 .map(|id| (id.clone(), id))
                 .collect(),
         }
     }
+    /// Explicit keys, for tests and embedders that hand out their own.
+    pub fn with_keys(
+        master: String,
+        players: BTreeMap<String, String>,
+        evaluators: BTreeMap<String, String>,
+    ) -> Self {
+        Self { master, players: Arc::new(RwLock::new(players)), evaluators }
+    }
     pub fn local(roles: impl IntoIterator<Item = String>) -> Self {
         Self {
             master: String::new(),
-            players: roles
-                .into_iter()
-                .map(|role| (role, String::new()))
-                .collect(),
+            players: Arc::new(RwLock::new(
+                roles.into_iter().map(|role| (role, String::new())).collect(),
+            )),
             evaluators: (1..=3)
                 .map(|n| (format!("evaluator-{n}"), String::new()))
                 .collect(),
         }
+    }
+    fn players(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<String, String>> {
+        self.players.read().unwrap_or_else(|p| p.into_inner())
+    }
+    pub fn has_player(&self, role: &str) -> bool {
+        self.players().contains_key(role)
+    }
+    pub fn player_ids(&self) -> Vec<String> {
+        self.players().keys().cloned().collect()
+    }
+    /// The key `role` presents (its own id, or empty in the local build).
+    pub fn player_key(&self, role: &str) -> Option<String> {
+        self.players().get(role).cloned()
+    }
+    /// A new scenario has other roles. Keys follow the same rule as at start.
+    pub fn set_roles(&self, roles: impl IntoIterator<Item = String>) {
+        let local = self.master.is_empty();
+        *self.players.write().unwrap_or_else(|p| p.into_inner()) = roles
+            .into_iter()
+            .map(|role| {
+                let key = if local { String::new() } else { role.clone() };
+                (role, key)
+            })
+            .collect();
     }
     pub fn principal(&self, token: &str) -> Option<Principal> {
         if token == self.master {
@@ -67,7 +102,7 @@ impl Access {
         {
             return Some(Principal::Evaluator { id: id.clone() });
         }
-        self.players
+        self.players()
             .iter()
             .find(|(_, key)| key.as_str() == token)
             .map(|(role, _)| Principal::Player { role: role.clone() })

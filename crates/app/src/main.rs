@@ -1,8 +1,8 @@
 //! `ttx` — the whole exercise in one process.
 //!
 //! ```text
-//! ttx [--scenario data/scenarios/valverde_factory.json] [--seed 1]
-//!     [--port 8080] [--web web/dist] [--headless]
+//! ttx [--scenario data/scenarios/valverde_factory.json] [--scenarios-dir DIR]
+//!     [--seed 1] [--port 8080] [--web web/dist] [--headless]
 //!     [--realizations 32] [--cutoff 0.5] [--operational-model]
 //!     [--state-dir runs/state | --no-state] [--fresh]
 //! ```
@@ -12,9 +12,16 @@
 //! `--headless` or built without the `viz` feature — opens the Bevy
 //! big-screen window on the main thread.
 //!
-//! The session (journal of accepted requests, AI answers) and the inject
-//! library are kept in `--state-dir`; the session is replayed on startup, so a
-//! restart continues the exercise. `--fresh` discards the saved session.
+//! The session (journal of accepted requests, AI answers, the scenario it
+//! started from) and the chosen scenario are kept in `--state-dir`; the
+//! session is replayed on startup, so a restart continues the exercise.
+//! `--fresh` discards the saved session.
+//!
+//! Scenarios live in `--scenarios-dir` (default: the folder of `--scenario`):
+//! `<id>.json` is a territory, `<id>.pack.json` a scenario designed on top of
+//! one (roles, resources, ignitions, MSEL…), editable from the EXCON console.
+//! `--scenario` names the territory or pack to start from. `--seed`,
+//! `--realizations` and `--cutoff` override what a pack says.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -23,12 +30,13 @@ use anyhow::{Context, Result};
 
 struct Args {
     scenario: PathBuf,
-    seed: u64,
+    scenarios_dir: Option<PathBuf>,
+    seed: Option<u64>,
     port: u16,
     web: PathBuf,
     headless: bool,
-    realizations: usize,
-    cutoff: f32,
+    realizations: Option<usize>,
+    cutoff: Option<f32>,
     operational_model: bool,
     state_dir: Option<PathBuf>,
     fresh: bool,
@@ -37,12 +45,13 @@ struct Args {
 fn args() -> Result<Args> {
     let mut a = Args {
         scenario: PathBuf::from("data/scenarios/valverde_factory.json"),
-        seed: 1,
+        scenarios_dir: None,
+        seed: None,
         port: 8080,
         web: PathBuf::from("web/dist"),
         headless: false,
-        realizations: 32,
-        cutoff: 0.5,
+        realizations: None,
+        cutoff: None,
         operational_model: false,
         state_dir: Some(PathBuf::from("runs/state")),
         fresh: false,
@@ -52,7 +61,8 @@ fn args() -> Result<Args> {
         let mut val = || it.next().with_context(|| format!("{k} needs a value"));
         match k.as_str() {
             "--scenario" => a.scenario = PathBuf::from(val()?),
-            "--seed" => a.seed = val()?.parse()?,
+            "--scenarios-dir" => a.scenarios_dir = Some(PathBuf::from(val()?)),
+            "--seed" => a.seed = Some(val()?.parse()?),
             "--port" => a.port = val()?.parse()?,
             "--web" => a.web = PathBuf::from(val()?),
             "--operational-model" => a.operational_model = true,
@@ -60,10 +70,10 @@ fn args() -> Result<Args> {
             "--state-dir" => a.state_dir = Some(PathBuf::from(val()?)),
             "--no-state" => a.state_dir = None,
             "--fresh" => a.fresh = true,
-            "--realizations" => a.realizations = val()?.parse()?,
-            "--cutoff" => a.cutoff = val()?.parse()?,
+            "--realizations" => a.realizations = Some(val()?.parse()?),
+            "--cutoff" => a.cutoff = Some(val()?.parse()?),
             "-h" | "--help" => {
-                println!("ttx [--scenario FILE] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model] [--state-dir DIR | --no-state] [--fresh]");
+                println!("ttx [--scenario FILE] [--scenarios-dir DIR] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model] [--state-dir DIR | --no-state] [--fresh]");
                 std::process::exit(0);
             }
             other => anyhow::bail!("unknown argument {other}"),
@@ -82,47 +92,59 @@ fn main() -> Result<()> {
         .init();
     let a = args()?;
 
-    anyhow::ensure!(
-        a.scenario.exists() || a.scenario != PathBuf::from("data/scenarios/valverde_factory.json"),
-        "default landscape is missing; regenerate with python3 scripts/scenario_factory.py landscape"
-    );
-    let mut scn = if a.scenario.exists() {
-        scenario::Scenario::load(&a.scenario)?
-    } else {
+    // `--scenario` names a territory (`<id>.json`) or a pack (`<id>.pack.json`).
+    let dir = a
+        .scenarios_dir
+        .clone()
+        .or_else(|| a.scenario.parent().map(PathBuf::from).filter(|p| !p.as_os_str().is_empty()))
+        .unwrap_or_else(|| PathBuf::from("data/scenarios"));
+    let file_name = a
+        .scenario
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("valverde_factory.json")
+        .to_string();
+    let default_id = file_name
+        .trim_end_matches(".json")
+        .trim_end_matches(".pack")
+        .to_string();
+    let is_pack = file_name.ends_with(".pack.json");
+    let default_landscape = PathBuf::from("data/scenarios/valverde_factory.json");
+    let base_file = dir.join(format!("{default_id}.json"));
+    if !is_pack && !base_file.exists() {
+        anyhow::ensure!(
+            a.scenario != default_landscape,
+            "default landscape is missing; regenerate with python3 scripts/scenario_factory.py landscape"
+        );
         tracing::info!(
             "{} not found: generating the synthetic scenario",
-            a.scenario.display()
+            base_file.display()
         );
-        let s = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
-        s.save(&a.scenario)?;
-        s
-    };
-    if a.operational_model {
-        scn.enable_operational_model();
+        scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED).save(&base_file)?;
     }
-    tracing::info!(
-        "fire: {}-run Monte Carlo ensemble, cutoff {}",
-        a.realizations,
-        a.cutoff
-    );
-    let default_msel = scn.msel.clone();
-    let fingerprint = format!(
-        "{}|{}|{}|{}|{}|{}",
-        a.scenario.display(),
-        std::fs::metadata(&a.scenario).map(|m| m.len()).unwrap_or(0),
-        a.seed,
-        a.realizations,
-        a.cutoff,
-        a.operational_model
-    );
-    // Builds a fresh exercise, optionally with replacement injects. The same
-    // function serves the first start and "start over" from the settings.
-    let factory: server::persist::Factory = {
-        let (seed, realizations, cutoff) = (a.seed, a.realizations, a.cutoff);
-        Arc::new(move |msel| {
-            let mut scn = scn.clone();
-            if let Some(msel) = msel {
-                scn.msel = msel;
+    let state_dir = a.state_dir.clone().filter(|_| std::env::var("TTX_SNAPSHOT").is_err());
+    let library = Arc::new(server::library::FileLibrary::new(dir.clone(), state_dir.clone()));
+    let base = server::library::file_base_loader(dir.clone());
+
+    // Seed, ensemble size and cutoff: command line, else the pack, else default.
+    let run_of = {
+        let a = (a.seed, a.realizations, a.cutoff, a.operational_model);
+        move |pack: &scenario::ScenarioPack| {
+            (
+                a.0.or(pack.run.seed).unwrap_or(1),
+                a.1.or(pack.run.realizations).unwrap_or(32),
+                a.2.or(pack.run.cutoff).unwrap_or(0.5),
+                a.3 || pack.run.operational_model == Some(true),
+            )
+        }
+    };
+    let factory: server::library::Factory = {
+        let (base, run_of) = (base.clone(), run_of.clone());
+        Arc::new(move |pack| {
+            let (seed, realizations, cutoff, operational) = run_of(pack);
+            let mut scn = pack.build((*base(&pack.base)?).clone())?;
+            if operational {
+                scn.enable_operational_model();
             }
             let world = sim::World::with_options(
                 Arc::new(scn),
@@ -140,35 +162,58 @@ fn main() -> Result<()> {
             Ok(exercise::Exercise::new(world).with_log_file(log))
         })
     };
-    let snapshot = std::env::var("TTX_SNAPSHOT").is_ok();
-    let storage = a
-        .state_dir
+    let fingerprint: Arc<dyn Fn(&scenario::ScenarioPack) -> String + Send + Sync> = {
+        let dir = dir.clone();
+        Arc::new(move |pack| {
+            let (seed, realizations, cutoff, operational) = run_of(pack);
+            let size = std::fs::metadata(dir.join(format!("{}.json", pack.base)))
+                .map(|m| m.len())
+                .unwrap_or(0);
+            format!("{}|{size}|{seed}|{realizations}|{cutoff}|{operational}", pack.base)
+        })
+    };
+    let scenarios = Arc::new(server::library::Scenarios {
+        library,
+        base,
+        build: factory,
+        fingerprint,
+        default_id: default_id.clone(),
+        running: Mutex::new(None),
+    });
+    tracing::info!(
+        "scenarios in {}: starting from {}",
+        dir.display(),
+        default_id
+    );
+    let storage = state_dir
         .clone()
-        .filter(|_| !snapshot)
         .map(|dir| {
             if a.fresh {
                 let _ = std::fs::remove_file(dir.join("session.json"));
             }
-            server::persist::Persist::new(dir, fingerprint, default_msel, factory.clone())
+            server::persist::Persist::new(dir, scenarios.clone())
         })
         .map(|persist| {
             let session = persist.load_session();
             (persist, session)
         });
-    let msel = storage.as_ref().and_then(|(persist, session)| {
-        session
-            .as_ref()
-            .map(|s| s.msel.clone())
-            .or_else(|| persist.load_injects())
-    });
-    if let Some((persist, session)) = &storage {
+    // Start from the saved session's scenario, else the chosen one, else the
+    // one named on the command line.
+    let pack = storage
+        .as_ref()
+        .and_then(|(_, session)| session.as_ref().map(|s| s.pack.clone()))
+        .or_else(|| scenarios.next_pack())
+        .with_context(|| format!("scenario {default_id} not found in {}", dir.display()))?;
+    if let Some((_, session)) = &storage {
         tracing::info!(
-            "storage: session {}, inject library {}",
+            "storage: session {}, scenario {}",
             if session.is_some() { "found" } else { "none" },
-            if persist.load_injects().is_some() { "found" } else { "none" },
+            pack.id,
         );
     }
-    let ex = Arc::new(Mutex::new(factory(msel)?));
+    let ex = Arc::new(Mutex::new((scenarios.build)(&pack)?));
+    scenarios.set_running(&pack);
+
 
     // Reproducible visual fixtures go through the same EXCON authority and
     // exercise turn resolution as the console. No renderer-only invented state.
@@ -269,7 +314,7 @@ fn main() -> Result<()> {
     let headless = a.headless || !cfg!(feature = "viz");
     if headless {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(server::serve_with(ex, llm, a.web, addr, storage));
+        return rt.block_on(server::serve_with(ex, llm, a.web, addr, storage, Some(scenarios)));
     }
 
     let model = if llm.is_available() {
@@ -283,7 +328,7 @@ fn main() -> Result<()> {
         .name("ttx-server".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            if let Err(e) = rt.block_on(server::serve_with(server_ex, llm, web, addr, storage)) {
+            if let Err(e) = rt.block_on(server::serve_with(server_ex, llm, web, addr, storage, Some(scenarios))) {
                 tracing::error!("server stopped: {e}");
             }
         })?;

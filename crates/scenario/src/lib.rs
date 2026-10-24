@@ -19,7 +19,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 pub mod factory;
+pub mod pack;
 pub mod synthetic;
+pub use pack::{RunOptions, ScenarioEdits, ScenarioPack};
 
 /// Fuel codes of the fire core's legacy 7-class table.
 pub mod fuel {
@@ -347,11 +349,63 @@ pub struct Place {
     pub pos: Pos,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceType {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// Straight-line travel speed from the staging base, m/s. `None` keeps the
+    /// built-in default for the id (air tankers 90, buses 8, anything else 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_mps: Option<f32>,
+}
+
+impl ResourceType {
+    /// Travel speed in metres per second.
+    pub fn speed(&self) -> f32 {
+        self.speed_mps.unwrap_or(match self.id.as_str() {
+            "air_tankers" => 90.0,
+            "buses" => 8.0,
+            _ => 10.0,
+        })
+    }
+}
+
+/// What the operational model adds to one role: units of a resource, the
+/// command that uses them and, if the scenario lacks it, the resource itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperationalGrant {
+    pub role: String,
+    pub resource: String,
+    pub qty: u32,
+    /// Command kind the role may propose (e.g. `DeployEngine`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// Resource type added when no type has `resource` as its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub define: Option<ResourceType>,
+}
+
+/// The grant older scenario packages relied on.
+pub(crate) fn legacy_grants() -> Vec<OperationalGrant> {
+    vec![OperationalGrant {
+        role: "fire_commander".into(),
+        resource: "engines".into(),
+        qty: 2,
+        action: Some("DeployEngine".into()),
+        define: Some(ResourceType {
+            id: "engines".into(),
+            name: "Road engines".into(),
+            description: "2,500 L training engine; 60 m hose reach; refills at staging".into(),
+            speed_mps: None,
+        }),
+    }]
+}
+
+/// Place deployments start from when the scenario names none: where older
+/// scenario packages staged their resources.
+fn legacy_staging() -> Option<String> {
+    Some("Valverde Town Hall".into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,6 +497,13 @@ pub struct Scenario {
     pub roles: Vec<Role>,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
+    /// Named place resources travel from (the exercise can move it later).
+    /// Unknown or `None`: the centre of the map.
+    #[serde(default = "legacy_staging")]
+    pub staging_base: Option<String>,
+    /// Added to roles when the operational model is enabled.
+    #[serde(default = "legacy_grants")]
+    pub operational_grants: Vec<OperationalGrant>,
 }
 
 impl Scenario {
@@ -452,18 +513,22 @@ impl Scenario {
         let spotting = self.operations.spotting;
         self.operations = Operations::enhanced();
         self.operations.spotting = spotting;
-        if let Some(role) = self.roles.iter_mut().find(|r| r.id == "fire_commander") {
-            role.resources.entry("engines".into()).or_insert(2);
-            if !role.allowed_actions.iter().any(|a| a == "DeployEngine") {
-                role.allowed_actions.push("DeployEngine".into());
+        for grant in self.operational_grants.clone() {
+            let Some(role) = self.roles.iter_mut().find(|r| r.id == grant.role) else {
+                continue;
+            };
+            role.resources
+                .entry(grant.resource.clone())
+                .or_insert(grant.qty);
+            if let Some(action) = &grant.action {
+                if !role.allowed_actions.contains(action) {
+                    role.allowed_actions.push(action.clone());
+                }
             }
-            if !self.resource_types.iter().any(|r| r.id == "engines") {
-                self.resource_types.push(ResourceType {
-                    id: "engines".into(),
-                    name: "Road engines".into(),
-                    description: "2,500 L training engine; 60 m hose reach; refills at staging"
-                        .into(),
-                });
+            if let Some(define) = grant.define {
+                if !self.resource_types.iter().any(|r| r.id == grant.resource) {
+                    self.resource_types.push(define);
+                }
             }
         }
     }

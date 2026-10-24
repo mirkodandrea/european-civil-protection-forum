@@ -35,15 +35,11 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
         scenario::synthetic::DEFAULT_SEED,
     ));
     let ex = exercise::Exercise::new(sim::World::new(scenario, 1).unwrap());
-    let access = server::access::Access {
-        master: "master-test".into(),
-        players: std::collections::BTreeMap::from([
+    let access = server::access::Access::with_keys("master-test".into(), std::collections::BTreeMap::from([
             ("mayor".into(), "mayor-test".into()),
             ("fire_commander".into(), "fire-test".into()),
             ("regional_cp".into(), "regional-test".into()),
-        ]),
-        evaluators: Default::default(),
-    };
+        ]), Default::default());
     let (rocket, _) = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access);
     let client = Client::tracked(rocket).await.unwrap();
     let (status, _) = post(&client, "/api/master/start", "master-test", json!({})).await;

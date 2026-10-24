@@ -67,7 +67,7 @@ pub(crate) async fn prepare(
             draft,
             role_spec.clone(),
             ex.language_of(&role),
-            sim::catalogue(&role_spec.allowed_actions),
+            sim::catalogue_for(&ex.world.scn, &role_spec.allowed_actions),
             others,
             ex.world.gazetteer(),
             digest,

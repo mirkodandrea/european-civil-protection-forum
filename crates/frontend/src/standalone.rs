@@ -1,12 +1,11 @@
 //! One document, one in-memory Exercise, multiple authorized views.
 use crate::{api, App};
 use gloo_timers::callback::Interval;
-use std::{cell::RefCell, sync::Arc};
+use std::cell::RefCell;
 use yew::prelude::*;
 
 thread_local! { static RUNTIME: RefCell<Option<server::AppState>> = const { RefCell::new(None) }; }
 const API_KEY_STORAGE: &str = crate::store::API_KEY;
-const DEFAULT_SCENARIO: &str = include_str!("../../../data/scenarios/valverde_factory.json");
 
 fn key_storage() -> Result<web_sys::Storage, ()> {
     web_sys::window()
@@ -43,27 +42,18 @@ pub fn runtime() -> Result<server::AppState, String> {
         .ok_or_else(|| "Esercitazione non inizializzata".into())
 }
 fn initialize() -> Result<server::AppState, String> {
-    let mut scenario: scenario::Scenario =
-        serde_json::from_str(DEFAULT_SCENARIO).map_err(|e| e.to_string())?;
-    // A saved session continues with the injects it started with; a new one
-    // takes the library, if the EXCON edited it.
+    let scenarios = crate::store::scenarios();
+    // A saved session continues with the scenario it started from; a new one
+    // takes the chosen scenario (the bare territory, unless the EXCON picked another).
     let session = crate::store::load_session();
-    match (&session, crate::store::load_injects()) {
-        (Some(s), _) => scenario.msel = s.msel.clone(),
-        (None, Some(library)) => scenario.msel = library,
-        _ => {}
-    }
-    scenario.enable_operational_model();
-    let world = sim::World::with_options(
-        Arc::new(scenario),
-        1,
-        sim::FireOptions {
-            realizations: 32,
-            cutoff: 0.5,
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    let mut state = server::browser::new(exercise::Exercise::new(world));
+    let pack = session
+        .as_ref()
+        .map(|s| s.pack.clone())
+        .or_else(|| scenarios.next_pack())
+        .ok_or("nessuno scenario disponibile")?;
+    let exercise = (scenarios.build)(&pack).map_err(|e| e.to_string())?;
+    scenarios.set_running(&pack);
+    let mut state = server::browser::new(exercise, Some(scenarios));
     if let Some(key) = saved_key().or_else(|| {
         option_env!("OPENROUTER_API_KEY")
             .filter(|key| !key.trim().is_empty())
@@ -107,11 +97,6 @@ pub fn standalone() -> Html {
     let restoring = use_state(crate::store::restoring);
     let notice = use_state(crate::store::take_notice);
     let backend = use_memo((), |_| crate::store::backend());
-    let default_injects = use_memo((), |_| {
-        serde_json::from_str::<scenario::Scenario>(DEFAULT_SCENARIO)
-            .map(|s| s.msel)
-            .unwrap_or_default()
-    });
     {
         // Replay the saved session into the fresh exercise, then start autosaving.
         let restoring = restoring.clone();
@@ -259,7 +244,7 @@ pub fn standalone() -> Html {
           <label>{"Modello traduzione"}<input id="openrouter-translator" value={(*translator).clone()} oninput={{let translator=translator.clone();Callback::from(move |e|translator.set(api::input(e)))}}/></label>
           <button id="configure-ai" onclick={onconfigure}>{"Applica"}</button><button id="clear-ai" onclick={onclear}>{"Rimuovi chiave"}</button></div>
           <p>{"L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente."}</p>
-          <crate::settings::Settings roles={roles.iter().map(|r|r.id.clone()).collect::<Vec<_>>()} defaults={(*default_injects).clone()} library={crate::store::load_injects()} session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={crate::store::save_error()} reset_note="Elimina sessione, libreria injects e chiave API di questo browser." backend={(*backend).clone()} revision={*revision}/>
+          <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={crate::store::save_error()} reset_note="Elimina sessione, scenari salvati e chiave API di questo browser." backend={(*backend).clone()} revision={*revision}/>
         </details>
         if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
         if *restoring {<p class="standalone-notice" role="status" id="restoring">{"Ripristino della sessione salvata…"}</p>} else {

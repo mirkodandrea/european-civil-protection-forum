@@ -70,7 +70,7 @@ fn tape() -> Arc<llm::cassette::Cassette> {
 }
 
 fn journaled(url: &str) -> bool {
-    !url.contains("/presence")
+    !url.contains("/presence") && !url.contains("/api/master/scenarios")
 }
 
 /// Play `entries` into a fresh exercise, reaching simulated time `end_t_s`
@@ -114,7 +114,7 @@ pub async fn replay(s: AppState, entries: Vec<JournalEntry>, end_t_s: i64) -> Re
     outcome
 }
 
-pub fn new(ex: Exercise) -> AppState {
+pub fn new(ex: Exercise, scenarios: Option<Arc<library::Scenarios>>) -> AppState {
     let access = Access::local(ex.role_ids());
     let state = AppState {
         ex: Arc::new(Mutex::new(ex)),
@@ -127,6 +127,7 @@ pub fn new(ex: Exercise) -> AppState {
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         presence: Default::default(),
+        scenarios,
     };
     tokio::spawn(flow::run_clock(state.clone()));
     state
@@ -225,7 +226,7 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
                 .cloned()
                 .unwrap_or_default(),
         },
-        player if s.access.players.contains_key(player) => Principal::Player {
+        player if s.access.has_player(player) => Principal::Player {
             role: player.to_string(),
         },
         _ => return Err(bad("unknown standalone role")),
@@ -296,6 +297,36 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             .await
         }
         ("GET", "/api/catalogue") => get_catalogue(principal.clone(), s.clone()).await,
+        ("GET", "/api/master/scenarios") => {
+            library::get_scenarios(principal.clone(), s.clone()).await
+        }
+        ("GET", "/api/master/scenarios/<id>") => {
+            library::get_scenario(principal.clone(), s.clone(), captures["id"].to_string()).await
+        }
+        ("POST", "/api/master/scenarios/validate") => {
+            library::post_validate(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/scenarios/save") => {
+            library::post_save(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/scenarios/delete") => {
+            library::post_delete_scenario(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("GET", "/api/view/scene") => get_view_scene(principal.clone(), s.clone()).await,
         ("GET", "/api/view/state") => {
             let have: ::view::Have = serde_urlencoded::from_str(query).unwrap_or_default();
@@ -583,6 +614,11 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/player/<role>/presence"),
     ("GET", "/api/player/<role>/presence"),
     ("GET", "/api/catalogue"),
+    ("GET", "/api/master/scenarios"),
+    ("GET", "/api/master/scenarios/<id>"),
+    ("POST", "/api/master/scenarios/validate"),
+    ("POST", "/api/master/scenarios/save"),
+    ("POST", "/api/master/scenarios/delete"),
     ("GET", "/api/view/scene"),
     ("GET", "/api/view/state"),
     ("GET", "/api/debrief"),

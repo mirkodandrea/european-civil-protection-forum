@@ -336,6 +336,8 @@ pub fn generate(seed: u64) -> Scenario {
         roles: roles(),
         reinforcements: reinforcements(),
         msel: msel(),
+        staging_base: Some("Valverde Town Hall".into()),
+        operational_grants: crate::legacy_grants(),
     };
     for i in 0..scn.buildings.len() {
         let p = scn.buildings[i].pos;
@@ -462,6 +464,7 @@ fn resource_types() -> Vec<ResourceType> {
         id: id.into(),
         name: name.into(),
         description: d.into(),
+        speed_mps: None,
     };
     vec![
         rt(

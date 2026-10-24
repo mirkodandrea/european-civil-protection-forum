@@ -388,6 +388,50 @@ pub fn catalogue(allowed: &[String]) -> String {
     out
 }
 
+/// [`catalogue`] with the examples rewritten to use names that exist in `scn`
+/// (a zone, a shelter, a school, the staging base, a role), so the model is
+/// never shown places from another scenario.
+pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
+    use scenario::BuildingKind::{School, SportsCentre};
+    let named = |kind: Option<scenario::BuildingKind>| {
+        scn.buildings
+            .iter()
+            .filter(|b| kind.is_none_or(|k| b.kind == k))
+            .find_map(|b| b.name.clone())
+    };
+    let zone = scn
+        .initial_ignitions
+        .first()
+        .and_then(|i| scn.zone_of(i.at))
+        .or_else(|| scn.zones.names().into_iter().next());
+    let place = scn.places.first().map(|p| p.name.clone());
+    let staging = scn
+        .staging_base
+        .clone()
+        .or_else(|| place.clone());
+    let crew_role = scn
+        .roles
+        .iter()
+        .find(|r| r.resources.contains_key("ground_crews"))
+        .or(scn.roles.first())
+        .map(|r| r.id.clone());
+    let mut doc = catalogue(allowed);
+    let mut swap = |from: &str, to: Option<String>| {
+        if let Some(to) = to {
+            doc = doc.replace(from, &to);
+        }
+    };
+    swap("Valverde Sports Centre", named(Some(SportsCentre)).or_else(|| named(None)));
+    swap("Pineta Primary School", named(Some(School)).or_else(|| named(None)));
+    swap("Valverde Town Hall", staging);
+    swap("Pine Hill", place);
+    swap("fire_commander", crew_role);
+    swap("F3:S", zone.clone().map(|z| format!("{z}:S")));
+    swap("F4", zone.clone());
+    swap("F3", zone);
+    doc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,6 +469,18 @@ mod tests {
         ));
         let back: Command = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back, e);
+    }
+
+    #[test]
+    fn catalogue_examples_use_the_scenarios_own_names() {
+        let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+        scn.staging_base = Some("Depot X".into());
+        scn.places[0].name = "Depot X".into();
+        scn.roles[1].id = "crew_boss".into();
+        let all: Vec<String> = ALL_KINDS.iter().map(|k| k.to_string()).collect();
+        let doc = catalogue_for(&scn, &all);
+        assert!(doc.contains("Depot X") && doc.contains("crew_boss"), "{doc}");
+        assert!(!doc.contains("Valverde Town Hall") && !doc.contains("fire_commander"));
     }
 
     #[test]

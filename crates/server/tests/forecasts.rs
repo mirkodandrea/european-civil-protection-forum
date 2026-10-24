@@ -44,14 +44,10 @@ async fn app() -> TestApp {
     .unwrap();
     let exercise = Arc::new(Mutex::new(exercise::Exercise::new(world)));
     let llm = llm::Llm::mock(|task, _, _| anyhow::bail!("unexpected LLM task {task}"));
-    let access = server::access::Access {
-        master: "forecast-master".into(),
-        players: BTreeMap::from([
+    let access = server::access::Access::with_keys("forecast-master".into(), BTreeMap::from([
             ("mayor".into(), "forecast-mayor".into()),
             ("fire_commander".into(), "forecast-fire".into()),
-        ]),
-        evaluators: BTreeMap::from([("reviewer".into(), "forecast-evaluator".into())]),
-    };
+        ]), BTreeMap::from([("reviewer".into(), "forecast-evaluator".into())]));
     build(exercise, llm, None, access).await.0
 }
 async fn request(

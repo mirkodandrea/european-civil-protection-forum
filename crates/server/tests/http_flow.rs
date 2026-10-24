@@ -25,17 +25,13 @@ fn mock_llm() -> llm::Llm {
 }
 
 fn access() -> server::access::Access {
-    server::access::Access {
-        master: "test-master".into(),
-        players: std::collections::BTreeMap::from([
+    server::access::Access::with_keys("test-master".into(), std::collections::BTreeMap::from([
             ("mayor".into(), "test-mayor".into()),
             ("fire_commander".into(), "test-fire".into()),
-        ]),
-        evaluators: std::collections::BTreeMap::from([
+        ]), std::collections::BTreeMap::from([
             ("eval-one".into(), "test-eval-one".into()),
             ("eval-two".into(), "test-eval-two".into()),
-        ]),
-    }
+        ]))
 }
 
 async fn app() -> TestApp {

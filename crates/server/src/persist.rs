@@ -1,27 +1,26 @@
-//! Server-side storage of the session and of the inject library.
+//! Server-side storage of the session.
 //!
 //! A session is saved as a journal: the state-changing requests that were
 //! accepted, who made them, the AI answers they received and the simulated
 //! time reached. On startup the journal is played again through the real
 //! routes (a local Rocket client) into a fresh exercise, answering from the
 //! saved AI answers and with the wall clock stood down, like the browser does.
-//! The inject library is a plain file read when a new exercise is built.
+//! The scenario the session started from is saved with it, so a restart
+//! rebuilds the same exercise even if the library has changed since.
 use super::*;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::{ContentType, Header};
 use rocket::local::asynchronous::Client;
 use rocket::{Data, Response};
-use scenario::InjectTemplate;
+use crate::library::Scenarios;
+use scenario::ScenarioPack;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 const SESSION_FILE: &str = "session.json";
-const INJECTS_FILE: &str = "injects.json";
+pub const ACTIVE_FILE: &str = "active.txt";
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
-
-/// Builds a fresh exercise, optionally with replacement injects.
-pub type Factory = Arc<dyn Fn(Option<Vec<InjectTemplate>>) -> anyhow::Result<Exercise> + Send + Sync>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JournalEntry {
@@ -38,9 +37,10 @@ pub struct JournalEntry {
 #[derive(Serialize, Deserialize)]
 pub struct SavedSession {
     pub v: u32,
-    /// Scenario, seed and ensemble options: a session only fits the same setup.
+    /// Base file, seed and ensemble options: a session only fits the same setup.
     pub fingerprint: String,
-    pub msel: Vec<InjectTemplate>,
+    /// The scenario the exercise was built from.
+    pub pack: ScenarioPack,
     pub journal: Vec<JournalEntry>,
     pub tape: Vec<(String, String)>,
     pub end_t_s: i64,
@@ -56,10 +56,7 @@ struct Inner {
 
 pub struct Persist {
     dir: PathBuf,
-    fingerprint: String,
-    /// Injects of the scenario file, before any library override.
-    pub default_msel: Vec<InjectTemplate>,
-    factory: Factory,
+    pub scenarios: Arc<Scenarios>,
     pub tape: Arc<llm::cassette::Cassette>,
     inner: Mutex<Inner>,
 }
@@ -73,38 +70,11 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// Same rules as the editor: unique ids, texts present, known recipients.
-pub fn validate_injects(list: &[InjectTemplate], roles: &[String]) -> Result<(), String> {
-    for (n, i) in list.iter().enumerate() {
-        let at = |what: &str| format!("Inject {}: {what}", n + 1);
-        if i.id.trim().is_empty() || i.title.trim().is_empty() || i.text.trim().is_empty() {
-            return Err(at("identifier, title and text are required"));
-        }
-        if list[..n].iter().any(|o| o.id == i.id) {
-            return Err(at(&format!("duplicate identifier {}", i.id)));
-        }
-        if i.recipients.is_empty() {
-            return Err(at("at least one recipient (or \"all\") is required"));
-        }
-        if let Some(bad) = i.recipients.iter().find(|r| *r != "all" && !roles.contains(r)) {
-            return Err(at(&format!("unknown recipient {bad}")));
-        }
-    }
-    Ok(())
-}
-
 impl Persist {
-    pub fn new(
-        dir: PathBuf,
-        fingerprint: String,
-        default_msel: Vec<InjectTemplate>,
-        factory: Factory,
-    ) -> Arc<Persist> {
+    pub fn new(dir: PathBuf, scenarios: Arc<Scenarios>) -> Arc<Persist> {
         Arc::new(Persist {
             dir,
-            fingerprint,
-            default_msel,
-            factory,
+            scenarios,
             tape: Arc::new(llm::cassette::Cassette::memory([])),
             inner: Mutex::new(Inner::default()),
         })
@@ -120,26 +90,13 @@ impl Persist {
         let path = self.dir.join(SESSION_FILE);
         let text = std::fs::read_to_string(&path).ok()?;
         match serde_json::from_str::<SavedSession>(&text) {
-            Ok(s) if s.v == FORMAT && s.fingerprint == self.fingerprint => Some(s),
+            Ok(s) if s.v == FORMAT && s.fingerprint == (self.scenarios.fingerprint)(&s.pack) => Some(s),
             _ => {
                 tracing::warn!("saved session {} does not fit this setup: discarded", path.display());
                 let _ = std::fs::remove_file(&path);
                 None
             }
         }
-    }
-
-    pub fn load_injects(&self) -> Option<Vec<InjectTemplate>> {
-        serde_json::from_str(&std::fs::read_to_string(self.dir.join(INJECTS_FILE)).ok()?).ok()
-    }
-
-    pub fn save_injects(&self, list: &[InjectTemplate]) -> Result<(), String> {
-        let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-        write_atomic(&self.dir.join(INJECTS_FILE), &text).map_err(|e| e.to_string())
-    }
-
-    pub fn build(&self, msel: Option<Vec<InjectTemplate>>) -> anyhow::Result<Exercise> {
-        (self.factory)(msel)
     }
 
     fn begin(&self, principal: Principal, uri: String, body: String, t_s: i64) -> u64 {
@@ -166,10 +123,8 @@ impl Persist {
         if flow::REPLAYING.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
-        let (msel, end_t_s) = {
-            let ex = state.lock();
-            (ex.world.scn.msel.clone(), ex.world.time_s())
-        };
+        let end_t_s = state.lock().world.time_s();
+        let Some(pack) = self.scenarios.running_pack() else { return };
         let tape = self.tape.entries();
         let mut inner = self.inner();
         let journal: Vec<JournalEntry> = inner.journal.iter().filter(|e| e.done).cloned().collect();
@@ -185,8 +140,8 @@ impl Persist {
         }
         let session = SavedSession {
             v: FORMAT,
-            fingerprint: self.fingerprint.clone(),
-            msel,
+            fingerprint: (self.scenarios.fingerprint)(&pack),
+            pack,
             journal,
             tape,
             end_t_s,
@@ -208,27 +163,32 @@ impl Persist {
     }
 }
 
-/// Replace the exercise by a fresh one, forgetting the journal and AI answers.
-pub async fn reset(state: &AppState, msel: Option<Vec<InjectTemplate>>) -> Result<(), String> {
-    let persist = state.persist.clone().ok_or("storage is not enabled")?;
+/// Replace the exercise by a fresh one built from `pack`, forgetting the
+/// journal and the AI answers.
+pub async fn reset(state: &AppState, pack: &ScenarioPack) -> Result<(), String> {
+    let scenarios = state.scenarios.clone().ok_or("scenarios are not available")?;
     if state.lock().phase == exercise::Phase::Resolving {
         return Err("a turn is being resolved; wait for it to finish".into());
     }
-    let mut fresh = persist.build(msel).map_err(|e| e.to_string())?;
+    let mut fresh = (scenarios.build)(pack).map_err(|e| e.to_string())?;
     {
         let mut ex = state.lock();
         fresh.generation = ex.generation + 1;
         *ex = fresh;
     }
+    state.access.set_roles(state.lock().role_ids());
     state.assessments.lock().await.clear();
     state.forecasts.lock().await.clear();
-    persist.tape.clear();
-    {
-        let mut inner = persist.inner();
-        inner.journal.clear();
-        inner.saved = (0, 0, 0);
+    scenarios.set_running(pack);
+    if let Some(persist) = &state.persist {
+        persist.tape.clear();
+        {
+            let mut inner = persist.inner();
+            inner.journal.clear();
+            inner.saved = (0, 0, 0);
+        }
+        let _ = std::fs::remove_file(persist.dir.join(SESSION_FILE));
     }
-    let _ = std::fs::remove_file(persist.dir.join(SESSION_FILE));
     Ok(())
 }
 
@@ -252,7 +212,7 @@ pub async fn restore(
             flow::advance_to(state, e.t_s).await;
             let token = match &e.principal {
                 Principal::Master => Some(state.access.master.clone()),
-                Principal::Player { role } => state.access.players.get(role).cloned(),
+                Principal::Player { role } => state.access.player_key(role),
                 Principal::Evaluator { id } => state.access.evaluators.get(id).cloned(),
             }
             .ok_or_else(|| format!("step {}: unknown participant", i + 1))?;
@@ -304,6 +264,7 @@ fn journaled(path: &str) -> bool {
     path.starts_with("/api/")
         && !path.contains("/presence")
         && !path.starts_with("/api/master/storage")
+        && !path.starts_with("/api/master/scenarios")
 }
 
 #[rocket::async_trait]
@@ -352,11 +313,8 @@ fn storage_info(s: &AppState) -> Value {
     };
     json!({
         "enabled": true,
-        "roles": s.lock().role_ids(),
         "session": persist.summary(),
-        "library": persist.load_injects(),
-        "defaults": persist.default_msel,
-        "running": s.lock().world.scn.msel,
+        "running": s.scenarios.as_ref().and_then(|sc| sc.running_pack()).map(|p| p.id),
         "error": persist.inner().error,
     })
 }
@@ -367,46 +325,25 @@ pub(crate) async fn get_storage(_principal: Principal, s: AppState) -> ApiResult
 }
 
 #[derive(Deserialize)]
-pub(crate) struct InjectsBody {
-    injects: Vec<InjectTemplate>,
-    #[serde(default)]
-    new_session: bool,
-}
-
-#[rocket::post("/api/master/storage/injects", data = "<b>")]
-pub(crate) async fn post_injects(_principal: Principal, s: AppState, b: Json<InjectsBody>) -> ApiResult {
-    let Json(b) = b;
-    let persist = s.persist.clone().ok_or_else(|| bad("storage is not enabled"))?;
-    let roles = s.lock().role_ids();
-    validate_injects(&b.injects, &roles).map_err(bad)?;
-    persist.save_injects(&b.injects).map_err(bad)?;
-    if b.new_session {
-        reset(&s, Some(b.injects)).await.map_err(bad)?;
-    }
-    Ok(Json(storage_info(&s)))
-}
-
-#[derive(Deserialize)]
 pub(crate) struct DeleteBody {
-    /// `session`, `injects` or `all`.
+    /// `session`, or `all` to also forget the chosen scenario.
     target: String,
 }
 
 #[rocket::post("/api/master/storage/delete", data = "<b>")]
 pub(crate) async fn post_delete(_principal: Principal, s: AppState, b: Json<DeleteBody>) -> ApiResult {
     let Json(b) = b;
-    let persist = s.persist.clone().ok_or_else(|| bad("storage is not enabled"))?;
-    let drop_library = || {
-        let _ = std::fs::remove_file(persist.dir.join(INJECTS_FILE));
-    };
-    match b.target.as_str() {
-        "injects" => drop_library(),
-        "session" => reset(&s, persist.load_injects()).await.map_err(bad)?,
+    s.persist.as_ref().ok_or_else(|| bad("storage is not enabled"))?;
+    let scenarios = s.scenarios.clone().ok_or_else(|| bad("scenarios are not available"))?;
+    let pack = match b.target.as_str() {
+        "session" => scenarios.running_pack(),
         "all" => {
-            drop_library();
-            reset(&s, None).await.map_err(bad)?;
+            scenarios.library.set_active(&scenarios.default_id).map_err(bad)?;
+            scenarios.library.load(&scenarios.default_id)
         }
         other => return Err(bad(format!("unknown target {other}"))),
     }
+    .ok_or_else(|| bad("no scenario to restart from"))?;
+    reset(&s, &pack).await.map_err(bad)?;
     Ok(Json(storage_info(&s)))
 }
