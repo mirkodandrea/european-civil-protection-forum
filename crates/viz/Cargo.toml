@@ -7,9 +7,7 @@ description = "Bevy big-screen renderer: 3D terrain, vegetation, fire, buildings
 
 [dependencies]
 scenario.workspace = true
-sim.workspace = true
-fire.workspace = true
-exercise.workspace = true
+view.workspace = true
 serde_json.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true

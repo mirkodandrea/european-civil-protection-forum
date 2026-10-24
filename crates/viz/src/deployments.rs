@@ -4,7 +4,7 @@ use crate::materials::{structure, Finish, StructureMaterial};
 use crate::models::{self, Rig};
 use crate::{Scn, Snapshot};
 use bevy::prelude::*;
-use sim::TaskStatus;
+use view::TaskStatus;
 use std::collections::HashMap;
 #[derive(Component)]
 pub struct DeploymentMarker(pub u64);
@@ -111,17 +111,17 @@ pub fn update(
     let visible = snap
         .deployments
         .iter()
-        .filter(|(task, qty)| *qty > 0 && task.status != TaskStatus::Cancelled)
+        .filter(|task| task.qty > 0 && task.status != TaskStatus::Cancelled)
         .collect::<Vec<_>>();
     for (entity, marker, mut transform) in &mut markers {
-        if let Some((task, _)) = visible.iter().find(|(t, _)| t.id == marker.0) {
+        if let Some(task) = visible.iter().find(|t| t.id == marker.0) {
             set(&scn, task, snap.time_s, &mut transform);
         } else {
             commands.entity(entity).despawn_recursive();
         }
     }
     for (part, mut tf) in &mut parts {
-        if let Some((task, _)) = visible.iter().find(|(t, _)| t.id == part.task) {
+        if let Some(task) = visible.iter().find(|t| t.id == part.task) {
             let moving = task.position(snap.time_s) != task.position(snap.time_s + 1);
             let work = task.status == TaskStatus::Working;
             let t = snap.time_s as f32;
@@ -137,10 +137,10 @@ pub fn update(
     }
     let show_marks = std::env::var("TTX_SNAPSHOT_MARKS").as_deref() != Ok("0");
     for (entity, marker, mut tf) in &mut traffic {
-        if let Some((pos, people, _)) = snap
+        if let Some(view::Vehicle { pos, people, .. }) = snap
             .traffic
             .get(marker.index)
-            .filter(|(_, p, _)| (*p > 4) == marker.bus)
+            .filter(|v| (v.people > 4) == marker.bus)
         {
             let next = to_bevy(&scn.0, *pos, 0.3);
             let d = next - tf.translation;
@@ -153,7 +153,7 @@ pub fn update(
             commands.entity(entity).despawn_recursive();
         }
     }
-    for (index, (pos, people, at_risk)) in snap.traffic.iter().enumerate() {
+    for (index, view::Vehicle { pos, people, at_risk }) in snap.traffic.iter().enumerate() {
         let bus = *people > 4;
         if !traffic
             .iter()
@@ -185,7 +185,7 @@ pub fn update(
             );
         }
     }
-    for (task, _) in visible {
+    for task in visible {
         let (name, _, lift) = model_for(&task.resource);
         let airborne = name == "tanker";
         let mut transform = Transform::default();
@@ -244,7 +244,7 @@ pub fn update(
             let points = task
                 .route
                 .as_ref()
-                .map(|r| r.points())
+                .cloned()
                 // Only aircraft have a direct route; a missing road path is not
                 // evidence of a traversable straight line.
                 .unwrap_or_else(|| {
@@ -273,7 +273,7 @@ pub fn update(
         }
     }
 }
-fn set(scn: &Scn, task: &sim::DeploymentTask, t: i64, transform: &mut Transform) {
+fn set(scn: &Scn, task: &view::Deployment, t: i64, transform: &mut Transform) {
     let (_, scale, lift) = model_for(&task.resource);
     transform.translation = to_bevy(&scn.0, task.position(t), lift);
     transform.scale = Vec3::splat(scale);

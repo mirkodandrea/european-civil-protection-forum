@@ -72,12 +72,12 @@ Then open:
 
 | Who | URL |
 |---|---|
-| **Conversational EXCON interface** | Startup EXCON link with access key |
+| **Conversational EXCON interface** | `http://<host>:8080/play.html` |
 | EXCON | `http://<host>:8080/master.html` |
 | Players (tablets) | Individual role link from the EXCON console |
 | Landing page | `http://<host>:8080/` |
 
-The server prints a fresh EXCON access link at startup. Open it, then distribute individual player links from the console; each key authorizes only its own role. The simulator window shows the machine's LAN address. Without an OpenRouter API key the exercise still runs in **manual mode**: injects are sent in English and the EXCON types the commands for each proposal.
+There are no access keys: EXCON is `play.html`/`master.html`, players open `player.html?role=<id>` (links are listed in the console). Anyone who can reach the port can act as any role, so run it only on a trusted network. The simulator window shows the machine's LAN address. Without an OpenRouter API key the exercise still runs in **manual mode**: injects are sent in English and the EXCON types the commands for each proposal.
 
 ### Playing from a phone
 
@@ -87,7 +87,7 @@ The server prints a fresh EXCON access link at startup. Open it, then distribute
 brew install --cask devtunnel
 devtunnel user login -g -d        # GitHub device-code login
 devtunnel host -p 8080            # private: only your account can open the URL
-# open the tunnel URL with the startup Master access key, or use an individual player link (GitHub login once)
+# open the tunnel URL (GitHub login once)
 ```
 
 Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the URL could run the EXCON console and spend your OpenRouter credit.
@@ -95,6 +95,28 @@ Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the
 The frontend build writes `web/dist/` (ignored by git), including compatible `.html` entry points. Rebuild it after changing `crates/frontend/`; the server defaults to `--web web/dist`. No Node build step or CDN is required.
 
 Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The default landscape is the Factory-generated Valverde valley. Regenerate it with `python3 scripts/scenario_factory.py landscape` (requires NumPy). The historical calibrated scenario remains available with `--scenario data/scenarios/synthetic_valley.json`; `cargo run -p scenario --bin gen-scenario` regenerates that historical template.
+
+## Model / 3D viewer split
+
+The exercise and its 3D view are independent. `crates/view` defines the
+serde contract (`ViewState`, `Deployment` tracks, grid arrays packed in
+base64); `server::view` produces it from the exercise; `viz` (Bevy) draws it
+and has no dependency on `sim`, `fire` or `exercise`. Three transports share
+that contract:
+
+- in-process (`ttx` window, and the standalone WASM app): `ExerciseSource`;
+- HTTP: `GET /api/view/scene` (once; `scene.z` is its zlib form, 12.6 MB → 3.1 MB) and `GET /api/view/state?generation=&cue=`
+  (`null` if nothing is new). EXCON identity only, because the view shows the
+  ground truth;
+- compact HTTP: `GET /api/view/frame?generation=&cue=` answers `204` when up to
+  date, otherwise a zlib-deflated JSON frame: the grid arrays and road flags as
+  sparse patches against the viewer's generation when the server still holds
+  it, or the whole state. Measured on the Valverde scenario: 1.0 MB JSON state →
+  46 KB full frame → about 2 KB per simulated minute;
+- remote native screen: `ttx --headless` on the server, then
+  `ttx-viewer --server http://host:8080`.
+
+An HTML/WebGL viewer only has to implement the same two calls.
 
 ## Operational model from propagator_abm
 

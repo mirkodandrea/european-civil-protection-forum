@@ -8,7 +8,7 @@ use bevy_egui::EguiContexts;
 
 use crate::frame::{to_bevy, Frame};
 use crate::objects::ShowGrid;
-use crate::{Scn, ServerPort, Snapshot};
+use crate::{Info, Scn, Snapshot};
 
 fn local_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
@@ -26,7 +26,7 @@ pub fn draw(
     snap: Res<Snapshot>,
     frame: Res<Frame>,
     scn: Res<Scn>,
-    port: Res<ServerPort>,
+    info: Res<Info>,
     grid: Res<ShowGrid>,
     quality: Res<crate::quality::Quality>,
     fire_style: Res<crate::fire_field::FirePresentation>,
@@ -98,7 +98,7 @@ pub fn draw(
                     ("⏸ PAUSED", Color32::from_rgb(170, 180, 190))
                 };
                 ui.label(RichText::new(badge).color(color).size(16.0).strong());
-                if let Some((turn, from_s, to_s)) = snap.resolving {
+                if let Some(view::TurnWindow { turn, from_s, to_s }) = snap.resolving {
                     let done = (frame.display_s - from_s) as f32 / (to_s - from_s).max(1) as f32;
                     ui.label(
                         RichText::new(format!(
@@ -196,17 +196,17 @@ pub fn draw(
 
     egui::Area::new(egui::Id::new("join")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
         panel.show(ui, |ui| {
-            ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else if cfg!(target_arch = "wasm32") { "Standalone browser simulation · camera: drag pan · right/Shift-drag rotate · wheel zoom".into() } else { format!("Players: http://{ip}:{}/player.html     EXCON: /master.html", port.0) }).color(Color32::WHITE).size(15.0));
-            ui.label(RichText::new(format!("AI: {}   ·   drag pan · right/Shift-drag rotate · wheel zoom · A auto-orbit · F fire · G grid · R/Home reset", if snap.llm_model.is_empty() { "see EXCON page" } else { &snap.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
+            ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else if cfg!(target_arch = "wasm32") { "Standalone browser simulation · camera: drag pan · right/Shift-drag rotate · wheel zoom".into() } else { match (&info.remote, info.port) { (Some(url), _) => format!("Remote view of {url}"), (None, Some(port)) => format!("Players: http://{ip}:{port}/player.html     EXCON: /master.html"), (None, None) => "Exercise view".to_string() } }).color(Color32::WHITE).size(15.0));
+            ui.label(RichText::new(format!("AI: {}   ·   drag pan · right/Shift-drag rotate · wheel zoom · A auto-orbit · F fire · G grid · R/Home reset", if info.llm_model.is_empty() { "see EXCON page" } else { &info.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
         });
     });
 
     egui::Area::new(egui::Id::new("deployments")).anchor(Align2::RIGHT_BOTTOM, [-12.0,-12.0]).show(ctx,|ui|{
       panel.show(ui,|ui|{
        ui.label(RichText::new("Approved deployments").color(Color32::WHITE).strong());
-       for (task,qty) in snap.deployments.iter().filter(|(t,q)|*q>0&&t.status!=sim::TaskStatus::Cancelled).take(12) {
+       for task in snap.deployments.iter().filter(|t|t.qty>0&&t.status!=view::TaskStatus::Cancelled).take(12) {
         let remaining=(task.arrival_s-snap.time_s).max(0);
-        ui.label(RichText::new(format!("#{} {} ×{} · {:?}{}",task.id,task.resource,qty,task.status,if task.status==sim::TaskStatus::EnRoute {format!(" · ETA {remaining}s")}else{String::new()})).color(Color32::WHITE));
+        ui.label(RichText::new(format!("#{} {} ×{} · {:?}{}",task.id,task.resource,task.qty,task.status,if task.status==view::TaskStatus::EnRoute {format!(" · ETA {remaining}s")}else{String::new()})).color(Color32::WHITE));
        }
        ui.label(RichText::new(format!("Quality: {} · orange travelling/refilling/withdrawing · cyan working · green complete · red failed", quality.name)).color(Color32::from_rgb(195, 205, 215)).size(11.0));
       });
@@ -244,10 +244,10 @@ pub fn draw(
             painter.galley(rect.min + egui::vec2(5.0, 3.0), galley, color);
         }
     };
-    for (task, qty) in snap
+    for task in snap
         .deployments
         .iter()
-        .filter(|(t, q)| *q > 0 && t.status != sim::TaskStatus::Cancelled)
+        .filter(|t| t.qty > 0 && t.status != view::TaskStatus::Cancelled)
     {
         label(
             task.position(snap.time_s),
@@ -258,14 +258,14 @@ pub fn draw(
             },
             &format!(
                 "#{} {} ×{} · {:?}",
-                task.id, task.resource, qty, task.status
+                task.id, task.resource, task.qty, task.status
             ),
             13.0,
             Color32::from_rgb(255, 230, 130),
         );
     }
     let mut road_labels = std::collections::HashSet::new();
-    for (road, a, b, closed, cut) in &snap.road_segments {
+    for view::RoadSegment { road, from: a, to: b, closed, cut_by_fire: cut } in &snap.road_segments {
         if (*closed || *cut) && road_labels.insert((*road, *cut)) {
             label(
                 [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5],

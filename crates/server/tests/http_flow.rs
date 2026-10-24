@@ -3133,3 +3133,184 @@ async fn revalidate_and_supersede_endpoints() {
     let (s, _) = call(&app, "POST", &uri, Some(json!({}))).await;
     assert_ne!(s, Status::Ok);
 }
+
+#[tokio::test]
+async fn view_is_excon_only_incremental_and_complete() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn.clone(), 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    for path in ["/api/view/scene", "/api/view/state"] {
+        for key in ["test-mayor", "test-eval-one"] {
+            assert_eq!(
+                call_key(&app, "GET", path, None, Some(key)).await.0,
+                Status::Forbidden,
+                "{path} must not leak the ground truth to {key}"
+            );
+        }
+        assert_eq!(
+            call_key(&app, "GET", path, None, None).await.0,
+            Status::Unauthorized
+        );
+    }
+    let (status, scene) = call(&app, "GET", "/api/view/scene", None).await;
+    assert_eq!(status, Status::Ok);
+    let scene: scenario::Scenario = serde_json::from_value(scene).unwrap();
+    assert_eq!(scene.grid.len(), scn.grid.len());
+
+    let (_, first) = call(&app, "GET", "/api/view/state", None).await;
+    let state: view::ViewState = serde_json::from_value(first).unwrap();
+    assert_eq!(state.cells.len(), scn.grid.len());
+    assert_eq!(state.probability.len(), scn.grid.len());
+    assert_eq!(state.buildings.len(), scn.buildings.len());
+    assert_eq!(state.roads.len(), scn.roads.len());
+    // Nothing changed: the viewer has everything.
+    let same = format!(
+        "/api/view/state?generation={}&cue={}",
+        state.generation,
+        state.cues.iter().map(|c| c.seq).max().unwrap_or(0)
+    );
+    assert_eq!(call(&app, "GET", &same, None).await.1, Value::Null);
+    // A change is a new generation, and only unseen cues are sent.
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":1})),
+    )
+    .await;
+    let (_, next) = call(&app, "GET", &same, None).await;
+    let next: view::ViewState = serde_json::from_value(next).unwrap();
+    assert!(next.generation > state.generation);
+    assert!(next.time_s > state.time_s);
+    let seen = state.cues.iter().map(|c| c.seq).max().unwrap_or(0);
+    assert!(next.cues.iter().all(|c| c.seq > seen));
+}
+
+#[tokio::test]
+async fn view_tracks_follow_the_model_and_flames_agree() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    call(&app,"POST","/api/master/command",Some(json!({"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":{"x":1000,"y":1000},"speed_mps":10}))).await;
+    let parent = reply_parent(&app, "fire_commander").await;
+    let (_, declared) = call(
+        &app,
+        "POST",
+        "/api/player/fire_commander/reply",
+        Some(json!({"text":"Cut a line","reply_to":parent})),
+    )
+    .await;
+    let pid = declared["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"commands":[{"type":"CutFireLine","from":{"x":2000,"y":1000},"to":{"x":2500,"y":1000}}]}))).await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/execute"),
+        None,
+    )
+    .await;
+    // Before, during and after the work: the view's track is the model's motion.
+    for minutes in [0, 1, 1, 3] {
+        if minutes > 0 {
+            call(
+                &app,
+                "POST",
+                "/api/master/command",
+                Some(json!({"type":"AdvanceTime","minutes":minutes})),
+            )
+            .await;
+        }
+        let ex = shared.lock().unwrap();
+        let state = server::view::extract(&ex, view::Have::default()).unwrap();
+        assert_eq!(state.deployments.len(), ex.world.d.tasks.len());
+        assert!(!state.deployments.is_empty());
+        for (task, shown) in ex.world.d.tasks.iter().zip(&state.deployments) {
+            assert_eq!(shown.id, task.id);
+            assert_eq!(shown.qty, ex.world.task_active_qty(task));
+            let from = task.departed_s.min(ex.world.time_s());
+            for t in (from - 30..from + 400).step_by(5) {
+                let (model, view) = (task.position(t), shown.position(t));
+                assert!(
+                    (model[0] - view[0]).abs() < 0.5 && (model[1] - view[1]).abs() < 0.5,
+                    "task {} at {t}s: model {model:?} view {view:?}",
+                    task.id
+                );
+            }
+        }
+    }
+    for fli in [-1.0f32, 0.0, 1.0, 50.0, 1800.0, 40_000.0] {
+        assert_eq!(view::flame_length_m(fli), fire::flame_length_m(fli));
+    }
+}
+
+#[tokio::test]
+async fn view_frames_are_compressed_differential_and_excon_only() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let fetch = |uri: String, key: &'static str| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .req(Method::Get, uri)
+                .header(Header::new("Authorization", format!("Bearer {key}")))
+                .dispatch()
+                .await;
+            (response.status(), response.into_bytes().await.unwrap_or_default())
+        }
+    };
+    assert_eq!(
+        fetch("/api/view/frame".into(), "test-mayor").await.0,
+        Status::Forbidden
+    );
+    let (status, zscene) = fetch("/api/view/scene.z".into(), "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let scene: scenario::Scenario =
+        serde_json::from_slice(&view::wire::decompress(&zscene).unwrap()).unwrap();
+    assert_eq!(scene.grid.len(), shared.lock().unwrap().world.scn.grid.len());
+    assert_eq!(
+        fetch("/api/view/scene.z".into(), "test-mayor").await.0,
+        Status::Forbidden
+    );
+    let (status, body) = fetch("/api/view/frame".into(), "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let view::wire::Frame::Full(first) = view::wire::decode(&body).unwrap() else {
+        panic!("a viewer with nothing gets the whole state")
+    };
+    let uri = format!("/api/view/frame?generation={}", first.generation);
+    assert_eq!(fetch(uri.clone(), "test-master").await.0, Status::NoContent);
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":5})),
+    )
+    .await;
+    let (status, body) = fetch(uri, "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let view::wire::Frame::Delta(delta) = view::wire::decode(&body).unwrap() else {
+        panic!("a known base gets a delta")
+    };
+    let rebuilt = view::wire::apply(&first, &delta).unwrap();
+    let truth = server::view::extract(&shared.lock().unwrap(), view::Have::default()).unwrap();
+    assert_eq!(rebuilt.cells, truth.cells);
+    assert_eq!(rebuilt.arrival, truth.arrival);
+    assert_eq!(rebuilt.generation, truth.generation);
+    assert!(body.len() * 5 < serde_json::to_vec(&*first).unwrap().len());
+}

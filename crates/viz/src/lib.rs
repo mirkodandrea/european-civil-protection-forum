@@ -1,14 +1,15 @@
 //! The big-screen renderer.
 //!
-//! Reads the shared [`Exercise`] (never writes it): each frame it `try_lock`s
-//! the mutex and, when the exercise `generation` has moved, copies what it
-//! draws into a [`Snapshot`] resource. A slow request on the server side
-//! therefore never stalls a frame, and the renderer can never change the
-//! exercise.
+//! Knows the exercise only through a [`view::ViewSource`]: each frame it polls
+//! for a newer [`view::ViewState`] (never blocking) and, when one arrives,
+//! copies what it draws into a [`Snapshot`] resource. The model can live in
+//! this process, in the browser's WASM, or behind HTTP on another machine, and
+//! the renderer can never change it: it has no dependency on the simulator or
+//! the exercise.
 //!
-//! Turns are simulated live: while the EXCON resolves a turn the server
+//! Turns are simulated live: while the EXCON resolves a turn the model
 //! advances the world one simulated minute at a time (optionally paced), and
-//! every step bumps `generation`, so this renderer shows the fire, the
+//! every step is a new view state, so this renderer shows the fire, the
 //! buildings and the counters as they change.
 //!
 //! Vegetation, landmarks and articulated unit bakes come from `propagator_abm`
@@ -18,7 +19,10 @@ use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
-use exercise::Exercise;
+use view::{
+    BuildingDraw, Cue, Deployment, Ensemble, FireLine, Have, RoadSegment, Stats, TurnWindow, Vehicle,
+    ViewSource,
+};
 
 mod architecture;
 mod bench;
@@ -41,45 +45,31 @@ mod terrain;
 
 pub use frame::Frame;
 
-#[derive(Resource, Clone)]
-pub struct Shared(pub Arc<Mutex<Exercise>>);
-
-#[derive(Resource)]
-pub struct ServerPort(pub u16);
-
-#[derive(Clone, Default)]
-pub struct BuildingDraw {
-    /// 0 intact, 1 damaged, 2 destroyed
-    pub damage: u8,
-    pub threatened: bool,
-    pub evacuating: bool,
-    pub empty_evacuated: bool,
+/// What the HUD says about the surroundings of the viewer.
+#[derive(Resource, Clone, Default)]
+pub struct Info {
+    /// The AI model the exercise uses ("off" when none).
+    pub llm_model: String,
+    /// Port of the exercise web server, when this process hosts it.
+    pub port: Option<u16>,
+    /// Where the state comes from, when it is not this process.
+    pub remote: Option<String>,
 }
 
-/// Something worth looking at, derived from the exercise log (see `camera`).
-#[derive(Clone, Debug)]
-pub struct Cue {
-    pub pos: scenario::Pos,
-    /// Size of what to frame, metres.
-    pub radius_m: f32,
-    /// How long to hold the shot, seconds.
-    pub hold_s: f32,
-    pub label: String,
-}
-
-/// Everything the renderer draws, copied from the exercise.
+/// Everything the renderer draws, copied from the view state.
 #[derive(Resource, Default)]
 pub struct Snapshot {
-    pub deployments: Vec<(sim::DeploymentTask, u32)>,
-    pub traffic: Vec<(scenario::Pos, u32, bool)>,
+    pub deployments: Vec<Deployment>,
+    pub traffic: Vec<Vehicle>,
     pub generation: u64,
     pub turn: u32,
     pub phase: String,
     pub time_s: i64,
     pub clock: String,
     pub weather: Option<scenario::WeatherSpec>,
-    pub stats: Option<sim::Stats>,
-    /// Final per-cell code (see `sim::digest::cell_code`).
+    pub stats: Option<Stats>,
+    pub ensemble: Option<Ensemble>,
+    /// Final per-cell code (see [`view::cell`]).
     pub cells: Vec<u8>,
     pub arrival: Vec<i32>,
     /// Ensemble-mean fireline intensity (kW/m) and fraction of runs reached, per cell.
@@ -87,21 +77,19 @@ pub struct Snapshot {
     pub probability: Vec<f32>,
     pub buildings: Vec<BuildingDraw>,
     pub roads: Vec<(bool, bool)>,
-    pub road_segments: Vec<(usize, scenario::Pos, scenario::Pos, bool, bool)>,
-    pub lines: Vec<(scenario::Pos, scenario::Pos, f32)>,
-    pub drops: Vec<(scenario::Pos, f32)>,
+    pub road_segments: Vec<RoadSegment>,
+    pub lines: Vec<FireLine>,
+    pub drops: Vec<view::Drop>,
     pub warned: Vec<String>,
-    pub last_turn: Option<exercise::TurnWindow>,
-    /// `(turn, from_s, to_s)` while a turn is being simulated.
-    pub resolving: Option<(u32, i64, i64)>,
+    pub last_turn: Option<TurnWindow>,
+    /// While a turn is being simulated.
+    pub resolving: Option<TurnWindow>,
     /// EXCON free-running clock between turns (distinct from `resolving`).
     pub clock_running: bool,
     pub feed: Vec<String>,
-    pub llm_model: String,
-    pub ensemble: Option<fire::FireOptions>,
     /// Camera cues, append-only.
     pub cues: Vec<Cue>,
-    log_seen: u64,
+    cue_seen: u64,
 }
 
 /// The scenario, shared by all systems.
@@ -109,11 +97,17 @@ pub struct Snapshot {
 pub struct Scn(pub Arc<scenario::Scenario>);
 
 /// Open the window and run until it is closed.
-pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
-    let scn = ex
-        .lock()
-        .map(|e| e.world.scn.clone())
-        .expect("exercise lock");
+///
+/// The renderer knows the exercise only through `source`: in this process
+/// (`server::view::ExerciseSource`) or on another machine.
+pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
+    let scn = match source.scenario() {
+        Ok(scn) => scn,
+        Err(e) => {
+            eprintln!("cannot load the scenario: {e}");
+            return;
+        }
+    };
     let quality = quality::Quality::from_env();
     let capture = std::env::var("TTX_SNAPSHOT").is_ok();
     #[allow(unused_mut)] // mutated only on wasm32
@@ -171,13 +165,10 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
             color: Color::srgb(0.70, 0.78, 0.95),
             brightness: 140.0,
         })
-        .insert_resource(Shared(ex))
-        .insert_resource(ServerPort(port))
+        .insert_resource(Source(Mutex::new(source)))
+        .insert_resource(info)
         .insert_resource(Scn(scn))
-        .insert_resource(Snapshot {
-            llm_model,
-            ..default()
-        })
+        .init_resource::<Snapshot>()
         .init_resource::<fire_field::FirePresentation>()
         .init_resource::<Frame>()
         .add_systems(
@@ -213,303 +204,47 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         .run();
 }
 
-/// Copy the exercise into the [`Snapshot`] whenever it changed (during a
-/// resolution: after every simulated minute).
-fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
-    let Ok(ex) = shared.0.try_lock() else { return };
-    if ex.generation == snap.generation {
+/// The source of views, polled each frame. Its `poll` never blocks.
+#[derive(Resource)]
+pub struct Source(Mutex<Box<dyn ViewSource>>);
+
+/// Copy the newest view into the [`Snapshot`] whenever the model has changed
+/// (during a resolution: after every simulated minute).
+fn sync(source: Res<Source>, mut snap: ResMut<Snapshot>) {
+    let have = Have {
+        generation: snap.generation,
+        cue: snap.cue_seen,
+    };
+    let Some(v) = source.0.lock().ok().and_then(|mut s| s.poll(have)) else {
         return;
-    }
-    let w = &ex.world;
-    snap.traffic =
-        w.d.traffic
-            .vehicles
-            .iter()
-            .filter(|v| v.departed && !v.completed)
-            .map(|v| (w.traffic_position(v, w.time_s()), v.people, v.at_risk))
-            .collect();
-    snap.deployments =
-        w.d.tasks
-            .iter()
-            .map(|task| (task.clone(), w.task_active_qty(task)))
-            .collect();
-    snap.generation = ex.generation;
-    snap.turn = ex.turn;
-    snap.phase = format!("{:?}", ex.phase).to_lowercase();
-    snap.time_s = w.time_s();
-    snap.clock = w.clock();
-    snap.weather = Some(w.fire.weather());
-    snap.ensemble = Some(w.fire.options());
-    snap.stats = Some(w.stats());
-    let cleared = w.fire.cleared();
-    let wet = w.fire.added_moisture();
-    let prob = w.fire.probability();
-    snap.cells = w
-        .fire
-        .state()
-        .iter()
-        .enumerate()
-        .map(|(i, s)| match s {
-            fire::CellFire::Burning => 1,
-            fire::CellFire::Burnt => 2,
-            fire::CellFire::Unburnt if cleared[i] => 3,
-            fire::CellFire::Unburnt if wet[i] > 10.0 => 4,
-            fire::CellFire::Unburnt if prob[i] > 0.0 => 5,
-            fire::CellFire::Unburnt => 0,
-        })
-        .collect();
-    snap.arrival = w.fire.arrival_times().to_vec();
-    snap.intensity = w.fire.intensity().to_vec();
-    snap.probability = w.fire.probability().to_vec();
-    snap.buildings =
-        w.d.buildings
-            .iter()
-            .map(|b| BuildingDraw {
-                damage: match b.damage {
-                    sim::Damage::Intact => 0,
-                    sim::Damage::Damaged => 1,
-                    sim::Damage::Destroyed => 2,
-                },
-                threatened: b.threatened,
-                evacuating: b.evac_done_at.is_some(),
-                empty_evacuated: b.people_inside == 0 && b.evacuated > 0,
-            })
-            .collect();
-    snap.roads = w
-        .scn
-        .roads
-        .iter()
-        .map(|r| {
-            w.d.roads
-                .get(&r.id)
-                .map(|s| (s.closed, s.cut_by_fire))
-                .unwrap_or_default()
-        })
-        .collect();
-    snap.road_segments = w
-        .network
-        .segments()
-        .into_iter()
-        .filter_map(|segment| {
-            let i = w.scn.roads.iter().position(|r| r.id == segment.road)?;
-            let st = w.d.roads.get(&segment.road)?;
-            let cut = st
-                .fire_closed_links
-                .as_ref()
-                .map_or(st.cut_by_fire, |links| {
-                    segment.links.iter().any(|id| links.contains(id))
-                });
-            Some((i, segment.from, segment.to, st.closed, cut))
-        })
-        .collect();
-    snap.lines =
-        w.d.lines
-            .iter()
-            .map(|l| (l.from, l.to, l.width_m))
-            .collect();
-    snap.drops = w.d.drops.iter().map(|d| (d.at, d.radius_m)).collect();
-    snap.warned = w.d.warned.iter().cloned().collect();
-    snap.feed = ex
-        .log
-        .iter()
-        .rev()
-        .filter_map(feed_line)
-        .take(9)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    snap.last_turn = ex.last_turn;
-    // Camera cues from new log entries.
-    let first = snap.log_seen;
-    for e in ex.log.iter().filter(|e| e.seq > first) {
-        if let Some(c) = cue_for(&ex, e) {
-            snap.cues.push(c);
-        }
-        snap.log_seen = e.seq;
-    }
-    snap.resolving = ex.resolving.as_ref().map(|r| (r.turn, r.from_s, r.to_s));
-    snap.clock_running = ex.clock_control.running;
-}
-
-/// Where an order acts, and how big an area it covers.
-fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f32)> {
-    use sim::{Area, Command as C};
-    let zone = |z: &str| {
-        w.zone_code(z)
-            .and_then(|c| w.scn.zone_centre(&c))
-            .map(|p| (p, 300.0))
     };
-    let building = |b: &str| w.find_building(b).map(|i| (w.scn.buildings[i].pos, 160.0));
-    match cmd {
-        C::CutFireLine {
-            from, to, along, ..
-        } => {
-            let (a, b) = match along {
-                Some(code) => w.scn.zone_edge(code)?,
-                None => (
-                    w.resolve_loc(from.as_ref()?).ok()?,
-                    w.resolve_loc(to.as_ref()?).ok()?,
-                ),
-            };
-            let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
-            Some(([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], len / 2.0 + 80.0))
-        }
-        C::DeployEngine { at } | C::WaterDrop { at } | C::Ignite { at, .. } => {
-            w.resolve_loc(at).ok().map(|p| (p, 180.0))
-        }
-        C::EvacuateZone { zone: z, .. } | C::IssueWarning { zone: z } => zone(z),
-        C::EvacuateBuilding { building: b, .. } | C::OpenShelter { building: b } => building(b),
-        C::SetBuildingStatus { building: b, .. } => building(b).or_else(|| zone(b)),
-        C::CloseRoad { road } | C::ReopenRoad { road } => w
-            .find_road(road)
-            .and_then(|id| w.scn.road(&id))
-            .and_then(|r| r.points.get(r.points.len() / 2).copied())
-            .map(|p| (p, 350.0)),
-        C::Extinguish { area } => match area {
-            Area::Named(n) => zone(n).or_else(|| w.scn.resolve_place(n).map(|p| (p, 250.0))),
-            Area::Circle { at, radius_m } => w.resolve_loc(at).ok().map(|p| (p, *radius_m)),
-        },
-        _ => None,
-    }
-}
-
-/// The first place a text names: a facility, a gazetteer place (or alias), or a zone code.
-fn named_place(w: &sim::World, text: &str) -> Option<(scenario::Pos, f32)> {
-    let lower = text.to_lowercase();
-    let mut best: Option<(usize, scenario::Pos, f32)> = None;
-    let mut consider = |name: &str, pos: scenario::Pos, r: f32| {
-        if name.len() < 3 {
-            return;
-        }
-        if let Some(i) = lower.find(&name.to_lowercase()) {
-            if best.is_none_or(|(j, _, _)| i < j) {
-                best = Some((i, pos, r));
-            }
-        }
-    };
-    for b in &w.scn.buildings {
-        if let Some(n) = &b.name {
-            consider(n, b.pos, 170.0);
-        }
-    }
-    for p in &w.scn.places {
-        consider(&p.name, p.pos, 300.0);
-        for a in &p.aliases {
-            consider(a, p.pos, 300.0);
-        }
-    }
-    for token in text.split(|c: char| !c.is_alphanumeric()) {
-        if token.len() == 2 {
-            if let (Some(c), Some(pos)) = (w.zone_code(token), text.find(token)) {
-                if best.is_none_or(|(j, _, _)| pos < j) {
-                    best = w.scn.zone_centre(&c).map(|p| (pos, p, 300.0));
-                }
-            }
-        }
-    }
-    best.map(|(_, p, r)| (p, r))
-}
-
-fn cue_for(ex: &Exercise, e: &exercise::LogEntry) -> Option<Cue> {
-    let w = &ex.world;
-    let d = &e.data;
-    let cmds_cue = |cmds: &[sim::Command], label: String, hold: f32| {
-        cmds.iter()
-            .find_map(|c| command_place(w, c))
-            .map(|(pos, radius_m)| Cue {
-                pos,
-                radius_m,
-                hold_s: hold,
-                label,
-            })
-    };
-    match e.kind.as_str() {
-        "inject_sent" => {
-            let title = d["title"].as_str().unwrap_or_default();
-            let text = ex
-                .messages
-                .iter()
-                .rev()
-                .find(|m| m.title.as_deref() == Some(title))
-                .map(|m| m.text_en.clone())
-                .unwrap_or_default();
-            let (pos, radius_m) = named_place(w, &format!("{title} {text}"))?;
-            Some(Cue {
-                pos,
-                radius_m,
-                hold_s: 6.0,
-                label: format!("inject: {title}"),
-            })
-        }
-        "proposal_parsed" => {
-            let cmds: Vec<sim::Command> = serde_json::from_value(d["commands"].clone()).ok()?;
-            cmds_cue(&cmds, format!("proposal from {}", e.actor), 5.0)
-        }
-        "proposal_decided" if d["approve"].as_bool() == Some(true) => {
-            let p = ex.proposal(d["proposal"].as_u64()?)?;
-            cmds_cue(&p.commands, "approved".into(), 5.0)
-        }
-        "master_command" => {
-            let c: sim::Command = serde_json::from_value(d["command"].clone()).ok()?;
-            cmds_cue(std::slice::from_ref(&c), c.describe(), 6.0)
-        }
-        _ => None,
-    }
-}
-
-/// What the audience sees in the HUD feed.
-fn feed_line(e: &exercise::LogEntry) -> Option<String> {
-    let d = &e.data;
-    let s = match e.kind.as_str() {
-        "inject_sent" => format!(
-            "INJECT  {} -> {}",
-            d["title"].as_str()?,
-            d["recipients"]
-                .as_array()?
-                .iter()
-                .filter_map(|r| r.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        "proposal_decided" if d["approve"].as_bool()? => format!(
-            "APPROVED  {}",
-            d["facts"]
-                .as_str()?
-                .lines()
-                .next()?
-                .trim_start_matches("APPROVED: ")
-        ),
-        "proposal_decided" => "REJECTED  a proposal".to_string(),
-        "master_command" => format!(
-            "EXCON  {}",
-            serde_json::from_value::<sim::Command>(d["command"].clone())
-                .ok()?
-                .describe()
-        ),
-        "turn_resolving" => format!("TURN {} SIMULATING  ({} min)", d["turn"], d["minutes"]),
-        "turn_resolved" => format!("TURN {} RESOLVED  ({} min)", d["turn"], d["minutes"]),
-        // The English summary, not the raw reply: the HUD font has no Armenian, Georgian… glyphs.
-        "proposal_parsed" if e.actor != exercise::MASTER => format!(
-            "ORDERS  {}: {}",
-            e.actor,
-            truncate(d["summary"].as_str().filter(|s| !s.is_empty())?, 90)
-        ),
-        "rollback" => format!("ROLLBACK to turn {}", d["to_turn"]),
-        _ => return None,
-    };
-    Some(format!(
-        "{}  {}",
-        &e.clock[e.clock.len().saturating_sub(5)..],
-        s
-    ))
-}
-
-fn truncate(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(n).collect::<String>())
+    snap.generation = v.generation;
+    snap.turn = v.turn;
+    snap.phase = v.phase;
+    snap.time_s = v.time_s;
+    snap.clock = v.clock;
+    snap.weather = v.weather;
+    snap.ensemble = v.ensemble;
+    snap.stats = v.stats;
+    snap.cells = v.cells;
+    snap.arrival = v.arrival;
+    snap.intensity = v.intensity;
+    snap.probability = v.probability;
+    snap.buildings = v.buildings;
+    snap.roads = v.roads;
+    snap.road_segments = v.road_segments;
+    snap.lines = v.lines;
+    snap.drops = v.drops;
+    snap.traffic = v.traffic;
+    snap.deployments = v.deployments;
+    snap.warned = v.warned;
+    snap.last_turn = v.last_turn;
+    snap.resolving = v.resolving;
+    snap.clock_running = v.clock_running;
+    snap.feed = v.feed;
+    for cue in v.cues {
+        snap.cue_seen = snap.cue_seen.max(cue.seq);
+        snap.cues.push(cue);
     }
 }
 

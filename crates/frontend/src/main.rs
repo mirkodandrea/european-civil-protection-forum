@@ -174,7 +174,6 @@ pub enum Msg {
     Field(String, String),
     Discard,
     Filter(String),
-    Login(String),
     ClearError,
     PresenceCheck,
     PresenceUpdated(Result<Value, String>),
@@ -872,7 +871,6 @@ impl Component for App {
                 self.filter = query;
                 self.request_refresh(ctx);
             }
-            Msg::Login(key) => api::save_token(&key),
             Msg::ClearError => self.error.clear(),
         }
         // Hidden role panels do not re-render: their labels would otherwise be
@@ -886,14 +884,7 @@ impl Component for App {
             return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){crate::i18n::ex("Connessione all’esercitazione…")}else{&self.error}}</p></section></main>};
             #[cfg(not(feature = "standalone"))]
             {
-                let login = ctx.link().callback(|e: SubmitEvent| {
-                    e.prevent_default();
-                    let doc = window().document().unwrap();
-                    let input = doc.get_element_by_id("access-key").unwrap();
-                    use wasm_bindgen::JsCast;
-                    Msg::Login(input.unchecked_into::<web_sys::HtmlInputElement>().value())
-                });
-                return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){crate::i18n::ex("Connessione all’esercitazione…")}else{&self.error}}</p><form onsubmit={login}><label>{crate::i18n::ex("Chiave di accesso ricevuta da EXCON")}<input id="access-key" type="password" required=true/></label><button type="submit">{crate::i18n::ex("Apri esercitazione")}</button></form></section></main>};
+                return html! {<main class="page"><section class="card"><h1>{"PPRD East 4 · TTX"}</h1><p>{if self.error.is_empty(){crate::i18n::ex("Connessione all’esercitazione…")}else{&self.error}}</p></section></main>};
             }
         }
         let title = if self.is_evaluator() {
@@ -918,7 +909,7 @@ impl Component for App {
         };
         let l = self.lang();
         let l = l.as_str();
-        let href = |path: &str| format!("{path}?token={}", api::encode(&self.token));
+        let href = |path: &str| path.to_string();
         let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{i18n::t(l,"advance_turn")}</button></div>};
         let running = phase == "resolving" || self.state["clock_control"]["running"] == true;
         let sim_badge = if self.state.is_null() || phase == "briefing" || phase == "debrief" {
@@ -979,7 +970,14 @@ fn main() {
     {
         yew::Renderer::<maptest::MapTest>::new().render();
     } else {
-        yew::Renderer::<App>::new().render();
+        // `Renderer::new` would use `AppProps::default()`, where `visible` is
+        // false (the `prop_or(true)` only applies inside `html!`): the page
+        // would never redraw after loading.
+        yew::Renderer::<App>::with_props(AppProps {
+            visible: true,
+            ..Default::default()
+        })
+        .render();
     }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();

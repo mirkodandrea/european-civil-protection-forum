@@ -49,6 +49,7 @@ pub mod persist;
 mod decision_drafts;
 pub mod flow;
 mod forecast;
+pub mod view;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -57,6 +58,9 @@ pub struct AppState {
     pub access: Arc<Access>,
     #[cfg(not(target_arch = "wasm32"))]
     generation: watch::Receiver<u64>,
+    /// Recent view states, the bases of differential `/api/view/frame` answers.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    view_frames: Arc<Mutex<::view::wire::FrameCache>>,
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
     forecast_slot: Arc<tokio::sync::Semaphore>,
@@ -139,6 +143,7 @@ fn router_inner(
         llm,
         generation: rx,
         access: Arc::new(access),
+        view_frames: Default::default(),
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -222,6 +227,10 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 persist::post_injects,
                 persist::post_delete,
                 get_catalogue,
+                get_view_scene,
+                get_view_state,
+                get_view_frame,
+                get_view_scene_z,
                 get_debrief,
                 ws
             ],
@@ -263,7 +272,7 @@ pub async fn serve_with(
     addr: std::net::SocketAddr,
     storage: Option<(Arc<persist::Persist>, Option<persist::SavedSession>)>,
 ) -> anyhow::Result<()> {
-    let (app, state) = match storage {
+    let (app, _state) = match storage {
         None => router(ex, llm, Some(web_dir)),
         Some((persist, session)) => {
             let (app, state) = router_persistent(ex, llm, Some(web_dir), persist.clone());
@@ -281,9 +290,8 @@ pub async fn serve_with(
         }
     };
     println!(
-        "EXCON access: http://localhost:{}/play.html?token={}",
-        addr.port(),
-        state.access.master
+        "EXCON console: http://localhost:{}/play.html (no access keys: keep the port on a trusted network)",
+        addr.port()
     );
     tracing::info!(
         "web UI on http://{addr}; distribute individual player links from the EXCON console"
@@ -395,7 +403,7 @@ async fn get_access(principal: Principal) -> ApiResult {
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(
-        json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.iter().map(|(id, token)| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}&token={token}")})).collect::<Vec<_>>()}),
+        json!({"players": s.access.players.keys().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>()}),
     ))
 }
 
@@ -647,6 +655,79 @@ async fn get_presence(principal: Principal, s: AppState, role: String, peer: Str
         .get(&peer)
         .is_some_and(|(to, at)| to == &role && at.elapsed() < Duration::from_secs(5));
     Ok(Json(json!({"typing":typing,"from":peer})))
+}
+
+/// The static world for a viewer (fetched once). EXCON only, like the rest of
+/// the view: it shows the ground truth.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/view/scene"))]
+async fn get_view_scene(_principal: Principal, s: AppState) -> ApiResult {
+    let scn = s.lock().world.scn.clone();
+    Ok(Json(
+        serde_json::to_value(&*scn).map_err(|e| bad(e.to_string()))?,
+    ))
+}
+
+/// The newest view state, or `null` when the viewer already has
+/// `generation` (and every cue up to `cue`). See [`view`].
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::get("/api/view/state?<generation>&<cue>")
+)]
+async fn get_view_state(
+    _principal: Principal,
+    s: AppState,
+    generation: Option<u64>,
+    cue: Option<u64>,
+) -> ApiResult {
+    let have = ::view::Have {
+        generation: generation.unwrap_or(0),
+        cue: cue.unwrap_or(0),
+    };
+    let state = view::extract(&s.lock(), have);
+    Ok(Json(match state {
+        Some(state) => serde_json::to_value(state).map_err(|e| bad(e.to_string()))?,
+        None => Value::Null,
+    }))
+}
+
+/// `/api/view/scene`, zlib-deflated (the scenario is megabytes of JSON).
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/api/view/scene.z")]
+async fn get_view_scene_z(
+    _principal: Principal,
+    s: AppState,
+) -> Result<(rocket::http::ContentType, Vec<u8>), ApiError> {
+    let scn = s.lock().world.scn.clone();
+    let json = serde_json::to_vec(&*scn).map_err(|e| bad(e.to_string()))?;
+    Ok((rocket::http::ContentType::Binary, ::view::wire::compress(&json)))
+}
+
+/// The compact form of `/api/view/state`: only what changed since the viewer's
+/// `generation` when that is still known, zlib-compressed (see
+/// [`view::wire`]). `204` when the viewer is up to date.
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/api/view/frame?<generation>&<cue>")]
+async fn get_view_frame(
+    _principal: Principal,
+    s: AppState,
+    generation: Option<u64>,
+    cue: Option<u64>,
+) -> (Status, (rocket::http::ContentType, Vec<u8>)) {
+    let have = ::view::Have {
+        generation: generation.unwrap_or(0),
+        cue: cue.unwrap_or(0),
+    };
+    let binary = rocket::http::ContentType::Binary;
+    // The lock is held only for the synchronous extraction.
+    let Some(new) = view::extract(&s.lock(), have) else {
+        return (Status::NoContent, (binary, Vec::new()));
+    };
+    let frame = s
+        .view_frames
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .frame(new, have.generation);
+    (Status::Ok, (binary, ::view::wire::encode(&frame)))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/catalogue"))]

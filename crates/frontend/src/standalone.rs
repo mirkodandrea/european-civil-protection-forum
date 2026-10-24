@@ -171,7 +171,13 @@ pub fn standalone() -> Html {
                 *started.borrow_mut() = true;
                 wasm_bindgen_futures::spawn_local(async move {
                     gloo_timers::future::TimeoutFuture::new(100).await;
-                    viz::run(exercise, 0, "standalone".into());
+                    viz::run(
+                        Box::new(server::view::ExerciseSource(exercise)),
+                        viz::Info {
+                            llm_model: "standalone".into(),
+                            ..Default::default()
+                        },
+                    );
                 });
             }
             || ()
