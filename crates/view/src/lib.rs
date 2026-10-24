@@ -17,6 +17,7 @@ use scenario::{Pos, Scenario, WeatherSpec};
 use serde::{Deserialize, Serialize};
 
 mod packed;
+pub mod wire;
 
 /// What a viewer asks for: only changes after what it already has.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

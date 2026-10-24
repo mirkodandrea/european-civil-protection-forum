@@ -3254,3 +3254,54 @@ async fn view_tracks_follow_the_model_and_flames_agree() {
         assert_eq!(view::flame_length_m(fli), fire::flame_length_m(fli));
     }
 }
+
+#[tokio::test]
+async fn view_frames_are_compressed_differential_and_excon_only() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let fetch = |uri: String, key: &'static str| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .req(Method::Get, uri)
+                .header(Header::new("Authorization", format!("Bearer {key}")))
+                .dispatch()
+                .await;
+            (response.status(), response.into_bytes().await.unwrap_or_default())
+        }
+    };
+    assert_eq!(
+        fetch("/api/view/frame".into(), "test-mayor").await.0,
+        Status::Forbidden
+    );
+    let (status, body) = fetch("/api/view/frame".into(), "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let view::wire::Frame::Full(first) = view::wire::decode(&body).unwrap() else {
+        panic!("a viewer with nothing gets the whole state")
+    };
+    let uri = format!("/api/view/frame?generation={}", first.generation);
+    assert_eq!(fetch(uri.clone(), "test-master").await.0, Status::NoContent);
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":5})),
+    )
+    .await;
+    let (status, body) = fetch(uri, "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let view::wire::Frame::Delta(delta) = view::wire::decode(&body).unwrap() else {
+        panic!("a known base gets a delta")
+    };
+    let rebuilt = view::wire::apply(&first, &delta).unwrap();
+    let truth = server::view::extract(&shared.lock().unwrap(), view::Have::default()).unwrap();
+    assert_eq!(rebuilt.cells, truth.cells);
+    assert_eq!(rebuilt.arrival, truth.arrival);
+    assert_eq!(rebuilt.generation, truth.generation);
+    assert!(body.len() * 5 < serde_json::to_vec(&*first).unwrap().len());
+}

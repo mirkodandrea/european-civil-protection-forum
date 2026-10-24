@@ -58,6 +58,9 @@ pub struct AppState {
     pub access: Arc<Access>,
     #[cfg(not(target_arch = "wasm32"))]
     generation: watch::Receiver<u64>,
+    /// Recent view states, the bases of differential `/api/view/frame` answers.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    view_frames: Arc<Mutex<::view::wire::FrameCache>>,
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
     forecast_slot: Arc<tokio::sync::Semaphore>,
@@ -140,6 +143,7 @@ fn router_inner(
         llm,
         generation: rx,
         access: Arc::new(access),
+        view_frames: Default::default(),
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -225,6 +229,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_catalogue,
                 get_view_scene,
                 get_view_state,
+                get_view_frame,
                 get_debrief,
                 ws
             ],
@@ -683,6 +688,34 @@ async fn get_view_state(
         Some(state) => serde_json::to_value(state).map_err(|e| bad(e.to_string()))?,
         None => Value::Null,
     }))
+}
+
+/// The compact form of `/api/view/state`: only what changed since the viewer's
+/// `generation` when that is still known, zlib-compressed (see
+/// [`view::wire`]). `204` when the viewer is up to date.
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/api/view/frame?<generation>&<cue>")]
+async fn get_view_frame(
+    _principal: Principal,
+    s: AppState,
+    generation: Option<u64>,
+    cue: Option<u64>,
+) -> (Status, (rocket::http::ContentType, Vec<u8>)) {
+    let have = ::view::Have {
+        generation: generation.unwrap_or(0),
+        cue: cue.unwrap_or(0),
+    };
+    let binary = rocket::http::ContentType::Binary;
+    // The lock is held only for the synchronous extraction.
+    let Some(new) = view::extract(&s.lock(), have) else {
+        return (Status::NoContent, (binary, Vec::new()));
+    };
+    let frame = s
+        .view_frames
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .frame(new, have.generation);
+    (Status::Ok, (binary, ::view::wire::encode(&frame)))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/catalogue"))]

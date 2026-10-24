@@ -122,6 +122,7 @@ pub fn new(ex: Exercise) -> AppState {
             .with_shared_cassette(tape())
             .with_runtime_config(),
         access: Arc::new(access),
+        view_frames: Default::default(),
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),

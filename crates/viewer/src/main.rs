@@ -77,24 +77,40 @@ impl ViewSource for Remote {
                 token,
                 updates: None,
             };
+            // What the renderer holds: the base for the next delta.
+            let mut current: Option<ViewState> = None;
             let mut have = Have::default();
             let mut failing = false;
             loop {
                 let path = format!(
-                    "/api/view/state?generation={}&cue={}",
+                    "/api/view/frame?generation={}&cue={}",
                     have.generation, have.cue
                 );
-                match worker
-                    .get(&path)
-                    .and_then(|b| Ok(serde_json::from_slice::<Option<ViewState>>(&b)?))
-                {
+                let next = worker.get(&path).and_then(|body| {
+                    // 204: nothing new.
+                    if body.is_empty() {
+                        return Ok(None);
+                    }
+                    match view::wire::decode(&body).map_err(anyhow::Error::msg)? {
+                        view::wire::Frame::Full(state) => Ok(Some(*state)),
+                        view::wire::Frame::Delta(delta) => {
+                            let base = current.as_ref().context("delta without a base")?;
+                            Ok(Some(view::wire::apply(base, &delta).map_err(anyhow::Error::msg)?))
+                        }
+                    }
+                });
+                match next {
                     Ok(Some(state)) => {
                         failing = false;
-                        // Blocks here until the renderer has taken the previous state.
                         have = Have {
                             generation: state.generation,
                             cue: state.cues.iter().map(|c| c.seq).max().unwrap_or(have.cue),
                         };
+                        // The base keeps no cues: they were delivered with this frame.
+                        let mut base = state.clone();
+                        base.cues.clear();
+                        current = Some(base);
+                        // Blocks here until the renderer has taken the previous state.
                         if tx.send(state).is_err() {
                             return;
                         }
@@ -105,6 +121,9 @@ impl ViewSource for Remote {
                             eprintln!("view: {e:#} (retrying)");
                         }
                         failing = true;
+                        // Start over from a whole state.
+                        current = None;
+                        have = Have::default();
                         std::thread::sleep(Duration::from_secs(1));
                     }
                 }

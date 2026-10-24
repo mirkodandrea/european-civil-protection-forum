@@ -108,6 +108,11 @@ that contract:
 - HTTP: `GET /api/view/scene` (once) and `GET /api/view/state?generation=&cue=`
   (`null` if nothing is new). EXCON key only, because the view shows the
   ground truth;
+- compact HTTP: `GET /api/view/frame?generation=&cue=` answers `204` when up to
+  date, otherwise a zlib-deflated JSON frame: the grid arrays and road flags as
+  sparse patches against the viewer's generation when the server still holds
+  it, or the whole state. Measured on the Valverde scenario: 1.0 MB JSON state →
+  46 KB full frame → about 2 KB per simulated minute;
 - remote native screen: `ttx --headless` on the server, then
   `ttx-viewer --server http://host:8080 --token EXCON_KEY` (or `TTX_TOKEN`).
 

@@ -30,7 +30,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 - Only `sim::World::apply` changes the world, and only with a `Command`. The LLM returns JSON that is deserialised and validated. It never drives the sim directly.
 - Never hold the exercise mutex across `.await` (see `server/src/flow.rs`). The renderer only `try_lock`s and reads.
 - Model code (`scenario`, `fire`, `sim`, `exercise`, `llm`) stays free of Bevy and HTTP and is tested headless.
-- The 3D viewer (`viz`) never sees the model: it depends only on `view` (serde protocol: `ViewState`, `ViewSource`). `server::view::extract` builds the state; `ExerciseSource` serves in-process and standalone WASM, `GET /api/view/scene|state` (EXCON key only) serves remote viewers such as `ttx-viewer` or a future HTML canvas. Add drawn data to `view::ViewState` + `extract`, never a model dependency in `viz`.
+- The 3D viewer (`viz`) never sees the model: it depends only on `view` (serde protocol: `ViewState`, `ViewSource`). `server::view::extract` builds the state; `ExerciseSource` serves in-process and standalone WASM, `GET /api/view/scene|state|frame` (EXCON key only; `frame` is the differential, deflated form, see `view::wire`) serves remote viewers such as `ttx-viewer` or a future HTML canvas. Add drawn data to `view::ViewState` + `extract`, never a model dependency in `viz`.
 - Integrate over simulated time, never per call (step-size invariance).
 - `vegetation_changes` is NaN-sparse. Suppression acts only on unburnt fuel. Single-cell ignitions fizzle, so use ≥ 40 m.
 - Keep docs in `docs/` and tests in step with code changes.
