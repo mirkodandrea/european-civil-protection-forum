@@ -45,26 +45,8 @@ pub fn token() -> String {
         .get("role")
         .or_else(|| params.get("evaluator"))
         .unwrap_or("master".into());
-    let store = format!("ttx-access:{context}");
-    let storage = w.session_storage().ok().flatten();
-    if let Some(key) = params.get("token") {
-        if let Some(s) = &storage {
-            let _ = s.set_item(&store, &key);
-        }
-        params.delete("token");
-        let _ = w
-            .history()
-            .and_then(|h| h.replace_state_with_url(&JsValue::NULL, "", Some(&url.href())));
-        return key;
-    }
-    storage
-        .and_then(|s| s.get_item(&store).ok().flatten())
-        .unwrap_or_default()
-}
-pub fn save_token(key: &str) {
-    let url = web_sys::Url::new(&window().location().href().unwrap()).unwrap();
-    url.search_params().set("token", key);
-    let _ = window().location().set_href(&url.href());
+    // No secret: the server takes the identity itself as the bearer value.
+    context
 }
 #[cfg(not(feature = "standalone"))]
 pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {

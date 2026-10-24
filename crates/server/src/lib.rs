@@ -272,7 +272,7 @@ pub async fn serve_with(
     addr: std::net::SocketAddr,
     storage: Option<(Arc<persist::Persist>, Option<persist::SavedSession>)>,
 ) -> anyhow::Result<()> {
-    let (app, state) = match storage {
+    let (app, _state) = match storage {
         None => router(ex, llm, Some(web_dir)),
         Some((persist, session)) => {
             let (app, state) = router_persistent(ex, llm, Some(web_dir), persist.clone());
@@ -290,9 +290,8 @@ pub async fn serve_with(
         }
     };
     println!(
-        "EXCON access: http://localhost:{}/play.html?token={}",
-        addr.port(),
-        state.access.master
+        "EXCON console: http://localhost:{}/play.html (no access keys: keep the port on a trusted network)",
+        addr.port()
     );
     tracing::info!(
         "web UI on http://{addr}; distribute individual player links from the EXCON console"
@@ -404,7 +403,7 @@ async fn get_access(principal: Principal) -> ApiResult {
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(
-        json!({"players": s.access.players.iter().map(|(role, token)| json!({"role":role,"url":format!("/player.html?role={role}&token={token}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.iter().map(|(id, token)| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}&token={token}")})).collect::<Vec<_>>()}),
+        json!({"players": s.access.players.keys().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>()}),
     ))
 }
 

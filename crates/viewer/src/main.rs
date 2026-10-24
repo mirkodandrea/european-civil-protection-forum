@@ -1,13 +1,13 @@
 //! `ttx-viewer` — the 3D big screen as a client of a running `ttx` server.
 //!
 //! ```text
-//! ttx-viewer --server http://host:8080 --token EXCON_KEY
+//! ttx-viewer --server http://host:8080
 //! ```
 //!
 //! The server (usually `ttx --headless`) keeps the exercise; this process only
-//! draws what `/api/view/*` reports. The view shows the ground truth, so the
-//! EXCON access key is required (the one printed at server start; also read
-//! from `TTX_TOKEN`). It can be started, closed and restarted at will.
+//! draws what `/api/view/*` reports (as the EXCON, since it shows the ground
+//! truth; the server has no access keys). It can be started, closed and
+//! restarted at will.
 
 use std::io::Read;
 use std::sync::{mpsc, Arc};
@@ -55,7 +55,7 @@ impl Remote {
                 Ok(body)
             }
             Err(ureq::Error::Status(401 | 403, _)) => {
-                bail!("the server refused the access key (the view needs the EXCON key)")
+                bail!("the server refused the viewer (is it a ttx server of this version?)")
             }
             Err(e) => bail!("{path}: {e}"),
         }
@@ -145,15 +145,14 @@ impl ViewSource for Remote {
 
 fn main() -> Result<()> {
     let mut server = "http://127.0.0.1:8080".to_string();
-    let mut token = std::env::var("TTX_TOKEN").unwrap_or_default();
+    let token = "master".to_string();
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let mut val = || it.next().with_context(|| format!("{k} needs a value"));
         match k.as_str() {
             "--server" => server = val()?,
-            "--token" => token = val()?,
             "-h" | "--help" => {
-                println!("ttx-viewer [--server http://127.0.0.1:8080] --token EXCON_KEY   (or TTX_TOKEN)");
+                println!("ttx-viewer [--server http://127.0.0.1:8080]");
                 return Ok(());
             }
             other => bail!("unknown argument {other}"),

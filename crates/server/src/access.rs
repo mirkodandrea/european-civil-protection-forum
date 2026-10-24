@@ -1,7 +1,7 @@
-//! Per-run capability keys. Player identities are bound to keys, never URL claims.
+//! Who is calling. There are no secrets: a caller's key is its identity (see
+//! [`Access::new`]), so pages and tools just name who they are.
 #[cfg(not(target_arch = "wasm32"))]
 use crate::AppState;
-use rand::RngCore;
 #[cfg(not(target_arch = "wasm32"))]
 use rocket::http::{Method, Status};
 #[cfg(not(target_arch = "wasm32"))]
@@ -19,6 +19,9 @@ pub enum Principal {
     Evaluator { id: String },
 }
 
+/// The EXCON identity, also its bearer value.
+pub const MASTER_KEY: &str = "master";
+
 #[derive(Clone)]
 pub struct Access {
     pub master: String,
@@ -26,18 +29,19 @@ pub struct Access {
     pub evaluators: BTreeMap<String, String>,
 }
 
-fn key() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 impl Access {
+    /// No secrets: the "key" of each participant is its own identity
+    /// (`master`, a role id, `evaluator-N`), which the pages send as the
+    /// bearer value. The exercise runs on a trusted local network; do not
+    /// expose the port to untrusted users.
     pub fn new(roles: impl IntoIterator<Item = String>) -> Self {
         Self {
-            master: key(),
-            players: roles.into_iter().map(|role| (role, key())).collect(),
-            evaluators: (1..=3).map(|n| (format!("evaluator-{n}"), key())).collect(),
+            master: MASTER_KEY.into(),
+            players: roles.into_iter().map(|role| (role.clone(), role)).collect(),
+            evaluators: (1..=3)
+                .map(|n| format!("evaluator-{n}"))
+                .map(|id| (id.clone(), id))
+                .collect(),
         }
     }
     pub fn local(roles: impl IntoIterator<Item = String>) -> Self {
