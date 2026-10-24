@@ -16,6 +16,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use view::{Have, ViewSource, ViewState};
 
+/// Polling period: 30 per second. An idle poll is a cheap `204`.
+const POLL: Duration = Duration::from_millis(33);
+
 /// Polls the server from a worker thread so a slow network never stalls a frame.
 struct Remote {
     base: String,
@@ -62,7 +65,8 @@ impl Remote {
 impl ViewSource for Remote {
     fn scenario(&mut self) -> Result<Arc<scenario::Scenario>, String> {
         let load = || -> Result<scenario::Scenario> {
-            let body = self.get("/api/view/scene")?;
+            let body = view::wire::decompress(&self.get("/api/view/scene.z")?)
+                .map_err(anyhow::Error::msg)?;
             serde_json::from_slice(&body).context("scenario")
         };
         let scn = load().map_err(|e| format!("{e:#}"))?;
@@ -127,7 +131,7 @@ impl ViewSource for Remote {
                         std::thread::sleep(Duration::from_secs(1));
                     }
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(POLL);
             }
         });
         Ok(Arc::new(scn))

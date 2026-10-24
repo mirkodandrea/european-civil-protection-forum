@@ -3279,6 +3279,15 @@ async fn view_frames_are_compressed_differential_and_excon_only() {
         fetch("/api/view/frame".into(), "test-mayor").await.0,
         Status::Forbidden
     );
+    let (status, zscene) = fetch("/api/view/scene.z".into(), "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let scene: scenario::Scenario =
+        serde_json::from_slice(&view::wire::decompress(&zscene).unwrap()).unwrap();
+    assert_eq!(scene.grid.len(), shared.lock().unwrap().world.scn.grid.len());
+    assert_eq!(
+        fetch("/api/view/scene.z".into(), "test-mayor").await.0,
+        Status::Forbidden
+    );
     let (status, body) = fetch("/api/view/frame".into(), "test-master").await;
     assert_eq!(status, Status::Ok);
     let view::wire::Frame::Full(first) = view::wire::decode(&body).unwrap() else {

@@ -105,7 +105,7 @@ and has no dependency on `sim`, `fire` or `exercise`. Three transports share
 that contract:
 
 - in-process (`ttx` window, and the standalone WASM app): `ExerciseSource`;
-- HTTP: `GET /api/view/scene` (once) and `GET /api/view/state?generation=&cue=`
+- HTTP: `GET /api/view/scene` (once; `scene.z` is its zlib form, 12.6 MB → 3.1 MB) and `GET /api/view/state?generation=&cue=`
   (`null` if nothing is new). EXCON key only, because the view shows the
   ground truth;
 - compact HTTP: `GET /api/view/frame?generation=&cue=` answers `204` when up to

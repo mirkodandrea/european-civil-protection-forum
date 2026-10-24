@@ -206,23 +206,32 @@ pub enum Frame {
     Delta(Box<ViewDelta>),
 }
 
-pub fn encode(frame: &Frame) -> Vec<u8> {
-    let json = serde_json::to_vec(frame).expect("view frames serialize");
+/// Zlib-deflate `raw`.
+pub fn compress(raw: &[u8]) -> Vec<u8> {
     let mut z = ZlibEncoder::new(Vec::new(), Compression::fast());
-    z.write_all(&json).expect("in-memory write");
+    z.write_all(raw).expect("in-memory write");
     z.finish().expect("in-memory write")
+}
+
+/// Inflate zlib `bytes`, refusing absurd sizes.
+pub fn decompress(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut raw = Vec::new();
+    ZlibDecoder::new(bytes)
+        .take(MAX_FRAME)
+        .read_to_end(&mut raw)
+        .map_err(|e| e.to_string())?;
+    Ok(raw)
+}
+
+pub fn encode(frame: &Frame) -> Vec<u8> {
+    compress(&serde_json::to_vec(frame).expect("view frames serialize"))
 }
 
 /// Largest inflated frame accepted, a guard against decompression bombs.
 const MAX_FRAME: u64 = 512 * 1024 * 1024;
 
 pub fn decode(bytes: &[u8]) -> Result<Frame, String> {
-    let mut json = Vec::new();
-    ZlibDecoder::new(bytes)
-        .take(MAX_FRAME)
-        .read_to_end(&mut json)
-        .map_err(|e| e.to_string())?;
-    serde_json::from_slice(&json).map_err(|e| e.to_string())
+    serde_json::from_slice(&decompress(bytes)?).map_err(|e| e.to_string())
 }
 
 /// Sender side: remembers recent states so a viewer's generation can be diffed.
@@ -328,6 +337,7 @@ mod tests {
         };
         assert!(apply(&base, &d).is_err());
         assert!(decode(b"not zlib").is_err());
+        assert_eq!(decompress(&compress(b"scene")).unwrap(), b"scene");
     }
 
     #[test]

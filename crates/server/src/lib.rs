@@ -230,6 +230,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_view_scene,
                 get_view_state,
                 get_view_frame,
+                get_view_scene_z,
                 get_debrief,
                 ws
             ],
@@ -688,6 +689,18 @@ async fn get_view_state(
         Some(state) => serde_json::to_value(state).map_err(|e| bad(e.to_string()))?,
         None => Value::Null,
     }))
+}
+
+/// `/api/view/scene`, zlib-deflated (the scenario is megabytes of JSON).
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/api/view/scene.z")]
+async fn get_view_scene_z(
+    _principal: Principal,
+    s: AppState,
+) -> Result<(rocket::http::ContentType, Vec<u8>), ApiError> {
+    let scn = s.lock().world.scn.clone();
+    let json = serde_json::to_vec(&*scn).map_err(|e| bad(e.to_string()))?;
+    Ok((rocket::http::ContentType::Binary, ::view::wire::compress(&json)))
 }
 
 /// The compact form of `/api/view/state`: only what changed since the viewer's
