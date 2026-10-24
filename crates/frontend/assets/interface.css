@@ -349,3 +349,31 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .scenario-tabs{display:flex;gap:4px;flex-wrap:wrap;margin:14px 0;border-bottom:1px solid var(--line)}.scenario-tabs button{border-bottom:0;border-radius:8px 8px 0 0;background:#f1f5f1}.scenario-tabs button.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .scenario-tab{margin-bottom:16px}.scenario-tab h4{margin:14px 0 6px}.scenario-tab .inject-row{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;padding:10px 14px}.scenario-tab .inject-row.selected{border-color:var(--accent);box-shadow:0 0 0 2px #cfe6dc}.scenario-tab .settings-fields{margin-bottom:8px}.scenario-tab .settings-fields .wide{flex-basis:100%}.scenario-tab label.check{display:flex;flex:0 0 auto;min-width:0;align-items:center;gap:6px;font-size:13px}.scenario-tab label.check input{width:auto}.scenario-tab fieldset>label{display:grid;gap:3px;font-size:12px;margin:8px 0}
 .ignition-map{width:100%;max-width:560px;aspect-ratio:1;border:1px solid var(--line);border-radius:8px;cursor:crosshair;display:block;margin:8px 0 14px}
+
+/* ---- Scenario editor: Inject tab ---- */
+.inject-tab .inject-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}
+.inject-tab .inject-turn{margin:14px 0 6px;font-size:13px;border-bottom:1px solid var(--line)}
+.inject-tab .inject-item{border:1px solid var(--line);border-radius:8px;margin:4px 0;padding:0}
+.inject-tab .inject-item[open]{box-shadow:0 0 0 2px #cfe6dc;border-color:var(--accent)}
+.inject-tab .inject-item>summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;min-width:0}
+.inject-tab .inject-id{font-family:monospace;font-size:12px;color:var(--muted,#667)}
+.inject-tab .inject-title{flex:1 1 140px;min-width:0;overflow-wrap:anywhere;font-weight:600}
+.inject-tab .inject-chips,.inject-tab .chips{display:flex;flex-wrap:wrap;gap:4px}
+.inject-tab .chip{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:12px;background:transparent;color:inherit}
+.inject-tab .chip.on{background:#cfe6dc;border-color:var(--accent);color:#123}
+.inject-tab .chip.event{border-style:dashed}
+.inject-tab button.chip{cursor:pointer}
+.inject-tab .inject-body{padding:6px 10px 10px;display:grid;gap:8px;min-width:0}
+.inject-tab .inject-body label{display:grid;gap:3px;font-size:12px;min-width:0}
+.inject-tab .inject-body input,.inject-tab .inject-body textarea,.inject-tab .inject-json textarea{width:100%;box-sizing:border-box;max-width:100%}
+.inject-tab .hint{display:block;font-weight:normal;color:var(--muted,#667);font-size:11px}
+.inject-tab .inject-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.inject-tab .confirm-inline{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center}
+.inject-tab .confirm-inline>summary{cursor:pointer;color:#9b1c1c;border:1px solid #d9a3a3;border-radius:6px;padding:3px 8px;list-style:none}
+.inject-tab .inject-json{margin-top:14px}
+.inject-tab .inject-json>summary{cursor:pointer;font-weight:600}
+.inject-tab button.chip{width:auto;height:auto;min-width:0;min-height:0;line-height:1.4;padding:3px 10px;border-radius:999px}
+.inject-tab .inject-recipients .label{font-size:12px}
+.inject-tab .inject-actions button{min-width:36px}
+@media (max-width:560px){.inject-tab .inject-body .settings-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inject-tab .inject-body .settings-fields label{flex:none}}
+.inject-tab .confirm-inline{display:inline-block}.inject-tab .confirm-inline[open]{display:inline-flex}.inject-tab .confirm-inline:not([open])>:not(summary){display:none}
