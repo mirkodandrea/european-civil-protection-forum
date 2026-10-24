@@ -30,6 +30,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 - Only `sim::World::apply` changes the world, and only with a `Command`. The LLM returns JSON that is deserialised and validated. It never drives the sim directly.
 - Never hold the exercise mutex across `.await` (see `server/src/flow.rs`). The renderer only `try_lock`s and reads.
 - Model code (`scenario`, `fire`, `sim`, `exercise`, `llm`) stays free of Bevy and HTTP and is tested headless.
+- The 3D viewer (`viz`) never sees the model: it depends only on `view` (serde protocol: `ViewState`, `ViewSource`). `server::view::extract` builds the state; `ExerciseSource` serves in-process and standalone WASM, `GET /api/view/scene|state` (EXCON key only) serves remote viewers such as `ttx-viewer` or a future HTML canvas. Add drawn data to `view::ViewState` + `extract`, never a model dependency in `viz`.
 - Integrate over simulated time, never per call (step-size invariance).
 - `vegetation_changes` is NaN-sparse. Suppression acts only on unburnt fuel. Single-cell ignitions fizzle, so use ≥ 40 m.
 - Keep docs in `docs/` and tests in step with code changes.
@@ -41,6 +42,7 @@ cargo test --release --workspace
 TTX_LIVE_LLM=1 cargo test -p llm --test live -- --nocapture
 ./scripts/build_frontend.sh                # Rust/Yew → web/dist (before HTTP startup)
 cargo run --release -p app [-- --headless] # :8080, master.html / player.html
+cargo run --release -p viewer -- --server http://host:8080 --token EXCON_KEY   # remote 3D screen
 cargo run -p scenario --bin gen-scenario
 ./scripts/demo_session.sh                  # scripted 2-turn session against a running ttx
 echo "$PWD/runs/x.png" > runs/shot.req     # simulator window screenshot (or press P)

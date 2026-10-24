@@ -355,7 +355,7 @@ pub struct Tongue {
 /// Tongue parameters for a cell: `fli` kW/m, `p` probability, `flaming` in
 /// 0..1 (1 = the front just arrived), `halo` = below the cutoff.
 pub fn tongue_for(fli: f32, p: f32, flaming: f32, halo: bool, cutoff: f32) -> Tongue {
-    let l = fire::flame_length_m(fli).max(1.2);
+    let l = view::flame_length_m(fli).max(1.2);
     if halo {
         let conf = (p / cutoff.max(1e-3)).clamp(0.0, 1.0);
         let height = l * FLAME_EXAGGERATION * 0.35 * (0.4 + 0.6 * conf);

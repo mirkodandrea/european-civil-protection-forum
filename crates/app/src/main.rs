@@ -241,7 +241,14 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "viz")]
     if std::env::var("TTX_SNAPSHOT").is_ok() {
-        viz::run(ex, a.port, "offline visual fixture".into());
+        viz::run(
+            Box::new(server::view::ExerciseSource(ex)),
+            viz::Info {
+                llm_model: "offline visual fixture".into(),
+                port: Some(a.port),
+                remote: None,
+            },
+        );
         return Ok(());
     }
 
@@ -281,6 +288,13 @@ fn main() -> Result<()> {
             }
         })?;
     #[cfg(feature = "viz")]
-    viz::run(ex, a.port, model);
+    viz::run(
+        Box::new(server::view::ExerciseSource(ex)),
+        viz::Info {
+            llm_model: model,
+            port: Some(a.port),
+            remote: None,
+        },
+    );
     Ok(())
 }

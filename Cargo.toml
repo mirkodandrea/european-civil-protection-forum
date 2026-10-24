@@ -9,7 +9,9 @@ members = [
     "crates/exercise",
     "crates/server",
     "crates/frontend",
+    "crates/view",
     "crates/viz",
+    "crates/viewer",
     "crates/app",
 ]
 
@@ -26,6 +28,7 @@ sim = { path = "crates/sim" }
 llm = { path = "crates/llm" }
 exercise = { path = "crates/exercise" }
 server = { path = "crates/server" }
+view = { path = "crates/view" }
 viz = { path = "crates/viz" }
 
 serde = { version = "1", features = ["derive"] }

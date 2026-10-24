@@ -295,6 +295,17 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             .await
         }
         ("GET", "/api/catalogue") => get_catalogue(principal.clone(), s.clone()).await,
+        ("GET", "/api/view/scene") => get_view_scene(principal.clone(), s.clone()).await,
+        ("GET", "/api/view/state") => {
+            let have: ::view::Have = serde_urlencoded::from_str(query).unwrap_or_default();
+            get_view_state(
+                principal.clone(),
+                s.clone(),
+                Some(have.generation),
+                Some(have.cue),
+            )
+            .await
+        }
         ("GET", "/api/debrief") => get_debrief(principal.clone(), s.clone()).await,
         ("POST", "/api/player/<role>/chat") => {
             post_player_chat(
@@ -571,6 +582,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/player/<role>/presence"),
     ("GET", "/api/player/<role>/presence"),
     ("GET", "/api/catalogue"),
+    ("GET", "/api/view/scene"),
+    ("GET", "/api/view/state"),
     ("GET", "/api/debrief"),
     ("POST", "/api/player/<role>/chat"),
     ("POST", "/api/master/chat"),

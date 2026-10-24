@@ -5094,6 +5094,7 @@ dependencies = [
  "sim",
  "tokio",
  "tracing",
+ "view",
  "wasm-bindgen-futures",
  "web-time",
 ]
@@ -5934,6 +5935,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "ureq"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "once_cell",
+ "url",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5988,20 +6001,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "view"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "scenario",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "scenario",
+ "serde_json",
+ "ureq",
+ "view",
+ "viz",
+]
+
+[[package]]
 name = "viz"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
- "exercise",
- "fire",
  "getrandom 0.3.4",
  "rand 0.8.8",
  "rand_chacha",
  "scenario",
  "serde_json",
- "sim",
  "uuid",
+ "view",
  "wgpu",
 ]
 

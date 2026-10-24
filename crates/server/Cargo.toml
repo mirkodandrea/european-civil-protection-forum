@@ -11,6 +11,7 @@ scenario.workspace = true
 sim.workspace = true
 fire.workspace = true
 exercise.workspace = true
+view.workspace = true
 llm.workspace = true
 serde.workspace = true
 serde_json.workspace = true

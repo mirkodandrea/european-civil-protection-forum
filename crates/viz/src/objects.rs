@@ -281,7 +281,7 @@ pub fn update(
     }
     // Water drops and the zone grid as gizmos (cheap, redrawn every frame).
     let show_marks = std::env::var("TTX_SNAPSHOT_MARKS").as_deref() != Ok("0");
-    for (at, r) in snap.drops.iter().filter(|_| show_marks) {
+    for view::Drop { at, radius_m: r } in snap.drops.iter().filter(|_| show_marks) {
         let pts: Vec<Vec3> = (0..=40)
             .map(|k| {
                 let a = k as f32 / 40.0 * std::f32::consts::TAU;
@@ -369,7 +369,7 @@ pub fn update(
     for entity in &road_layers {
         commands.entity(entity).despawn();
     }
-    for (_, from, to, closed, cut) in &snap.road_segments {
+    for view::RoadSegment { from, to, closed, cut_by_fire: cut, .. } in &snap.road_segments {
         if !show_marks || (!closed && !cut) {
             continue;
         }
@@ -391,7 +391,7 @@ pub fn update(
         for e in layers.iter() {
             commands.entity(e).despawn();
         }
-        for (a, b, w) in &snap.lines {
+        for view::FireLine { from: a, to: b, width_m: w } in &snap.lines {
             commands.spawn((
                 PbrBundle {
                     mesh: meshes.add(ribbon(s, &[*a, *b], *w * 0.6, 2.0)),

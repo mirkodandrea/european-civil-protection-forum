@@ -49,6 +49,7 @@ pub mod persist;
 mod decision_drafts;
 pub mod flow;
 mod forecast;
+pub mod view;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -222,6 +223,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 persist::post_injects,
                 persist::post_delete,
                 get_catalogue,
+                get_view_scene,
+                get_view_state,
                 get_debrief,
                 ws
             ],
@@ -647,6 +650,39 @@ async fn get_presence(principal: Principal, s: AppState, role: String, peer: Str
         .get(&peer)
         .is_some_and(|(to, at)| to == &role && at.elapsed() < Duration::from_secs(5));
     Ok(Json(json!({"typing":typing,"from":peer})))
+}
+
+/// The static world for a viewer (fetched once). EXCON only, like the rest of
+/// the view: it shows the ground truth.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/view/scene"))]
+async fn get_view_scene(_principal: Principal, s: AppState) -> ApiResult {
+    let scn = s.lock().world.scn.clone();
+    Ok(Json(
+        serde_json::to_value(&*scn).map_err(|e| bad(e.to_string()))?,
+    ))
+}
+
+/// The newest view state, or `null` when the viewer already has
+/// `generation` (and every cue up to `cue`). See [`view`].
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::get("/api/view/state?<generation>&<cue>")
+)]
+async fn get_view_state(
+    _principal: Principal,
+    s: AppState,
+    generation: Option<u64>,
+    cue: Option<u64>,
+) -> ApiResult {
+    let have = ::view::Have {
+        generation: generation.unwrap_or(0),
+        cue: cue.unwrap_or(0),
+    };
+    let state = view::extract(&s.lock(), have);
+    Ok(Json(match state {
+        Some(state) => serde_json::to_value(state).map_err(|e| bad(e.to_string()))?,
+        None => Value::Null,
+    }))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/catalogue"))]

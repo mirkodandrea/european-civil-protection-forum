@@ -76,8 +76,8 @@ pub fn hold(
     } else if let Some(id) = at.strip_prefix("task:").and_then(|s| s.parse::<u64>().ok()) {
         snap.deployments
             .iter()
-            .find(|(t, _)| t.id == id)
-            .map(|(t, _)| t.position(snap.time_s))
+            .find(|t| t.id == id)
+            .map(|t| t.position(snap.time_s))
     } else {
         at.split_once(':')
             .and_then(|(x, y)| Some([x.parse().ok()?, y.parse().ok()?]))

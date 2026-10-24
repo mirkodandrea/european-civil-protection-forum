@@ -96,6 +96,23 @@ The frontend build writes `web/dist/` (ignored by git), including compatible `.h
 
 Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The default landscape is the Factory-generated Valverde valley. Regenerate it with `python3 scripts/scenario_factory.py landscape` (requires NumPy). The historical calibrated scenario remains available with `--scenario data/scenarios/synthetic_valley.json`; `cargo run -p scenario --bin gen-scenario` regenerates that historical template.
 
+## Model / 3D viewer split
+
+The exercise and its 3D view are independent. `crates/view` defines the
+serde contract (`ViewState`, `Deployment` tracks, grid arrays packed in
+base64); `server::view` produces it from the exercise; `viz` (Bevy) draws it
+and has no dependency on `sim`, `fire` or `exercise`. Three transports share
+that contract:
+
+- in-process (`ttx` window, and the standalone WASM app): `ExerciseSource`;
+- HTTP: `GET /api/view/scene` (once) and `GET /api/view/state?generation=&cue=`
+  (`null` if nothing is new). EXCON key only, because the view shows the
+  ground truth;
+- remote native screen: `ttx --headless` on the server, then
+  `ttx-viewer --server http://host:8080 --token EXCON_KEY` (or `TTX_TOKEN`).
+
+An HTML/WebGL viewer only has to implement the same two calls.
+
 ## Operational model from propagator_abm
 
 `cargo run --release -p app -- --operational-model` enables road routing,
