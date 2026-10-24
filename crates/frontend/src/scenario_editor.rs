@@ -61,29 +61,38 @@ fn upd<E: 'static>(
     })
 }
 
-fn field(label: &'static str, value: String, cb: Callback<String>) -> Html {
-    html! {<label>{ex(label)}<input value={value} oninput={cb.reform(api::input)}/></label>}
+/// Label text, tooltip and, when there is one, a visible explanation.
+fn hint(tip: &'static str) -> Html {
+    if tip.is_empty() {
+        Html::default()
+    } else {
+        html! {<small class="hint">{ex(tip)}</small>}
+    }
 }
 
-fn number(label: &'static str, value: String, cb: Callback<String>) -> Html {
-    html! {<label>{ex(label)}<input type="number" step="any" value={value} oninput={cb.reform(api::input)}/></label>}
+fn field(label: &'static str, tip: &'static str, value: String, cb: Callback<String>) -> Html {
+    html! {<label title={ex(tip)}>{ex(label)}<input value={value} oninput={cb.reform(api::input)}/>{hint(tip)}</label>}
 }
 
-fn area(label: &'static str, value: String, rows: &'static str, cb: Callback<String>) -> Html {
-    html! {<label class="wide">{ex(label)}<textarea rows={rows} value={value} oninput={cb.reform(api::input)}/></label>}
+fn number(label: &'static str, tip: &'static str, value: String, cb: Callback<String>) -> Html {
+    html! {<label title={ex(tip)}>{ex(label)}<input type="number" step="any" value={value} oninput={cb.reform(api::input)}/>{hint(tip)}</label>}
 }
 
-fn check(label: String, on: bool, cb: Callback<bool>) -> Html {
-    html! {<label class="check"><input type="checkbox" checked={on} onchange={cb.reform(|e: Event| {
+fn area(label: &'static str, tip: &'static str, value: String, rows: &'static str, cb: Callback<String>) -> Html {
+    html! {<label class="wide" title={ex(tip)}>{ex(label)}<textarea rows={rows} value={value} oninput={cb.reform(api::input)}/>{hint(tip)}</label>}
+}
+
+fn check(label: String, tip: &'static str, on: bool, cb: Callback<bool>) -> Html {
+    html! {<label class="check" title={ex(tip)}><input type="checkbox" checked={on} onchange={cb.reform(|e: Event| {
         use yew::TargetCast;
         e.target_unchecked_into::<web_sys::HtmlInputElement>().checked()
     })}/>{label}</label>}
 }
 
-fn choice(label: &'static str, value: &str, options: &[(String, String)], cb: Callback<String>) -> Html {
-    html! {<label>{ex(label)}<select onchange={cb.reform(api::select)}>
+fn choice(label: &'static str, tip: &'static str, value: &str, options: &[(String, String)], cb: Callback<String>) -> Html {
+    html! {<label title={ex(tip)}>{ex(label)}<select onchange={cb.reform(api::select)}>
         {for options.iter().map(|(v, name)| html!{<option value={v.clone()} selected={v == value}>{name.clone()}</option>})}
-    </select></label>}
+    </select>{hint(tip)}</label>}
 }
 
 fn num<T: std::str::FromStr>(s: &str) -> Option<T> {
@@ -134,18 +143,18 @@ fn general(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
         })
     };
     html! {<div class="settings-fields">
-        {field("Nome", o.pack.name.clone(), upd(open, |p, v: String| p.name = v))}
-        {area("Descrizione", o.pack.description.clone(), "3", upd(open, |p, v: String| p.description = v))}
+        {field("Nome", "", o.pack.name.clone(), upd(open, |p, v: String| p.name = v))}
+        {area("Descrizione", "", o.pack.description.clone(), "3", upd(open, |p, v: String| p.description = v))}
         <label>{ex("Territorio")}<input value={o.pack.base.clone()} disabled=true/></label>
-        {field("Ora di inizio (HH:MM)", clock_text(start), upd(open, |p, v: String| {
+        {field("Ora di inizio (HH:MM)", "", clock_text(start), upd(open, |p, v: String| {
             let day = p.edits.start_clock_s.unwrap_or(0) / 86_400 + 1;
             if let Some(t) = parse_clock(day, &v) { p.edits.start_clock_s = Some(t); }
         }))}
-        {number("Giorno", (start / 86_400 + 1).to_string(), day_cb)}
-        {choice("Base di partenza delle risorse", e.staging_base.as_deref().unwrap_or(""), &places, upd(open, |p, v: String| p.edits.staging_base = Some(v)))}
-        {number("Vento da (gradi)", fmt(weather.wind_dir_deg), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.wind_dir_deg = x } }))}
-        {number("Vento (km/h)", fmt(weather.wind_speed_kmh), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.wind_speed_kmh = x } }))}
-        {number("Umidità del combustibile (%)", fmt(weather.moisture_pct), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.moisture_pct = x } }))}
+        {number("Giorno", "", (start / 86_400 + 1).to_string(), day_cb)}
+        {choice("Base di partenza delle risorse", "", e.staging_base.as_deref().unwrap_or(""), &places, upd(open, |p, v: String| p.edits.staging_base = Some(v)))}
+        {number("Vento da (gradi)", "", fmt(weather.wind_dir_deg), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.wind_dir_deg = x } }))}
+        {number("Vento (km/h)", "", fmt(weather.wind_speed_kmh), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.wind_speed_kmh = x } }))}
+        {number("Umidità del combustibile (%)", "", fmt(weather.moisture_pct), upd(open, |p, v: String| if let Some(x) = num(&v) { if let Some(w) = p.edits.weather.as_mut() { w.moisture_pct = x } }))}
     </div>}
 }
 
@@ -169,12 +178,12 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
             html!{<fieldset class="inject-row" key={i}>
                 <legend>{format!("{} · {}", if r.id.is_empty() {"nuovo"} else {&r.id}, r.name)}</legend>
                 <div class="settings-fields">
-                    {field("Identificativo", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
-                    {field("Nome", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                    {choice("Livello", &r.level, &levels, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.level = v }))}
-                    {choice("Lingua", &r.language, &languages, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.language = v }))}
+                    {field("Identificativo", "", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
+                    {field("Nome", "", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
+                    {choice("Livello", "", &r.level, &levels, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.level = v }))}
+                    {choice("Lingua", "", &r.language, &languages, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.language = v }))}
                 </div>
-                {area("Descrizione", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
+                {area("Descrizione", "", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
                 <h4>{ex("Risorse disponibili per turno")}</h4>
                 <div class="settings-fields">
                     {for resources.iter().map(|res| {
@@ -191,7 +200,7 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                 <div class="settings-fields">
                     {for actions.iter().map(|a| {
                         let action = a.clone();
-                        check(a.clone(), r.allowed_actions.contains(a), upd(open, move |p, on: bool| {
+                        check(a.clone(), "", r.allowed_actions.contains(a), upd(open, move |p, on: bool| {
                             if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) {
                                 x.allowed_actions.retain(|y| *y != action);
                                 if on { x.allowed_actions.push(action.clone()); }
@@ -227,11 +236,11 @@ fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
             html!{<fieldset class="inject-row" key={i}>
                 <legend>{format!("{} · {}", r.id, r.name)}</legend>
                 <div class="settings-fields">
-                    {field("Identificativo", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
-                    {field("Nome", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                    {number("Velocità di spostamento (m/s, vuoto = predefinita)", r.speed_mps.map(|s| s.to_string()).unwrap_or_default(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.speed_mps = num(&v) }))}
+                    {field("Identificativo", "", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
+                    {field("Nome", "", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
+                    {number("Velocità di spostamento (m/s, vuoto = predefinita)", "", r.speed_mps.map(|s| s.to_string()).unwrap_or_default(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.speed_mps = num(&v) }))}
                 </div>
-                {area("Descrizione", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
+                {area("Descrizione", "", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
                 <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.resource_types.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina risorsa")}</button>
             </fieldset>}
         })}
@@ -301,10 +310,10 @@ fn ignitions_tab(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &UseSt
             html!{<fieldset class={classes!("inject-row", (i == sel).then_some("selected"))} key={i} onfocusin={Callback::from(move |_| selected.set(i))}>
                 <legend>{format!("{} {}", ex("Innesco"), i + 1)}</legend>
                 <div class="settings-fields">
-                    {number("Est x (m)", g.at[0].to_string(), upd(open, move |p, v: String| if let (Some(x), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[0] = x }))}
-                    {number("Nord y (m)", g.at[1].to_string(), upd(open, move |p, v: String| if let (Some(y), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[1] = y }))}
-                    {number("Raggio (m)", g.radius_m.to_string(), upd(open, move |p, v: String| if let (Some(r), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.radius_m = r }))}
-                    {choice("Zona", "", &zone_options, upd(open, move |p, zone: String| {
+                    {number("Est x (m)", "", g.at[0].to_string(), upd(open, move |p, v: String| if let (Some(x), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[0] = x }))}
+                    {number("Nord y (m)", "", g.at[1].to_string(), upd(open, move |p, v: String| if let (Some(y), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[1] = y }))}
+                    {number("Raggio (m)", "", g.radius_m.to_string(), upd(open, move |p, v: String| if let (Some(r), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.radius_m = r }))}
+                    {choice("Zona", "", "", &zone_options, upd(open, move |p, zone: String| {
                         let c = &centres[zone.as_str()];
                         if let (Some(x), Some(y), Some(g)) = (c[0].as_f64(), c[1].as_f64(), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at = [x as f32, y as f32]; }
                     }))}
@@ -330,11 +339,11 @@ fn reinforcements_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
             html!{<fieldset class="inject-row" key={i}>
                 <legend>{format!("{} → {}", r.resource, r.assigned_to)}</legend>
                 <div class="settings-fields">
-                    {choice("Risorsa", &r.resource, &resources, upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.resource = v }))}
-                    {number("Quantità massima", r.max_qty.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.max_qty = n }))}
-                    {number("Ritardo (min)", r.delay_min.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.delay_min = n }))}
-                    {field("Provenienza", r.source.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.source = v }))}
-                    {choice("Riceve il ruolo", &r.assigned_to, &roles, upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.assigned_to = v }))}
+                    {choice("Risorsa", "", &r.resource, &resources, upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.resource = v }))}
+                    {number("Quantità massima", "", r.max_qty.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.max_qty = n }))}
+                    {number("Ritardo (min)", "", r.delay_min.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.delay_min = n }))}
+                    {field("Provenienza", "", r.source.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.source = v }))}
+                    {choice("Riceve il ruolo", "", &r.assigned_to, &roles, upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.assigned_to = v }))}
                 </div>
                 <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.reinforcements.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina rinforzo")}</button>
             </fieldset>}
@@ -360,10 +369,10 @@ fn places_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
             html!{<fieldset class="inject-row" key={i}>
                 <legend>{pl.name.clone()}</legend>
                 <div class="settings-fields">
-                    {field("Nome", pl.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                    {field("Alias", pl.aliases.join(", "), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.aliases = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() }))}
-                    {number("Est x (m)", pl.pos[0].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[0] = n }))}
-                    {number("Nord y (m)", pl.pos[1].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[1] = n }))}
+                    {field("Nome", "", pl.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
+                    {field("Alias", "", pl.aliases.join(", "), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.aliases = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() }))}
+                    {number("Est x (m)", "", pl.pos[0].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[0] = n }))}
+                    {number("Nord y (m)", "", pl.pos[1].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[1] = n }))}
                 </div>
                 <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.places.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina luogo")}</button>
             </fieldset>}
@@ -387,27 +396,27 @@ fn injects_tab(o: &Open, open: &UseStateHandle<Option<Open>>, json: &UseStateHan
             html!{<fieldset class="inject-row" key={i}>
                 <legend>{format!("{} · {} {}", m.id, ex("turno"), m.turn)}</legend>
                 <div class="settings-fields">
-                    {field("Identificativo", m.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
-                    {number("Turno", m.turn.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.msel.as_mut().and_then(|l| l.get_mut(i))) { x.turn = n }))}
-                    {field("Mittente", m.sender.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.sender = v }))}
-                    {field("Evento (raggruppa nella timeline)", m.event.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.event = v }))}
+                    {field("Identificativo", "", m.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
+                    {number("Turno", "", m.turn.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.msel.as_mut().and_then(|l| l.get_mut(i))) { x.turn = n }))}
+                    {field("Mittente", "", m.sender.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.sender = v }))}
+                    {field("Evento (raggruppa nella timeline)", "", m.event.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.event = v }))}
                 </div>
                 <div class="settings-fields">
-                    {check(ex("tutti").to_string(), m.recipients.iter().any(|r| r == "all"), upd(open, move |p, on: bool| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) {
+                    {check(ex("tutti").to_string(), "", m.recipients.iter().any(|r| r == "all"), upd(open, move |p, on: bool| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) {
                         x.recipients.retain(|r| r != "all");
                         if on { x.recipients = vec!["all".into()]; }
                     }))}
                     {for ro.iter().map(|(id, name)| {
                         let id2 = id.clone();
-                        check(name.clone(), m.recipients.contains(id), upd(open, move |p, on: bool| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) {
+                        check(name.clone(), "", m.recipients.contains(id), upd(open, move |p, on: bool| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) {
                             x.recipients.retain(|r| *r != id2 && r != "all");
                             if on { x.recipients.push(id2.clone()); }
                         }))
                     })}
                 </div>
-                {field("Titolo", m.title.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.title = v }))}
-                {area("Testo", m.text.clone(), "3", upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.text = v }))}
-                {field("Obiettivo formativo", m.objective.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.objective = v }))}
+                {field("Titolo", "", m.title.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.title = v }))}
+                {area("Testo", "", m.text.clone(), "3", upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.text = v }))}
+                {field("Obiettivo formativo", "", m.objective.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { x.objective = v }))}
                 <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.msel.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina inject")}</button>
             </fieldset>}
         })}
@@ -463,28 +472,28 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
         <div class="settings-fields">
             {for flags.iter().map(|(label, get, set)| {
                 let set = *set;
-                check(ex(label).to_string(), get(&ops), upd(open, move |p, on: bool| set(p.edits.operations.get_or_insert_with(Default::default), on)))
+                check(ex(label).to_string(), "", get(&ops), upd(open, move |p, on: bool| set(p.edits.operations.get_or_insert_with(Default::default), on)))
             })}
-            {check(ex("Avvia con il modello operativo attivo").to_string(), run.operational_model == Some(true), upd(open, |p, on: bool| p.run.operational_model = on.then_some(true)))}
+            {check(ex("Avvia con il modello operativo attivo").to_string(), "", run.operational_model == Some(true), upd(open, |p, on: bool| p.run.operational_model = on.then_some(true)))}
         </div>
         <h4>{ex("Politica tattica (distanze in metri, tempi in secondi simulati)")}</h4>
         <div class="settings-fields">
-            {number("Raggio del settore", policy.sector_radius_m.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).sector_radius_m = n }))}
-            {number("Portata della manichetta", policy.hose_reach_m.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).hose_reach_m = n }))}
-            {number("Limite di bagnatura (punti)", policy.wet_limit_pts.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).wet_limit_pts = n }))}
-            {number("Rivalutazione (s)", policy.reassess_s.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).reassess_s = n }))}
-            {number("Pericolo per sosta (0–1)", policy.parking_danger.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).parking_danger = n }))}
-            {number("Pericolo per lavoro (0–1)", policy.work_danger.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).work_danger = n }))}
-            {number("Riorganizzazione (s)", policy.regroup_s.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).regroup_s = n }))}
-            {check(ex("Lavoro condiviso tra squadre").to_string(), policy.share_work, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).share_work = on))}
-            {check(ex("Riprende dopo il ritiro").to_string(), policy.resume_after_withdrawal, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).resume_after_withdrawal = on))}
+            {number("Raggio del settore", "", policy.sector_radius_m.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).sector_radius_m = n }))}
+            {number("Portata della manichetta", "", policy.hose_reach_m.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).hose_reach_m = n }))}
+            {number("Limite di bagnatura (punti)", "", policy.wet_limit_pts.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).wet_limit_pts = n }))}
+            {number("Rivalutazione (s)", "", policy.reassess_s.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).reassess_s = n }))}
+            {number("Pericolo per sosta (0–1)", "", policy.parking_danger.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).parking_danger = n }))}
+            {number("Pericolo per lavoro (0–1)", "", policy.work_danger.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).work_danger = n }))}
+            {number("Riorganizzazione (s)", "", policy.regroup_s.to_string(), upd(open, |p, v: String| if let Some(n) = num(&v) { p.edits.tactical_policy.get_or_insert_with(Default::default).regroup_s = n }))}
+            {check(ex("Lavoro condiviso tra squadre").to_string(), "", policy.share_work, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).share_work = on))}
+            {check(ex("Riprende dopo il ritiro").to_string(), "", policy.resume_after_withdrawal, upd(open, |p, on: bool| p.edits.tactical_policy.get_or_insert_with(Default::default).resume_after_withdrawal = on))}
         </div>
         <h4>{ex("Simulazione")}</h4>
         <p class="muted">{ex("Vuoto = valore predefinito. Le opzioni sulla riga di comando hanno la precedenza.")}</p>
         <div class="settings-fields">
-            {number("Seme casuale", run.seed.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.seed = num(&v)))}
-            {number("Realizzazioni dell’ensemble", run.realizations.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.realizations = num(&v)))}
-            {number("Soglia del fuoco «reale» (0–1)", run.cutoff.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.cutoff = num(&v)))}
+            {number("Seme casuale", "", run.seed.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.seed = num(&v)))}
+            {number("Realizzazioni dell’ensemble", "", run.realizations.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.realizations = num(&v)))}
+            {number("Soglia del fuoco «reale» (0–1)", "", run.cutoff.map(|s| s.to_string()).unwrap_or_default(), upd(open, |p, v: String| p.run.cutoff = num(&v)))}
         </div>
     </>}
 }
@@ -691,7 +700,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                 </div>
                 if o.saved_id.is_none() {
                     <div class="settings-fields">
-                        {field("Identificativo (a-z, 0-9, _ -)", o.pack.id.clone(), upd(&open, |p, v: String| p.id = v))}
+                        {field("Identificativo (a-z, 0-9, _ -)", "", o.pack.id.clone(), upd(&open, |p, v: String| p.id = v))}
                     </div>
                 }
                 <nav class="scenario-tabs" aria-label={ex("Sezioni dello scenario")}>
