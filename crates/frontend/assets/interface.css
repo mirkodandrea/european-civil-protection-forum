@@ -349,3 +349,32 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .scenario-tabs{display:flex;gap:4px;flex-wrap:wrap;margin:14px 0;border-bottom:1px solid var(--line)}.scenario-tabs button{border-bottom:0;border-radius:8px 8px 0 0;background:#f1f5f1}.scenario-tabs button.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .scenario-tab{margin-bottom:16px}.scenario-tab h4{margin:14px 0 6px}.scenario-tab .inject-row{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;padding:10px 14px}.scenario-tab .inject-row.selected{border-color:var(--accent);box-shadow:0 0 0 2px #cfe6dc}.scenario-tab .settings-fields{margin-bottom:8px}.scenario-tab .settings-fields .wide{flex-basis:100%}.scenario-tab label.check{display:flex;flex:0 0 auto;min-width:0;align-items:center;gap:6px;font-size:13px}.scenario-tab label.check input{width:auto}.scenario-tab fieldset>label{display:grid;gap:3px;font-size:12px;margin:8px 0}
 .ignition-map{width:100%;max-width:560px;aspect-ratio:1;border:1px solid var(--line);border-radius:8px;cursor:crosshair;display:block;margin:8px 0 14px}
+
+/* ---- Scenario view: Ruoli / Risorse tabs ---- */
+.rr-tab{display:grid;gap:8px}
+.rr-item{border:1px solid var(--line);border-radius:8px;background:#fff}
+.rr-item>summary{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:9px 12px;cursor:pointer}
+.rr-item[open]>summary{border-bottom:1px solid var(--line);background:#f5f9f6}
+.rr-id{font-family:ui-monospace,monospace;font-size:13px}
+.rr-name{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.rr-sum{flex:1 1 220px;min-width:0;overflow-wrap:anywhere}
+.rr-body{padding:10px 14px 14px;display:grid;gap:8px}
+.rr-tab .hint{display:block;color:var(--muted);font-size:11px;line-height:1.35;font-weight:400}
+.rr-tab h4{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 2px}
+.rr-bulk{display:inline-flex;gap:6px}
+.rr-bulk button{padding:2px 9px;font-size:12px}
+.rr-qty{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 12px}
+.rr-qty .rr-q{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+.rr-qty .rr-q span{min-width:0;overflow-wrap:anywhere}
+.rr-qty .rr-q input{width:70px;flex:none;text-align:right}
+.rr-actions{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 12px}
+.rr-actions .rr-action{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;cursor:pointer}
+.rr-actions .rr-action:has(input:checked){background:#eaf4ee;border-color:#b8d1c3}
+.rr-actions .rr-action input{margin-top:3px;width:auto;flex:none}
+.rr-actions .rr-action b{font-family:ui-monospace,monospace;font-size:12px}
+.rr-del{margin-top:6px}
+.rr-del>summary{cursor:pointer;font-size:13px;width:fit-content}
+.rr-del>p{margin:6px 0}
+.rr-tab .error{min-height:0}
+@media(max-width:760px){.rr-body{padding:8px 10px 12px}.rr-actions,.rr-qty{grid-template-columns:1fr}}
+.rr-body .settings-fields{align-items:start}

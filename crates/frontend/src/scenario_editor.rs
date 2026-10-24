@@ -162,45 +162,67 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     let e = &o.pack.edits;
     let roles = e.roles.clone().unwrap_or_default();
     let resources = e.resource_types.clone().unwrap_or_default();
-    let levels: Vec<(String, String)> = ["national", "regional", "local"]
+    let levels: Vec<(String, String)> = [("national", "Nazionale"), ("regional", "Regionale"), ("local", "Locale")]
         .iter()
-        .map(|l| (l.to_string(), l.to_string()))
+        .map(|(l, name)| (l.to_string(), ex(name).to_string()))
         .collect();
     let languages: Vec<(String, String)> = api::LANGUAGES
         .iter()
         .map(|(id, name)| (id.to_string(), name.to_string()))
         .collect();
     let actions: Vec<String> = list(&o.reference["actions"]).iter().map(|a| text(a).to_string()).collect();
-    html! {<>
+    html! {<div class="rr-tab">
         <p class="muted">{ex("Ogni ruolo è una pagina player. Azioni e risorse decidono cosa può proporre; l’EXCON approva comunque ogni azione.")}</p>
         {for roles.iter().enumerate().map(|(i, r)| {
             let r = r.clone();
-            html!{<fieldset class="inject-row" key={i}>
-                <legend>{format!("{} · {}", if r.id.is_empty() {"nuovo"} else {&r.id}, r.name)}</legend>
+            let duplicate = roles.iter().filter(|x| x.id == r.id).count() > 1;
+            let bad_id = r.id.is_empty() || !r.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+            let fresh = r.id.starts_with("role_") && r.description.is_empty() && r.allowed_actions.is_empty();
+            let stock: Vec<String> = resources.iter().filter_map(|res| r.resources.get(&res.id).map(|q| format!("{} ×{q}", res.name))).collect();
+            let level = levels.iter().find(|(v, _)| *v == r.level).map(|(_, n)| n.clone()).unwrap_or_else(|| r.level.clone());
+            html!{<details class="rr-item" key={i} open={fresh}>
+                <summary>
+                    <b class="rr-id">{ if r.id.is_empty() { ex("nuovo").to_string() } else { r.id.clone() } }</b>
+                    <span class="rr-name">{r.name.clone()}</span>
+                    <span class="pill">{level}</span>
+                    <small class="rr-sum">{crate::exfmt!("{} azioni", "{} actions", r.allowed_actions.len())}
+                        {" · "}{ if stock.is_empty() { ex("nessuna risorsa").to_string() } else { stock.join(", ") } }</small>
+                </summary>
+                <div class="rr-body">
                 <div class="settings-fields">
-                    {field("Identificativo", "", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
-                    {field("Nome", "", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                    {choice("Livello", "", &r.level, &levels, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.level = v }))}
-                    {choice("Lingua", "", &r.language, &languages, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.language = v }))}
+                    {field("Identificativo", "Codice breve del ruolo: compare negli indirizzi delle pagine player e come destinatario degli inject. Solo a-z, 0-9, _ e -; deve essere unico.", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
+                    {field("Nome", "Nome mostrato ai partecipanti e all’EXCON, ad esempio «Protezione civile regionale».", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
+                    {choice("Livello", "Livello istituzionale del ruolo: nazionale, regionale o locale. Orienta il perimetro delle richieste e il modo in cui l’AI contestualizza i messaggi del ruolo.", &r.level, &levels, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.level = v }))}
+                    {choice("Lingua", "Lingua predefinita della pagina del giocatore; i messaggi vengono tradotti per l’EXCON.", &r.language, &languages, upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.language = v }))}
                 </div>
-                {area("Descrizione", "", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
+                { if duplicate { html!{<p class="error">{ex("Identificativo già usato da un altro ruolo.")}</p>} } else if bad_id { html!{<p class="error">{ex("Identificativo non valido: usa solo a-z, 0-9, _ e -.")}</p>} } else { Html::default() } }
+                {area("Descrizione", "Responsabilità e contesto del ruolo, letti dal giocatore e usati dall’AI per interpretare i messaggi.", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
                 <h4>{ex("Risorse disponibili per turno")}</h4>
-                <div class="settings-fields">
+                <p class="muted">{ex("Unità che il ruolo può impiegare in ogni turno. 0 = nessuna.")}</p>
+                <div class="rr-qty">
                     {for resources.iter().map(|res| {
                         let id = res.id.clone();
                         let qty = r.resources.get(&res.id).copied().unwrap_or(0);
-                        number_owned(format!("{} ({})", res.name, res.id), qty.to_string(), upd(open, move |p, v: String| {
+                        qty_box(format!("{} ({})", res.name, res.id), qty.to_string(), upd(open, move |p, v: String| {
                             if let (Some(x), Some(n)) = (p.edits.roles.as_mut().and_then(|l| l.get_mut(i)), num::<u32>(&v)) {
                                 if n == 0 { x.resources.remove(&id); } else { x.resources.insert(id.clone(), n); }
                             }
                         }))
                     })}
+                    { if resources.is_empty() { html!{<small class="muted">{ex("Nessun tipo di risorsa: aggiungilo nella scheda Risorse.")}</small>} } else { Html::default() } }
                 </div>
-                <h4>{ex("Azioni che può proporre")}</h4>
-                <div class="settings-fields">
+                <h4>{ex("Azioni che può proporre")}
+                    <span class="rr-bulk">
+                        <button type="button" title={ex("Abilita tutte le azioni per questo ruolo")} onclick={{
+                            let all = actions.clone();
+                            upd(open, move |p, _: MouseEvent| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.allowed_actions = all.clone() })
+                        }}>{ex("Tutte")}</button>
+                        <button type="button" title={ex("Toglie tutte le azioni: il ruolo potrà solo scrivere messaggi")} onclick={upd(open, move |p, _: MouseEvent| if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) { x.allowed_actions.clear() })}>{ex("Nessuna")}</button>
+                    </span></h4>
+                <div class="rr-actions">
                     {for actions.iter().map(|a| {
                         let action = a.clone();
-                        check(a.clone(), "", r.allowed_actions.contains(a), upd(open, move |p, on: bool| {
+                        action_box(a, r.allowed_actions.contains(a), upd(open, move |p, on: bool| {
                             if let Some(x) = p.edits.roles.as_mut().and_then(|l| l.get_mut(i)) {
                                 x.allowed_actions.retain(|y| *y != action);
                                 if on { x.allowed_actions.push(action.clone()); }
@@ -208,8 +230,10 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                         }))
                     })}
                 </div>
-                <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.roles.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina ruolo")}</button>
-            </fieldset>}
+                {confirm_delete("Elimina ruolo", "Elimina il ruolo e la sua pagina player. Se un inject, un rinforzo o un luogo lo cita ancora, «Controlla» lo segnala.",
+                    upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.roles.as_mut() { if i < l.len() { l.remove(i); } } }))}
+                </div>
+            </details>}
         })}
         <button onclick={upd(open, |p, _: MouseEvent| {
             let l = p.edits.roles.get_or_insert_with(Vec::new);
@@ -219,37 +243,92 @@ fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                 description: String::new(), allowed_actions: vec![], resources: Default::default(),
             });
         })}>{ex("Aggiungi ruolo")}</button>
-    </>}
-}
-
-/// A number field whose label is not a static string.
-fn number_owned(label: String, value: String, cb: Callback<String>) -> Html {
-    html! {<label>{label}<input type="number" min="0" step="1" value={value} oninput={cb.reform(api::input)}/></label>}
+    </div>}
 }
 
 fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     let resources = o.pack.edits.resource_types.clone().unwrap_or_default();
-    html! {<>
+    let roles = o.pack.edits.roles.clone().unwrap_or_default();
+    html! {<div class="rr-tab">
         <p class="muted">{ex("Tipi di risorsa del lancio: acqua, squadre, mezzi. La velocità è quella con cui raggiungono il luogo dalla base di partenza.")}</p>
         {for resources.iter().enumerate().map(|(i, r)| {
             let r = r.clone();
-            html!{<fieldset class="inject-row" key={i}>
-                <legend>{format!("{} · {}", r.id, r.name)}</legend>
+            let duplicate = resources.iter().filter(|x| x.id == r.id).count() > 1;
+            let users: Vec<String> = roles.iter().filter(|x| x.resources.contains_key(&r.id)).map(|x| x.id.clone()).collect();
+            let fresh = r.id.starts_with("resource_") && r.description.is_empty();
+            html!{<details class="rr-item" key={i} open={fresh}>
+                <summary>
+                    <b class="rr-id">{r.id.clone()}</b>
+                    <span class="rr-name">{r.name.clone()}</span>
+                    <small class="rr-sum">{ match r.speed_mps { Some(s) => format!("{s} m/s"), None => ex("velocità predefinita").to_string() } }
+                        {" · "}{crate::exfmt!("{} ruoli", "{} roles", users.len())}</small>
+                </summary>
+                <div class="rr-body">
                 <div class="settings-fields">
-                    {field("Identificativo", "", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
-                    {field("Nome", "", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                    {number("Velocità di spostamento (m/s, vuoto = predefinita)", "", r.speed_mps.map(|s| s.to_string()).unwrap_or_default(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.speed_mps = num(&v) }))}
+                    {field("Identificativo", "Codice breve della risorsa, usato nelle quantità dei ruoli, nei rinforzi e negli ordini. Deve essere unico.", r.id.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.id = v }))}
+                    {field("Nome", "Nome leggibile mostrato ai giocatori, ad esempio «Squadra AIB».", r.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
+                    {number("Velocità di spostamento (m/s, vuoto = predefinita)", "Velocità con cui la risorsa raggiunge il luogo dalla base di partenza; i suoi effetti iniziano all’arrivo. Esempio: 10 m/s = 36 km/h. Vuoto = valore predefinito del simulatore.", r.speed_mps.map(|s| s.to_string()).unwrap_or_default(), upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.speed_mps = num(&v) }))}
                 </div>
-                {area("Descrizione", "", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
-                <button class="danger" onclick={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.resource_types.as_mut() { if i < l.len() { l.remove(i); } } })}>{ex("Elimina risorsa")}</button>
-            </fieldset>}
+                { if duplicate { html!{<p class="error">{ex("Identificativo già usato da un’altra risorsa.")}</p>} } else { Html::default() } }
+                {area("Descrizione", "Cosa rappresenta e cosa può fare la risorsa; aiuta l’AI e i giocatori a usarla in modo coerente.", r.description.clone(), "2", upd(open, move |p, v: String| if let Some(x) = p.edits.resource_types.as_mut().and_then(|l| l.get_mut(i)) { x.description = v }))}
+                <p class="muted">{ if users.is_empty() { ex("Nessun ruolo la possiede.").to_string() } else { crate::exfmt!("Assegnata ai ruoli: {}", "Assigned to roles: {}", users.join(", ")) } }</p>
+                {confirm_delete("Elimina risorsa", "Elimina il tipo di risorsa. Se un ruolo o un rinforzo la usa ancora, «Controlla» lo segnala.",
+                    upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.resource_types.as_mut() { if i < l.len() { l.remove(i); } } }))}
+                </div>
+            </details>}
         })}
         <button onclick={upd(open, |p, _: MouseEvent| {
             let l = p.edits.resource_types.get_or_insert_with(Vec::new);
             let n = l.len() + 1;
             l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None });
         })}>{ex("Aggiungi risorsa")}</button>
-    </>}
+    </div>}
+}
+
+/// Plain-words explanation of a command kind, for the role action checkboxes.
+fn action_tip(action: &str) -> &'static str {
+    match action {
+        "CutFireLine" => "Apre una linea tagliafuoco (senza vegetazione) lungo un percorso: ferma l’avanzata se è completata prima del fuoco.",
+        "WaterDrop" => "Lancio d’acqua da aerei o elicotteri su una zona: rallenta o spegne il fuoco sotto il passaggio.",
+        "DeployEngine" => "Invia un’autobotte o una squadra a terra in un luogo: agisce dopo il viaggio dalla base, se le strade sono praticabili.",
+        "EvacuateZone" => "Ordina di evacuare tutta una zona della griglia, con i suoi edifici e abitanti.",
+        "EvacuateBuilding" => "Ordina di evacuare un singolo edificio, ad esempio una scuola o una casa di riposo.",
+        "IssueWarning" => "Emette un’allerta alla popolazione di un luogo; ha effetto dopo il tempo di diffusione.",
+        "CloseRoad" => "Chiude una strada o un tratto: il traffico civile non passa, i mezzi di soccorso sì.",
+        "ReopenRoad" => "Riapre una strada chiusa in precedenza.",
+        "OpenShelter" => "Apre un centro di accoglienza dove portare gli evacuati.",
+        "RequestReinforcement" => "Chiede rinforzi esterni, che arrivano dopo un ritardo se previsti dallo scenario.",
+        _ => "Azione operativa che il ruolo può proporre all’EXCON.",
+    }
+}
+
+/// An action checkbox with its plain-words explanation, as title and visible hint.
+fn action_box(action: &str, on: bool, cb: Callback<bool>) -> Html {
+    let tip = action_tip(action);
+    html! {<label class="rr-action" title={ex(tip)}>
+        <input type="checkbox" checked={on} onchange={cb.reform(|e: Event| {
+            use yew::TargetCast;
+            e.target_unchecked_into::<web_sys::HtmlInputElement>().checked()
+        })}/>
+        <span><b>{action.to_string()}</b><small class="hint">{ex(tip)}</small></span>
+    </label>}
+}
+
+/// Quantity input for one resource of a role.
+fn qty_box(label: String, value: String, cb: Callback<String>) -> Html {
+    html! {<label class="rr-q" title={ex("Unità al turno (0 = nessuna)")}>
+        <span>{label}</span>
+        <input type="number" min="0" step="1" inputmode="numeric" value={value} oninput={cb.reform(api::input)}/>
+    </label>}
+}
+
+/// Two-step delete: opening the disclosure explains the consequence, the button inside confirms.
+fn confirm_delete(label: &'static str, tip: &'static str, cb: Callback<MouseEvent>) -> Html {
+    html! {<details class="rr-del">
+        <summary class="danger" title={ex(tip)}>{ex(label)}{"…"}</summary>
+        <p class="muted">{ex(tip)}</p>
+        <button type="button" class="danger" onclick={cb}>{ex("Conferma eliminazione")}</button>
+    </details>}
 }
 
 /// Zone grid and ignitions; a click on the map moves the selected ignition.
