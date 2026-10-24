@@ -429,3 +429,30 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .inject-tab .inject-actions button{min-width:36px}
 @media (max-width:560px){.inject-tab .inject-body .settings-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inject-tab .inject-body .settings-fields label{flex:none}}
 .inject-tab .confirm-inline{display:inline-block}.inject-tab .confirm-inline[open]{display:inline-flex}.inject-tab .confirm-inline:not([open])>:not(summary){display:none}
+/* Scenario view: Inneschi / Rinforzi / Luoghi */
+.sc-split{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:18px;align-items:start}
+.sc-split .sc-map{position:sticky;top:8px;min-width:0}.sc-split .sc-list{min-width:0;display:grid;gap:8px}
+.sc-split .ignition-map{max-width:100%;margin:6px 0}
+.sc-map .map-help{font-size:13px;margin:0 0 4px}.sc-map .map-legend{font-size:12px;margin:2px 0}
+.sc-split .inject-row{margin:0}
+@media(max-width:900px){.sc-split{grid-template-columns:minmax(0,1fr)}.sc-split .sc-map{position:static}}
+.ignition-map .zone-lbl{fill:#4d6657;opacity:.55;font-weight:700;pointer-events:none;user-select:none}
+.ignition-map .map-lbl{fill:#2a2a2a;stroke:#fff;paint-order:stroke;stroke-linejoin:round;pointer-events:none;user-select:none;font-weight:700}
+.ignition-map .map-ign{cursor:pointer}.ignition-map .ign-disc{fill:rgba(214,120,20,.42);stroke:#a3312c}
+.ignition-map .map-ign.selected .ign-disc{fill:rgba(214,69,20,.68);stroke:#5c0f0a}
+.ignition-map .ign-ring{fill:none;stroke:#111}.ignition-map .map-ign.selected .ign-num{fill:#7a1d12}
+.ignition-map .map-ign.tiny .ign-disc{stroke-dasharray:6 4;fill:rgba(214,120,20,.15)}
+.ignition-map .ign-disc.faint{fill:rgba(214,120,20,.28);stroke:none;pointer-events:none}
+.ignition-map .map-place{cursor:pointer}.ignition-map .map-place .map-lbl{opacity:0}
+.ignition-map .map-place:hover .map-lbl,.ignition-map .map-place.always .map-lbl,.ignition-map .map-place.selected .map-lbl{opacity:1}
+.ignition-map .map-place.selected .map-lbl{fill:#0f6b4d}
+.sc-summary{display:flex;align-items:center;gap:10px;text-align:left;width:100%;font-size:13px;background:#f6f9f6}.sc-summary:hover{background:#e6efe8}
+.scenario-tab .badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:#d9a35a;color:#3b1d05;font-size:12px;font-weight:700}
+.scenario-tab .badge.sel{background:#b3341d;color:#fff}
+.scenario-tab .hint{display:block;color:var(--muted);font-size:11px;line-height:1.3;margin-top:2px}
+.scenario-tab .warn{color:#8a4b00;background:#fff4dc;border:1px solid #e6c27a;border-radius:6px;padding:6px 8px;font-size:13px;margin:6px 0}
+.sc-reinf-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.7fr) minmax(0,.7fr) minmax(0,1.3fr) minmax(0,1.3fr) auto;gap:8px;align-items:start}
+.sc-reinf-row>label{margin:0}.sc-reinf-row input,.sc-reinf-row select{width:100%;min-width:0}.sc-reinf-row .sc-del{align-self:center}
+.sc-reinf-row~.sc-reinf-row .hint{display:none}
+@media(max-width:900px){.sc-reinf-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.sc-reinf-row .sc-del{grid-column:1/-1}.sc-reinf-row~.sc-reinf-row .hint{display:block}}
+.sc-split .settings-fields label{min-width:120px}
