@@ -6005,6 +6005,7 @@ name = "view"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
  "scenario",
  "serde",
  "serde_json",
