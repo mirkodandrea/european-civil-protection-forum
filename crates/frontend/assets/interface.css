@@ -365,15 +365,7 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .scenario-editor button:focus-visible,.scenario-editor input:focus-visible,.scenario-editor select:focus-visible,.scenario-editor textarea:focus-visible{outline:3px solid #f2b705;outline-offset:2px}
 .scenario-editor button:disabled{opacity:.55;cursor:progress}
 .scenario-tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin}.scenario-tabs button{flex:none}
-@media(max-width:640px){
-.scenario-editor .scenario-list,.scenario-editor .scenario-list tbody,.scenario-editor .scenario-list tr,.scenario-editor .scenario-list td{display:block;width:100%}
-.scenario-editor .scenario-list thead{display:none}
-.scenario-editor .scenario-list tr{border-top:1px solid var(--line);padding:8px 0}.scenario-editor .scenario-list td{border:0;padding:3px 0}
-.scenario-editor .scenario-list td.row{justify-content:flex-start;margin-top:6px;min-width:0}
-.scenario-editor .scenario-base{font-size:12px;color:var(--muted)}
-.scenario-editor .scenario-actions>.row{width:100%}.scenario-editor .scenario-actions .primary{flex:1 1 100%}
-.scenario-editor button{min-height:40px}
-}
+
 /* ---- Scenario view: Ruoli / Risorse tabs ---- */
 .rr-tab{display:grid;gap:8px}
 .rr-item{border:1px solid var(--line);border-radius:8px;background:#fff}
@@ -400,7 +392,7 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .rr-del>summary{cursor:pointer;font-size:13px;width:fit-content}
 .rr-del>p{margin:6px 0}
 .rr-tab .error{min-height:0}
-@media(max-width:760px){.rr-body{padding:8px 10px 12px}.rr-actions,.rr-qty{grid-template-columns:1fr}}
+
 .rr-body .settings-fields{align-items:start}
 /* ---- Scenario editor: Inject tab ---- */
 .inject-tab .inject-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}
@@ -427,7 +419,7 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .inject-tab button.chip{width:auto;height:auto;min-width:0;min-height:0;line-height:1.4;padding:3px 10px;border-radius:999px}
 .inject-tab .inject-recipients .label{font-size:12px}
 .inject-tab .inject-actions button{min-width:36px}
-@media (max-width:560px){.inject-tab .inject-body .settings-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inject-tab .inject-body .settings-fields label{flex:none}}
+
 .inject-tab .confirm-inline{display:inline-block}.inject-tab .confirm-inline[open]{display:inline-flex}.inject-tab .confirm-inline:not([open])>:not(summary){display:none}
 /* Scenario view: Inneschi / Rinforzi / Luoghi */
 .sc-split{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:18px;align-items:start}
@@ -435,7 +427,7 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .sc-split .ignition-map{max-width:100%;margin:6px 0}
 .sc-map .map-help{font-size:13px;margin:0 0 4px}.sc-map .map-legend{font-size:12px;margin:2px 0}
 .sc-split .inject-row{margin:0}
-@media(max-width:900px){.sc-split{grid-template-columns:minmax(0,1fr)}.sc-split .sc-map{position:static}}
+
 .ignition-map .zone-lbl{fill:#4d6657;opacity:.55;font-weight:700;pointer-events:none;user-select:none}
 .ignition-map .map-lbl{fill:#2a2a2a;stroke:#fff;paint-order:stroke;stroke-linejoin:round;pointer-events:none;user-select:none;font-weight:700}
 .ignition-map .map-ign{cursor:pointer}.ignition-map .ign-disc{fill:rgba(214,120,20,.42);stroke:#a3312c}
@@ -454,7 +446,7 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .sc-reinf-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.7fr) minmax(0,.7fr) minmax(0,1.3fr) minmax(0,1.3fr) auto;gap:8px;align-items:start}
 .sc-reinf-row>label{margin:0}.sc-reinf-row input,.sc-reinf-row select{width:100%;min-width:0}.sc-reinf-row .sc-del{align-self:center}
 .sc-reinf-row~.sc-reinf-row .hint{display:none}
-@media(max-width:900px){.sc-reinf-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.sc-reinf-row .sc-del{grid-column:1/-1}.sc-reinf-row~.sc-reinf-row .hint{display:block}}
+
 .sc-split .settings-fields label{min-width:120px}
 /* Scenario view: "Generale" and "Avanzate" screens */
 .gen-sec{margin:0 0 22px;padding-bottom:6px}.gen-sec>h4{margin:0 0 2px;font-size:15px}.gen-sec>p.muted{margin:0 0 10px}
@@ -468,7 +460,7 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .gen-sec:first-of-type .gen-grid>label:first-child{grid-column:span 2}
 .gen-grid input:invalid{border-color:#a3312c;background:#fff4f2}
 .gen-grid input:invalid+.hint::before{content:"⚠ ";color:#a3312c}
-@media(max-width:600px){.gen-grid{grid-template-columns:minmax(0,1fr)}.gen-grid input[type=number],.gen-grid input[type=time]{max-width:none}}
+
 
 /* Master-detail for the scenario editor tabs Ruoli, Risorse and Inject: a compact selectable list on the left, only the selected item's editor on the right. Desktop only. */
 .md{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start}
