@@ -336,6 +336,7 @@ pub fn generate(seed: u64) -> Scenario {
         roles: roles(),
         reinforcements: reinforcements(),
         msel: msel(),
+        timeline: vec![],
         staging_base: Some("Valverde Town Hall".into()),
         operational_grants: crate::legacy_grants(),
     };

@@ -33,6 +33,7 @@ pub mod knowledge;
 pub mod summaries;
 pub mod threads;
 pub mod planned;
+pub mod actions;
 pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
 use std::collections::BTreeMap;
@@ -427,6 +428,8 @@ pub struct Exercise {
     pub phase_history: Vec<PhaseEntry>,
     pub clock_control: ClockControl,
     pub scheduled_injects: Vec<ScheduledInject>,
+    /// Decisions taken on scripted timeline actions (see [`actions`]).
+    pub action_runs: BTreeMap<String, actions::ActionRun>,
     pub world: World,
     pub turn: u32,
     pub phase: Phase,
@@ -498,6 +501,7 @@ impl Exercise {
             }],
             clock_control: ClockControl::default(),
             scheduled_injects: Vec::new(),
+            action_runs: BTreeMap::new(),
             world,
             turn: 0,
             phase: Phase::Briefing,
@@ -660,7 +664,16 @@ impl Exercise {
     /// the same three steps with the lock released between steps, so the
     /// renderer and the browsers see the turn unfold.
     pub fn resolve_turn(&mut self, minutes: Option<u32>) -> Result<TurnReport> {
-        self.begin_resolution(minutes)?;
+        self.resolve_turn_with(minutes, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve_turn`] with decisions on the scripted timeline actions.
+    pub fn resolve_turn_with(
+        &mut self,
+        minutes: Option<u32>,
+        choices: &BTreeMap<String, actions::ActionChoice>,
+    ) -> Result<TurnReport> {
+        self.begin_resolution_with(minutes, choices)?;
         while !self.step_resolution(STEP_S)? {}
         self.finish_resolution()
     }
@@ -668,11 +681,22 @@ impl Exercise {
     /// Start resolving the open turn: approved player actions are applied now,
     /// then the phase is `Resolving` until simulated time reaches the end.
     pub fn begin_resolution(&mut self, minutes: Option<u32>) -> Result<()> {
+        self.begin_resolution_with(minutes, &BTreeMap::new())
+    }
+
+    /// As [`Self::begin_resolution`], with EXCON's decisions on the scripted
+    /// timeline actions that fall inside the turn.
+    pub fn begin_resolution_with(
+        &mut self,
+        minutes: Option<u32>,
+        choices: &BTreeMap<String, actions::ActionChoice>,
+    ) -> Result<()> {
         if self.phase != Phase::Orders {
             bail!("no turn is open");
         }
-        self.stop_clock("Turn resolution uses its own duration and playback speed");
         let minutes = minutes.unwrap_or(self.turn_minutes).clamp(1, 24 * 60);
+        self.decide_actions(minutes, choices)?;
+        self.stop_clock("Turn resolution uses its own duration and playback speed");
         let from_s = self.world.time_s();
         let mut applied = Vec::new();
         let approved: Vec<u64> = self
@@ -708,7 +732,11 @@ impl Exercise {
         let Some(to_s) = self.resolving.as_ref().map(|r| r.to_s) else {
             bail!("no turn is being resolved")
         };
-        let dt = (to_s - self.world.time_s()).min(step_s);
+        self.run_approved_actions();
+        let mut dt = (to_s - self.world.time_s()).min(step_s);
+        if let Some(next) = self.next_action_in() {
+            dt = dt.min(next);
+        }
         if dt > 0 {
             let resource_event_count = self.world.d.resource_events.len();
             let events = self.world.advance(dt)?;
@@ -728,7 +756,11 @@ impl Exercise {
         };
         while self.world.time_s() < r.to_s {
             // Finishing early (e.g. a caller that did not step to the end) still completes the turn.
-            let dt = (r.to_s - self.world.time_s()).min(STEP_S);
+            self.run_approved_actions();
+            let mut dt = (r.to_s - self.world.time_s()).min(STEP_S);
+            if let Some(next) = self.next_action_in() {
+                dt = dt.min(next);
+            }
             let resource_event_count = self.world.d.resource_events.len();
             self.world.advance(dt)?;
             self.record_resource_events(resource_event_count, MASTER);
@@ -769,6 +801,7 @@ impl Exercise {
         self.player_drafts.clear();
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
+        self.forget_actions_since_restore();
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self
             .proposals
@@ -2085,6 +2118,7 @@ impl Exercise {
             "phase_history":self.phase_history,
             "clock_control":self.clock_control,
             "scheduled_injects":self.scheduled_injects,
+            "timeline_actions":self.timeline_actions(),
             "scenario": self.world.scn.name,
             "turns": self.turn,
             "stats": self.world.stats(),

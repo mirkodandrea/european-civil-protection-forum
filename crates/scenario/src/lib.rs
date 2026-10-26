@@ -453,6 +453,23 @@ pub struct InjectTemplate {
     pub event: String,
 }
 
+/// A scripted world change on the MSEL timeline, independent of any message.
+/// EXCON is asked about it when opening a turn whose window contains `at_s`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimelineAction {
+    pub id: String,
+    pub title: String,
+    /// Planned instant, simulated seconds from the start of the exercise.
+    pub at_s: i64,
+    /// An EXCON `sim::Command` as JSON; validated when the exercise loads.
+    pub command: serde_json::Value,
+    /// Inject this action accompanies (informational link in the timeline).
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub note: String,
+}
+
 /// Optional supplied visual heightfield, sampled at grid nodes (row 0 north).
 /// Rendering only: routing, slope, fire and exposure continue using `dem`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -497,6 +514,9 @@ pub struct Scenario {
     pub roles: Vec<Role>,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
+    /// Scripted world changes on the timeline (see [`TimelineAction`]).
+    #[serde(default)]
+    pub timeline: Vec<TimelineAction>,
     /// Named place resources travel from (the exercise can move it later).
     /// Unknown or `None`: the centre of the map.
     #[serde(default = "legacy_staging")]
@@ -653,6 +673,30 @@ impl Scenario {
                     rcp == "all" || self.role(rcp).is_some(),
                     "inject {} to unknown role {rcp}",
                     i.id
+                );
+            }
+        }
+        for (n, a) in self.timeline.iter().enumerate() {
+            anyhow::ensure!(
+                !a.id.trim().is_empty() && !a.title.trim().is_empty() && a.at_s >= 0,
+                "timeline action {} needs an id, a title and a non-negative time",
+                n + 1
+            );
+            anyhow::ensure!(
+                !self.timeline[..n].iter().any(|o| o.id == a.id),
+                "duplicate timeline action id {}",
+                a.id
+            );
+            anyhow::ensure!(
+                a.command.is_object(),
+                "timeline action {} command must be a JSON object",
+                a.id
+            );
+            if let Some(after) = &a.after {
+                anyhow::ensure!(
+                    self.msel.iter().any(|i| &i.id == after),
+                    "timeline action {} follows unknown inject {after}",
+                    a.id
                 );
             }
         }

@@ -6,7 +6,7 @@
 //! [`ScenarioPack`] that names its base. Several packs can share one base, and
 //! a pack is a plain JSON file that can be copied, edited and versioned.
 use crate::{
-    IgnitionSpec, InjectTemplate, OperationalGrant, Operations, Place, ReinforcementOffer,
+    IgnitionSpec, InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
     ResourceType, Role, Scenario, TacticalPolicy, WeatherSpec,
 };
 use anyhow::Result;
@@ -40,6 +40,8 @@ pub struct ScenarioEdits {
     pub reinforcements: Option<Vec<ReinforcementOffer>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msel: Option<Vec<InjectTemplate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<Vec<TimelineAction>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tactical_policy: Option<TacticalPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -152,6 +154,9 @@ impl Scenario {
         if let Some(v) = &e.msel {
             self.msel = v.clone();
         }
+        if let Some(v) = &e.timeline {
+            self.timeline = v.clone();
+        }
         if let Some(v) = &e.tactical_policy {
             self.tactical_policy = v.clone();
         }
@@ -180,6 +185,7 @@ impl Scenario {
             roles: Some(self.roles.clone()),
             reinforcements: Some(self.reinforcements.clone()),
             msel: Some(self.msel.clone()),
+            timeline: Some(self.timeline.clone()),
             tactical_policy: Some(self.tactical_policy.clone()),
             operations: Some(self.operations.clone()),
             staging_base: Some(self.staging_base.clone().unwrap_or_default()),
@@ -325,6 +331,28 @@ impl Scenario {
             }
         }
 
+        let timeline = e.timeline.as_deref().unwrap_or(&self.timeline);
+        for (n, a) in timeline.iter().enumerate() {
+            let at = format!("Azione {}", n + 1);
+            if a.id.trim().is_empty() || a.title.trim().is_empty() {
+                out.push(format!("{at}: identificativo e titolo sono obbligatori"));
+            }
+            if timeline[..n].iter().any(|o| o.id == a.id) {
+                out.push(format!("{at}: identificativo «{}» duplicato", a.id));
+            }
+            if a.at_s < 0 {
+                out.push(format!("{at}: il tempo non può essere negativo"));
+            }
+            if !a.command.is_object() {
+                out.push(format!("{at}: il comando deve essere un oggetto JSON"));
+            }
+            if let Some(after) = &a.after {
+                if !msel.iter().any(|i| &i.id == after) {
+                    out.push(format!("{at}: segue l'inject sconosciuto «{after}»"));
+                }
+            }
+        }
+
         if let Some(base) = e.staging_base.as_deref().filter(|b| !b.trim().is_empty()) {
             // The place may be one this edit adds.
             let mut probe = Scenario::probe(self);
@@ -377,6 +405,7 @@ impl Scenario {
             roles: vec![],
             reinforcements: vec![],
             msel: vec![],
+            timeline: vec![],
             staging_base: None,
             operational_grants: vec![],
         }

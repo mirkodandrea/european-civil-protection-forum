@@ -3310,3 +3310,36 @@ async fn view_frames_are_compressed_differential_and_excon_only() {
     assert_eq!(rebuilt.generation, truth.generation);
     assert!(body.len() * 5 < serde_json::to_vec(&*first).unwrap().len());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scripted_timeline_action_is_decided_when_the_turn_starts() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.timeline = vec![scenario::TimelineAction {
+        id: "gust".into(),
+        title: "Gust front".into(),
+        at_s: 600,
+        command: json!({"type": "SetWeather", "wind_speed_kmh": 55.0}),
+        after: None,
+        note: String::new(),
+    }];
+    let ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+
+    let (st, due) = call(&app, "GET", "/api/master/due-actions?minutes=30", None).await;
+    assert_eq!(st, Status::Ok);
+    assert_eq!(due["due"][0]["id"], "gust");
+    let (_, none) = call(&app, "GET", "/api/master/due-actions?minutes=5", None).await;
+    assert!(none["due"].as_array().unwrap().is_empty());
+
+    // No decision: refused, the turn stays open.
+    let (st, err) = call(&app, "POST", "/api/master/resolve", Some(json!({"minutes": 30}))).await;
+    assert_ne!(st, Status::Ok, "{err}");
+    assert!(err["error"].as_str().unwrap().contains("gust"));
+
+    let body = json!({"minutes": 30, "actions": {"gust": "run"}});
+    let (st, _) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
+    assert_eq!(st, Status::Ok);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["timeline_actions"][0]["status"], "done");
+}

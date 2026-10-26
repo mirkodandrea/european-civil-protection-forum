@@ -119,6 +119,8 @@ pub struct App {
     busy: bool,
     reading: bool,
     resolving_request: bool,
+    /// Scripted timeline actions due in the turn about to start: (minutes, rows).
+    due_modal: Option<(u32, Vec<Value>)>,
     /// EXCON console language; stored in this browser only.
     excon_lang: String,
     refresh_again: bool,
@@ -157,6 +159,10 @@ pub enum Msg {
     Refresh,
     Refreshed(Result<(Value, Value), String>),
     ResolutionDone(Result<Value, String>),
+    /// Start the turn: first ask which scripted actions fall inside it.
+    StartTurn(u32),
+    DueActions(u32, Result<Value, String>),
+    CloseDue,
     Action(Action),
     Done(ActionKind, Result<Value, String>),
     Select(String),
@@ -381,6 +387,7 @@ impl Component for App {
             busy: false,
             reading: false,
             resolving_request: false,
+            due_modal: None,
             excon_lang: web_sys::window()
                 .and_then(|w| w.local_storage().ok().flatten())
                 .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
@@ -563,6 +570,29 @@ impl Component for App {
                     Msg::Done(action.kind, r)
                 });
             }
+            Msg::StartTurn(minutes) => {
+                if self.resolving_request || self.busy {
+                    return false;
+                }
+                self.error.clear();
+                let key = self.token.clone();
+                ctx.link().send_future(async move {
+                    let path = format!("/api/master/due-actions?minutes={minutes}");
+                    Msg::DueActions(minutes, api::request(&key, &path, None).await)
+                });
+            }
+            Msg::DueActions(minutes, result) => match result {
+                Ok(v) if list(&v["due"]).is_empty() => {
+                    ctx.link().send_message(Msg::Action(Action::post(
+                        "/api/master/resolve",
+                        json!({"minutes": minutes}),
+                    )));
+                    return false;
+                }
+                Ok(v) => self.due_modal = Some((minutes, list(&v["due"]).to_vec())),
+                Err(e) => self.error = e,
+            },
+            Msg::CloseDue => self.due_modal = None,
             Msg::ResolutionDone(result) => {
                 self.resolving_request = false;
                 match result {
@@ -911,7 +941,7 @@ impl Component for App {
         let l = self.lang();
         let l = l.as_str();
         let href = |path: &str| path.to_string();
-        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::Action(Action::post("/api/master/resolve",json!({"minutes":minutes}))))}}>{i18n::t(l,"advance_turn")}</button></div>};
+        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button><label>{"Δt "}<input id="minutes" type="number" min="1" max="1440" value={self.field("minutes","30")} oninput={ctx.link().callback(|e|Msg::Field("minutes".into(),api::input(e)))}/>{" min"}</label><button id="resolve" class="primary" disabled={self.busy||self.resolving_request||phase!="orders"} onclick={{let minutes=self.field("minutes","30").parse::<u32>().unwrap_or(30);ctx.link().callback(move |_|Msg::StartTurn(minutes))}}>{i18n::t(l,"advance_turn")}</button></div>};
         let running = phase == "resolving" || self.state["clock_control"]["running"] == true;
         let sim_badge = if self.state.is_null() || phase == "briefing" || phase == "debrief" {
             Html::default()
@@ -945,6 +975,7 @@ impl Component for App {
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
             else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy}/></main>}
             else{{self.view_chat(ctx)}}
+            if let Some((minutes,due))=&self.due_modal{<timeline::DueActionsDialog minutes={*minutes} due={due.clone()} busy={self.busy} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject a tutti").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 
         </>}

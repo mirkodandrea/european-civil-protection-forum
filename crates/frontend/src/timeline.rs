@@ -130,6 +130,78 @@ fn send_dialog(props: &SendDialogProps) -> Html {
     </section></div>}
 }
 
+#[derive(Properties, PartialEq)]
+pub struct DueActionsProps {
+    pub minutes: u32,
+    pub due: Vec<Value>,
+    pub busy: bool,
+    pub action: Callback<Action>,
+    pub onclose: Callback<()>,
+}
+
+/// Asked when a turn starts: what to do with each scripted action planned
+/// inside the turn's window (default: apply it at its planned instant).
+pub fn actions_body(minutes: u32, choices: &BTreeMap<String, String>) -> Value {
+    json!({"minutes": minutes, "actions": choices})
+}
+
+#[function_component(DueActionsDialog)]
+pub fn due_actions_dialog(props: &DueActionsProps) -> Html {
+    let choices = {
+        let due = props.due.clone();
+        use_state(move || {
+            due.iter()
+                .map(|a| (text(&a["id"]).to_string(), "run".to_string()))
+                .collect::<BTreeMap<_, _>>()
+        })
+    };
+    let confirm = {
+        let (choices, action, onclose, minutes) =
+            (choices.clone(), props.action.clone(), props.onclose.clone(), props.minutes);
+        Callback::from(move |_| {
+            action.emit(Action::post("/api/master/resolve", actions_body(minutes, &choices)));
+            onclose.emit(());
+        })
+    };
+    let option = |id: &str, value: &'static str, label: &'static str| {
+        let selected = choices.get(id).is_some_and(|c| c == value);
+        let onchange = {
+            let (choices, id) = (choices.clone(), id.to_string());
+            Callback::from(move |_| {
+                let mut next = (*choices).clone();
+                next.insert(id.clone(), value.to_string());
+                choices.set(next);
+            })
+        };
+        html! {<label class="inline-check"><input type="radio" name={format!("due-{id}")} data-due-choice={value} checked={selected} {onchange}/> {crate::i18n::ex(label)}</label>}
+    };
+    html! {<div class="modal-backdrop"><section class="inject-modal send-dialog" role="dialog" aria-modal="true" aria-labelledby="due-dialog-title">
+        <div class="row"><h2 id="due-dialog-title">{crate::i18n::ex("Azioni pianificate in questo turno")}</h2><div class="grow"/><button onclick={{let c=props.onclose.clone();Callback::from(move |_|c.emit(()))}}>{crate::i18n::ex("Annulla")}</button></div>
+        <p class="muted">{crate::exfmt!("Il turno dura {} min. Decidi cosa fare di ciascuna azione prima di avviarlo.","The turn lasts {} min. Decide what to do with each action before starting it.",props.minutes)}</p>
+        <ul class="planned-list">{for props.due.iter().map(|a|{
+            let id=text(&a["id"]).to_string();
+            html!{<li class="planned-inject" data-action={id.clone()} key={id.clone()}>
+                <span class="planned-times"><b>{text(&a["clock"])}</b></span>
+                <span class="planned-body"><b class="planned-title">{text(&a["title"])}</b>
+                    <span class="planned-text">{text(&a["summary"])}</span>
+                    if !text(&a["note"]).is_empty(){<small class="planned-objective">{text(&a["note"])}</small>}
+                    <span class="row">{option(&id,"run","Esegui all’istante previsto")}{option(&id,"skip","Salta")}{option(&id,"defer","Rinvia")}</span></span></li>}
+        })}</ul>
+        <div class="row send-actions"><div class="grow"/><button class="primary" data-due-confirm="" disabled={props.busy} onclick={confirm}>{crate::i18n::ex("Avvia il turno")}</button></div>
+    </section></div>}
+}
+
+fn action_status_label(a: &Value) -> &'static str {
+    match text(&a["status"]) {
+        "approved" => crate::i18n::ex("approvata"),
+        "done" => crate::i18n::ex("eseguita"),
+        "failed" => crate::i18n::ex("fallita"),
+        "skipped" => crate::i18n::ex("saltata"),
+        _ if a["run"].is_null() => crate::i18n::ex("in attesa"),
+        _ => crate::i18n::ex("rinviata"),
+    }
+}
+
 #[function_component(ExconTimeline)]
 pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let ratio = use_state(|| "60".to_string());
@@ -143,6 +215,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         .cloned()
         .collect::<Vec<_>>();
     let injects = list(&props.master["planned_injects"]).to_vec();
+    let actions = list(&props.master["timeline_actions"]).to_vec();
     let groups = group_by_event(&injects, *grouped);
     let sent_count = injects.iter().filter(|i| i["sent"] == true).count();
     let open_inject = opened
@@ -172,7 +245,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         <label class="inline-check"><input type="checkbox" id="group-by-event" checked={*grouped} onchange={{let g=grouped.clone();Callback::from(move |e:Event|{use yew::TargetCast;g.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("raggruppa per evento")}</label>
         <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject a tutti")}</button></div>
         <div class="row timeline-clock"><span>{format!("{} · clock {}",text(&props.state["world"]["stats"]["clock"]),if running{crate::i18n::ex("in esecuzione")}else{crate::i18n::ex("fermo")})}</span><label>{crate::i18n::ex("Velocità clock × ")}<input aria-label={crate::i18n::ex("Velocità clock")} type="number" min="0.1" step="1" value={(*ratio).clone()} oninput={{let ratio=ratio.clone();Callback::from(move |e|ratio.set(crate::api::input(e)))}}/></label><button id="timeline-clock-toggle" disabled={props.busy||props.state["phase"]=="resolving"||props.state["phase"]=="debrief"||ratio.parse::<f64>().map_or(true,|r|!r.is_finite()||r<=0.)} onclick={{let cb=props.action.clone();let ratio=ratio.parse::<f64>().unwrap_or(60.);Callback::from(move |_|cb.emit(Action::post("/api/master/clock",json!({"running":!running,"ratio":ratio,"reason":crate::i18n::ex("Controllo clock dalla timeline EXCON")}))))}}>{if running{crate::i18n::ex("Ferma clock")}else{crate::i18n::ex("Avvia clock")}}</button></div>
-        if injects.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject pianificato")}</p>}
+        if injects.is_empty()&&actions.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject pianificato")}</p>}
         {for groups.iter().map(|(event,items)|{
             let is_closed=!event.is_empty()&&collapsed.contains(event);
             let list_html=html!{<ol class="planned-list">{for items.iter().map(|i|row(i))}</ol>};
@@ -181,6 +254,13 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
                 html!{<section class="event-group" data-event={event.clone()}><button class="event-head" aria-expanded={(!is_closed).to_string()} onclick={toggle}><span>{if is_closed{"▸"}else{"▾"}}</span><b>{event.clone()}</b><small>{items.len()}</small></button>if !is_closed{{list_html}}</section>}
             }
         })}
+        if !actions.is_empty(){<section class="event-group" id="timeline-actions"><h3>{crate::i18n::ex("Azioni pianificate")}</h3>
+            <ol class="planned-list">{for actions.iter().map(|a|html!{<li class="planned-inject" data-action={text(&a["id"]).to_string()} key={text(&a["id"]).to_string()}>
+                <span class="planned-times"><b>{text(&a["clock"])}</b></span>
+                <span class="planned-body"><b class="planned-title">{text(&a["title"])}</b>
+                    <span class="pill rcpt">{action_status_label(a)}</span>
+                    <span class="planned-text">{text(&a["summary"])}</span>
+                    if let Some(r)=a["run"]["result"].as_str(){<small class="planned-objective">{r}</small>}</span></li>})}</ol></section>}
         <p class="muted">{crate::exfmt!("{} inject pianificati · {} già inviati · turno {} · {}","{} planned injects · {} already sent · turn {} · {}",injects.len(),sent_count,props.state["turn"],text(&props.state["phase"]))}</p>
         if let Some(inject)=open_inject{<SendDialog key={text(&inject["id_inject"]).to_string()} inject={inject.clone()} roles={roles.clone()} busy={props.busy} action={props.action.clone()} onclose={{let o=opened.clone();Callback::from(move |_|o.set(None))}}/>}
     </section>}

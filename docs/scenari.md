@@ -3,7 +3,7 @@
 Uno scenario è un **pack** (piccolo, modificabile) sopra un **territorio** (grande, in sola lettura).
 
 - **Territorio**: `data/scenarios/<id>.json`. Griglia, combustibili, edifici, strade, settori. Non si modifica dalla UI.
-- **Pack**: `data/scenarios/<id>.pack.json`. Dice quale territorio usa (`base`) e cosa cambia: nome, ora di inizio, meteo, inneschi, luoghi, tipi di risorsa, ruoli, rinforzi, inject (MSEL), politica tattica, modello operativo, base di partenza delle risorse. Un campo assente in `edits` resta quello del territorio. `run` fissa seme, realizzazioni, soglia e modello operativo; le opzioni da riga di comando hanno la precedenza.
+- **Pack**: `data/scenarios/<id>.pack.json`. Dice quale territorio usa (`base`) e cosa cambia: nome, ora di inizio, meteo, inneschi, luoghi, tipi di risorsa, ruoli, rinforzi, inject (MSEL), azioni pianificate (`timeline`), politica tattica, modello operativo, base di partenza delle risorse. Un campo assente in `edits` resta quello del territorio. `run` fissa seme, realizzazioni, soglia e modello operativo; le opzioni da riga di comando hanno la precedenza.
 
 Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Generale, Ruoli, Risorse, Inneschi con mappa, Rinforzi, Luoghi, Inject, Avanzate), controlla, salva, avvia. «Avvia» costruisce una nuova esercitazione dal pack e scarta la sessione in corso. Salvare non tocca l'esercitazione in corso. Un pack salvato dall'editor contiene tutti i campi, quindi è autonomo rispetto al territorio.
 
@@ -32,3 +32,11 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 
 Base di partenza delle risorse (`staging_base`), velocità per risorsa (`speed_mps`), risorse e azioni che il modello operativo aggiunge a un ruolo (`operational_grants`), esempi del catalogo comandi per l'AI (derivati dallo scenario).
 Gli scenari senza questi campi si comportano come prima.
+
+## Azioni pianificate (`timeline`)
+
+Accanto agli inject, un pack può avere `edits.timeline`: cambiamenti del mondo non legati a un messaggio. Ogni voce ha `id`, `title`, `at_s` (secondi simulati dall'inizio), `command` (un comando EXCON di `sim::Command`, ad esempio `{"type":"SetWeather","wind_dir_deg":270}`), `after` (inject a cui è collegata, facoltativo) e `note`.
+
+Quando EXCON avvia un turno, il server cerca le azioni ancora in attesa il cui istante cade prima della fine del turno (anche quelle in ritardo). La console apre un modale con l'elenco e per ciascuna chiede **Esegui** (all'istante previsto, o subito se già passato), **Salta** o **Rinvia** (ricompare al turno dopo). Senza una decisione per ogni azione dovuta il turno non parte. Le azioni approvate passano per `direct_command` (come un intervento EXCON) al passo di simulazione giusto. Il rollback a un turno dimentica le decisioni prese da quel momento in poi.
+
+API: `GET /api/master/due-actions?minutes=N`; `POST /api/master/resolve {minutes, actions:{id:"run"|"skip"|"defer"}}`; `GET /api/master` espone `timeline_actions` con lo stato di ogni voce.

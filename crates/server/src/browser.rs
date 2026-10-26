@@ -271,6 +271,11 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         }
         ("GET", "/api/state") => get_state(principal.clone(), s.clone()).await,
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
+        ("GET", "/api/master/due-actions") => {
+            let q: crate::DueQuery =
+                serde_urlencoded::from_str(query).map_err(|e| bad(e.to_string()))?;
+            get_due_actions(principal.clone(), s.clone(), q.minutes).await
+        }
         ("GET", "/api/player/<role>") => {
             get_player(principal.clone(), s.clone(), captures["role"].to_string()).await
         }
@@ -610,6 +615,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/evaluator"),
     ("GET", "/api/state"),
     ("GET", "/api/master"),
+    ("GET", "/api/master/due-actions"),
     ("GET", "/api/player/<role>"),
     ("POST", "/api/player/<role>/presence"),
     ("GET", "/api/player/<role>/presence"),

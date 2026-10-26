@@ -811,3 +811,65 @@ fn player_answer_supersedes_the_clarified_proposal() {
     let other = reply(&mut ex, "mayor", "x").unwrap();
     assert_eq!(ex.proposal(other).unwrap().supersedes, None);
 }
+
+fn with_timeline() -> Exercise {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.timeline = vec![scenario::TimelineAction {
+        id: "wind_shift".into(),
+        title: "Wind shifts".into(),
+        at_s: 300,
+        command: serde_json::json!({"type": "SetWeather", "wind_dir_deg": 123.0}),
+        after: None,
+        note: String::new(),
+    }];
+    scn.check().unwrap();
+    Exercise::new(World::new(Arc::new(scn), 1).unwrap())
+}
+
+#[test]
+fn due_timeline_action_needs_a_decision_and_fires_at_its_instant() {
+    use exercise::actions::{ActionChoice, ActionStatus};
+    use std::collections::BTreeMap;
+    let mut ex = with_timeline();
+    ex.start().unwrap();
+    assert_eq!(ex.due_actions(Some(10)).len(), 1);
+    assert!(ex.due_actions(Some(4)).is_empty());
+    // Undecided: nothing changes.
+    assert!(ex.begin_resolution(Some(10)).is_err());
+    assert_eq!(ex.phase, Phase::Orders);
+
+    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Run)]);
+    ex.begin_resolution_with(Some(10), &choices).unwrap();
+    while ex.world.time_s() < 299 {
+        ex.step_resolution(exercise::STEP_S).unwrap();
+    }
+    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Approved);
+    ex.step_resolution(exercise::STEP_S).unwrap();
+    ex.step_resolution(exercise::STEP_S).unwrap();
+    let run = &ex.action_runs["wind_shift"];
+    assert_eq!(run.status, ActionStatus::Done, "{run:?}");
+    assert_eq!(run.executed_s, Some(300));
+    ex.finish_resolution().unwrap();
+
+    // Rolling back to the turn it was decided in makes it pending again.
+    ex.rollback(1).unwrap();
+    assert!(ex.action_runs.is_empty());
+    assert_eq!(ex.due_actions(Some(10)).len(), 1);
+}
+
+#[test]
+fn skipped_and_deferred_actions_do_not_fire() {
+    use exercise::actions::{ActionChoice, ActionStatus};
+    use std::collections::BTreeMap;
+    let mut ex = with_timeline();
+    ex.start().unwrap();
+    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Defer)]);
+    ex.resolve_turn_with(Some(10), &choices).unwrap();
+    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Deferred);
+    // Overdue and still pending: asked again in the next turn.
+    assert_eq!(ex.due_actions(Some(10)).len(), 1);
+    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Skip)]);
+    ex.resolve_turn_with(Some(10), &choices).unwrap();
+    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Skipped);
+    assert!(ex.due_actions(Some(60)).is_empty());
+}

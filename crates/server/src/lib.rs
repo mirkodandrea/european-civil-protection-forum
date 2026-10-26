@@ -215,6 +215,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_static,
                 get_state,
                 get_master,
+                get_due_actions,
                 get_player,
                 post_presence,
                 get_presence,
@@ -581,6 +582,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(json!({
         "proposals": ex.proposals,
         "planned_injects": ex.planned_injects(),
+        "timeline_actions": ex.timeline_actions(),
         "inject_responses": ex.inject_responses(),
         "sent_injects": ex.sent_injects,
         "messages": messages,
@@ -1435,6 +1437,27 @@ async fn post_command(_principal: Principal, s: AppState, body: Json<Value>) -> 
 struct ResolveBody {
     #[serde(default)]
     minutes: Option<u32>,
+    /// Decision for each scripted timeline action due in the turn.
+    #[serde(default)]
+    actions: std::collections::BTreeMap<String, exercise::actions::ActionChoice>,
+}
+
+#[derive(Deserialize, Default)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) struct DueQuery {
+    #[serde(default)]
+    minutes: Option<u32>,
+}
+
+/// Scripted timeline actions that fall inside the next turn: EXCON decides
+/// on each of them when starting the turn.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::get("/api/master/due-actions?<minutes>")
+)]
+async fn get_due_actions(_principal: Principal, s: AppState, minutes: Option<u32>) -> ApiResult {
+    let ex = s.lock();
+    Ok(Json(json!({"turn": ex.turn, "due": ex.due_actions(minutes)})))
 }
 
 #[cfg_attr(
@@ -1446,8 +1469,9 @@ async fn post_resolve(
     s: AppState,
     body: Option<Json<ResolveBody>>,
 ) -> ApiResult {
-    let minutes = body.map(|b| b.0.minutes).unwrap_or_default();
-    s.lock().begin_resolution(minutes)?;
+    let body = body.map(|b| b.0).unwrap_or_default();
+    let minutes = body.minutes;
+    s.lock().begin_resolution_with(minutes, &body.actions)?;
     // Spawned, so the turn completes even if the client goes away; the
     // response still waits for the report.
     let report = tokio::spawn(flow::run_resolution(s.clone()))
