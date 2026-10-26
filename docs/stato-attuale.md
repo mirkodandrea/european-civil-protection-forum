@@ -63,6 +63,10 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta; la
    risposta del player la sostituisce, stato `superseded`). Modificando i
    parametri la fattibilità è ricalcolata in automatico (`/revalidate`).
+   La tab Risposte mostra solo gli inject effettivamente inviati e, per ciascuno,
+   l'intero thread in ordine (inject, risposte, chiarimenti EXCON; le chat tra
+   player restano private). Rispondendo a un chiarimento il selettore
+   «Rispondi a inject» non è offerto: resta solo per le azioni indipendenti.
 4. Le azioni approvate vengono eseguite o applicate durante l'avanzamento del
    tempo simulato. Le mappe, gli aggiornamenti ai ruoli, il registro e il debrief
    mostrano gli effetti.

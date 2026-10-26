@@ -24,6 +24,12 @@ fn is_open(p: &Value) -> bool {
     p["status"] != "superseded"
 }
 
+/// Only injects actually delivered to the recipient appear here: a row needs
+/// its delivered message, never a draft, a pending proposal or an unsent plan.
+pub fn is_sent(r: &Value) -> bool {
+    r["inject_message_id"].is_number() && !text(&r["clock"]).is_empty()
+}
+
 pub fn reply_state(r: &Value) -> ReplyState {
     let open = list(&r["pending_proposals"]).iter().filter(|p| is_open(p)).collect::<Vec<_>>();
     if open.iter().any(|p| p["awaiting_clarification"] != true) {
@@ -94,6 +100,7 @@ pub fn risposte(props: &RisposteProps) -> Html {
         .and_then(|k| rows.iter().find(|r| key(r) == *k).cloned());
     let shown = rows
         .iter()
+        .filter(|r| is_sent(r))
         .filter(|r| !*only_pending || matches!(reply_state(r), ReplyState::Pending | ReplyState::Clarifying))
         .collect::<Vec<_>>();
     html! {<section class="card" id="risposte"><div class="row"><h2>{crate::i18n::ex("Risposte")}</h2><span class="pill pending-count" hidden={pending_count(&props.master)==0}>{crate::exfmt!("{} in attesa di approvazione","{} awaiting approval",pending_count(&props.master))}</span><span class="pill clarifying-count" hidden={clarifying_count(&props.master)==0}>{crate::exfmt!("{} in attesa di chiarimento","{} awaiting clarification",clarifying_count(&props.master))}</span><div class="grow"/>
@@ -118,11 +125,7 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
     html! {<div class="modal-backdrop"><section class="inject-modal response-dialog" role="dialog" aria-modal="true" aria-labelledby="response-dialog-title">
         <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
         <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
-        <h3>{crate::i18n::ex("Inject inviato")}</h3><p class="inject-text">{text(&r["inject_text"])}</p>
-        <h3>{crate::i18n::ex("Risposte del player")}</h3>
-        if list(&r["replies"]).is_empty(){<p class="muted">{crate::i18n::ex("Nessuna risposta")}</p>}
-        <ol class="reply-list">{for list(&r["replies"]).iter().map(|m|html!{<li key={m["id"].to_string()}><small>{text(&m["clock"])}</small><p>{text(&m["text"])}</p>
-            if !text(&m["original"]).is_empty()&&text(&m["original"])!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",text(&m["original"]))}</small>}</li>})}</ol>
+        {thread_view(r,roles)}
         if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
         {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
@@ -133,6 +136,63 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
             }
         })}
     </section></div>}
+}
+
+/// Visual kind of a thread message: who speaks decides the side and the colour.
+fn thread_kind(m: &Value) -> &'static str {
+    match text(&m["kind"]) {
+        "inject" => "inject",
+        "clarification" => "question",
+        "reply" => "reply",
+        _ => "chat",
+    }
+}
+
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "inject" => crate::i18n::ex("Inject"),
+        "question" => crate::i18n::ex("Chiarimento EXCON"),
+        "reply" => crate::i18n::ex("Risposta"),
+        _ => crate::i18n::ex("Messaggio"),
+    }
+}
+
+/// The whole conversation of a delivery in message order. Older payloads
+/// without `thread` fall back to the inject plus the player replies.
+fn thread_messages(r: &Value) -> Vec<Value> {
+    let t = list(&r["thread"]);
+    if !t.is_empty() {
+        return t.to_vec();
+    }
+    let mut v = vec![serde_json::json!({"id":r["inject_message_id"],"kind":"inject","from":"master","to":r["role"],
+        "clock":r["clock"],"title":r["title"],"text":r["inject_text"]})];
+    v.extend(list(&r["replies"]).iter().map(|m| {
+        serde_json::json!({"id":m["id"],"kind":"reply","from":r["role"],"to":"master","clock":m["clock"],
+            "text":m["text"],"original":m["original"],"reply_to":m["reply_to"]})
+    }));
+    v
+}
+
+fn thread_view(r: &Value, roles: &[Value]) -> Html {
+    let messages = thread_messages(r);
+    let player = text(&r["role"]).to_string();
+    html! {<div class="response-thread" data-response-thread={r["inject_message_id"].to_string()}>
+        <h3>{crate::exfmt!("Thread · {} messaggi","Thread · {} messages",messages.len())}</h3>
+        if list(&r["replies"]).is_empty(){<p class="muted">{crate::i18n::ex("Nessuna risposta")}</p>}
+        <ol class="thread-list">{for messages.iter().map(|m|{
+            let kind=thread_kind(m);
+            let from=text(&m["from"]);
+            let own=from==player;
+            let original=text(&m["original"]);
+            html!{<li key={m["id"].to_string()} data-thread-message={m["id"].to_string()} class={classes!("thread-msg",format!("kind-{kind}"),own.then_some("from-player"))}>
+                <div class="thread-head"><b class="thread-from">{role_name(roles,from)}</b><span class="thread-arrow" aria-hidden="true">{"→"}</span><span class="thread-to">{role_name(roles,text(&m["to"]))}</span><span class="pill thread-kind">{kind_label(kind)}</span><div class="grow"/><time>{text(&m["clock"])}</time></div>
+                if !text(&m["title"]).is_empty(){<b class="thread-title">{text(&m["title"])}</b>}
+                <p class="thread-text">{text(&m["text"])}</p>
+                if !original.is_empty()&&original!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",original)}</small>}
+                if m["reply_to"].is_number(){<small class="thread-reply-to">{crate::exfmt!("In risposta al messaggio #{}","In reply to message #{}",m["reply_to"])}</small>}
+            </li>}
+        })}</ol>
+    </div>}
 }
 
 #[cfg(test)]
@@ -151,6 +211,21 @@ mod tests {
         let old = json!({"replies":[{}],"pending_proposals":[{"id":1,"status":"superseded"}]});
         assert_eq!(reply_state(&old), ReplyState::Replied);
         assert_eq!(pending_count(&json!({"inject_responses":[old]})), 0);
+    }
+    #[test]
+    fn only_sent_injects_and_whole_thread() {
+        assert!(is_sent(&json!({"inject_message_id":3,"clock":"10:00"})));
+        assert!(!is_sent(&json!({"title":"draft"})));
+        assert!(!is_sent(&json!({"inject_message_id":null,"clock":"10:00"})));
+        let r = json!({"inject_message_id":1,"role":"mayor","clock":"10:00","inject_text":"Fire",
+            "replies":[{"id":2,"clock":"10:05","text":"ok","original":"va bene"}],
+            "thread":[{"id":1,"kind":"inject"},{"id":2,"kind":"reply"},{"id":3,"kind":"clarification"}]});
+        assert_eq!(thread_messages(&r).len(), 3);
+        // Without `thread` the inject and its replies are rebuilt in order.
+        let old = json!({"inject_message_id":1,"role":"mayor","clock":"10:00","inject_text":"Fire","replies":[{"id":2,"text":"ok"}]});
+        let t = thread_messages(&old);
+        assert_eq!((thread_kind(&t[0]), thread_kind(&t[1])), ("inject", "reply"));
+        assert_eq!(thread_kind(&json!({"kind":"clarification"})), "question");
     }
     #[test]
     fn counts_pending() {
