@@ -62,7 +62,7 @@ impl Exercise {
                 let run = self.action_runs.get(&a.id);
                 json!({
                     "id": a.id, "title": a.title, "note": a.note, "after": a.after,
-                    "at_s": a.at_s, "clock": scenario::format_clock(start + a.at_s),
+                    "at_s": a.at_s, "overdue": a.at_s < self.world.time_s(), "clock": scenario::format_clock(start + a.at_s),
                     "command": a.command,
                     "summary": serde_json::from_value::<Command>(a.command.clone())
                         .map(|c| c.describe()).unwrap_or_else(|e| format!("invalid command: {e}")),

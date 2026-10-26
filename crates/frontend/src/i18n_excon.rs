@@ -64,6 +64,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Azioni pianificate" => "Scripted actions",
         "Esegui all’istante previsto" => "Run at the planned instant",
         "Salta" => "Skip",
+        "Esegui subito" => "Run now",
+        "istante già passato" => "planned instant already past",
         "Rinvia" => "Defer",
         "Avvia il turno" => "Start the turn",
         "approvata" => "approved",

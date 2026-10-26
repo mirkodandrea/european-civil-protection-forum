@@ -180,12 +180,13 @@ pub fn due_actions_dialog(props: &DueActionsProps) -> Html {
         <p class="muted">{crate::exfmt!("Il turno dura {} min. Decidi cosa fare di ciascuna azione prima di avviarlo.","The turn lasts {} min. Decide what to do with each action before starting it.",props.minutes)}</p>
         <ul class="planned-list">{for props.due.iter().map(|a|{
             let id=text(&a["id"]).to_string();
+            let overdue=a["overdue"]==true;
             html!{<li class="planned-inject" data-action={id.clone()} key={id.clone()}>
-                <span class="planned-times"><b>{text(&a["clock"])}</b></span>
+                <span class="planned-times"><b>{text(&a["clock"])}</b>if overdue{<small>{crate::i18n::ex("istante già passato")}</small>}</span>
                 <span class="planned-body"><b class="planned-title">{text(&a["title"])}</b>
                     <span class="planned-text">{text(&a["summary"])}</span>
                     if !text(&a["note"]).is_empty(){<small class="planned-objective">{text(&a["note"])}</small>}
-                    <span class="row">{option(&id,"run","Esegui all’istante previsto")}{option(&id,"skip","Salta")}{option(&id,"defer","Rinvia")}</span></span></li>}
+                    <span class="row">{if overdue{option(&id,"run","Esegui subito")}else{option(&id,"run","Esegui all’istante previsto")}}{option(&id,"skip","Salta")}{option(&id,"defer","Rinvia")}</span></span></li>}
         })}</ul>
         <div class="row send-actions"><div class="grow"/><button class="primary" data-due-confirm="" disabled={props.busy} onclick={confirm}>{crate::i18n::ex("Avvia il turno")}</button></div>
     </section></div>}
