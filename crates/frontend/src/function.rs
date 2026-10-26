@@ -13,6 +13,34 @@ fn number_or_text(value: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
+/// `**bold**` spans inside one line of plain text.
+fn inline(line: &str) -> Html {
+    html! {<>{for line.split("**").enumerate().map(|(i, part)| if i % 2 == 1 {html!{<strong>{part.to_string()}</strong>}} else {html!{{part.to_string()}}})}</>}
+}
+
+/// Plain LLM text as paragraphs and bullet lists (`-`/`*`/`•` start a bullet; consecutive bullets share one list).
+fn summary_body(text: &str) -> Html {
+    let bullet = |l: &str| l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")).or_else(|| l.strip_prefix("• ")).map(str::to_string);
+    let mut blocks: Vec<Html> = Vec::new();
+    let mut items: Vec<Html> = Vec::new();
+    let flush = |items: &mut Vec<Html>, blocks: &mut Vec<Html>| {
+        if !items.is_empty() {
+            blocks.push(html! {<ul>{for std::mem::take(items)}</ul>});
+        }
+    };
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        match bullet(line) {
+            Some(b) => items.push(html! {<li>{inline(&b)}</li>}),
+            None => {
+                flush(&mut items, &mut blocks);
+                blocks.push(html! {<p>{inline(line)}</p>});
+            }
+        }
+    }
+    flush(&mut items, &mut blocks);
+    html! {<div class="summary-body">{for blocks}</div>}
+}
+
 impl App {
     pub fn view_function(&self) -> Html {
         let lang = self.lang();
@@ -79,14 +107,16 @@ impl App {
                 <section class="card">
                     <h2>{i18n::t(&lang,"function_summaries")}</h2>
                     if summary_data_missing || summaries.is_empty() {<p class="muted">{i18n::t(&lang,"function_no_summaries")}</p>}
-                    else {<ol class="function-summaries">{for summaries.iter().map(|summary| {
+                    else {<ol class="function-summaries">{for summaries.iter().enumerate().map(|(idx, summary)| {
                         let turn = number_or_text(&summary["turn"]);
-                        let status = text(&summary["status"]);
-                        let status = if status.is_empty() {i18n::t(&lang,"function_status_unknown")} else {i18n::summary_status(&lang,status)};
-                        html! {<li key={format!("{}:{}",turn,text(&summary["clock"]))}>
-                            <header><strong>{i18n::tf(&lang,"function_turn_clock",&[&turn,text(&summary["clock"])])}</strong><span class="pill">{status}</span></header>
-                            if text(&summary["text"]).is_empty() {<p class="muted">{i18n::t(&lang,"function_summary_empty")}</p>}
-                            else {<p>{text(&summary["text"])}</p>}
+                        let raw_status = text(&summary["status"]);
+                        let status = if raw_status.is_empty() {i18n::t(&lang,"function_status_unknown")} else {i18n::summary_status(&lang,raw_status)};
+                        let body = if text(&summary["text"]).is_empty() {html!{<p class="muted">{i18n::t(&lang,"function_summary_empty")}</p>}} else {summary_body(text(&summary["text"]))};
+                        html! {<li key={format!("{}:{}",turn,text(&summary["clock"]))} class={classes!("summary-card", format!("summary-{raw_status}"))}>
+                            <details open={idx == 0}>
+                                <summary><span class="summary-turn">{turn.clone()}</span><strong>{i18n::tf(&lang,"function_turn_clock",&[&turn,text(&summary["clock"])])}</strong><span class="pill">{status}</span></summary>
+                                {body}
+                            </details>
                         </li>}
                     })}</ol>}
                 </section>

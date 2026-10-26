@@ -11,7 +11,6 @@ use crate::{
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
 // ------------------------------------------------------------------ tool catalogue
@@ -491,13 +490,15 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
     let to = (dir + 180.).to_radians();
     let len = speed / WIND_MAX_KMH * WIND_R;
     let (tx, ty) = (len * to.sin(), -len * to.cos());
+    // The dial element itself: with Yew's event delegation `current_target` can be a child shape.
+    let dial = use_node_ref();
     let pick = {
-        let state = state.clone();
+        let (state, dial) = (state.clone(), dial.clone());
         move |e: &PointerEvent| {
-            let svg = e.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
-            let Some(svg) = svg else { return };
+            let Some(svg) = dial.cast::<web_sys::Element>() else { return };
             let r = svg.get_bounding_client_rect();
-            let k = 200. / r.width().max(1.);
+            // The viewBox (200 units) is fitted into the smaller side and centred.
+            let k = 200. / r.width().min(r.height()).max(1.);
             let x = (e.client_x() as f64 - r.left() - r.width() / 2.) * k;
             let y = (e.client_y() as f64 - r.top() - r.height() / 2.) * k;
             let to_deg = x.atan2(-y).to_degrees().rem_euclid(360.);
@@ -506,19 +507,23 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         }
     };
     let ondown = {
-        let pick = pick.clone();
+        let (pick, dial) = (pick.clone(), dial.clone());
         Callback::from(move |e: PointerEvent| {
-            if let Some(el) = e.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+            if let Some(el) = dial.cast::<web_sys::Element>() {
                 let _ = el.set_pointer_capture(e.pointer_id());
             }
             pick(&e);
         })
     };
-    let onmove = Callback::from(move |e: PointerEvent| {
-        if e.buttons() & 1 == 1 {
-            pick(&e);
-        }
-    });
+    // Dragging = the dial holds the pointer capture taken in `ondown`.
+    let onmove = {
+        let dial = dial.clone();
+        Callback::from(move |e: PointerEvent| {
+            if dial.cast::<web_sys::Element>().is_some_and(|el| el.has_pointer_capture(e.pointer_id())) {
+                pick(&e);
+            }
+        })
+    };
     let onapply = {
         let (cb, moisture, oncommand, onclose) = (p.common.action.clone(), moisture.clone(), p.oncommand.clone(), p.common.onclose.clone());
         Callback::from(move |_| {
@@ -561,7 +566,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
     let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
     html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} {apply_label} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
         <p class="muted">{ex("Trascina la punta della freccia: indica dove soffia il vento, la lunghezza è la velocità.")}</p>
-        <svg class="wind-dial" viewBox="-100 -100 200 200" onpointerdown={ondown} onpointermove={onmove}>
+        <svg class="wind-dial" ref={dial} viewBox="-100 -100 200 200" onpointerdown={ondown} onpointermove={onmove}>
             {for rings.iter().map(|&v| html!{<circle r={format!("{}", v / WIND_MAX_KMH * WIND_R)} class="wd-ring"/>})}
             <line x1="-95" y1="0" x2="95" y2="0" class="wd-ring"/><line x1="0" y1="-95" x2="0" y2="95" class="wd-ring"/>
             <text y="-91" class="wd-n">{"N"}</text><text x="93" y="3" class="wd-n">{"E"}</text><text y="99" class="wd-n">{"S"}</text><text x="-93" y="3" class="wd-n">{"O"}</text>

@@ -478,10 +478,18 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .md-detail .rr-body,.md-detail .inject-body{padding:0}
 .scenario-json{margin:12px 0}.scenario-json>summary{cursor:pointer;font-weight:600}.scenario-json textarea{width:100%;box-sizing:border-box;max-width:100%}
 
-.wind-dial{width:min(100%,280px);display:block;margin:8px auto;touch-action:none;cursor:crosshair;background:var(--panel,transparent);border-radius:50%}
+.wind-dial{width:min(100%,280px);aspect-ratio:1;display:block;margin:8px auto;touch-action:none;cursor:crosshair;background:var(--panel,transparent);border-radius:50%}
 .wind-dial .wd-ring{fill:none;stroke:currentColor;stroke-opacity:.2;stroke-width:.6}
 .wind-dial .wd-n{fill:currentColor;font-size:8px;text-anchor:middle;opacity:.7}
 .wind-dial .wd-arrow{stroke:#e8590c;stroke-width:3;stroke-linecap:round}
 .wind-dial .wd-tip{fill:#e8590c}
 .wd-read{text-align:center;font-weight:600}
 .wd-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.function-summaries li.summary-card{padding:0;border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:#fbfdfb;overflow:hidden}
+.summary-card>details{margin:0}.summary-card>details>summary{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;list-style:none;min-height:44px}.summary-card>details>summary::-webkit-details-marker{display:none}
+.summary-card>details[open]>summary{border-bottom:1px solid var(--line);background:#f1f6f2}
+.summary-card>details>summary::after{content:"▸";margin-left:auto;color:var(--muted);transition:transform .15s}.summary-card>details[open]>summary::after{transform:rotate(90deg)}
+.summary-turn{flex:none;min-width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.summary-card .pill{margin-left:4px}.summary-card.summary-ready .pill{background:#dcebe2;color:#1d5a42}.summary-card.summary-unavailable .pill{background:#f6dede;color:#8a2b27}.summary-card.summary-pending .pill,.summary-card.summary-generating .pill{background:#fff0d2;color:#7a5314}
+.summary-body{padding:12px 16px 14px;line-height:1.55;max-width:70ch}.summary-body p{margin:0 0 8px}.summary-body ul{margin:0 0 8px;padding-left:20px}.summary-body li{margin:2px 0}.summary-body>:last-child{margin-bottom:0}
