@@ -8,6 +8,8 @@ use scenario::{BuildingKind, Pos, Scenario};
 
 use crate::frame::{to_bevy, EXAGGERATION};
 use crate::materials::{structure, Finish, StructureMaterial};
+use crate::night::night_factor;
+use crate::sky::SkyEnv;
 use crate::{Scn, Snapshot};
 
 #[derive(Component)]
@@ -33,6 +35,34 @@ pub struct Palette {
     road_closed: Handle<StandardMaterial>,
     road_cut: Handle<StandardMaterial>,
     line: Handle<StandardMaterial>,
+}
+
+/// Lit windows after dark. Each occupied state has its own light (warm
+/// homes, amber when threatened, cold white-blue while evacuating); empty and
+/// damaged buildings stay dark, so the lights themselves say who is still
+/// home. The shader (`structure.wgsl`, glass) picks which panes are on.
+pub fn night_windows(
+    sky: Res<SkyEnv>,
+    pal: Option<Res<Palette>>,
+    mut mats: ResMut<Assets<StructureMaterial>>,
+    mut last: Local<f32>,
+) {
+    let Some(pal) = pal else { return };
+    let night = (night_factor(&sky) * 50.0).round() / 50.0;
+    if night == *last {
+        return;
+    }
+    *last = night;
+    for (handle, rgb) in [
+        (&pal.house, [2.6, 1.7, 0.7]),
+        (&pal.facility, [2.8, 2.2, 1.2]),
+        (&pal.threatened, [3.4, 1.5, 0.4]),
+        (&pal.evacuating, [1.6, 2.6, 3.4]),
+    ] {
+        if let Some(m) = mats.get_mut(handle) {
+            m.base.emissive = LinearRgba::new(rgb[0], rgb[1], rgb[2], 0.0) * night;
+        }
+    }
 }
 
 /// Show the zone grid (toggle with G).

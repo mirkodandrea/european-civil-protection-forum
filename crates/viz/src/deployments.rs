@@ -24,6 +24,26 @@ pub struct DeploymentPalette {
     material: Handle<StructureMaterial>,
     kit_material: Handle<StructureMaterial>,
 }
+/// Beacons and headlamps brighten after dark (`structure.wgsl`, lamps read the
+/// night factor from the material's emissive red).
+pub fn night_vehicles(
+    sky: Res<crate::sky::SkyEnv>,
+    pal: Option<Res<DeploymentPalette>>,
+    mut mats: ResMut<Assets<StructureMaterial>>,
+    mut last: Local<f32>,
+) {
+    let Some(pal) = pal else { return };
+    let night = (crate::night::night_factor(&sky) * 50.0).round() / 50.0;
+    if night == *last {
+        return;
+    }
+    *last = night;
+    for handle in [&pal.material, &pal.kit_material] {
+        if let Some(m) = mats.get_mut(handle) {
+            m.base.emissive = LinearRgba::new(night, 0.0, 0.0, 0.0);
+        }
+    }
+}
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,

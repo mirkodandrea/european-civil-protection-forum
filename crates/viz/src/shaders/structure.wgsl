@@ -54,7 +54,7 @@ fn set_pbr(pbr: ptr<function, PbrInput>, roughness: f32, metallic: f32, reflecta
 // lamps that glow, matte cloth, hi-vis strips that catch the light. `lp` is
 // the object-space position (metres, y up from the ground): road dust climbs
 // the lower part of a vehicle and the boots of a crew.
-fn apply_surface(pbr: ptr<function, PbrInput>, id: u32, lp: vec3<f32>, p: vec3<f32>) {
+fn apply_surface(pbr: ptr<function, PbrInput>, id: u32, lp: vec3<f32>, p: vec3<f32>, glow: vec3<f32>) {
     let c = (*pbr).material.base_color.rgb;
     let px_m = max(length(dpdx(p)), length(dpdy(p)));
     let fine = 1.0 - smoothstep(0.05, 0.4, px_m);
@@ -81,10 +81,23 @@ fn apply_surface(pbr: ptr<function, PbrInput>, id: u32, lp: vec3<f32>, p: vec3<f
         }
         case SURFACE_GLASS: {
             set_pbr(pbr, 0.04, 0.0, 0.8);
+#ifdef FINISH_TOWN
+            // Night: `glow`, the material's own emissive, is the colour of its
+            // lit windows (zero by day, `objects::night_windows`). Each pane
+            // is lit or dark by a hash of its place, so a street reads as
+            // people at home, not a lit grid. Alpha 0: raw radiance, not
+            // scaled by the camera exposure.
+            let pane = floor(vec3<f32>(p.x * 0.45, p.y * 0.4, p.z * 0.45));
+            let on = step(hash21(pane.xz + pane.y * 7.3), 0.62);
+            (*pbr).material.emissive = vec4<f32>(glow * on * (0.7 + 0.6 * hash21(pane.xz + 3.1)), 0.0);
+#endif
         }
         case SURFACE_LAMP: {
             set_pbr(pbr, 0.15, 0.0, 0.5);
-            (*pbr).material.emissive = vec4<f32>(c * 6.0, 1.0);
+            // Beacons and headlamps: lit a little by day, bright at night
+            // (`glow.r` is the night factor of the vehicle materials,
+            // `deployments::night_vehicles`). Alpha 0, as for windows.
+            (*pbr).material.emissive = vec4<f32>(c * (0.8 + 9.0 * glow.r), 0.0);
         }
         case SURFACE_SKIN: {
             set_pbr(pbr, 0.52, 0.0, 0.35);
@@ -344,6 +357,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let surface = 0u;
 #endif
     pbr.material.base_color = alpha_discard(pbr.material, pbr.material.base_color);
+    // A material's emissive is its night light, for the windows only (glass
+    // below): everything else of the structure stays dark.
+    let glow = pbr.material.emissive.rgb;
+    pbr.material.emissive = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     let p = in.world_position.xyz;
     let c = pbr.material.base_color;
 #ifdef FINISH_TOWN
@@ -361,7 +378,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.N = normalize(pbr.N + rock_bump(p, normalize(in.world_normal)));
 #endif
     if surface != 0u {
-        apply_surface(&pbr, surface, local_metres(p, in.instance_index), p);
+        apply_surface(&pbr, surface, local_metres(p, in.instance_index), p, glow);
     }
 
     var out: FragmentOutput;

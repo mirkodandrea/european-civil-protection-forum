@@ -45,7 +45,9 @@ const REFLECTANCE: f32 = 0.02;
 const RANGE_M: f32 = 12.0;
 const KERB_M: f32 = 1.3;
 const ASPHALT: vec3<f32> = vec3<f32>(0.214, 0.214, 0.223);
-const ASPHALT_KERB: vec3<f32> = vec3<f32>(0.045, 0.045, 0.050);
+// A pale gravel shoulder, not a dark one: it outlines the road on dark night
+// ground and on ochre day ground alike.
+const ASPHALT_KERB: vec3<f32> = vec3<f32>(0.34, 0.32, 0.28);
 const PAVING: vec3<f32> = vec3<f32>(0.74, 0.67, 0.55);
 const TRACK: vec3<f32> = vec3<f32>(0.296, 0.234, 0.141);
 const TRACK_KERB: vec3<f32> = vec3<f32>(0.119, 0.091, 0.056);

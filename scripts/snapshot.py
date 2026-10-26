@@ -17,7 +17,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-KEYS = {'name', 't', 'fixture', 'at', 'dist', 'yaw', 'pitch', 'ui', 'marks', 'quality', 'bench', 'settle', 'fire'}
+KEYS = {'name', 't', 'fixture', 'at', 'dist', 'yaw', 'pitch', 'ui', 'marks', 'quality', 'bench', 'settle', 'fire', 'hour'}
 
 
 def parse(spec):
@@ -37,7 +37,7 @@ def parse(spec):
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', state['name']) or state['name'] in names:
             raise ValueError('Names must be unique simple file names (letters, numbers, _ or -)')
         names.add(state['name'])
-        for key in ['t', 'dist', 'yaw', 'pitch', 'bench', 'settle']:
+        for key in ['t', 'dist', 'yaw', 'pitch', 'bench', 'settle', 'hour']:
             if key in state:
                 value = float(state[key])
                 if not math.isfinite(value):
@@ -46,6 +46,8 @@ def parse(spec):
                     raise ValueError('t must be whole simulated minutes, 0..10080')
                 if key in ['bench', 'settle'] and not 0 <= value <= 300:
                     raise ValueError(f'{key} must be 0..300 seconds')
+                if key == 'hour' and not 0 <= value < 24:
+                    raise ValueError('hour must be 0..24')
                 if key == 'dist' and value < 20:
                     raise ValueError('dist must be at least 20 m')
                 if key == 'pitch' and not 3 <= abs(value) <= 89:
@@ -147,6 +149,8 @@ def main():
                    TTX_SNAPSHOT_AT=state['at'], TTX_SNAPSHOT_UI=state['ui'], TTX_SNAPSHOT_MARKS=state['marks'],
                    TTX_QUALITY=state.get('quality', 'projector'), TTX_FIRE_RENDER=state.get('fire', os.environ.get('TTX_FIRE_RENDER', 'continuous')), TTX_SIZE=args.size, TTX_SCALE=str(args.scale),
                    TTX_SNAPSHOT_BENCH=state.get('bench', str(args.bench)), TTX_SNAPSHOT_SETTLE=state.get('settle', '3'))
+        if 'hour' in state:
+            env['TTX_START_HOUR'] = state['hour']
         for key, variable in [('dist', 'DISTANCE'), ('yaw', 'YAW'), ('pitch', 'PITCH')]:
             if key in state:
                 env['TTX_SNAPSHOT_' + variable] = state[key]

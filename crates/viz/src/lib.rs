@@ -36,6 +36,7 @@ mod frame;
 mod hud;
 mod materials;
 mod models;
+mod night;
 mod objects;
 mod quality;
 mod sky;
@@ -177,6 +178,7 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
                 camera::setup,
                 terrain::setup,
                 objects::setup,
+                night::setup,
                 deployments::setup,
             ),
         )
@@ -190,6 +192,9 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
                     .after(frame::update)
                     .after(fire_field::toggle),
                 objects::update.after(frame::update),
+                objects::night_windows,
+                night::update,
+                deployments::night_vehicles,
                 deployments::update.after(frame::update),
                 camera::control.after(frame::update),
                 camera::fire_lights.after(frame::update),
