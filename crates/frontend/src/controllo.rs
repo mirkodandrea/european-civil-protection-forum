@@ -62,7 +62,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "json", group: "Esercitazione", icon: "{ }", label: "Comando JSON e catalogo", tip: "Anteprima di comandi in JSON e catalogo completo dei comandi." },
     Tool { id: "end", group: "Esercitazione", icon: "🏁", label: "Fine ed evidenze", tip: "Conclude l’esercitazione o scarica il debrief JSON." },
 ];
-fn tool_label(id: &str) -> &'static str {
+pub(crate) fn tool_label(id: &str) -> &'static str {
     TOOLS.iter().find(|t| t.id == id).map(|t| ex(t.label)).unwrap_or("")
 }
 fn matches_query(t: &Tool, q: &str) -> bool {
@@ -133,7 +133,7 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
     })
 }
 /// Which map click hint applies.
-fn map_hint(tool: &str, picked: usize) -> &'static str {
+pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
     match (tool, picked) {
         ("line", 0) => "Clicca sulla mappa il primo punto della linea.",
         ("line", 1) => "Clicca il secondo punto della linea.",
@@ -301,6 +301,22 @@ fn pick_map(stat: &Value, state: &Value, onclick: Callback<Value>, pending: Opti
 pub struct MapToolProps {
     pub tool: AttrValue,
     pub common: CommonProps,
+    /// Hand the finished command to the caller instead of posting it to the
+    /// running exercise (the scenario editor uses the tool forms this way).
+    #[prop_or_default]
+    pub oncommand: Option<Callback<Value>>,
+    /// Replaces the situation map: gets the map-click callback and the pending point.
+    #[prop_or_default]
+    pub map_for: Option<MapFactory>,
+}
+
+/// Builds a point-picking map for [`MapToolModal`] when no live situation exists.
+#[derive(Clone)]
+pub struct MapFactory(pub std::rc::Rc<dyn Fn(Callback<Value>, Option<Value>) -> Html>);
+impl PartialEq for MapFactory {
+    fn eq(&self, _: &Self) -> bool {
+        false // closes over the scenario being edited
+    }
 }
 #[function_component(MapToolModal)]
 pub fn map_tool_modal(p: &MapToolProps) -> Html {
@@ -348,19 +364,30 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
     };
     let hint = if points.len() < need && !points.is_empty() { ex(map_hint(tool, points.len())).to_string() } else { String::new() };
     let onapply = {
-        let (cb, cmd) = (c.action.clone(), cmd.clone());
+        let (cb, cmd, oncommand, onclose) = (c.action.clone(), cmd.clone(), p.oncommand.clone(), c.onclose.clone());
         Callback::from(move |_| {
             if let Some(cmd) = &cmd {
-                cb.emit(Action::post("/api/master/command", cmd.clone()));
+                match &oncommand {
+                    Some(f) => {
+                        f.emit(cmd.clone());
+                        onclose.emit(());
+                    }
+                    None => cb.emit(Action::post("/api/master/command", cmd.clone())),
+                }
             }
         })
     };
+    let map = match &p.map_for {
+        Some(f) => (f.0)(onmap, pending),
+        None => pick_map(&c.stat, &c.state, onmap, pending, Vec::new(), Vec::new()),
+    };
+    let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
     let reset = {
         let points = points.clone();
         Callback::from(move |_| points.set(Vec::new()))
     };
-    html! {<Modal title={tool_label(tool)} onclose={c.onclose.clone()} {onapply} apply_disabled={cmd.is_none() || radius_bad} busy={c.busy} done={c.done} error={c.error.clone()}
-        map={pick_map(&c.stat, &c.state, onmap, pending, Vec::new(), Vec::new())}
+    html! {<Modal title={tool_label(tool)} onclose={c.onclose.clone()} {onapply} apply_disabled={cmd.is_none() || radius_bad} busy={c.busy} done={c.done} error={c.error.clone()} {apply_label}
+        {map}
         extra_actions={html!{<button type="button" disabled={points.is_empty() || c.busy} onclick={reset}>{ex("Azzera selezione")}</button>}}>
         <p class="muted">{ex(TOOLS.iter().find(|t| t.id == tool).map(|t| t.tip).unwrap_or(""))}</p>
         <p class="ctl-pick" aria-live="polite">{summary}</p>
@@ -450,6 +477,9 @@ pub struct WeatherProps {
     /// Fuel moisture, percent.
     pub moisture: f64,
     pub common: CommonProps,
+    /// Hand the `SetWeather` command to the caller instead of posting it.
+    #[prop_or_default]
+    pub oncommand: Option<Callback<Value>>,
 }
 /// Boundary conditions: wind as a direction/speed vector editor, plus fuel moisture.
 /// Wind vector: drag the arrow tip on the dial. The arrow points where the wind blows to.
@@ -490,8 +520,17 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         }
     });
     let onapply = {
-        let (cb, moisture) = (p.common.action.clone(), moisture.clone());
-        Callback::from(move |_| cb.emit(Action::post("/api/master/command", json!({"type":"SetWeather","wind_dir_deg":dir,"wind_speed_kmh":speed,"moisture_pct":*moisture}))))
+        let (cb, moisture, oncommand, onclose) = (p.common.action.clone(), moisture.clone(), p.oncommand.clone(), p.common.onclose.clone());
+        Callback::from(move |_| {
+            let cmd = json!({"type":"SetWeather","wind_dir_deg":dir,"wind_speed_kmh":speed,"moisture_pct":*moisture});
+            match &oncommand {
+                Some(f) => {
+                    f.emit(cmd);
+                    onclose.emit(());
+                }
+                None => cb.emit(Action::post("/api/master/command", cmd)),
+            }
+        })
     };
     // Typed values; an unparsable field leaves the state untouched.
     let on_dir = {
@@ -519,7 +558,8 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         })
     };
     let rings = [25., 50., 75., 100.];
-    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
+    let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
+    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} {apply_label} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
         <p class="muted">{ex("Trascina la punta della freccia: indica dove soffia il vento, la lunghezza è la velocità.")}</p>
         <svg class="wind-dial" viewBox="-100 -100 200 200" onpointerdown={ondown} onpointermove={onmove}>
             {for rings.iter().map(|&v| html!{<circle r={format!("{}", v / WIND_MAX_KMH * WIND_R)} class="wd-ring"/>})}

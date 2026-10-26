@@ -822,7 +822,14 @@ fn injects_tab(o: &Open, open: &UseStateHandle<Option<Open>>, json: &UseStateHan
 fn injects_view(props: &InjectsProps) -> Html {
     let (o, open, json, message) = (&props.o, &props.open, &props.json, &props.message);
     let selected = use_state(|| 0usize);
+    // `Some(i)`: the i-th scripted action is selected instead of an inject.
+    let act = use_state(|| Option::<usize>::None);
+    let cmd_edit = use_state(|| (usize::MAX, String::new()));
+    // The EXCON control tool (see `controllo`) currently building an action's command.
+    let tool = use_state(|| Option::<&'static str>::None);
     let msel = o.pack.edits.msel.clone().unwrap_or_default();
+    let actions = o.pack.edits.timeline.clone().unwrap_or_default();
+    let na = actions.len();
     let roles: Vec<(String, String)> = o.pack.edits.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
     let n = msel.len();
     let sel = (*selected).min(n.saturating_sub(1));
@@ -832,7 +839,7 @@ fn injects_view(props: &InjectsProps) -> Html {
             let title = if m.title.trim().is_empty() { ex("(senza titolo)").to_string() } else { m.title.clone() };
             html!{<>
                 {if new_turn { html!{<h4 class="md-group inject-turn">{format!("{} {}", ex("Turno"), m.turn)}</h4>} } else { Html::default() }}
-                {md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set(i)) }, html!{<>
+                {md_item(i == sel && act.is_none(), { let (selected, act) = (selected.clone(), act.clone()); Callback::from(move |_| { act.set(None); selected.set(i) }) }, html!{<>
                     <span class="md-id">{m.id.clone()}</span>
                     <span class="md-name">{title}</span>
                     {if m.event.trim().is_empty() { Html::default() } else { html!{<small class="md-sub">{m.event.clone()}</small>} }}
@@ -840,10 +847,33 @@ fn injects_view(props: &InjectsProps) -> Html {
             </>}
         })}
         {if n == 0 { html!{<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>} } else { Html::default() }}
+        {if na == 0 { Html::default() } else { html!{<h4 class="md-group inject-turn">{ex("Azioni pianificate")}</h4>} }}
+        {for actions.iter().enumerate().map(|(i, a)| {
+            let title = if a.title.trim().is_empty() { ex("(senza titolo)").to_string() } else { a.title.clone() };
+            let when = clock_text(o.pack.edits.start_clock_s.unwrap_or(0) + a.at_s);
+            md_item(*act == Some(i), { let act = act.clone(); Callback::from(move |_| act.set(Some(i))) }, html!{<>
+                <span class="md-id">{when}</span>
+                <span class="md-name">{title}</span>
+                <small class="md-sub">{a.command["type"].as_str().unwrap_or("?").to_string()}</small>
+            </>})
+        })}
     </>};
     let tools = html! {<>
-        <span class="muted">{format!("{n} inject")}</span>
+        <span class="muted">{format!("{n} inject · {na} {}", ex("azioni"))}</span>
         {add_inject_button(open, &selected, n)}
+        <button class="primary" title={ex("Aggiunge un’azione pianificata: un cambiamento del mondo (es. vento, ignizione) che l’EXCON approva all’avvio del turno in cui cade.")} onclick={{
+            let (act, add) = (act.clone(), upd(open, |p, _: MouseEvent| {
+                let l = p.edits.timeline.get_or_insert_with(Vec::new);
+                let mut k = l.len() + 1;
+                while l.iter().any(|a| a.id == format!("A-{k:02}")) { k += 1; }
+                l.push(scenario::TimelineAction {
+                    id: format!("A-{k:02}"), title: String::new(), at_s: 0,
+                    command: serde_json::json!({"type": "SetWeather", "wind_speed_kmh": 30.0}),
+                    after: None, note: String::new(),
+                });
+            }));
+            Callback::from(move |e| { act.set(Some(na)); add.emit(e) })
+        }}>{ex("Aggiungi azione")}</button>
         <button title={ex("Riordina l’elenco per turno, mantenendo l’ordine attuale a parità di turno.")} onclick={{
             // The selection follows the inject it points at.
             let mut sorted = msel.clone();
@@ -855,12 +885,13 @@ fn injects_view(props: &InjectsProps) -> Html {
             Callback::from(move |e| { if let Some(k) = target { selected.set(k); } sort.emit(e) })
         }}>{ex("Ordina per turno")}</button>
     </>};
-    let detail = match msel.get(sel) {
-        Some(m) => inject_detail(sel, n, m, &roles, open, &selected),
-        None => html! {<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>},
+    let detail = match (act.and_then(|i| actions.get(i).map(|a| (i, a))), msel.get(sel)) {
+        (Some((i, a)), _) => action_detail(i, a, &msel, o, open, &act, &cmd_edit, &tool),
+        (None, Some(m)) => inject_detail(sel, n, m, &roles, open, &selected),
+        (None, None) => html! {<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>},
     };
     html! {<div class="inject-tab">
-        <p class="muted">{ex("Inject preparati (MSEL). L’EXCON decide quando inviarli; il turno è solo un suggerimento.")}</p>
+        <p class="muted">{ex("Inject preparati (MSEL): l’EXCON decide quando inviarli; il turno è solo un suggerimento. Le azioni pianificate cambiano il mondo a un istante preciso: all’avvio del turno in cui cadono l’EXCON sceglie se eseguirle, saltarle o rinviarle.")}</p>
         {master_detail(items, tools, detail)}
         <details class="inject-json">
             <summary title={ex("Copia o sostituisci l’intera lista degli inject come testo JSON.")}>{ex("Avanzate: JSON (solo inject)")}</summary>
@@ -883,6 +914,115 @@ fn injects_view(props: &InjectsProps) -> Html {
                 Callback::from(move |e: InputEvent| json.set(api::input(e)))
             }}/>
         </details>
+    </div>}
+}
+
+/// The editor of the selected scripted action. The command is raw JSON of an
+/// EXCON command; it is stored only while it parses as a JSON object.
+fn action_detail(
+    i: usize,
+    a: &scenario::TimelineAction,
+    msel: &[InjectTemplate],
+    o: &Open,
+    open: &UseStateHandle<Option<Open>>,
+    act: &UseStateHandle<Option<usize>>,
+    cmd_edit: &UseStateHandle<(usize, String)>,
+    tool: &UseStateHandle<Option<&'static str>>,
+) -> Html {
+    let start_s = o.pack.edits.start_clock_s.unwrap_or(0);
+    let set = |f: fn(&mut scenario::TimelineAction, String)| upd(open, move |p, v: String| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { f(x, v) });
+    let abs = start_s + a.at_s;
+    let clock_cb = upd(open, move |p, v: String| {
+        if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) {
+            if let Some(t) = parse_clock(abs.div_euclid(86_400) + 1, &v).map(|t| t - start_s).filter(|t| *t >= 0) {
+                x.at_s = t;
+            }
+        }
+    });
+    let shown = if cmd_edit.0 == i { cmd_edit.1.clone() } else { serde_json::to_string_pretty(&a.command).unwrap_or_default() };
+    let valid = serde_json::from_str::<Value>(&shown).is_ok_and(|v| v.is_object());
+    let on_cmd = {
+        let (cmd_edit, store) = (cmd_edit.clone(), upd(open, move |p, v: Value| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { x.command = v }));
+        Callback::from(move |e: InputEvent| {
+            let t = api::input(e);
+            if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                if v.is_object() { store.emit(v); }
+            }
+            cmd_edit.set((i, t));
+        })
+    };
+    // The same tool forms as the EXCON Controllo; the command they build is stored here.
+    const TOOL_IDS: [&str; 8] = ["ignite", "line", "drop", "extcircle", "extzone", "evac", "warn", "weather"];
+    let pick = {
+        let (store, cmd_edit) = (upd(open, move |p, v: Value| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { x.command = v }), cmd_edit.clone());
+        Callback::from(move |v: Value| {
+            store.emit(v);
+            cmd_edit.set((usize::MAX, String::new()));
+        })
+    };
+    let common = crate::controllo::CommonProps {
+        stat: Value::Null, state: Value::Null, master: Value::Null, responses: Default::default(),
+        busy: false, error: "".into(), done: 0, action: Callback::noop(),
+        onclose: { let tool = tool.clone(); Callback::from(move |_| tool.set(None)) },
+    };
+    let tool_modal = match **tool {
+        Some("weather") => {
+            let w = o.pack.edits.weather;
+            let cur = |k: &str, d: f64| if a.command["type"] == "SetWeather" { a.command[k].as_f64() } else { None }.or(Some(d)).unwrap_or(d);
+            html! {<crate::controllo::WeatherModal title={crate::controllo::tool_label("weather")} common={common}
+                dir={cur("wind_dir_deg", w.map_or(0., |w| w.wind_dir_deg))} speed={cur("wind_speed_kmh", w.map_or(0., |w| w.wind_speed_kmh))}
+                moisture={cur("moisture_pct", w.map_or(10., |w| w.moisture_pct))} oncommand={Some(pick.clone())}/>}
+        }
+        Some(id) => {
+            let (g, o2) = (geom(o), o.clone());
+            let map_for = crate::controllo::MapFactory(std::rc::Rc::new(move |onpick: Callback<Value>, pending: Option<Value>| {
+                let map = NodeRef::default();
+                let o3 = o2.clone();
+                let onclick = map_click(&map, g, Callback::from(move |(at, _): ([f32; 2], Option<usize>)| {
+                    let zone = zone_at(&o3, g, at).unwrap_or_default();
+                    onpick.emit(json!({"x": at[0], "y": at[1], "zone": zone}));
+                }));
+                let mark = pending.and_then(|p| Some((p["x"].as_f64()?, p["y"].as_f64()?)));
+                html! {<svg ref={map} class="ignition-map" viewBox={format!("0 0 {} {}", g.width, g.height)} style={format!("aspect-ratio:{}/{}", g.width, g.height)} role="img" aria-label={ex("Mappa del territorio")} {onclick}>
+                    {map_base(&o2, g)}
+                    {if let Some((x, y)) = mark { html!{<circle cx={x.to_string()} cy={(g.height - y).to_string()} r={(g.zone * 0.06).to_string()} fill="#d9480f"/>} } else { Html::default() }}
+                </svg>}
+            }));
+            html! {<crate::controllo::MapToolModal key={id.to_string()} tool={id.to_string()} common={common} oncommand={Some(pick.clone())} {map_for}/>}
+        }
+        None => Html::default(),
+    };
+    let links: Vec<(String, String)> = std::iter::once((String::new(), ex("(nessuno)").to_string()))
+        .chain(msel.iter().map(|m| (m.id.clone(), format!("{} · {}", m.id, m.title))))
+        .collect();
+    html! {<div class="inject-body" key={format!("action-{i}")}>
+        <div class="settings-fields">
+            {field("Identificativo", "Chiave stabile dell’azione, usata dai report: non riutilizzarla.", a.id.clone(), set(|x, v| x.id = v))}
+            {field("Ora (HH:MM)", "Istante in cui l’azione va eseguita, nell’ora simulata dello scenario. L’EXCON la decide all’avvio del turno che lo contiene.", clock_text(abs), clock_cb)}
+            {choice("Segue l’inject", "Collegamento informativo a un inject: non cambia quando l’azione scatta.", a.after.as_deref().unwrap_or(""), &links, upd(open, move |p, v: String| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { x.after = Some(v).filter(|v| !v.is_empty()) }))}
+        </div>
+        {field("Titolo", "Nome breve mostrato nell’elenco e nel modale di avvio del turno.", a.title.clone(), set(|x, v| x.title = v))}
+        <div class="inject-recipients" title={ex("Gli stessi strumenti del Controllo EXCON: costruiscono il comando dell’azione.")}>
+            <span class="label">{ex("Imposta con lo strumento")}</span>
+            <div class="chips">{for crate::controllo::TOOLS.iter().filter(|t| TOOL_IDS.contains(&t.id)).map(|t| {
+                let (tool, id) = (tool.clone(), t.id);
+                html!{<button type="button" class="chip" title={ex(t.tip)} onclick={Callback::from(move |_| tool.set(Some(id)))}>{format!("{} {}", t.icon, ex(t.label))}</button>}
+            })}</div>
+            <small class="hint">{format!("{}: {}", ex("Comando attuale"), a.command["type"].as_str().unwrap_or("?"))}</small>
+        </div>
+        {tool_modal}
+        <label class="wide" title={ex("Comando EXCON in JSON, ad esempio SetWeather, Ignite, CloseRoad, SetBuildingStatus, AdjustResource.")}>{ex("Avanzate: comando (JSON)")}
+            <textarea rows="7" value={shown} oninput={on_cmd}/>
+            <small class="hint">{if valid { ex("JSON valido: i campi sono controllati all’esecuzione. Esempio: {\"type\":\"SetWeather\",\"wind_dir_deg\":270}") } else { ex("JSON non valido: l’ultima versione valida resta salvata.") }}</small>
+        </label>
+        {area("Nota", "Appunto per l’EXCON, mostrato nel modale di avvio del turno.", a.note.clone(), "2", set(|x, v| x.note = v))}
+        <div class="inject-actions">
+            <ConfirmDelete label="Elimina azione" onconfirm={{
+                let act = act.clone();
+                let del = upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.timeline.as_mut() { if i < l.len() { l.remove(i); } } });
+                Callback::from(move |e| { act.set(None); del.emit(e) })
+            }}/>
+        </div>
     </div>}
 }
 
@@ -1031,7 +1171,7 @@ const TABS: &[(&str, &str, &str)] = &[
     ("ignitions", "Inneschi", "Dove e quando parte l’incendio, scelti sulla mappa."),
     ("reinforcements", "Rinforzi", "Risorse extra che i giocatori possono richiedere durante l’esercitazione."),
     ("places", "Luoghi", "Nomi dei luoghi che giocatori e AI possono citare nei messaggi."),
-    ("injects", "Inject", "Eventi e messaggi programmati (MSEL) che l’EXCON consegna a un orario prefissato."),
+    ("injects", "Timeline", "Inject (messaggi) e azioni pianificate (cambiamenti del mondo) che l’EXCON consegna o decide durante l’esercitazione."),
     ("advanced", "Avanzate", "Impostazioni tecniche: modello operativo, seme casuale, realizzazioni dell’ensemble."),
 ];
 
