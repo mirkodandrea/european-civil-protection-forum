@@ -71,6 +71,7 @@ impl Exercise {
     /// One row per (inject delivery, recipient): the inject, the player's
     /// replies in that thread and any proposal still awaiting EXCON review.
     pub fn inject_responses(&self) -> Vec<Value> {
+        let clarifications = self.clarification_threads();
         self.messages
             .iter()
             .filter(|m| m.kind == MsgKind::Inject && m.inject_id.is_some())
@@ -127,13 +128,29 @@ impl Exercise {
                     })
                     .map(|t| {
                         let original = t.original.as_ref().filter(|o| **o != t.text_en);
+                        // Clarification entries carry the id of their thread.
+                        let clarification = clarifications
+                            .iter()
+                            .find(|c| c.entries.iter().any(|e| e.message == t.id))
+                            .map(|c| c.id);
                         json!({"id": t.id, "kind": t.kind, "from": t.from, "to": t.to,
                         "turn": t.turn, "clock": t.clock, "t_s": t.t_s, "title": t.title,
-                        "text": t.text_en, "original": original, "reply_to": t.reply_to})
+                        "text": t.text_en, "original": original, "reply_to": t.reply_to,
+                        "clarification_thread": clarification})
+                    })
+                    .collect();
+                // Status and open proposal of each clarification conversation of this delivery.
+                let threads: Vec<Value> = clarifications
+                    .iter()
+                    .filter(|c| c.inject_id == Some(delivery) && c.role == m.to)
+                    .map(|c| {
+                        json!({"id": c.id, "status": c.status, "current_proposal": c.current_proposal,
+                        "messages": c.entries.iter().map(|e| e.message).collect::<Vec<_>>()})
                     })
                     .collect();
                 json!({
                     "thread": thread,
+                    "clarification_threads": threads,
                     "inject_message_id": m.id, "delivery_id": delivery,
                     "id_inject": self.delivery_msel.get(&delivery),
                     "title": m.title, "role": m.to, "clock": m.clock, "t_s": m.t_s,

@@ -2,6 +2,7 @@ mod advanced;
 mod controllo;
 mod api;
 mod chat;
+mod clarify;
 mod evaluator;
 mod function;
 mod history;
@@ -41,6 +42,8 @@ pub enum ActionKind {
     Prepare(String),
     Submit(String),
     Download,
+    /// Remove this form field once the request succeeded.
+    ClearField(String),
 }
 #[derive(Clone, PartialEq)]
 pub struct Action {
@@ -711,6 +714,9 @@ impl Component for App {
                                     self.fields.remove(key);
                                 }
                                 self.notice = crate::i18n::ex("Proposta inviata a EXCON per revisione").into();
+                            }
+                            ActionKind::ClearField(key) => {
+                                self.fields.remove(&key);
                             }
                             ActionKind::Ordinary => {}
                         }

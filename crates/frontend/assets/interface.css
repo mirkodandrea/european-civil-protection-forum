@@ -504,3 +504,10 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .summary-body{padding:12px 16px 14px;line-height:1.55;max-width:70ch}.summary-body p{margin:0 0 8px}.summary-body ul{margin:0 0 8px;padding-left:20px}.summary-body li{margin:2px 0}.summary-body>:last-child{margin-bottom:0}
 .pill.kind{font-size:.72em;text-transform:uppercase;letter-spacing:.04em}.pill.kind.action{background:#fff3e0;color:#8a4b00}.pill.kind.inject{background:#e8f0fe;color:#1a4a9a}
 .planned-inject.planned-action{border-left:4px solid #e08a00;padding-left:.5rem}
+
+/* Clarification threads (EXCON <-> player) */
+.clarification-threads{display:grid;gap:10px;margin:0 0 12px}.clarification-thread{padding:10px 12px;background:#fff8e8;border:1px solid #d9822b;border-radius:8px}.clarification-thread.is-closed{background:#f4f7f5;border-color:var(--line)}
+.clarification-thread header{display:flex;gap:8px;align-items:center;justify-content:space-between}.clarification-thread h3{margin:0;font-size:14px}
+.clarify-chat{list-style:none;margin:8px 0;padding:0;display:grid;gap:6px}.clarify-msg{max-width:85%;padding:6px 10px;border-radius:10px;background:#fff;border:1px solid var(--line)}.clarify-msg p{margin:2px 0 0;white-space:pre-wrap}.clarify-msg.mine{justify-self:end;background:#eef6ff;border-color:#3b7dd8}
+.clarify-reply{display:grid;gap:6px}.clarify-reply textarea{min-height:64px}
+.clarification-bar{display:flex;gap:8px;align-items:center;margin:6px 0}.thread-msg.in-clarification{border-left-style:dashed}

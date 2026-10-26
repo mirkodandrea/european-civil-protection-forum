@@ -317,6 +317,13 @@ fn it(key: &'static str) -> &'static str {
         "advance_turn" => "Avanza turno →",
         "tools_link" => "Strumenti avanzati ↗",
         "map_road_cut" => "× Strada interrotta da incendio",
+        // Clarification threads with EXCON (not in i18n_lang: other languages use English)
+        "thread_title" => "Conversazione con EXCON",
+        "thread_you" => "Tu",
+        "thread_answer" => "Scrivi la tua risposta",
+        "thread_send" => "Invia risposta →",
+        "thread_wait" => "In attesa della valutazione di EXCON",
+        "thread_closed" => "Chiarimento chiuso",
         _ => key,
     }
 }
@@ -535,6 +542,13 @@ fn en(key: &'static str) -> &'static str {
         "advance_turn" => "Advance turn →",
         "tools_link" => "Advanced tools ↗",
         "map_road_cut" => "× Road cut by fire",
+        // Clarification threads with EXCON (not in i18n_lang: other languages use English)
+        "thread_title" => "Conversation with EXCON",
+        "thread_you" => "You",
+        "thread_answer" => "Write your answer",
+        "thread_send" => "Send answer →",
+        "thread_wait" => "Waiting for EXCON to review",
+        "thread_closed" => "Clarification closed",
         _ => key,
     }
 }

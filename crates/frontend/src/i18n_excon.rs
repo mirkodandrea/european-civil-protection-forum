@@ -725,6 +725,12 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Quante simulazioni del fuoco vengono eseguite in parallelo per stimarne l’incertezza. Predefinito 32. Più realizzazioni = stima più stabile ma più lenta." => "How many fire simulations are run to estimate uncertainty. Default 32. More = steadier estimate but slower.",
         "Soglia del fuoco «reale» (0–1)" => "“Actual” fire threshold (0–1)",
         "Frazione di realizzazioni che devono raggiungere una cella perché conti come in fiamme. 0.5 = scenario centrale (predefinito), 0.25 = scenario pessimistico." => "Fraction of realisations that must reach a cell for it to count as burning. 0.5 = central scenario (default), 0.25 = pessimistic.",
+        // BEGIN clarification threads (risposte.rs)
+        "Chiudi chiarimento" => "Close clarification",
+        "Chiarimento: attende il player" => "Clarification: waiting for the player",
+        "Chiarimento: attende EXCON" => "Clarification: waiting for EXCON",
+        "Chiarimento chiuso" => "Clarification closed",
+        // END clarification threads
         _ => return None,
     })
 }

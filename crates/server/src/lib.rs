@@ -232,6 +232,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_prompt,
                 post_decide,
                 post_clarify,
+                post_close_clarification,
                 post_revalidate,
                 post_command,
                 post_preview,
@@ -584,6 +585,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "planned_injects": ex.planned_injects(),
         "timeline_actions": ex.timeline_actions(),
         "inject_responses": ex.inject_responses(),
+        "clarification_threads": ex.clarification_threads(),
         "sent_injects": ex.sent_injects,
         "messages": messages,
         "log": log,
@@ -639,6 +641,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
+        "clarification_threads": ex.player_clarification_threads(&role),
     })))
 }
 
@@ -1270,6 +1273,18 @@ async fn post_clarify(
         req.text_en.clone(),
     ));
     Ok(Json(json!(req)))
+}
+
+/// EXCON closes a clarification thread (`id` = originating proposal) and goes
+/// back to deciding on its latest proposal.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/clarifications/<id>/close")
+)]
+async fn post_close_clarification(_principal: Principal, s: AppState, id: u64) -> ApiResult {
+    let mut ex = s.lock();
+    ex.close_clarification(id)?;
+    Ok(Json(json!(ex.clarification_thread(id))))
 }
 
 #[derive(Deserialize)]

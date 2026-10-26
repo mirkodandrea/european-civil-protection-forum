@@ -3083,6 +3083,72 @@ async fn excon_clarify_endpoint_asks_the_player_and_keeps_the_proposal_open() {
 }
 
 #[tokio::test]
+async fn clarification_thread_runs_several_rounds_and_can_be_closed() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text": "warn the area", "reply_to": reply_parent(&app, "mayor").await})),
+    )
+    .await;
+    let p1 = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |v| {
+        v["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1 && p["status"] == "pending")
+    })
+    .await;
+    // Round 1: EXCON asks, the player answers in text.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{p1}/clarify"), Some(json!({"note": "Which zone?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let player = eventually(&app, "/api/player/mayor", |v| {
+        v["clarification_threads"].as_array().unwrap().iter().any(|t| t["entries"].as_array().unwrap().len() == 2)
+    })
+    .await;
+    let t = &player["clarification_threads"][0];
+    assert_eq!((t["id"].as_u64(), t["status"].as_str()), (Some(p1), Some("awaiting_player")));
+    assert!(t["entries"][0].get("text_en").is_none(), "players do not see the working copy");
+    let q1 = t["entries"][1]["message"].as_u64().unwrap();
+    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "Zone F4", "reply_to": q1}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    let p2 = r["proposal"].as_u64().unwrap();
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p2 && p["status"] == "pending")
+    })
+    .await;
+    let th = m["clarification_threads"].as_array().unwrap().iter().find(|t| t["id"] == p1).unwrap();
+    assert_eq!((th["status"].as_str(), th["current_proposal"].as_u64()), (Some("awaiting_excon"), Some(p2)));
+    assert_eq!(th["entries"].as_array().unwrap().len(), 3);
+    // The same messages are tagged in the per-response thread.
+    let row = m["inject_responses"].as_array().unwrap().iter()
+        .find(|r| r["clarification_threads"].as_array().is_some_and(|a| !a.is_empty()))
+        .expect("row with clarification thread");
+    assert_eq!(row["thread"].as_array().unwrap().iter().filter(|x| x["clarification_thread"] == p1).count(), 3);
+    // Round 2 on the new proposal, still the same thread.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{p2}/clarify"), Some(json!({"note": "Which side?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let m = eventually(&app, "/api/master", |m| {
+        m["clarification_threads"].as_array().unwrap().iter().any(|t| t["id"] == p1 && t["entries"].as_array().unwrap().len() == 4)
+    })
+    .await;
+    assert_eq!(m["clarification_threads"].as_array().unwrap().len(), 1);
+    // EXCON closes: the proposal is back in the plain review queue.
+    let uri = format!("/api/master/clarifications/{p1}/close");
+    let (s, t) = call(&app, "POST", &uri, None).await;
+    assert_eq!(s, Status::Ok, "{t}");
+    assert_eq!(t["status"], "closed");
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p2 && p["status"] == "pending")
+    })
+    .await;
+    assert_eq!(m["clarification_threads"][0]["status"], "closed");
+    let (s, _) = call(&app, "POST", &uri, None).await;
+    assert_ne!(s, Status::Ok, "already closed");
+    let (s, _) = call(&app, "POST", "/api/master/clarifications/999999/close", None).await;
+    assert_ne!(s, Status::Ok);
+}
+
+#[tokio::test]
 async fn revalidate_and_supersede_endpoints() {
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;

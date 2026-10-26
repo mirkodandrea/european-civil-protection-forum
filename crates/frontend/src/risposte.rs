@@ -125,7 +125,7 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
     html! {<div class="modal-backdrop"><section class="inject-modal response-dialog" role="dialog" aria-modal="true" aria-labelledby="response-dialog-title">
         <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
         <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
-        {thread_view(r,roles)}
+        {thread_view(props,r,roles)}
         if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
         {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
@@ -173,7 +173,7 @@ fn thread_messages(r: &Value) -> Vec<Value> {
     v
 }
 
-fn thread_view(r: &Value, roles: &[Value]) -> Html {
+fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value]) -> Html {
     let messages = thread_messages(r);
     let player = text(&r["role"]).to_string();
     html! {<div class="response-thread" data-response-thread={r["inject_message_id"].to_string()}>
@@ -184,7 +184,7 @@ fn thread_view(r: &Value, roles: &[Value]) -> Html {
             let from=text(&m["from"]);
             let own=from==player;
             let original=text(&m["original"]);
-            html!{<li key={m["id"].to_string()} data-thread-message={m["id"].to_string()} class={classes!("thread-msg",format!("kind-{kind}"),own.then_some("from-player"))}>
+            html!{<li key={m["id"].to_string()} data-thread-message={m["id"].to_string()} data-clarification-thread={m["clarification_thread"].as_u64().map(|id|id.to_string())} class={classes!("thread-msg",format!("kind-{kind}"),own.then_some("from-player"),m["clarification_thread"].is_number().then_some("in-clarification"))}>
                 <div class="thread-head"><b class="thread-from">{role_name(roles,from)}</b><span class="thread-arrow" aria-hidden="true">{"→"}</span><span class="thread-to">{role_name(roles,text(&m["to"]))}</span><span class="pill thread-kind">{kind_label(kind)}</span><div class="grow"/><time>{text(&m["clock"])}</time></div>
                 if !text(&m["title"]).is_empty(){<b class="thread-title">{text(&m["title"])}</b>}
                 <p class="thread-text">{text(&m["text"])}</p>
@@ -192,6 +192,15 @@ fn thread_view(r: &Value, roles: &[Value]) -> Html {
                 if m["reply_to"].is_number(){<small class="thread-reply-to">{crate::exfmt!("In risposta al messaggio #{}","In reply to message #{}",m["reply_to"])}</small>}
             </li>}
         })}</ol>
+        {for list(&r["clarification_threads"]).iter().map(|c|{
+            let id=c["id"].as_u64().unwrap_or(0);
+            let closed=c["status"]=="closed";
+            let close={let a=props.action.clone();Callback::from(move |_|a.emit(Action::post(format!("/api/master/clarifications/{id}/close"),serde_json::json!({}))))};
+            html!{<div key={id} class={classes!("clarification-bar",closed.then_some("is-closed"))} data-clarification-bar={id.to_string()}>
+                <span class="pill">{match text(&c["status"]){"awaiting_player"=>crate::i18n::ex("Chiarimento: attende il player"),"closed"=>crate::i18n::ex("Chiarimento chiuso"),_=>crate::i18n::ex("Chiarimento: attende EXCON")}}</span>
+                if !closed{<button data-close-clarification={id.to_string()} disabled={props.busy} onclick={close}>{crate::i18n::ex("Chiudi chiarimento")}</button>}
+            </div>}
+        })}
     </div>}
 }
 
@@ -226,6 +235,9 @@ mod tests {
         let t = thread_messages(&old);
         assert_eq!((thread_kind(&t[0]), thread_kind(&t[1])), ("inject", "reply"));
         assert_eq!(thread_kind(&json!({"kind":"clarification"})), "question");
+        // Clarification entries keep their thread tag inside the same list.
+        let tagged = json!({"inject_message_id":1,"role":"mayor","thread":[{"id":1,"kind":"inject"},{"id":2,"kind":"clarification","clarification_thread":7}]});
+        assert_eq!(thread_messages(&tagged)[1]["clarification_thread"], 7);
     }
     #[test]
     fn counts_pending() {

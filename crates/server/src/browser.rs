@@ -479,6 +479,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/clarifications/<id>/close") => {
+            post_close_clarification(
+                principal.clone(),
+                s.clone(),
+                captures["id"].parse().map_err(|_| bad("invalid id"))?,
+            )
+            .await
+        }
         ("POST", "/api/master/proposals/<id>/revalidate") => {
             post_revalidate(
                 principal.clone(),
@@ -645,6 +653,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/prompt"),
     ("POST", "/api/master/proposals/<id>/decide"),
     ("POST", "/api/master/proposals/<id>/clarify"),
+    ("POST", "/api/master/clarifications/<id>/close"),
     ("POST", "/api/master/proposals/<id>/revalidate"),
     ("POST", "/api/master/preview"),
     ("POST", "/api/master/correct-intervention"),

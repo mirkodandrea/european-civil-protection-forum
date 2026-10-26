@@ -309,6 +309,9 @@ pub struct Proposal {
     /// Question the EXCON put to the proposing player (status `NeedsClarification`).
     #[serde(default)]
     pub clarification_request: Option<String>,
+    /// EXCON closed the clarification thread this proposal ends (see [`threads`]).
+    #[serde(default)]
+    pub clarification_closed: bool,
     /// Earlier proposal this one replaces (the player answered its clarification question).
     #[serde(default)]
     pub supersedes: Option<u64>,
@@ -1178,6 +1181,7 @@ impl Exercise {
             status: ProposalStatus::Parsing,
             master_note: None,
             clarification_request: None,
+            clarification_closed: false,
             supersedes: None,
             superseded_by: None,
             results: Vec::new(),
@@ -1342,6 +1346,7 @@ impl Exercise {
             status: ProposalStatus::Parsing,
             master_note: None,
             clarification_request: None,
+            clarification_closed: false,
             supersedes: None,
             superseded_by: None,
             results: Vec::new(),
@@ -1791,7 +1796,9 @@ impl Exercise {
         if !matches!(p.status, ProposalStatus::Pending | ProposalStatus::NeedsClarification) {
             bail!("proposal {pid} is already {:?}", p.status);
         }
-        self.proposal_mut(pid)?.clarification_request = Some(note.to_string());
+        let p = self.proposal_mut(pid)?;
+        p.clarification_request = Some(note.to_string());
+        p.clarification_closed = false;
         self.transition(
             pid,
             ProposalStatus::NeedsClarification,
@@ -2131,6 +2138,7 @@ impl Exercise {
             "objectives": self.world.scn.msel.iter().map(|i| json!({"inject":i.id,"objective":i.objective})).collect::<Vec<_>>(),
             "proposals": self.proposals,
             "messages": self.messages,
+            "clarification_threads": self.clarification_threads(),
             "log": self.log,
         })
     }
