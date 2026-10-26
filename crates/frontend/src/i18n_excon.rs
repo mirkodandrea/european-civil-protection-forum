@@ -402,6 +402,10 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Il clock è in marcia: l’intervento agisce subito sullo stato corrente." => "The clock is running: the intervention acts immediately on the current state.",
         "Clicca le zone da rivelare: il clic le aggiunge o le toglie. Il ruolo conosce solo ciò che pubblichi, come fotografia al momento della consegna." => "Click the zones to reveal: a click adds or removes them. The role only knows what you publish, as a snapshot at delivery time.",
         // END controllo.rs
+        // BEGIN risposte thread
+        "Chiarimento EXCON" => "EXCON clarification",
+        "Risposta" => "Reply",
+        // END risposte thread
         // BEGIN timeline.rs / risposte.rs
         "Inviato" => "Sent",
         "Non ancora inviato" => "Not yet sent",

@@ -807,6 +807,17 @@ fn player_answer_supersedes_the_clarified_proposal() {
     for r in ex.inject_responses() {
         assert!(!r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old));
     }
+    // Each row carries its whole thread in message order: inject, replies, question.
+    let row = ex
+        .inject_responses()
+        .into_iter()
+        .find(|r| r["role"] == "fire_commander" && !r["replies"].as_array().unwrap().is_empty())
+        .expect("row with replies");
+    let thread = row["thread"].as_array().unwrap();
+    assert_eq!(thread[0]["kind"], "inject");
+    assert!(thread.iter().any(|t| t["kind"] == "clarification"));
+    assert!(thread.iter().any(|t| t["kind"] == "reply"));
+    assert!(thread.windows(2).all(|w| w[0]["id"].as_u64() < w[1]["id"].as_u64()));
     // An unrelated reply supersedes nothing.
     let other = reply(&mut ex, "mayor", "x").unwrap();
     assert_eq!(ex.proposal(other).unwrap().supersedes, None);

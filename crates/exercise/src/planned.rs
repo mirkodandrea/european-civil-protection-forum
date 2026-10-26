@@ -1,7 +1,7 @@
 //! EXCON master-view projections: the unified chronological MSEL plan and
 //! the responses players gave to delivered injects.
 use crate::timing::ScheduleStatus;
-use crate::{Exercise, MsgKind, ProposalStatus};
+use crate::{Exercise, MsgKind, ProposalStatus, MASTER};
 use serde_json::{json, Value};
 
 impl Exercise {
@@ -109,7 +109,31 @@ impl Exercise {
                         "clarification_request": p.clarification_request})
                     })
                     .collect();
+                // The whole conversation hanging off this delivery, in order:
+                // the inject, the player's replies, EXCON clarifications and
+                // any chat that continued the thread with this recipient.
+                let thread: Vec<Value> = self
+                    .messages
+                    .iter()
+                    .filter(|t| {
+                        t.inject_id == Some(delivery)
+                            && (t.from == m.to || t.to == m.to)
+                            // Peer chats between players stay private to them.
+                            && (t.kind != MsgKind::Chat || t.from == MASTER || t.to == MASTER)
+                            && matches!(
+                                t.kind,
+                                MsgKind::Inject | MsgKind::Reply | MsgKind::Clarification | MsgKind::Chat
+                            )
+                    })
+                    .map(|t| {
+                        let original = t.original.as_ref().filter(|o| **o != t.text_en);
+                        json!({"id": t.id, "kind": t.kind, "from": t.from, "to": t.to,
+                        "turn": t.turn, "clock": t.clock, "t_s": t.t_s, "title": t.title,
+                        "text": t.text_en, "original": original, "reply_to": t.reply_to})
+                    })
+                    .collect();
                 json!({
+                    "thread": thread,
                     "inject_message_id": m.id, "delivery_id": delivery,
                     "id_inject": self.delivery_msel.get(&delivery),
                     "title": m.title, "role": m.to, "clock": m.clock, "t_s": m.t_s,
