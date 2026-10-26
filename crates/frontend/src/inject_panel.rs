@@ -145,10 +145,8 @@ pub fn modal_shell(props: &ModalShellProps) -> Html {
 }
 
 impl App {
-    /// The list of injects (and, if one is opened, its modal). `turn` is the selected turn.
-    pub fn view_inject_panel(&self, ctx: &Context<Self>, can_act: bool, turn: u64) -> Html {
-        let l = self.lang();
-        let l = l.as_str();
+    /// Inject rows of a turn (most urgent first) and the live proposals they are built from.
+    fn inject_items(&self, l: &str, turn: u64) -> (Vec<Item<'_>>, Vec<&Value>) {
         let injects: Vec<&Value> = self.messages().iter().filter(|m| m["kind"] == "inject").collect();
         let proposals: Vec<&Value> = list(&self.state["proposals"]).iter().filter(|p| p["status"] != "rolled_back").collect();
         let all_threads = list(&self.state["clarification_threads"]);
@@ -170,6 +168,21 @@ impl App {
             items.push(Item { key: "free".into(), msg: None, proposals: free, threads: all_threads.iter().filter(|t| t["inject_id"].is_null()).collect() });
         }
         items.sort_by_key(|it| if it.threads.iter().any(|t| has_status(t, "awaiting_player")) { 0 } else if outcome(l, it).action { 1 } else { 2 });
+        (items, proposals)
+    }
+
+    /// Injects of the current turn that wait for the player (nav badge).
+    pub fn inject_todo(&self) -> usize {
+        let l = self.lang();
+        let turn = self.state["turn"].as_u64().unwrap_or(0);
+        self.inject_items(&l, turn).0.iter().filter(|it| outcome(&l, it).action).count()
+    }
+
+    /// The list of injects (and, if one is opened, its modal). `turn` is the selected turn.
+    pub fn view_inject_panel(&self, ctx: &Context<Self>, can_act: bool, turn: u64) -> Html {
+        let l = self.lang();
+        let l = l.as_str();
+        let (items, proposals) = self.inject_items(l, turn);
         if items.is_empty() {
             return html! {<div class="tactical-empty"><b>{if self.state["phase"]=="briefing"{i18n::t(l,"awaiting_start")}else{i18n::t(l,"no_events")}}</b><p>{i18n::t(l,"empty_hint")}</p></div>};
         }

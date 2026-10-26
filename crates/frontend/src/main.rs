@@ -938,6 +938,8 @@ impl Component for App {
             let active = self.active == id;
             let unread = if id == "chat" && !self.is_master() {
                 self.chat_unread()
+            } else if id == "map" && !self.is_master() && !self.is_evaluator() {
+                self.inject_todo()
             } else if id == "risposte" && self.is_master() {
                 risposte::pending_count(&self.master)
             } else {
