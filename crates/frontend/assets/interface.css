@@ -477,3 +477,11 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .md-detail{min-width:0;border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px 14px 14px}
 .md-detail .rr-body,.md-detail .inject-body{padding:0}
 .scenario-json{margin:12px 0}.scenario-json>summary{cursor:pointer;font-weight:600}.scenario-json textarea{width:100%;box-sizing:border-box;max-width:100%}
+
+.wind-dial{width:min(100%,280px);display:block;margin:8px auto;touch-action:none;cursor:crosshair;background:var(--panel,transparent);border-radius:50%}
+.wind-dial .wd-ring{fill:none;stroke:currentColor;stroke-opacity:.2;stroke-width:.6}
+.wind-dial .wd-n{fill:currentColor;font-size:8px;text-anchor:middle;opacity:.7}
+.wind-dial .wd-arrow{stroke:#e8590c;stroke-width:3;stroke-linecap:round}
+.wind-dial .wd-tip{fill:#e8590c}
+.wd-read{text-align:center;font-weight:600}
+.wd-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}

@@ -11,6 +11,7 @@ use crate::{
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
 // ------------------------------------------------------------------ tool catalogue
@@ -40,8 +41,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: dimezza il tempo di evacuazione." },
     Tool { id: "bstatus", group: "Fuoco e interventi", icon: "🏠", label: "Stato edificio", tip: "Forza lo stato di danno di un edificio scelto sulla mappa." },
     Tool { id: "correct", group: "Fuoco e interventi", icon: "↶", label: "Correggi ultimo intervento", tip: "Annulla l’ultimo intervento fisico, se nulla è cambiato dopo di esso." },
-    Tool { id: "wind", group: "Meteo", icon: "🌬", label: "Vento", tip: "Imposta direzione (da cui soffia) e velocità del vento." },
-    Tool { id: "humidity", group: "Meteo", icon: "💦", label: "Umidità del combustibile", tip: "Imposta l’umidità della vegetazione in percentuale: più è alta, più il fuoco rallenta." },
+    Tool { id: "weather", group: "Meteo", icon: "🌬", label: "Condizioni a contorno", tip: "Imposta vento (direzione da cui soffia e velocità) e umidità del combustibile." },
     Tool { id: "missions", group: "Risorse e squadre", icon: "🚒", label: "Missioni e ritorni", tip: "Stato delle missioni, risorse impegnate e conferma del ritorno delle squadre." },
     Tool { id: "limits", group: "Risorse e squadre", icon: "📦", label: "Limiti risorse", tip: "Sostituisce per intero i limiti di risorse disponibili." },
     Tool { id: "knowledge", group: "Comunicazioni e previsioni", icon: "👁", label: "Informazioni ai ruoli", tip: "Rivela a un ruolo le zone scelte sulla mappa (fog of war)." },
@@ -437,6 +437,109 @@ pub fn fields_modal(p: &FieldsProps) -> Html {
     </Modal>}
 }
 
+// ------------------------------------------------------------------ boundary conditions (wind + moisture)
+
+const WIND_MAX_KMH: f64 = 100.;
+const WIND_R: f64 = 90.;
+#[derive(Properties, PartialEq)]
+pub struct WeatherProps {
+    pub title: AttrValue,
+    /// Current direction the wind blows from, degrees clockwise from north.
+    pub dir: f64,
+    pub speed: f64,
+    /// Fuel moisture, percent.
+    pub moisture: f64,
+    pub common: CommonProps,
+}
+/// Boundary conditions: wind as a direction/speed vector editor, plus fuel moisture.
+/// Wind vector: drag the arrow tip on the dial. The arrow points where the wind blows to.
+#[function_component(WeatherModal)]
+pub fn wind_modal(p: &WeatherProps) -> Html {
+    let state = use_state(|| (p.dir.rem_euclid(360.).round(), p.speed.clamp(0., WIND_MAX_KMH).round()));
+    let (dir, speed) = *state;
+    let moisture = use_state(|| (p.moisture * 10.).round() / 10.);
+    let to = (dir + 180.).to_radians();
+    let len = speed / WIND_MAX_KMH * WIND_R;
+    let (tx, ty) = (len * to.sin(), -len * to.cos());
+    let pick = {
+        let state = state.clone();
+        move |e: &PointerEvent| {
+            let svg = e.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+            let Some(svg) = svg else { return };
+            let r = svg.get_bounding_client_rect();
+            let k = 200. / r.width().max(1.);
+            let x = (e.client_x() as f64 - r.left() - r.width() / 2.) * k;
+            let y = (e.client_y() as f64 - r.top() - r.height() / 2.) * k;
+            let to_deg = x.atan2(-y).to_degrees().rem_euclid(360.);
+            let v = (x.hypot(y) / WIND_R * WIND_MAX_KMH).clamp(0., WIND_MAX_KMH).round();
+            state.set(((to_deg + 180.).rem_euclid(360.).round(), v));
+        }
+    };
+    let ondown = {
+        let pick = pick.clone();
+        Callback::from(move |e: PointerEvent| {
+            if let Some(el) = e.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+                let _ = el.set_pointer_capture(e.pointer_id());
+            }
+            pick(&e);
+        })
+    };
+    let onmove = Callback::from(move |e: PointerEvent| {
+        if e.buttons() & 1 == 1 {
+            pick(&e);
+        }
+    });
+    let onapply = {
+        let (cb, moisture) = (p.common.action.clone(), moisture.clone());
+        Callback::from(move |_| cb.emit(Action::post("/api/master/command", json!({"type":"SetWeather","wind_dir_deg":dir,"wind_speed_kmh":speed,"moisture_pct":*moisture}))))
+    };
+    // Typed values; an unparsable field leaves the state untouched.
+    let on_dir = {
+        let state = state.clone();
+        Callback::from(move |e: InputEvent| {
+            if let Ok(d) = api::input(e).trim().parse::<f64>() {
+                state.set((d.rem_euclid(360.), state.1));
+            }
+        })
+    };
+    let on_speed = {
+        let state = state.clone();
+        Callback::from(move |e: InputEvent| {
+            if let Ok(v) = api::input(e).trim().parse::<f64>() {
+                state.set((state.0, v.clamp(0., WIND_MAX_KMH)));
+            }
+        })
+    };
+    let on_moisture = {
+        let moisture = moisture.clone();
+        Callback::from(move |e: InputEvent| {
+            if let Ok(m) = api::input(e).trim().parse::<f64>() {
+                moisture.set(m.clamp(0., 100.));
+            }
+        })
+    };
+    let rings = [25., 50., 75., 100.];
+    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
+        <p class="muted">{ex("Trascina la punta della freccia: indica dove soffia il vento, la lunghezza è la velocità.")}</p>
+        <svg class="wind-dial" viewBox="-100 -100 200 200" onpointerdown={ondown} onpointermove={onmove}>
+            {for rings.iter().map(|&v| html!{<circle r={format!("{}", v / WIND_MAX_KMH * WIND_R)} class="wd-ring"/>})}
+            <line x1="-95" y1="0" x2="95" y2="0" class="wd-ring"/><line x1="0" y1="-95" x2="0" y2="95" class="wd-ring"/>
+            <text y="-91" class="wd-n">{"N"}</text><text x="93" y="3" class="wd-n">{"E"}</text><text y="99" class="wd-n">{"S"}</text><text x="-93" y="3" class="wd-n">{"O"}</text>
+            if speed > 0. {
+                <line x1="0" y1="0" x2={format!("{tx:.1}")} y2={format!("{ty:.1}")} class="wd-arrow"/>
+                <circle cx={format!("{tx:.1}")} cy={format!("{ty:.1}")} r="6" class="wd-tip"/>
+            }
+            <circle r="3" class="wd-tip"/>
+        </svg>
+        <div class="wd-fields">
+            <label>{ex("Direzione (gradi, da cui soffia)")}<span class="ctl-unit"><input type="number" step="any" value={format!("{dir:.0}")} oninput={on_dir}/>{" °"}</span></label>
+            <label>{ex("Velocità")}<span class="ctl-unit"><input type="number" step="any" value={format!("{speed:.0}")} oninput={on_speed}/>{" km/h"}</span></label>
+        </div>
+        <label>{ex("Umidità del combustibile")}<span class="ctl-unit"><input type="number" step="any" min="0" max="100" value={moisture.to_string()} oninput={on_moisture}/>{" %"}</span></label>
+        <p class="muted">{ex("Umidità del combustibile in percentuale (0–100).")}</p>
+    </Modal>}
+}
+
 // ------------------------------------------------------------------ knowledge (fog of war)
 
 const LAYERS: [(&str, &str); 5] = [("fire", "Incendio"), ("buildings", "Edifici"), ("roads", "Strade"), ("lines", "Linee e lanci"), ("units", "Squadre")];
@@ -617,19 +720,12 @@ pub fn controllo(p: &ControlloProps) -> Html {
             html! {<MapToolModal key={id.to_string()} tool={id.to_string()} common={common.clone()}/>}
         }
         Some("knowledge") => html! {<KnowledgeModal tool="knowledge" common={common.clone()}/>},
-        Some("wind") => fields_modal(
-            tool_label("wind"), ex("Direzione da cui soffia il vento e velocità."), "/api/master/command",
-            vec![
-                Field::new("wind_dir_deg", "Direzione (gradi, da cui soffia)", FieldKind::Number, num(&w["wind_dir_deg"], 0.)).unit(" °"),
-                Field::new("wind_speed_kmh", "Velocità", FieldKind::Number, num(&w["wind_speed_kmh"], 10.)).unit(" km/h"),
-            ],
-            json!({"type":"SetWeather"}),
-        ),
-        Some("humidity") => fields_modal(
-            tool_label("humidity"), ex("Umidità del combustibile in percentuale (0–100)."), "/api/master/command",
-            vec![Field::new("moisture_pct", "Umidità", FieldKind::Number, num(&w["moisture_pct"], 10.)).unit(" %")],
-            json!({"type":"SetWeather"}),
-        ),
+        Some("weather") => html! {<WeatherModal
+            title={tool_label("weather").to_string()}
+            dir={w["wind_dir_deg"].as_f64().unwrap_or(0.)}
+            speed={w["wind_speed_kmh"].as_f64().unwrap_or(10.)}
+            moisture={w["moisture_pct"].as_f64().unwrap_or(10.)}
+            common={common.clone()}/>},
         Some("correct") => fields_modal(
             tool_label("correct"), ex("Annulla l’ultimo intervento fisico. Richiede clock fermo."), "/api/master/correct-intervention",
             vec![Field::new("reason", "Motivazione", FieldKind::Text, "")], json!({}),
