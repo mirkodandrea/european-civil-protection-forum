@@ -122,7 +122,11 @@ pub fn risposte(props: &RisposteProps) -> Html {
 
 fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<()>) -> Html {
     let st = reply_state(r);
-    html! {<div class="modal-backdrop"><section class="inject-modal response-dialog" role="dialog" aria-modal="true" aria-labelledby="response-dialog-title">
+    let on_key = {
+        let onclose = onclose.clone();
+        Callback::from(move |e: KeyboardEvent| if e.key() == "Escape" { onclose.emit(()) })
+    };
+    html! {<crate::inject_panel::ModalShell class={classes!("modal-backdrop")} onkeydown={on_key}><section class="inject-modal response-dialog" role="dialog" aria-modal="true" aria-labelledby="response-dialog-title">
         <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
         <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
         {thread_view(props,r,roles)}
@@ -135,7 +139,7 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
                 None=>html!{<p class="muted">{text(&pp["summary"])}</p>},
             }
         })}
-    </section></div>}
+    </section></crate::inject_panel::ModalShell>}
 }
 
 /// Visual kind of a thread message: who speaks decides the side and the colour.
@@ -177,7 +181,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value]) -> Html {
     let messages = thread_messages(r);
     let player = text(&r["role"]).to_string();
     html! {<div class="response-thread" data-response-thread={r["inject_message_id"].to_string()}>
-        <h3>{crate::exfmt!("Thread · {} messaggi","Thread · {} messages",messages.len())}</h3>
+        <h3>{format!("Thread · {}",crate::i18n_excon::count_messages(messages.len()))}</h3>
         if list(&r["replies"]).is_empty(){<p class="muted">{crate::i18n::ex("Nessuna risposta")}</p>}
         <ol class="thread-list">{for messages.iter().map(|m|{
             let kind=thread_kind(m);
@@ -185,7 +189,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value]) -> Html {
             let own=from==player;
             let original=text(&m["original"]);
             html!{<li key={m["id"].to_string()} data-thread-message={m["id"].to_string()} data-clarification-thread={m["clarification_thread"].as_u64().map(|id|id.to_string())} class={classes!("thread-msg",format!("kind-{kind}"),own.then_some("from-player"),m["clarification_thread"].is_number().then_some("in-clarification"))}>
-                <div class="thread-head"><b class="thread-from">{role_name(roles,from)}</b><span class="thread-arrow" aria-hidden="true">{"→"}</span><span class="thread-to">{role_name(roles,text(&m["to"]))}</span><span class="pill thread-kind">{kind_label(kind)}</span><div class="grow"/><time>{text(&m["clock"])}</time></div>
+                <div class="thread-head"><b class="thread-from">{crate::render::role_label(roles,from)}</b><span class="thread-arrow" aria-hidden="true">{"→"}</span><span class="thread-to">{crate::render::role_label(roles,text(&m["to"]))}</span><span class="pill thread-kind">{kind_label(kind)}</span><div class="grow"/><time>{text(&m["clock"])}</time></div>
                 if !text(&m["title"]).is_empty(){<b class="thread-title">{text(&m["title"])}</b>}
                 <p class="thread-text">{text(&m["text"])}</p>
                 if !original.is_empty()&&original!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",original)}</small>}
@@ -197,7 +201,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value]) -> Html {
             let closed=c["status"]=="closed";
             let close={let a=props.action.clone();Callback::from(move |_|a.emit(Action::post(format!("/api/master/clarifications/{id}/close"),serde_json::json!({}))))};
             html!{<div key={id} class={classes!("clarification-bar",closed.then_some("is-closed"))} data-clarification-bar={id.to_string()}>
-                <span class="pill">{match text(&c["status"]){"awaiting_player"=>crate::i18n::ex("Chiarimento: attende il player"),"closed"=>crate::i18n::ex("Chiarimento chiuso"),_=>crate::i18n::ex("Chiarimento: attende EXCON")}}</span>
+                <span class={classes!("pill",(c["status"]=="awaiting_player").then_some("pending"))}>{match text(&c["status"]){"awaiting_player"=>crate::i18n::ex("Chiarimento: attende il player"),"closed"=>crate::i18n::ex("Chiarimento chiuso"),_ if !messages.iter().any(|m|m["clarification_thread"]==c["id"]&&m["kind"]=="clarification")=>crate::i18n::ex("Chiarimento: domanda in consegna al player"),_=>crate::i18n::ex("Chiarimento: attende EXCON")}}</span>
                 if !closed{<button data-close-clarification={id.to_string()} disabled={props.busy} onclick={close}>{crate::i18n::ex("Chiudi chiarimento")}</button>}
             </div>}
         })}

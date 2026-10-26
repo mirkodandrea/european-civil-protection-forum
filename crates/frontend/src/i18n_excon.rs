@@ -173,9 +173,11 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Limiti di risorse proposti" => "Proposed resource limits",
         "Comunicazioni da revisionare" => "Communications to review",
         "Inject proposti" => "Proposed injects",
-        "Nota EXCON (facoltativa)" => "EXCON note (optional)",
+        "Nota EXCON (facoltativa; richiesta per rifiuto o chiarimento)" => "EXCON note (optional; required to reject or ask for clarification)",
         "Nota EXCON" => "EXCON note",
-        "Spiega il motivo al player" => "Explain the reason to the player",
+        "Thread collegato" => "Linked thread",
+        "Per rifiutare o chiedere un chiarimento scrivi una nota per il player." => "To reject or ask for clarification, write a note for the player.",
+        "In attesa del chiarimento del player: le azioni attuali non sarebbero approvabili (vedi verifica sopra)." => "Waiting for the player's clarification: the current actions would not be approvable (see the check above).",
         "Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta." => "No action interpreted: add the commands manually (JSON) or reject the proposal.",
         "Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta." => "Cannot be approved: fix actions or resources (see the check above) or reject the proposal.",
         "Esamina anteprima fisica" => "Review physical preview",
@@ -729,11 +731,22 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Chiudi chiarimento" => "Close clarification",
         "Chiarimento: attende il player" => "Clarification: waiting for the player",
         "Chiarimento: attende EXCON" => "Clarification: waiting for EXCON",
+        "Chiarimento: domanda in consegna al player" => "Clarification: question being delivered to the player",
         "Chiarimento chiuso" => "Clarification closed",
         // END clarification threads
         _ => return None,
     })
 }
+/// "1 messaggio" / "2 messaggi" (English: "1 message" / "2 messages").
+pub fn count_messages(n: usize) -> String {
+    match (is_en(), n == 1) {
+        (true, true) => format!("{n} message"),
+        (true, false) => format!("{n} messages"),
+        (false, true) => format!("{n} messaggio"),
+        (false, false) => format!("{n} messaggi"),
+    }
+}
+
 /// `format!` with an Italian and an English template, chosen by the console language.
 #[macro_export]
 macro_rules! exfmt {

@@ -263,6 +263,8 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 format!("/api/master/proposals/{id}/clarify"),
                 json!({"note": note.trim()}),
             ));
+            // The question is sent: an empty note keeps a second click from resending it.
+            note.set(String::new());
         })
     };
     let decide = |approve: bool| {
@@ -308,6 +310,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 format!("/api/master/proposals/{id}/decide"),
                 body,
             ));
+            note.set(String::new());
         })
     };
     let no_actions=editable&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
@@ -317,7 +320,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
         if p["status"]=="superseded"{<p class="muted proposal-superseded" data-superseded="">{if p["superseded_by"].is_number(){crate::exfmt!("Sostituita dalla proposta #{}","Superseded by proposal #{}",p["superseded_by"])}else{crate::i18n::ex("sostituita").to_string()}}</p>}
         if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){<p class="proposal-clarification" data-clarification-request="">{format!("{}: {}",crate::i18n::ex("Domanda inviata al player"),text(&p["clarification_request"]))}</p>}
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
-        if !list(&p["thread"]).is_empty() {<details open=true class="proposal-thread"><summary>{crate::exfmt!("Thread collegato · {} messaggi", "Linked thread · {} messages",list(&p["thread"]).len())}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
+        if !list(&p["thread"]).is_empty() {<details class="proposal-thread"><summary>{format!("{} · {}",crate::i18n::ex("Thread collegato"),crate::i18n_excon::count_messages(list(&p["thread"]).len()))}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
             html!{<fieldset class="command-card"><legend>{command_name(text(&cmd["type"]))}</legend>
@@ -340,15 +343,15 @@ pub fn proposal(props: &ProposalProps) -> Html {
         if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
-        <label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
+        <label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa; richiesta per rifiuto o chiarimento)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
         <p class="error">{&*error}</p>
         if let Some(e)=&recheck_error{<p class="danger proposal-recheck-error" role="status">{format!("{}: {}",crate::i18n::ex("Verifica non riuscita"),e)}</p>}
-        if editable&&needs_reason{<p class="danger proposal-reason-hint" role="status">{crate::i18n::ex("Spiega il motivo al player")}</p>}
-        if blocked{<p class="danger proposal-blocked" role="status">{if no_actions{crate::i18n::ex("Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta.")}else{crate::i18n::ex("Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta.")}}</p>}
+        if editable&&needs_reason{<small class="muted proposal-reason-hint">{crate::i18n::ex("Per rifiutare o chiedere un chiarimento scrivi una nota per il player.")}</small>}
+        if blocked{<p class={if p["status"]=="needs_clarification"{"muted proposal-blocked"}else{"danger proposal-blocked"}} role="status">{if p["status"]=="needs_clarification"{crate::i18n::ex("In attesa del chiarimento del player: le azioni attuali non sarebbero approvabili (vedi verifica sopra).")}else if no_actions{crate::i18n::ex("Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta.")}else{crate::i18n::ex("Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta.")}}</p>}
         if needs_preview {<button disabled={props.busy||!editable} onclick={{let cb=props.action.clone();let commands=(*commands).clone();Callback::from(move |_|cb.emit(Action::store("/api/master/preview",Some(json!({"commands":commands})),format!("proposal:{id}"))))}}>{crate::i18n::ex("Esamina anteprima fisica")}</button>
             if !props.preview.is_null(){{preview(&props.preview)}}
         }
-        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{crate::i18n::ex("Approva azione")}</button><button data-reject="" disabled={props.busy||!editable||needs_reason} title={needs_reason.then_some(crate::i18n::ex("Spiega il motivo al player"))} onclick={decide(false)}>{crate::i18n::ex("Rifiuta")}</button>
+        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{crate::i18n::ex("Approva azione")}</button><button data-reject="" disabled={props.busy||!editable||needs_reason} title={needs_reason.then_some(crate::i18n::ex("Per rifiutare o chiedere un chiarimento scrivi una nota per il player."))} onclick={decide(false)}>{crate::i18n::ex("Rifiuta")}</button>
         if p["source"]["kind"]=="player"{<button data-clarify="" disabled={props.busy||!editable||note.trim().is_empty()} title={note.trim().is_empty().then_some(crate::i18n::ex("Spiega cosa chiarire al player"))} onclick={clarify}>{crate::i18n::ex("Chiedi chiarimento")}</button>}
         if p["status"]=="approved"{<button disabled={props.busy} data-execute={id.to_string()} onclick={{let cb=props.action.clone();Callback::from(move |_|cb.emit(Action::post(format!("/api/master/proposals/{id}/execute"),json!({}))))}}>{crate::i18n::ex("Esegui ora ordine approvato")}</button>}
         </div>{details(crate::i18n::ex("Cronologia ed esiti effettivi"),&json!({"history":p["history"],"executions":p["executions"]}))}

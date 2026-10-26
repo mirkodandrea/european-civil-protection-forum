@@ -6,6 +6,7 @@ mod clarify;
 mod evaluator;
 mod function;
 mod history;
+mod inject_panel;
 mod i18n;
 mod i18n_excon;
 mod i18n_lang;
