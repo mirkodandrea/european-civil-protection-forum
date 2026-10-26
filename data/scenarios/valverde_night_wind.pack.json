@@ -6,7 +6,17 @@
   "edits": {
     "start_clock_s": 9000,
     "weather": { "wind_dir_deg": 270.0, "wind_speed_kmh": 55.0, "moisture_pct": 3.0 },
-    "initial_ignitions": [ { "at": [2200.0, 2500.0], "radius_m": 100.0 } ],
+    "initial_ignitions": [],
+    "timeline": [
+      {
+        "id": "N-A1",
+        "title": "Innesco sul bordo ovest del bosco",
+        "at_s": 0,
+        "command": { "type": "Ignite", "at": { "x": 2200.0, "y": 2500.0 }, "radius_m": 100.0 },
+        "after": "N-01",
+        "note": "Il fuoco parte alle 02:30, come segnalato dall'inject N-01. Approva «Esegui» per far partire l'incendio."
+      }
+    ],
     "msel": [
       {
         "id": "N-01",

@@ -873,3 +873,33 @@ fn skipped_and_deferred_actions_do_not_fire() {
     assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Skipped);
     assert!(ex.due_actions(Some(60)).is_empty());
 }
+
+/// The default scenario no longer starts burning: the ignition is the
+/// timeline action A-01, which EXCON approves when the first turn starts.
+#[test]
+fn default_scenario_ignition_is_a_timeline_action() {
+    use exercise::actions::ActionChoice;
+    let scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    assert!(scn.initial_ignitions.is_empty());
+    let world = World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = Exercise::new(world);
+    ex.start().unwrap();
+    assert!(ex.world.burning_zones().is_empty());
+    let due = ex.due_actions(Some(30));
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0]["id"], "A-01");
+    assert_eq!(due[0]["after"], "I-01");
+    assert!(ex.resolve_turn(Some(30)).is_err(), "undecided ignition must block the turn");
+    let choices = BTreeMap::from([("A-01".to_string(), ActionChoice::Run)]);
+    ex.resolve_turn_with(Some(30), &choices).unwrap();
+    assert_eq!(ex.action_runs["A-01"].status, exercise::actions::ActionStatus::Done, "{:?}", ex.action_runs["A-01"]);
+    assert!(!ex.world.burning_zones().is_empty(), "the fire must be burning after the ignition ran");
+}
