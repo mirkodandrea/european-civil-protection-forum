@@ -521,3 +521,8 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .clarify-reply{display:grid;gap:6px}.clarify-reply textarea{min-height:72px}.clarify-actions{display:flex;justify-content:space-between;align-items:center;gap:8px}.clarify-links{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .link-button{border:0;background:none;color:var(--accent);text-decoration:underline;padding:4px 0}
 .work-hint{display:block;margin-top:6px}.proposal-reason-hint{display:block}.modal-backdrop:focus{outline:0}
+
+/* EXCON management tabs (History, Scenario): right-aligned and visually distinct from the exercise tabs. */
+.navigation .mgmt-tabs{display:flex;align-items:center;gap:6px;padding:3px 3px 3px 10px;border:1px dashed #9db5a9;border-radius:10px;background:#eef3ef}
+.navigation .mgmt-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:var(--muted)}
+.navigation .mgmt-tabs button{border-color:#c4d4ca}
