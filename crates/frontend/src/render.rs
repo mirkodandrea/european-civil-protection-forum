@@ -31,6 +31,8 @@ pub fn event_label(kind: &str) -> String {
         "exercise_ended" => crate::i18n::ex("Esercitazione terminata"),
         "exercise_phase_changed" => crate::i18n::ex("Fase dell’esercitazione cambiata"),
         "action_executed" => crate::i18n::ex("Azione eseguita"),
+        "timeline_action_decided" => crate::i18n::ex("Azione pianificata decisa"),
+        "timeline_action_executed" => crate::i18n::ex("Azione pianificata eseguita"),
         "approved_communication_delivered" => crate::i18n::ex("Comunicazione approvata consegnata"),
         "communications_reviewed" => crate::i18n::ex("Comunicazioni riviste"),
         "forecast_published" => crate::i18n::ex("Previsione pubblicata"),

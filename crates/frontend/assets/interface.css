@@ -485,3 +485,5 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .wind-dial .wd-tip{fill:#e8590c}
 .wd-read{text-align:center;font-weight:600}
 .wd-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pill.kind{font-size:.72em;text-transform:uppercase;letter-spacing:.04em}.pill.kind.action{background:#fff3e0;color:#8a4b00}.pill.kind.inject{background:#e8f0fe;color:#1a4a9a}
+.planned-inject.planned-action{border-left:4px solid #e08a00;padding-left:.5rem}

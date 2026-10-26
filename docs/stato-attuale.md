@@ -24,7 +24,7 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
    tutti gli inject pianificati (orario reale e di scenario, raggruppabili per
    evento), con i destinatari come pill (verdi se già serviti). Cliccando un
    inject si scelgono i ruoli con i checkbox; un ruolo già servito è saltato e
-   gli altri si possono servire più tardi. “Inject a tutti” invia un inject
+   gli altri si possono servire più tardi. “Inject personalizzato” invia un inject
    libero. Le viste interne a EXCON sono Timeline, Risposte, Controllo e
    Cronologia. La Cronologia raccoglie tutti gli eventi operativi
    salvati, con ricerca, dettagli ed esportazione JSON per la valutazione.

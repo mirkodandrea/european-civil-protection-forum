@@ -63,6 +63,24 @@ pub fn group_by_event(injects: &[Value], group: bool) -> Vec<(String, Vec<Value>
     out
 }
 
+/// Injects and scripted actions as one chronological list. Each item is
+/// tagged with `"item": "inject" | "action"` and sorted by scenario time
+/// (stable, so injects come before actions planned at the same instant).
+pub fn merge_items(injects: &[Value], actions: &[Value]) -> Vec<Value> {
+    let tag = |v: &Value, kind: &str, t: i64| {
+        let mut v = v.clone();
+        v["item"] = json!(kind);
+        (t, v)
+    };
+    let mut rows: Vec<(i64, Value)> = injects
+        .iter()
+        .map(|i| tag(i, "inject", i["scenario_time_s"].as_i64().unwrap_or(0)))
+        .chain(actions.iter().map(|a| tag(a, "action", a["at_s"].as_i64().unwrap_or(0))))
+        .collect();
+    rows.sort_by_key(|(t, _)| *t);
+    rows.into_iter().map(|(_, v)| v).collect()
+}
+
 pub fn role_name(roles: &[Value], id: &str) -> String {
     roles
         .iter()
@@ -217,12 +235,21 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         .collect::<Vec<_>>();
     let injects = list(&props.master["planned_injects"]).to_vec();
     let actions = list(&props.master["timeline_actions"]).to_vec();
-    let groups = group_by_event(&injects, *grouped);
+    let groups = group_by_event(&merge_items(&injects, &actions), *grouped);
     let sent_count = injects.iter().filter(|i| i["sent"] == true).count();
     let open_inject = opened
         .as_ref()
         .and_then(|id| injects.iter().find(|i| text(&i["id_inject"]) == id).cloned());
     let row = |i: &Value| {
+        if i["item"] == "action" {
+            let id = text(&i["id"]).to_string();
+            return html! {<li class="planned-inject planned-action" data-action={id.clone()} key={format!("a:{id}")}>
+                <span class="planned-times"><b>{text(&i["clock"])}</b></span>
+                <span class="planned-body"><span class="pill kind action" title={crate::i18n::ex("Azione pianificata")}>{crate::i18n::ex("Azione")}</span> <b class="planned-title">{text(&i["title"])}</b>
+                    <span class="pill rcpt">{action_status_label(i)}</span>
+                    <span class="planned-text">{text(&i["summary"])}</span>
+                    if let Some(r)=i["run"]["result"].as_str(){<small class="planned-objective">{r}</small>}</span></li>};
+        }
         let id = text(&i["id_inject"]).to_string();
         let sent = i["sent"] == true;
         let complete = sent && list(&i["not_yet_sent_to"]).is_empty();
@@ -231,11 +258,11 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             let id = id.clone();
             Callback::from(move |_| opened.set(Some(id.clone())))
         };
-        html! {<li class={classes!("planned-inject",sent.then_some("is-sent"),complete.then_some("is-complete"))} data-inject={id.clone()} key={id.clone()}>
+        html! {<li class={classes!("planned-inject",sent.then_some("is-sent"),complete.then_some("is-complete"))} data-inject={id.clone()} key={format!("i:{id}")}>
             <button class="planned-open" {onclick} disabled={props.busy} aria-label={crate::exfmt!("Apri l’invio dell’inject {}","Open sending for inject {}",text(&i["title"]))}>
                 <span class="planned-times"><b>{format_offset(i["real_time_offset"].as_i64().unwrap_or(0))}</b><small>{text(&i["scenario_time"])}</small>
                     <small>{crate::exfmt!("turno {}","turn {}",i["turn"])}</small></span>
-                <span class="planned-body"><b class="planned-title">{text(&i["title"])}</b>
+                <span class="planned-body"><span class="pill kind inject" title={crate::i18n::ex("Inject pianificato")}>{crate::i18n::ex("Inject")}</span> <b class="planned-title">{text(&i["title"])}</b>
                     if sent{<span class="pill rcpt sent">{if complete{crate::i18n::ex("Inviato")}else{crate::i18n::ex("Inviato in parte")}}</span>}
                     <span class="planned-text">{text(&i["text"])}</span>
                     if !text(&i["objective"]).is_empty(){<small class="planned-objective">{crate::exfmt!("Obiettivo: {}","Objective: {}",text(&i["objective"]))}</small>}
@@ -244,7 +271,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     };
     html! {<section class="card" id="excon-timeline"><div class="row"><h2>{crate::i18n::ex("Timeline EXCON")}</h2><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="group-by-event" checked={*grouped} onchange={{let g=grouped.clone();Callback::from(move |e:Event|{use yew::TargetCast;g.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("raggruppa per evento")}</label>
-        <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject a tutti")}</button></div>
+        <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject personalizzato")}</button></div>
         <div class="row timeline-clock"><span>{format!("{} · clock {}",text(&props.state["world"]["stats"]["clock"]),if running{crate::i18n::ex("in esecuzione")}else{crate::i18n::ex("fermo")})}</span><label>{crate::i18n::ex("Velocità clock × ")}<input aria-label={crate::i18n::ex("Velocità clock")} type="number" min="0.1" step="1" value={(*ratio).clone()} oninput={{let ratio=ratio.clone();Callback::from(move |e|ratio.set(crate::api::input(e)))}}/></label><button id="timeline-clock-toggle" disabled={props.busy||props.state["phase"]=="resolving"||props.state["phase"]=="debrief"||ratio.parse::<f64>().map_or(true,|r|!r.is_finite()||r<=0.)} onclick={{let cb=props.action.clone();let ratio=ratio.parse::<f64>().unwrap_or(60.);Callback::from(move |_|cb.emit(Action::post("/api/master/clock",json!({"running":!running,"ratio":ratio,"reason":crate::i18n::ex("Controllo clock dalla timeline EXCON")}))))}}>{if running{crate::i18n::ex("Ferma clock")}else{crate::i18n::ex("Avvia clock")}}</button></div>
         if injects.is_empty()&&actions.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject pianificato")}</p>}
         {for groups.iter().map(|(event,items)|{
@@ -255,13 +282,6 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
                 html!{<section class="event-group" data-event={event.clone()}><button class="event-head" aria-expanded={(!is_closed).to_string()} onclick={toggle}><span>{if is_closed{"▸"}else{"▾"}}</span><b>{event.clone()}</b><small>{items.len()}</small></button>if !is_closed{{list_html}}</section>}
             }
         })}
-        if !actions.is_empty(){<section class="event-group" id="timeline-actions"><h3>{crate::i18n::ex("Azioni pianificate")}</h3>
-            <ol class="planned-list">{for actions.iter().map(|a|html!{<li class="planned-inject" data-action={text(&a["id"]).to_string()} key={text(&a["id"]).to_string()}>
-                <span class="planned-times"><b>{text(&a["clock"])}</b></span>
-                <span class="planned-body"><b class="planned-title">{text(&a["title"])}</b>
-                    <span class="pill rcpt">{action_status_label(a)}</span>
-                    <span class="planned-text">{text(&a["summary"])}</span>
-                    if let Some(r)=a["run"]["result"].as_str(){<small class="planned-objective">{r}</small>}</span></li>})}</ol></section>}
         <p class="muted">{crate::exfmt!("{} inject pianificati · {} già inviati · turno {} · {}","{} planned injects · {} already sent · turn {} · {}",injects.len(),sent_count,props.state["turn"],text(&props.state["phase"]))}</p>
         if let Some(inject)=open_inject{<SendDialog key={text(&inject["id_inject"]).to_string()} inject={inject.clone()} roles={roles.clone()} busy={props.busy} action={props.action.clone()} onclose={{let o=opened.clone();Callback::from(move |_|o.set(None))}}/>}
     </section>}
@@ -281,6 +301,15 @@ mod tests {
         let i = json!({"recipients_planned":["a","b","c"],"sent_to":["b"]});
         assert_eq!(default_recipients(&i).into_iter().collect::<Vec<_>>(), ["a", "c"]);
         assert_eq!(send_body(&default_recipients(&i)), json!({"recipients":["a","c"]}));
+    }
+    #[test]
+    fn merged_chronologically() {
+        let i = vec![json!({"id_inject":"i1","scenario_time_s":600}), json!({"id_inject":"i2","scenario_time_s":0})];
+        let a = vec![json!({"id":"a1","at_s":300}), json!({"id":"a2","at_s":600})];
+        let m = merge_items(&i, &a);
+        let kinds = m.iter().map(|v| v["item"].as_str().unwrap()).collect::<Vec<_>>();
+        assert_eq!(kinds, ["inject", "action", "inject", "action"]);
+        assert_eq!(m[1]["id"], "a1");
     }
     #[test]
     fn grouping() {
