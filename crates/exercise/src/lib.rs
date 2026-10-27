@@ -796,6 +796,22 @@ impl Exercise {
         Ok(self.world.time_s() >= to_s)
     }
 
+    /// Ask the running resolution to end at the current simulated second. It
+    /// becomes an intermediate advance: the turn stays open (even when it was
+    /// closing the turn) and the next advance continues from here. Approved
+    /// scripted actions planned later stay approved. Returns the stop instant.
+    pub fn stop_resolution(&mut self) -> Result<i64> {
+        let now = self.world.time_s();
+        let Some(r) = self.resolving.as_mut() else {
+            bail!("no turn is being resolved")
+        };
+        r.to_s = now;
+        r.partial = true;
+        r.minutes = ((now - r.from_s + 59) / 60).max(0) as u32;
+        self.record("resolution_stopped", MASTER, json!({"turn": self.turn, "at_s": now}));
+        Ok(now)
+    }
+
     /// Close the resolved turn: log it, snapshot, open the next turn.
     pub fn finish_resolution(&mut self) -> Result<TurnReport> {
         let Some(r) = self.resolving.take() else {
