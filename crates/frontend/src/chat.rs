@@ -97,7 +97,7 @@ impl App {
             .collect::<Vec<_>>();
         received_injects.sort_by_key(|m| std::cmp::Reverse(m["id"].as_u64().unwrap_or(0)));
         let send_disabled =
-            self.busy || self.state["phase"] == "debrief" || (!master && reference.is_none());
+            (self.busy && !master) || self.state["phase"] == "debrief" || (!master && reference.is_none());
         let contact = self
             .contacts()
             .into_iter()
@@ -155,7 +155,7 @@ impl App {
                 if !master && reference.is_none() {<p class="muted" role="status">{label("Per inviare, rispondi a un messaggio oppure attendi un inject.", "To send, reply to a message or wait for an inject.")}</p>}
                 <textarea id="text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} required=true value={draft.text.clone()} oninput={field("draft:text")} onkeydown={keydown}/>
                 if !master {<small class="literal-translation-hint">{i18n::t(l,"literal_translation_hint")}</small>}
-            <div class="row">if master{<small>{crate::i18n::ex("Testo EXCON in inglese · tradotto per il destinatario")}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{if self.busy{self.notice.as_str()}else{""}}</span><button id="send" class="primary" disabled={send_disabled}>{if self.busy{i18n::t(l,"sending")}else if master{crate::i18n::ex("Invia inject →")}else{i18n::t(l,"send")}}</button></div>
+            <div class="row">if master{<small>{crate::i18n::ex("Testo EXCON in inglese · tradotto per il destinatario")}</small>}<div class="grow"/><span id="send-status" class="muted" role="status">{if self.busy{self.notice.as_str()}else{""}}</span>if master && !self.pending.is_empty(){<span class="activity"><span class="loader" aria-hidden="true"></span>{crate::i18n::ex("Invio in corso…")}</span>}<button id="send" class="primary" disabled={send_disabled}>{if self.busy{i18n::t(l,"sending")}else if master{crate::i18n::ex("Invia inject →")}else{i18n::t(l,"send")}}</button></div>
         </form>}else{<div class="composer"><p class="muted">{i18n::t(l,"inject_info")}</p></div>}};
         if composer_only {
             return composer;
@@ -200,7 +200,8 @@ impl App {
         </>}
     }
     fn chat_action(&self) -> Option<Action> {
-        if self.busy || self.state["phase"] == "debrief" {
+        // Master injects do not wait for other actions: see `ActionKind::Inject`.
+        if (self.busy && !self.is_master()) || self.state["phase"] == "debrief" {
             return None;
         }
         let draft = self.draft();
@@ -223,6 +224,8 @@ impl App {
             body,
         );
         action.kind = ActionKind::Send(to.clone(), draft.text.clone());
+        // Master injects run in their own slot: a new one can be sent while another is in flight.
+        let mut slot = format!("compose:{}", js_sys::Date::now());
         if self.is_master() {
             let template = list(&self.stat["msel"])
                 .iter()
@@ -237,12 +240,14 @@ impl App {
             }) {
                 action.path = format!("/api/master/msel/{}/send", api::encode(text(&t["id"])));
                 action.body = Some(json!({}));
+                slot = crate::timeline::send_slot(text(&t["id"]));
             } else {
                 action.path = "/api/master/inject".into();
                 action.body = Some(
                     json!({"title":draft.title.trim(),"sender":draft.sender.trim(),"text":message,"actions":draft.actions,"recipients":if scenario{template.unwrap()["recipients"].clone()}else if draft.scope=="custom"{json!(draft.recipients.split(',').filter(|k|!k.is_empty()).collect::<Vec<_>>())}else{json!([to])}}),
                 );
             }
+            return Some(action.in_slot(slot));
         }
         Some(action)
     }
