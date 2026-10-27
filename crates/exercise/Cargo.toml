@@ -3,15 +3,15 @@ name = "exercise"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Turn-based exercise engine: phases, injects, inboxes, proposals and Master approval, rollback, event log. No LLM, no HTTP."
+description = "Turn-based exercise engine: phases, injects, inboxes, proposals and EXCON approval, rollback, event log. No LLM, no HTTP."
 
 [dependencies]
+web-time = "1"
 scenario.workspace = true
 sim.workspace = true
+fire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 url = "2"
 base64 = "0.22"
-
-web-time = "1"

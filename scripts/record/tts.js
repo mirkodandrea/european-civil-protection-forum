@@ -66,7 +66,7 @@ function matches(expected, heard) {
 }
 
 (async () => {
-  const spec = JSON.parse(fs.readFileSync(path.join(__dirname, 'narration.json'), 'utf8'));
+  const spec = JSON.parse(fs.readFileSync(process.env.TTX_NARRATION || path.join(__dirname, 'narration.json'), 'utf8'));
   const { model, voice } = { ...spec.voice, voice: process.env.TTX_TTS_VOICE || spec.voice.voice };
   fs.mkdirSync(CACHE, { recursive: true });
   fs.mkdirSync(OUT, { recursive: true });

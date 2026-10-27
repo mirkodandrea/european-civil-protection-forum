@@ -1,0 +1,37 @@
+{
+  "minutes": 1,
+  "commands": [],
+  "role_orders": [
+    {
+      "role": "fire_commander",
+      "commands": [
+        {
+          "type": "DeployEngine",
+          "at": {
+            "x": 1600,
+            "y": 1300
+          }
+        },
+        {
+          "type": "CutFireLine",
+          "from": {
+            "x": 1600,
+            "y": 1300
+          },
+          "to": {
+            "x": 1680,
+            "y": 1300
+          },
+          "width_m": 20
+        },
+        {
+          "type": "WaterDrop",
+          "at": {
+            "x": 1690,
+            "y": 1450
+          }
+        }
+      ]
+    }
+  ]
+}

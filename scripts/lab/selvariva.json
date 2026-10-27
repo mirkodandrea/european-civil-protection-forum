@@ -1,0 +1,144 @@
+{
+  "scenarios": [
+    {
+      "name": "selvariva",
+      "path": "../../data/scenarios/selvariva_basin.json"
+    }
+  ],
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "duration_s": 10800,
+  "sample_s": 60,
+  "realizations": 32,
+  "cutoff": 0.5,
+  "variants": [
+    {
+      "name": "operational",
+      "operational": true
+    }
+  ],
+  "strategies": [
+    {
+      "name": "delayed_response",
+      "orders": [
+        {
+          "at_s": 600,
+          "actor": "mayor",
+          "command": {
+            "type": "OpenShelter",
+            "building": "Centro di accoglienza di Pianalto"
+          }
+        },
+        {
+          "at_s": 600,
+          "actor": "mayor",
+          "command": {
+            "type": "IssueWarning",
+            "zone": "D4"
+          }
+        },
+        {
+          "at_s": 660,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Rifugio della scolaresca",
+            "destination": "Centro di accoglienza di Pianalto"
+          }
+        },
+        {
+          "at_s": 660,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Area festival delle Fonti",
+            "destination": "Centro di accoglienza di Pianalto"
+          }
+        },
+        {
+          "at_s": 720,
+          "actor": "fire_commander",
+          "command": {
+            "type": "WaterDrop",
+            "at": "Margine nord di Roverechiare"
+          }
+        },
+        {
+          "at_s": 720,
+          "actor": "fire_commander",
+          "command": {
+            "type": "DeployEngine",
+            "at": {
+              "x": 2500,
+              "y": 3500
+            }
+          }
+        },
+        {
+          "at_s": 900,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": {
+              "x": 2180,
+              "y": 3790
+            },
+            "to": {
+              "x": 2480,
+              "y": 3790
+            },
+            "width_m": 12
+          }
+        },
+        {
+          "at_s": 1200,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Scuola di Roverechiare",
+            "destination": "Centro di accoglienza di Pianalto"
+          }
+        }
+      ]
+    }
+  ],
+  "injects": [
+    {
+      "at_s": 0,
+      "actor": "master",
+      "command": {
+        "type": "Ignite",
+        "at": {
+          "x": 1730,
+          "y": 4050
+        },
+        "radius_m": 80
+      }
+    },
+    {
+      "at_s": 0,
+      "actor": "master",
+      "command": {
+        "type": "Ignite",
+        "at": {
+          "x": 2050,
+          "y": 4160
+        },
+        "radius_m": 60
+      }
+    },
+    {
+      "at_s": 3600,
+      "actor": "master",
+      "command": {
+        "type": "SetWeather",
+        "wind_dir_deg": 290,
+        "wind_speed_kmh": 42,
+        "moisture_pct": 6
+      }
+    }
+  ]
+}

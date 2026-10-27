@@ -1,0 +1,18 @@
+[package]
+name = "viewer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Remote big screen: the Bevy renderer fed by a ttx server over HTTP"
+
+[[bin]]
+name = "ttx-viewer"
+path = "src/main.rs"
+
+[dependencies]
+view.workspace = true
+viz.workspace = true
+scenario.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+ureq = { version = "2", default-features = false }

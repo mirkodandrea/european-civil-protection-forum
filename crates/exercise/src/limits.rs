@@ -48,7 +48,7 @@ impl Exercise {
 
     pub fn edit_resource_limit_draft(&mut self,id:u64,limits:ResourceLimits)->Result<()> {
         let p=self.proposal(id).ok_or_else(||anyhow::anyhow!("unknown proposal"))?;
-        if !matches!(p.source,Source::Master) || !matches!(p.status,ProposalStatus::Parsing|ProposalStatus::Pending|ProposalStatus::NeedsClarification){bail!("only an undecided Master proposal can recommend resource limits");}
+        if !matches!(p.source,Source::Master) || !matches!(p.status,ProposalStatus::Parsing|ProposalStatus::Pending|ProposalStatus::NeedsClarification){bail!("only an undecided EXCON proposal can recommend resource limits");}
         self.validate_limits_for_phase(&limits,self.exercise_phase)?;
         let before=p.resource_limit_draft.clone();let after=json!(limits);
         let p=self.proposal_mut(id)?;p.resource_limit_draft=Some(after.clone());p.invalid.retain(|i|!i.starts_with("resource limits:"));

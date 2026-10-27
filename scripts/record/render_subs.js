@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 
 const OUT = process.argv[2];
-const W = 1380;
+const W = parseInt(process.env.TTX_SUB_WIDTH || '1380', 10);
 
 (async () => {
   const narr = JSON.parse(fs.readFileSync(path.join(OUT, 'narration.json'), 'utf8'));

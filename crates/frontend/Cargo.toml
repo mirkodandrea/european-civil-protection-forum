@@ -1,0 +1,29 @@
+[package]
+name = "frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Rust/WebAssembly browser UI for the TTX"
+
+[features]
+standalone = ["scenario/embedded", "dep:server", "dep:sim", "dep:exercise", "dep:llm", "dep:viz", "dep:anyhow"]
+
+[dependencies]
+server = { workspace = true, optional = true }
+scenario.workspace = true
+sim = { workspace = true, optional = true }
+exercise = { workspace = true, optional = true }
+llm = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+viz = { workspace = true, optional = true }
+yew = { version = "0.23", features = ["csr"] }
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Location", "History", "Storage", "Url", "UrlSearchParams", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlElement", "Element", "DomRect", "Blob", "BlobPropertyBag", "HtmlAnchorElement", "KeyboardEvent", "MouseEvent", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "PointerEvent", "WheelEvent", "ResizeObserver", "EventTarget", "DragEvent", "DataTransfer", "ClipboardEvent"] }
+js-sys = "0.3"
+gloo-net = { version = "0.6", features = ["http", "websocket"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+futures = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"

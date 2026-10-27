@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Drive a two-turn demo session through the HTTP API (the same calls the web
 # UIs make). Requires a running `ttx` (default http://localhost:8080) with the
-# LLM configured. Screenshots of the simulator window go to docs/screenshots/.
+# LLM configured. Screenshots of the simulator window go to runs/demo-screenshots/.
 #
 #   ./scripts/demo_session.sh [base_url]
 set -euo pipefail
 B="${1:-http://localhost:8080}/api"
 H='content-type: application/json'
-: "${TTX_MASTER_KEY:?Set TTX_MASTER_KEY to the Director access key printed at startup}"
+: "${TTX_MASTER_KEY:?Set TTX_MASTER_KEY to the EXCON access key printed at startup}"
 A="Authorization: Bearer $TTX_MASTER_KEY"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 post() { curl -sf -H "$A" -XPOST "$B$1" -H "$H" ${2:+-d "$2"}; echo; }
@@ -23,7 +23,7 @@ wait_parsed() { # wait until no proposal is still being parsed
   done
 }
 last_pid() { curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposals"][-1]["id"])'; }
-shot() { echo "$ROOT/docs/screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
+shot() { mkdir -p "$ROOT/runs/demo-screenshots"; echo "$ROOT/runs/demo-screenshots/$1" > "$ROOT/runs/shot.req"; sleep 2; }
 
 echo "== setup: regional player plays in Armenian"
 post /player/regional_cp/language '{"language":"hy"}'
@@ -37,7 +37,7 @@ reply mayor "{\"text\":\"Diramate subito l'allerta alla popolazione della zona F
 reply fire_commander '{"text":"Two crews cut a fire line along the northern edge of zone F4 to protect Pineta; the third crew cuts from Pineta east edge to Forest edge east. Air tanker: one drop on Pineta north edge. Tell regional civil protection we may need reinforcements soon."}'
 wait_parsed
 
-echo "== Director prompt: one more bus for the mayor"
+echo "== EXCON prompt: one more bus for the mayor"
 post /master/prompt '{"text":"The regional transport company makes one extra bus available to the mayor right now. Send the mayor a short inject from the Regional transport company confirming it."}'
 wait_parsed
 for id in $(curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(str(p["id"]) for p in sorted(d["proposals"], key=lambda p: p["source"]["kind"]!="master") if p["status"]=="pending"))'); do
@@ -45,6 +45,7 @@ for id in $(curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; d=json.l
 done
 sleep 5
 echo "== resolve turn 1 (30 min)"
+# The fire started when I-01 was sent: its action A-01 (ignition) runs with the send.
 post /master/resolve '{"minutes":30}' > /dev/null
 sleep 3; shot sim_turn1_end.png
 

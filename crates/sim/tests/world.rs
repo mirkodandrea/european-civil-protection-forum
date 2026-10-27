@@ -5,7 +5,11 @@ use sim::{Actor, Area, Command, Damage, Loc, Verdict, World};
 
 fn world() -> World {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
-    World::new(scn, 1).unwrap()
+    let mut w = World::new(scn, 1).unwrap();
+    let (x, y) = (scenario::synthetic::IGNITION[0], scenario::synthetic::IGNITION[1]);
+    let fire = Command::Ignite { at: Loc::Point { x, y }, radius_m: Some(scenario::synthetic::IGNITION_RADIUS_M) };
+    w.apply(&fire, &Actor::Master).unwrap();
+    w
 }
 
 fn role(r: &str) -> Actor {
@@ -23,7 +27,7 @@ fn role_authority_is_enforced() {
     assert!(w.validate(&drop, &role("fire_commander")).is_ok());
     let v = w.validate(&drop, &role("mayor"));
     assert!(matches!(v, Verdict::Rejected { ref reason } if reason.contains("not authorised")), "{v:?}");
-    // Master-only commands are refused to every player, allowed to the Master.
+    // EXCON-only commands are refused to every player, allowed to the EXCON.
     let ext = Command::Extinguish { area: Area::Named("G3".into()) };
     assert!(!w.validate(&ext, &role("fire_commander")).is_ok());
     assert!(w.validate(&ext, &Actor::Master).is_ok());
@@ -86,7 +90,7 @@ fn evacuate_zone_by_code_with_warning_and_shelter() {
     let mut w = world();
     w.apply(&Command::OpenShelter { building: "Valverde Sports Centre".into() }, &role("mayor")).unwrap();
     w.apply(&Command::IssueWarning { zone: "f4".into() }, &role("mayor")).unwrap();
-    // F4 holds the school: the Master is not bound by buses.
+    // F4 holds the school: the EXCON is not bound by buses.
     let people_before: u32 = w.d.buildings.iter().map(|b| b.people_inside).sum();
     w.apply(&Command::EvacuateZone { zone: "F4".into(), destination: Some("Valverde Sports Centre".into()) }, &Actor::Master).unwrap();
     w.advance(11 * 60).unwrap(); // warned: 10 min

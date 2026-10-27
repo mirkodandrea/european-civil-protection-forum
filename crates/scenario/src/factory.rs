@@ -47,10 +47,31 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
         cellsize,
     };
     scn.dem = dem;
+    // Source package convention: independent north-first, node-sampled visual DEM.
+    if dir.join("render_terrain.json").exists() {
+        let t = json(&dir.join("render_terrain.json"))?;
+        let bytes = std::fs::read(dir.join("render_terrain.f32"))?;
+        ensure!(bytes.len() % 4 == 0, "invalid visual terrain byte length");
+        scn.render_terrain = Some(RenderTerrain {
+            rows: t["rows"]
+                .as_u64()
+                .context("visual terrain rows")?
+                .try_into()?,
+            cols: t["cols"]
+                .as_u64()
+                .context("visual terrain cols")?
+                .try_into()?,
+            posting_m: t["posting_m"].as_f64().context("visual terrain posting")? as f32,
+            world_size_m: serde_json::from_value(t["world_size_m"].clone())?,
+            elev: bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect(),
+        });
+    }
     scn.fuel = fuel;
     scn.operations = Operations::enhanced();
     scn.msel.clear();
-    scn.initial_ignitions.clear();
     scn.places.clear();
     let w = scn.grid.width_m();
     let h = scn.grid.height_m();
@@ -114,16 +135,19 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
                 name: name.clone(),
                 aliases: vec![],
                 pos: point,
+                ..Default::default()
             });
         }
         scn.buildings.push(Building {
             id: u32::try_from(i + 1)?,
+            visual_kind: b["kind"].as_str().map(str::to_owned),
             kind,
             name,
             pos: point,
             size,
             occupants: occupants.remove(&id).unwrap_or(0),
             sector: "territory".into(),
+            rotation_deg: 0.0,
             shelter_capacity: if kind == BuildingKind::SportsCentre {
                 500
             } else {

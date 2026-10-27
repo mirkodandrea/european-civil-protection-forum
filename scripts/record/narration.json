@@ -1,5 +1,5 @@
 {
- "_doc": "Narration of the recorded demo, told as the story of the incident. `text` is the subtitle; `say` (optional) is what the voice reads when it should differ (numbers, times, acronyms). Avoid phrases like 'in Italian': the TTS model may take them as an instruction and switch language (tts.js verifies every line with a transcription and regenerates on mismatch). `who` and `shows` feed the README timeline (readme_demo.py). session.js refers to lines by `id` and waits for each line to finish before the next.",
+ "_doc": "Narration of the recorded demo, told as the story of the incident. `text` is the subtitle; `say` (optional) is what the voice reads when it should differ (numbers, times, acronyms). Avoid phrases like 'in Italian': the TTS model may take them as an instruction and switch language (tts.js verifies every line with a transcription and regenerates on mismatch). `who` and `shows` are retained in caption metadata. session.js refers to lines by `id` and waits for each line to finish before the next.",
  "voice": { "model": "google/gemini-3.1-flash-tts-preview", "voice": "Charon" },
  "qa": { "model": "openai/gpt-4o-mini-transcribe" },
  "lines": [

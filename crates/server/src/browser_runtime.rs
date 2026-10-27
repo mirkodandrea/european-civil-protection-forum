@@ -27,6 +27,18 @@ pub mod task {
     pub async fn yield_now() {
         gloo_timers::future::TimeoutFuture::new(0).await;
     }
+    pub fn spawn_blocking<F, T>(
+        work: F,
+    ) -> impl std::future::Future<Output = Result<T, &'static str>>
+    where
+        F: FnOnce() -> T + 'static,
+        T: 'static,
+    {
+        super::spawn(async move {
+            yield_now().await;
+            work()
+        })
+    }
 }
 pub mod time {
     use std::{future::Future, time::Duration};
@@ -47,7 +59,26 @@ pub mod time {
         }
     }
 }
-
 pub mod sync {
     pub use futures::lock::Mutex;
+    use std::{cell::Cell, sync::Arc};
+    pub struct Semaphore(Cell<usize>);
+    pub struct Permit(Arc<Semaphore>);
+    impl Semaphore {
+        pub fn new(permits: usize) -> Self {
+            Self(Cell::new(permits))
+        }
+        pub fn try_acquire_owned(self: Arc<Self>) -> Result<Permit, ()> {
+            if self.0.get() == 0 {
+                return Err(());
+            }
+            self.0.set(self.0.get() - 1);
+            Ok(Permit(self))
+        }
+    }
+    impl Drop for Permit {
+        fn drop(&mut self) {
+            self.0 .0.set(self.0 .0.get() + 1);
+        }
+    }
 }

@@ -12,7 +12,8 @@ permette di aprire o scaricare due app HTML indipendenti:
 
 Entrambe usano il modello e i controller del rispettivo branch, con seme 1,
 32 realizzazioni e cutoff 0.5. Non sono collegate tra loro. Ogni apertura
-crea una sessione locale in memoria; ricaricare la pagina la azzera. EXCON,
+crea una sessione locale; su dev viene salvata nel local storage e ripresa al
+ricaricamento (vedi “Persistenza di dev”). EXCON,
 partecipanti e valutatore condividono una sola sessione nelle schede dei ruoli.
 Per partecipanti su dispositivi diversi serve la versione con server.
 
@@ -20,10 +21,15 @@ Il file `web/standalone/ttx.html` contiene codice WASM, scenario, interfaccia e
 asset necessari. Può essere aperto con `file://` senza rete; usare un browser
 moderno con WebAssembly e DecompressionStream. Le viste 3D richiedono
 anche supporto GPU/WebGL. L’AI è opzionale, richiede rete e contatta direttamente
-OpenRouter con la chiave inserita nell’app. La chiave resta in memoria e non
-entra nel debrief. Senza chiave è disponibile il flusso manuale EXCON.
-Esportare il debrief JSON per conservare le evidenze; non è un salvataggio
-ripristinabile della sessione.
+OpenRouter con la chiave inserita nell’app. Su dev la chiave viene salvata nel
+local storage del browser, riutilizzata
+alle aperture successive e cancellata con “Rimuovi chiave”; se il browser blocca
+il salvataggio, resta valida solo nella pagina corrente. Non entra nel debrief.
+La vista 3D di dev è disattivata inizialmente e si avvia alla prima attivazione
+di “Simulazione”, con vegetazione e particelle ridotte e senza anti-aliasing SMAA. Senza chiave è
+disponibile il flusso manuale EXCON.
+Esportare il debrief JSON per conservare le evidenze; la sessione si riprende
+automaticamente solo nello stesso browser.
 
 ## Build e verifica
 
@@ -36,6 +42,7 @@ cargo test --locked --release -p server -p exercise -p llm
 npm ci --prefix scripts/record
 scripts/record/node_modules/.bin/playwright install chromium
 TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone.cjs
+TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone-settings.cjs
 ```
 
 La verifica è headless e offline: attraversa inject, risposta, approvazione,
@@ -62,3 +69,44 @@ Ogni sottocartella include `version.json` con branch, commit e run GitHub.
 La verifica browser opzionale usa Chrome preinstallato sul runner Ubuntu, con ANGLE SwiftShader per
 verificare il 3D senza una GPU fisica. Le prove browser sono conservate negli
 artefatti della run per sette giorni.
+
+## Persistenza di dev
+
+La versione standalone di dev salva nel `localStorage` del browser:
+
+- `ttx.standalone.session`: la sessione in corso. Non è uno snapshot dello stato,
+  ma un *journal*: gli injects di partenza, le richieste che hanno cambiato lo
+  stato (`server::browser::request`, tranne `presence`), le risposte dell’AI
+  (tape in memoria, indipendente dal modello) e il tempo simulato raggiunto.
+  Al caricamento le richieste vengono rigiocate su un’esercitazione nuova, con le
+  risposte AI dal tape e il clock reale sospeso (`flow::REPLAYING`,
+  `flow::advance_to`); al termine il clock è in pausa. Se un passo non è più
+  accettato la sessione viene scartata con un avviso, senza export.
+  Si salva dopo ogni richiesta e ogni secondo se il tempo è avanzato.
+- `ttx.standalone.injects`: libreria di injects modificabili; una nuova sessione
+  parte da qui (altrimenti dagli injects dello scenario). Una sessione salvata
+  conserva i propri injects.
+- `ttx.standalone.openrouter-key`: chiave OpenRouter.
+
+“Impostazioni” contiene l’editor degli injects (aggiungi, elimina, import/export
+JSON, “Salva e inizia nuova sessione”) e bottoni espliciti, con conferma, per
+eliminare la sessione, la libreria injects, la chiave o tutto.
+
+## Persistenza nella versione con server
+
+`ttx` salva sessione e libreria injects in `--state-dir` (default `runs/state`;
+`--no-state` la disattiva, `--fresh` scarta la sessione salvata all’avvio):
+
+- `session.json`: stesso schema del browser, ma il journal registra le
+  richieste POST accettate (fairing `persist::JournalFairing`) con il
+  partecipante che le ha fatte. All’avvio vengono rigiocate sulle vere rotte con
+  un client Rocket locale (`persist::restore`) prima di mettersi in ascolto. Una
+  sessione che non corrisponde a scenario/seed/opzioni, o non più riproducibile,
+  viene scartata con un avviso nel log.
+- `injects.json`: libreria injects usata da una nuova esercitazione.
+
+Endpoint EXCON: `GET /api/master/storage`, `POST /api/master/storage/injects`
+(`new_session` opzionale) e `POST /api/master/storage/delete` (`session`,
+`injects`, `all`). Nella UI sono in Strumenti → Impostazioni.
+Cancellare la sessione riavvia l’esercitazione sul posto per tutti i
+partecipanti.

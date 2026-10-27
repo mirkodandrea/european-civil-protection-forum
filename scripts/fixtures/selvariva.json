@@ -1,0 +1,53 @@
+{
+  "commands": [
+    {
+      "type": "Ignite",
+      "at": {
+        "x": 1730,
+        "y": 4050
+      },
+      "radius_m": 80
+    },
+    {
+      "type": "Ignite",
+      "at": {
+        "x": 2050,
+        "y": 4160
+      },
+      "radius_m": 60
+    }
+  ],
+  "role_orders": [
+    {
+      "role": "mayor",
+      "commands": [
+        {
+          "type": "OpenShelter",
+          "building": "Centro di accoglienza di Pianalto"
+        },
+        {
+          "type": "EvacuateBuilding",
+          "building": "Area festival delle Fonti",
+          "destination": "Centro di accoglienza di Pianalto"
+        },
+        {
+          "type": "EvacuateBuilding",
+          "building": "Rifugio della scolaresca",
+          "destination": "Centro di accoglienza di Pianalto"
+        }
+      ]
+    },
+    {
+      "role": "fire_commander",
+      "commands": [
+        {
+          "type": "DeployEngine",
+          "at": {
+            "x": 2500,
+            "y": 3500
+          }
+        }
+      ]
+    }
+  ]
+}

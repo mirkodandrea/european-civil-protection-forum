@@ -1,16 +1,17 @@
 # Emergency simulation models
 
-Original, editable Blender assets generated for this project; no external art or textures.
+Blender mesh bakes and generators transferred from `propagator_abm` under the
+existing EUPL-1.2 attribution.
 
 - `emergency_assets.blend`: seven named collections (pedestrian, firefighter, car, fire_engine, pine, oak, bush). Each collection is authored at the origin; isolate a collection to edit it.
 - `meshes.json`: baked positions, normals, vertex colors, triangle indices and bark masks, embedded in the native and web game.
-- `preview.png`: Blender studio render. The fire engine is shown with red paint; game symbols use their live operational status tint.
+- `preview.png`: Blender studio render. The fire engine is shown with red paint; legacy symbols use operational status tint; the latest units retain their authored paint with separate operational rings.
 
 Regenerate from the repository root:
 
 ```sh
 /Applications/Blender.app/Contents/MacOS/Blender --background --python scripts/build_models.py
-cargo test -p game models::tests
+cargo test -p viz models::tests
 ```
 
 The generator is the source of truth: regeneration rebuilds the `.blend` and mesh bake. Make persistent design changes in `scripts/build_models.py`.
@@ -23,6 +24,45 @@ Triangle budgets: pedestrian 356, firefighter 388, car 712, fire engine 1,688, p
 
 ## Additional urban kit
 
-`town.json` is adapted from `/Users/mirko/dev/experiments/propagator_abm/assets/models/town.json` (EUPL-1.2). School, town hall, fuel station and industrial buildings use these landmark meshes; other building kinds retain their blocks and all status colors come from simulation state. Meshes use metres, Y up, and RGB vertex colors converted to RGBA by the loader.
+`town.json` is adapted from `/Users/mirko/dev/experiments/propagator_abm/assets/models/town.json` (EUPL-1.2). School, town hall, fuel station and industrial buildings use these landmark meshes; rectangular buildings use detailed procedural architecture and all status colors come from simulation state. Meshes use metres, Y up, and RGB vertex colors converted to RGBA by the loader.
 
 The reproducible generator is `scripts/build_town_models.py`; run it with Blender from the repository root. It also writes the editable `.blend` and a preview.
+
+## Vegetation varieties (2026-10-20)
+
+`vegetation.json` and `scripts/build_vegetation_models.py` are transferred from
+`propagator_abm` under the existing EUPL-1.2 provenance. Fifteen varieties (four
+pines, four chestnuts, four scrub forms and three olives) share live stems and
+matching fine-branch/debris additions. The TTX uses the source GPU pipeline:
+one RG32Float texel per plant encodes state and ignition time; the vertex,
+fragment, depth and shadow passes retain stems, consume foliage and reveal the
+matching additions. Clearing and rollback derive from the authoritative snapshot
+without rewriting meshes. The source generator remains reproducible with
+Blender; this transfer did not regenerate its bake.
+
+SHA-256 of the transferred inputs:
+
+- vegetation.json: `39d78204a1b40008972eef9a23129027a2430760f10a5478fab03b71c34a66e3`
+- generator: `cc59770aa04fb98417e304219cb0789ae3cd718c602bb2d78bba24357b741a61`
+
+## Articulated PBR units (latest source, 2026-10-20)
+
+`units.json` and `scripts/build_unit_models.py` contain the engine, tanker and
+firefighter bodies and their wheel, beacon, propeller and limb parts. Their
+`surfaces` attribute is encoded as vertex alpha (`id / 255`, 1 means default)
+for the structure shader. This is a material identifier, not transparency.
+Each `rig` gives its authored pivot, axis, animation kind and phase. Preserve
+these fields when editing/regenerating; RGB-only loading loses the PBR response.
+Use Blender in background mode with the generator to rebuild the assets.
+The TTX uses metre-authored meshes with presentation magnification. Physical
+allocations and movement remain in `sim`.
+
+## Vegetation varieties (2026-10-27)
+
+`scripts/build_vegetation_models.py` (Blender) bakes `vegetation.json` and the previews in `vegetation_preview/`
+(`overview_vivo.png`, `overview_bruciato.png`, one burn strip per variety; `-- fast` skips the strips).
+Fuel groups read by silhouette *and* colour: conifers (`pine_*`) are tiers of ragged cones in dark blue-green on
+red-brown bark (marittimo, umbrella, narrow fir, wind-bent Aleppo); broadleaves (`chestnut_*`) are lobed domes in
+light yellow-green on grey-brown bark (classic, tall oval, wide oak, coppice); olives are silvery grey-green;
+shrubs are the macchia clumps. Burnt state follows the game's foliage shader: the live half chars in place, the
+`remains` half holds the fine skeleton (conifers: stubs of boughs at each whorl) and the fallen limbs.

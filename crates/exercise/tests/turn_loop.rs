@@ -50,13 +50,13 @@ fn full_turn_inject_reply_approve_resolve() {
     assert!(p.verdicts[0].is_ok());
     assert!(!p.verdicts[1].is_ok(), "F4 evacuation needs 3 buses: {:?}", p.verdicts[1]);
 
-    // The Master edits: keep the warning, evacuate the school by bus instead... still 3 buses; give one more bus first.
+    // The EXCON edits: keep the warning, evacuate the school by bus instead... still 3 buses; give one more bus first.
     ex.direct_command(&Command::AdjustResource { role: "mayor".into(), resource: "buses".into(), delta: 1 }).unwrap();
     let edited = vec![
         Command::IssueWarning { zone: "F4".into() },
         Command::EvacuateZone { zone: "F4".into(), destination: None },
     ];
-    let out = ex.decide(pid, Decision { approve: true, commands: Some(edited), note: Some("good call".into()) }).unwrap();
+    let out = ex.decide(pid, Decision { approve: true, commands: Some(edited), note: Some("good call".into()), ..Default::default() }).unwrap();
     assert_eq!(out.notify.as_deref(), Some("mayor"));
     assert!(out.facts_en.contains("APPROVED: Evacuate zone F4"), "{}", out.facts_en);
     assert!(out.facts_en.contains("good call"));
@@ -68,7 +68,7 @@ fn full_turn_inject_reply_approve_resolve() {
     let p2 = reply(&mut ex, "fire_commander", "another drop on F3").unwrap();
     ex.attach_parse(p2, parsed(json!([{"type":"WaterDrop","at":"F3"}]))).unwrap();
     assert!(!ex.proposal(p2).unwrap().verdicts[0].is_ok(), "approved drop must hold the air tanker");
-    ex.decide(p2, Decision { approve: false, commands: None, note: None }).unwrap();
+    ex.decide(p2, Decision { approve: false, commands: None, note: None, ..Default::default() }).unwrap();
 
     let t0 = ex.world.time_s();
     let report = ex.resolve_turn(Some(30)).unwrap();
@@ -129,7 +129,7 @@ fn llm_failure_leaves_proposal_for_manual_entry() {
     ex.parse_failed(pid, "timeout").unwrap();
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
     let cmds = vec![Command::CutFireLine { from: None, to: None, along: Some("G3:S".into()), width_m: None }];
-    ex.decide(pid, Decision { approve: true, commands: Some(cmds), note: None }).unwrap();
+    ex.decide(pid, Decision { approve: true, commands: Some(cmds), note: None, ..Default::default() }).unwrap();
     let r = ex.resolve_turn(None).unwrap();
     assert!(r.applied[0].ok);
     assert!(ex.world.stats().line_km>0.4);
@@ -299,7 +299,11 @@ fn repeated_msel_deliveries_have_distinct_threads_shared_by_recipients() {
     let ids = ex.send_inject(Some("I-01"), "Fire", "112", &["all".into()], "Fire", &BTreeMap::new()).unwrap();
     let first = ex.messages[0].inject_id;
     assert!(ex.messages.iter().all(|m| m.inject_id == first && m.recipients.len() == 3));
-    ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap();
+    // A role that already received the MSEL inject is skipped silently.
+    assert!(ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap().is_empty());
+    assert_eq!(ex.inject_sent_to["I-01"].len(), 3);
+    // Ad-hoc injects still open a distinct thread each time.
+    ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap();
     assert_ne!(ex.messages.last().unwrap().inject_id, first);
     assert_eq!(ids.len(), 3);
 }
@@ -432,12 +436,13 @@ fn rollback_keeps_resource_history_even_when_actual_ledger_is_restored() {
 }
 
 #[test]
-fn joining_requires_language_and_evidence_is_validated_before_recording() {
+fn default_language_needs_no_confirmation_and_evidence_is_validated_before_recording() {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
     let mut ex = Exercise::new(World::new(scn, 1).unwrap());
     ex.start().unwrap();
     let mid = ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap()[0];
-    assert!(ex.player_reply("mayor", "warn F4", mid, DecisionEvidence::judgment("Urgent warning based on report")).is_err());
+    assert!(ex.players["mayor"].language_confirmed);
+    assert!(!ex.players["mayor"].language.is_empty());
     assert!(ex.set_language("mayor", "invented-language").is_err());
     ex.set_language("mayor", "it").unwrap();
     assert!(ex.players["mayor"].language_confirmed);
@@ -599,4 +604,493 @@ fn rollback_cannot_restore_deployments_above_current_reviewed_limits() {
     assert!(ex.rollback(2).is_err());assert_eq!(ex.world.view(),before);assert_eq!(ex.generation,generation);
     ex.set_resource_limits(serde_json::from_value(json!({"total":{"ground_crews":1}})).unwrap(),"Review restoration capacity",None).unwrap();
     ex.rollback(2).unwrap();assert_eq!(ex.world.d.pools["fire_commander"]["ground_crews"].used,1);
+}
+
+#[test]
+fn named_place_fire_line_player_action_terminates() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"Pineta Fuel Station","to":"Pineta Primary School"})).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
+}
+
+/// The standalone WASM build runs the Valverde factory scenario with the
+/// operational model, where ground crews walk with a 1.5 km access radius.
+/// Validating their staging route used to run one Dijkstra and rebuild one
+/// path per anchor pair (> 60 s native, a frozen browser tab in WASM).
+#[test]
+fn factory_operational_fire_line_validation_is_fast() {
+    let mut scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    scn.enable_operational_model();
+    let world = World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = Exercise::new(world);
+    ex.start().unwrap();
+    let t = std::time::Instant::now();
+    let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"F4","to":"G4"})).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea · F4", vec![cmd], None).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
+}
+
+#[test]
+fn factory_operational_fire_line_reply_to_inject_is_fast() {
+    let mut scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    scn.enable_operational_model();
+    let world = World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = Exercise::new(world);
+    ex.start().unwrap();
+    let parent = ex.send_inject(None, "Fire near Pineta", "EXCON", &["fire_commander".into()], "Report actions", &BTreeMap::new()).unwrap()[0];
+    let t = std::time::Instant::now();
+    for (from, to) in [("Pineta Fuel Station", "Pineta Primary School"), ("F5", "H5")] {
+        let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":from,"to":to})).unwrap();
+        let pid = ex.player_actions("fire_commander", "Linea", vec![cmd], Some(parent)).unwrap();
+        assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
+        eprintln!("{from}->{to}: {:?} verdict={:?}", t.elapsed(), ex.proposal(pid).unwrap().verdicts[0]);
+    }
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
+}
+
+#[test]
+fn private_turn_summaries_freeze_role_evidence_and_discard_rollback_results() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    ex.send_inject(None, "Visible", "EXCON", &["mayor".into()], "MAYOR_VISIBLE", &BTreeMap::new()).unwrap();
+    ex.send_inject(None, "Private", "EXCON", &["fire_commander".into()], "FIRE_PRIVATE", &BTreeMap::new()).unwrap();
+    ex.add_message("fire_commander", "regional_cp", MsgKind::Chat, None, "PRIVATE_THREAD", "PRIVATE_THREAD", None);
+    ex.add_message("mayor", "regional_cp", MsgKind::Chat, None, "OWN_CONVERSATION", "OWN_CONVERSATION", None);
+    ex.resolve_turn(Some(1)).unwrap();
+    let summaries = ex.claim_turn_summaries();
+    let (id, _, evidence) = summaries.iter().find(|(_, _, evidence)| evidence.to_string().contains("MAYOR_VISIBLE")).unwrap();
+    let evidence_text = evidence.to_string();
+    assert!(evidence_text.contains("OWN_CONVERSATION"));
+    assert!(!evidence_text.contains("FIRE_PRIVATE"));
+    assert!(!evidence_text.contains("PRIVATE_THREAD"));
+    assert!(!evidence_text.contains("text_en"));
+    assert_eq!(evidence["turn"], 1);
+    assert!(ex.claim_turn_summaries().is_empty(), "one AI call per role and turn");
+    ex.complete_turn_summary(*id, Some("Private recap".into()));
+    assert_eq!(ex.player_turn_summaries("mayor")[0].text, "Private recap");
+    assert!(ex.player_turn_summaries("fire_commander").iter().all(|s| s.text != "Private recap"));
+    ex.rollback(1).unwrap();
+    ex.resolve_turn(Some(1)).unwrap();
+    ex.claim_turn_summaries();
+    ex.complete_turn_summary(*id, Some("Stale response".into()));
+    assert!(ex.player_turn_summaries("mayor").iter().all(|s| s.text != "Stale response"));
+    assert_eq!(ex.player_turn_summaries("mayor").len(), 1);
+    // Serialized role responses contain no hidden prompt/evidence.
+    let response = serde_json::to_value(ex.player_turn_summaries("mayor")).unwrap();
+    assert!(response[0].get("evidence").is_none());
+}
+
+#[test]
+fn edited_flag_is_true_only_when_actions_actually_change() {
+    let acts = json!([{"type":"IssueWarning","zone":"F4"}]);
+    // Note only, and re-submitting identical commands: not edited.
+    for resubmit in [false, true] {
+        let mut ex = exercise();
+        ex.start().unwrap();
+        let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
+        ex.attach_parse(pid, parsed(acts.clone())).unwrap();
+        let same = ex.proposal(pid).unwrap().commands.clone();
+        let commands = if resubmit { Some(same) } else { None };
+        ex.decide(pid, Decision { approve: true, commands, note: Some("ok".into()), ..Default::default() }).unwrap();
+        assert!(!ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
+    }
+    // Real change: edited.
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
+    ex.attach_parse(pid, parsed(acts)).unwrap();
+    let other: Vec<Command> = serde_json::from_value(json!([{"type":"IssueWarning","zone":"G4"}])).unwrap();
+    ex.decide(pid, Decision { approve: true, commands: Some(other), note: None, ..Default::default() }).unwrap();
+    assert!(ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
+}
+
+#[test]
+fn excon_clarification_request_keeps_the_proposal_open() {
+    let mut ex = exercise();
+    // Not during briefing.
+    assert!(ex.request_clarification(1, "where?").is_err());
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "fire_commander", "warn F4").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
+    // A note is required.
+    assert!(ex.request_clarification(pid, "  ").is_err());
+    let req = ex.request_clarification(pid, "Which side of F4?").unwrap();
+    assert_eq!((req.role.as_str(), req.text_en.as_str()), ("fire_commander", "Which side of F4?"));
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.status, ProposalStatus::NeedsClarification);
+    assert_eq!(p.clarification_request.as_deref(), Some("Which side of F4?"));
+    assert_eq!(p.history.last().unwrap().actor, MASTER);
+    assert!(ex.log.iter().any(|e| e.kind == "clarification_requested"));
+    // Delivered to the player in the proposal's thread.
+    ex.deliver_clarification(pid, "Quale lato di F4?", "Which side of F4?").unwrap();
+    let m = ex.inbox("fire_commander").last().cloned().unwrap();
+    assert_eq!(m.kind, MsgKind::Clarification);
+    assert_eq!(m.text, "Quale lato di F4?");
+    assert_eq!(m.proposal, Some(pid));
+    assert_eq!(m.inject_id, ex.proposal(pid).unwrap().inject_id);
+    // The proposal can still be decided afterwards.
+    ex.decide(pid, Decision { approve: false, note: Some("no".into()), ..Default::default() }).unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Rejected);
+    // Decided proposals and EXCON proposals cannot be sent back.
+    assert!(ex.request_clarification(pid, "again?").is_err());
+    assert!(ex.deliver_clarification(pid, "x", "x").is_err());
+    let mp = ex.master_prompt("do something");
+    assert!(ex.request_clarification(mp, "what?").is_err());
+}
+
+#[test]
+fn revalidate_updates_verdicts_without_deciding() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let pid = reply(&mut ex, "mayor", "evacuate F4").unwrap();
+    ex.attach_parse(pid, parsed(json!([{"type":"EvacuateZone","zone":"F4"}]))).unwrap();
+    assert!(!ex.proposal(pid).unwrap().verdicts[0].is_ok(), "needs more buses than the mayor has");
+    // Same commands: still infeasible, status untouched.
+    ex.revalidate_proposal(pid, None).unwrap();
+    assert!(!ex.proposal(pid).unwrap().verdicts[0].is_ok());
+    // Edited commands: feasible, descriptions follow, still undecided.
+    let edited: Vec<Command> = serde_json::from_value(json!([{"type":"IssueWarning","zone":"F4"}])).unwrap();
+    ex.revalidate_proposal(pid, Some(edited)).unwrap();
+    let p = ex.proposal(pid).unwrap();
+    assert_eq!(p.status, ProposalStatus::Pending);
+    assert!(p.decision.is_none());
+    assert!(p.verdicts.iter().all(|v| v.is_ok()));
+    assert_eq!(p.descriptions.len(), 1);
+    assert!(ex.log.iter().any(|e| e.kind == "proposal_revalidated"));
+    // Decided proposals cannot be revalidated.
+    ex.decide(pid, Decision { approve: false, ..Default::default() }).unwrap();
+    assert!(ex.revalidate_proposal(pid, None).is_err());
+}
+
+#[test]
+fn player_answer_is_a_message_and_keeps_the_clarified_proposal() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let old = reply(&mut ex, "fire_commander", "warn").unwrap();
+    ex.attach_parse(old, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
+    ex.request_clarification(old, "Which zone?").unwrap();
+    let qid = ex.deliver_clarification(old, "Quale zona?", "Which zone?").unwrap();
+    let before = ex.inject_responses();
+    assert!(before.iter().any(|r| r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old)));
+    let (_, same) = ex.answer_clarification("fire_commander", "F4", qid, "F4", false).unwrap();
+    assert_eq!(same, old);
+    let o = ex.proposal(old).unwrap();
+    assert_eq!(o.status, ProposalStatus::Pending);
+    assert_eq!((o.superseded_by, o.commands.len()), (None, 1));
+    assert!(ex.log.iter().any(|e| e.kind == "clarification_answered"));
+    // Each row carries its whole thread in message order: inject, replies, question, answer.
+    let row = ex
+        .inject_responses()
+        .into_iter()
+        .find(|r| r["role"] == "fire_commander" && !r["replies"].as_array().unwrap().is_empty())
+        .expect("row with replies");
+    assert!(row["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old && p["status"] == "pending"));
+    let thread = row["thread"].as_array().unwrap();
+    assert_eq!(thread[0]["kind"], "inject");
+    assert!(thread.iter().any(|t| t["kind"] == "clarification"));
+    assert_eq!(thread.iter().filter(|t| t["kind"] == "reply").count(), 2, "declaration and answer");
+    assert!(thread.windows(2).all(|w| w[0]["id"].as_u64() < w[1]["id"].as_u64()));
+    // An unrelated reply is its own proposal.
+    let other = reply(&mut ex, "mayor", "x").unwrap();
+    assert_eq!(ex.proposal(other).unwrap().supersedes, None);
+}
+
+fn act(id: &str, offset_s: i64, wind: f64) -> scenario::InjectAction {
+    scenario::InjectAction {
+        id: id.into(),
+        title: format!("Action {id}"),
+        command: json!({"type": "SetWeather", "wind_dir_deg": wind}),
+        offset_s,
+        note: String::new(),
+    }
+}
+
+/// First inject planned at 600 s with a post-action (offset 0), a delayed one
+/// (+120 s) and a pre-action (-300 s, so at 300 s). Every other inject is far away.
+fn with_actions() -> (Exercise, String) {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    for (n, i) in scn.msel.iter_mut().enumerate() {
+        i.at_s = Some(100_000 + n as i64 * 60);
+    }
+    scn.msel[0].at_s = Some(600);
+    scn.msel[0].actions = vec![act("wind_shift", 0, 123.0), act("late_wind", 120, 200.0), act("pre_wind", -300, 100.0)];
+    let id = scn.msel[0].id.clone();
+    scn.check().unwrap();
+    let mut ex = Exercise::new(World::new(Arc::new(scn), 1).unwrap());
+    ex.start().unwrap();
+    ex.turn_minutes = 30;
+    (ex, id)
+}
+
+fn scan_to(ex: &mut Exercise, to_s: i64) {
+    ex.begin_resolution_until(to_s, true).unwrap();
+    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
+    ex.finish_resolution().unwrap();
+}
+
+fn send(ex: &mut Exercise, id: &str, to: &str, actions: &exercise::actions::SendActions) {
+    ex.send_inject_with(Some(id), "T", "112", &[to.into()], "text", &BTreeMap::new(), actions).unwrap();
+}
+
+#[test]
+fn sending_an_inject_runs_its_actions() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    send(&mut ex, &id, "mayor", &SendActions::all());
+    let run = |ex: &Exercise, k: &str| ex.action_runs.iter().find(|(_, r)| r.action == k).map(|(_, r)| r.clone()).unwrap();
+    assert_eq!(run(&ex, "wind_shift").status, ActionStatus::Done, "delay 0 applies at send");
+    let late = run(&ex, "late_wind");
+    assert_eq!((late.status, late.run_at_s), (ActionStatus::Approved, Some(120)));
+    assert_eq!(run(&ex, "pre_wind").status, ActionStatus::Done, "an early send runs the pending pre-action");
+    // A second send to another role never runs them again.
+    let n = ex.action_runs.len();
+    send(&mut ex, &id, "fire_commander", &SendActions::all());
+    assert_eq!(ex.action_runs.len(), n);
+    // The view lists the actions under the inject.
+    let row = ex.planned_injects().into_iter().find(|i| i["id_inject"] == id.as_str()).unwrap();
+    assert_eq!(row["actions"].as_array().unwrap().len(), 3);
+    assert_eq!(row["actions"][0]["status"], "done");
+}
+
+#[test]
+fn unchecked_actions_do_not_run() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    send(&mut ex, &id, "mayor", &SendActions { run: Some(vec!["wind_shift".into()]), custom: vec![] });
+    let status = |ex: &Exercise, k: &str| ex.action_runs.values().find(|r| r.action == k).unwrap().status;
+    assert_eq!(status(&ex, "wind_shift"), ActionStatus::Done);
+    assert_eq!(status(&ex, "late_wind"), ActionStatus::NotRun);
+    assert_eq!(status(&ex, "pre_wind"), ActionStatus::NotRun);
+    scan_to(&mut ex, 1000);
+    assert_eq!(status(&ex, "late_wind"), ActionStatus::NotRun, "never executed");
+}
+
+#[test]
+fn delayed_action_runs_at_its_instant_and_rollback_forgets_it() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    send(&mut ex, &id, "mayor", &SendActions::all());
+    ex.begin_resolution_until(300, true).unwrap();
+    while ex.world.time_s() < 119 {
+        ex.step_resolution(exercise::STEP_S).unwrap();
+    }
+    let late = |ex: &Exercise| ex.action_runs.values().find(|r| r.action == "late_wind").unwrap().clone();
+    assert_eq!(late(&ex).status, ActionStatus::Approved);
+    ex.step_resolution(exercise::STEP_S).unwrap();
+    ex.step_resolution(exercise::STEP_S).unwrap();
+    assert_eq!((late(&ex).status, late(&ex).executed_s), (ActionStatus::Done, Some(120)));
+    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
+    ex.finish_resolution().unwrap();
+    ex.rollback(1).unwrap();
+    assert!(ex.action_runs.is_empty(), "decisions taken after the restored time are forgotten");
+}
+
+#[test]
+fn custom_inject_actions_run_and_cannot_precede_it() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, _) = with_actions();
+    let bad = SendActions { run: None, custom: vec![act("c1", -60, 90.0)] };
+    assert!(ex.send_inject_with(None, "T", "EXCON", &["mayor".into()], "x", &BTreeMap::new(), &bad).is_err());
+    assert!(ex.messages.is_empty(), "nothing is sent when an action is invalid");
+    let ok = SendActions { run: None, custom: vec![act("c1", 0, 90.0), act("c2", 60, 80.0)] };
+    ex.send_inject_with(None, "T", "EXCON", &["mayor".into()], "x", &BTreeMap::new(), &ok).unwrap();
+    let st = |k: &str| ex.action_runs.values().find(|r| r.action == k).unwrap().status;
+    assert_eq!((st("c1"), st("c2")), (ActionStatus::Done, ActionStatus::Approved));
+}
+
+#[test]
+fn pre_actions_run_during_the_scan_and_can_be_disabled() {
+    use exercise::actions::ActionStatus;
+    let (mut ex, id) = with_actions();
+    assert_eq!(ex.next_pending_inject().unwrap().0, 600);
+    scan_to(&mut ex, 600);
+    let pre = ex.action_runs.values().find(|r| r.action == "pre_wind").unwrap();
+    assert_eq!((pre.status, pre.executed_s), (ActionStatus::Done, Some(300)), "{pre:?}");
+    assert!(ex.action_runs.values().all(|r| r.action == "pre_wind"), "post-actions wait for the send");
+
+    // Disabled beforehand: it does not run.
+    let (mut ex, id2) = with_actions();
+    ex.set_action_enabled(&id2, "pre_wind", false).unwrap();
+    scan_to(&mut ex, 600);
+    assert!(ex.action_runs.is_empty());
+    let row = ex.planned_injects().into_iter().find(|i| i["id_inject"] == id2.as_str()).unwrap();
+    assert_eq!(row["actions"][2]["status"], "not_run");
+    assert!(ex.set_action_enabled(&id2, "wind_shift", false).is_err(), "only pre-actions toggle");
+    let _ = id;
+}
+
+#[test]
+fn skipping_an_inject_cancels_its_pre_actions_and_rollback_forgets_the_skip() {
+    let (mut ex, id) = with_actions();
+    ex.skip_inject(&id).unwrap();
+    scan_to(&mut ex, 600);
+    assert!(ex.action_runs.is_empty(), "a skipped inject's pre-actions never run");
+    // Skipped injects do not count as pending nor as due.
+    assert_ne!(ex.next_pending_inject().map(|p| p.1), Some(id.clone()));
+    let item = ex.turn_agenda()["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).cloned().unwrap();
+    assert_eq!((item["status"].as_str(), item["due"].as_bool()), (Some("skipped"), Some(false)));
+    ex.restore_inject(&id).unwrap();
+    assert_eq!(ex.skipped_injects.len(), 0);
+    ex.skip_inject(&id).unwrap();
+    ex.rollback(1).unwrap();
+    assert!(ex.skipped_injects.is_empty(), "skip decided after the restored time is forgotten");
+}
+
+#[test]
+fn advance_target_stops_at_the_next_inject_or_closes_the_turn() {
+    let (mut ex, id) = with_actions();
+    let t = ex.advance_target();
+    assert_eq!((t.to_s, t.closes_turn, t.inject.as_deref()), (600, false, Some(id.as_str())));
+    assert_eq!(ex.turn_agenda()["next_event_s"], 600);
+    // Clamped to the turn end: the advance closes the turn there.
+    ex.skip_inject(&id).unwrap();
+    let t = ex.advance_target();
+    assert_eq!((t.to_s, t.closes_turn, t.inject), (1800, true, None));
+    ex.restore_inject(&id).unwrap();
+    ex.turn_minutes = 5;
+    let t = ex.advance_target();
+    assert_eq!((t.to_s, t.closes_turn), (300, true));
+    ex.turn_minutes = 30;
+    // Reaching the inject makes it due.
+    scan_to(&mut ex, 600);
+    let item = ex.turn_agenda()["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).cloned().unwrap();
+    assert_eq!(item["due"], true);
+    assert!(ex.sent_injects.is_empty(), "never sent automatically");
+    // Still pending and overdue: the next target is the turn end.
+    assert!(ex.advance_target().closes_turn);
+}
+
+#[test]
+fn substep_advances_inside_the_turn_without_closing_it() {
+    let (mut ex, _) = with_actions();
+    let agenda = ex.turn_agenda();
+    assert_eq!((agenda["turn_start_s"].as_i64(), agenda["planned_end_s"].as_i64()), (Some(0), Some(1800)));
+    scan_to(&mut ex, 600);
+    assert_eq!((ex.turn, ex.phase, ex.world.time_s(), ex.turn_start_s), (1, Phase::Orders, 600, 0));
+    assert_eq!(ex.substeps.len(), 1);
+    // Closing the turn runs to the planned end, not another full turn.
+    ex.resolve_turn(None).unwrap();
+    assert_eq!((ex.world.time_s(), ex.turn, ex.turn_start_s), (1800, 2, 1800));
+    assert!(ex.substeps.is_empty());
+    ex.rollback(1).unwrap();
+    assert_eq!((ex.turn_start_s, ex.world.time_s()), (0, 0));
+    assert!(ex.substeps.is_empty());
+}
+
+#[test]
+fn stopping_a_resolution_keeps_the_turn_open_at_the_current_second() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    assert!(ex.stop_resolution().is_err(), "nothing is running yet");
+    // A delayed action (+120 s) is approved; stop before the end, it stays approved.
+    let mut custom = act("slow", 1000, 70.0);
+    custom.title = "slow".into();
+    let acts = SendActions { run: None, custom: vec![custom] };
+    ex.send_inject_with(None, "T", "EXCON", &["mayor".into()], "x", &BTreeMap::new(), &acts).unwrap();
+    let _ = id;
+    ex.begin_resolution(None).unwrap();
+    for _ in 0..100 {
+        assert!(!ex.step_resolution(exercise::STEP_S).unwrap());
+    }
+    let at = ex.stop_resolution().unwrap();
+    assert_eq!(at, ex.world.time_s());
+    assert!(ex.step_resolution(exercise::STEP_S).unwrap(), "the resolution is over");
+    assert_eq!(ex.world.time_s(), at, "no further second is simulated");
+    let report = ex.finish_resolution().unwrap();
+    assert_eq!((report.from_s, report.to_s), (0, at));
+    assert_eq!((ex.turn, ex.phase), (1, Phase::Orders), "the turn stays open");
+    assert_eq!(ex.substeps.len(), 1);
+    assert_eq!(ex.last_turn.as_ref().map(|w| w.to_s), Some(at));
+    let slow = |ex: &Exercise| ex.action_runs.values().find(|r| r.action == "slow").unwrap().status;
+    assert_eq!(slow(&ex), ActionStatus::Approved);
+    ex.resolve_turn(None).unwrap();
+    assert_eq!((ex.world.time_s(), ex.turn), (1800, 2));
+    assert_eq!(slow(&ex), ActionStatus::Done);
+}
+
+#[test]
+fn inject_at_s_places_it_in_the_agenda() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.msel[0].at_s = Some(600);
+    let id = scn.msel[0].id.clone();
+    scn.check().unwrap();
+    let mut ex = Exercise::new(World::new(Arc::new(scn), 1).unwrap());
+    ex.start().unwrap();
+    ex.turn_minutes = 30;
+    let agenda = ex.turn_agenda();
+    let item = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap();
+    assert_eq!(item["at_s"], 600);
+    assert_eq!(item["due"], false);
+    // Advancing to it makes it due: proposed to EXCON, never sent automatically.
+    scan_to(&mut ex, 600);
+    let agenda = ex.turn_agenda();
+    let item = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap();
+    assert_eq!(item["due"], true);
+    assert!(ex.sent_injects.is_empty());
+}
+
+/// The default scenario no longer starts burning: the ignition is an action of
+/// inject I-01, which runs when EXCON sends it.
+#[test]
+fn default_scenario_ignition_is_an_action_of_the_first_inject() {
+    use exercise::actions::SendActions;
+    let scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    assert_eq!(scn.msel.iter().find(|i| i.id == "I-01").unwrap().actions[0].id, "A-01");
+    let world = World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = Exercise::new(world);
+    ex.start().unwrap();
+    assert!(ex.world.burning_zones().is_empty());
+    ex.send_inject_with(Some("I-01"), "Fire", "112", &["all".into()], "Fire", &BTreeMap::new(), &SendActions::all()).unwrap();
+    let run = ex.action_runs.values().find(|r| r.action == "A-01").unwrap().clone();
+    assert_eq!(run.status, exercise::actions::ActionStatus::Done, "{run:?}");
+    ex.resolve_turn(Some(30)).unwrap();
+    assert!(!ex.world.burning_zones().is_empty(), "the fire must be burning after the ignition ran");
+}
+
+/// The turn length is part of the scenario; EXCON changing the live length
+/// does not move injects that have no explicit time.
+#[test]
+fn live_turn_length_does_not_move_implied_inject_times() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.turn_minutes = 20;
+    scn.msel[0].turn = 3;
+    scn.msel[0].at_s = None;
+    let id = scn.msel[0].id.clone();
+    scn.check().unwrap();
+    let mut ex = Exercise::new(World::new(Arc::new(scn), 1).unwrap());
+    assert_eq!(ex.turn_minutes, 20, "initialised from the scenario");
+    let due = |ex: &Exercise| {
+        ex.planned_injects().iter().find(|i| i["id_inject"] == id.as_str()).unwrap()["scenario_time_s"].as_i64().unwrap()
+    };
+    assert_eq!(due(&ex), 2 * 20 * 60);
+    ex.turn_minutes = 45;
+    assert_eq!(due(&ex), 2 * 20 * 60);
 }

@@ -1,7 +1,8 @@
 //! Paired native reference for scripts/qa/standalone.cjs (seed 1, real commands).
 use std::sync::Arc;
 fn main() -> anyhow::Result<()> {
-    let scn = scenario::Scenario::load("data/scenarios/synthetic_valley.json")?;
+    let mut scn = scenario::Scenario::load("data/scenarios/valverde_factory.json")?;
+    scn.enable_operational_model();
     let world = sim::World::with_options(
         Arc::new(scn),
         1,

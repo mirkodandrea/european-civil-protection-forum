@@ -99,6 +99,7 @@ pub struct SharedInputs<'a> {
 }
 
 /// Mutable state of one realization.
+#[derive(Clone)]
 pub struct Realization {
     pub heap: FrontHeap,
     pub tiles: TileGrid,

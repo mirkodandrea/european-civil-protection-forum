@@ -1,0 +1,79 @@
+{
+  "recipe": "selvariva-basin-v1",
+  "seed": 33,
+  "candidate": {
+    "id": "t3",
+    "name": "Conca con colle",
+    "archetype": "conca",
+    "seed": 33,
+    "notes": "conca chiusa da crinali, sbocco a E, colle isolato con sommita piana",
+    "detail": {},
+    "params": {
+      "archetype": "conca",
+      "seed": 33,
+      "detail": {
+        "warp_m": 260.0,
+        "broad_m": 22.0,
+        "broad_relief_m": 40.0,
+        "fine_m": 6.0,
+        "erosion_iterations": 20,
+        "erosion_k": 0.5,
+        "erosion_cap_m": 6.0,
+        "erosion_diffusion": 1.2,
+        "erosion_exponent": 0.5
+      }
+    }
+  },
+  "vegetation": {
+    "fuel_share": {
+      "0": 0.0068,
+      "1": 0.008,
+      "2": 0.2492,
+      "3": 0.0369,
+      "4": 0.0797,
+      "5": 0.1199,
+      "7": 0.0556,
+      "8": 0.0995,
+      "9": 0.0896,
+      "11": 0.1991,
+      "12": 0.0556
+    },
+    "class_share": {
+      "prato/coltivo": 0.2897,
+      "macchia": 0.244,
+      "bosco di latifoglie": 0.1903,
+      "pineta": 0.2575,
+      "vegetazione rada": 0.0185
+    },
+    "veg": {
+      "channel_cells": 350,
+      "river_cells": 2500,
+      "open_max_slope_deg": 10.0,
+      "rock_slope_deg": 34.0
+    }
+  },
+  "grading": {
+    "max_cut_fill_m": 66.9254250563443,
+    "rms_cut_fill_m": 4.359817418787928,
+    "grade_iterations": 240,
+    "grade_residual_m": 0.024796678458646304
+  },
+  "physical_cell_m": 20,
+  "visual_posting_m": 10,
+  "world_size_m": [
+    6000,
+    6000
+  ],
+  "buildings": 172,
+  "roads": 27,
+  "occupants": 1102,
+  "elevation_range_m": [
+    155.44100410364533,
+    569.9842226693625
+  ],
+  "max_drivable_grade": 0.16424430925321223,
+  "provenance": "Existing TTX Factory kernels, adapted from propagator_abm under EUPL-1.2; all geography and demographic counts synthetic.",
+  "scenario_sha256": "5dcb876766b084704b69b56b671d398f77bd1f96b0488154749c68db8aa1196d",
+  "template_sha256": "b2acc39f6926eb9e122bd096b3495377ea580ac86195f49cdbac2882eb6f7156",
+  "pack_sha256": "dd453605a3a1dcecac176dd88fa5f154edc2392bf3a2f747bf194aaeacc8acd8"
+}

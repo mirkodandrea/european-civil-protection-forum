@@ -4,7 +4,7 @@
 # ffmpeg while recording, cinematic camera), with Gemini TTS narration and
 # subtitles. One final ffmpeg pass composes everything.
 #
-#   ./scripts/record/record.sh [output.mp4]      (default docs/media/ttx_demo.mp4)
+#   ./scripts/record/record.sh [output.mp4]      (default runs/demo/ttx_demo.mp4)
 #
 # Environment:
 #   TTX_REC_FAST=1    hardware encoder for the final pass (faster, bigger file)
@@ -23,7 +23,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REC="$ROOT/scripts/record"
-OUT_MP4="${1:-$ROOT/docs/media/ttx_demo.mp4}"
+OUT_MP4="${1:-$ROOT/runs/demo/ttx_demo.mp4}"
 PORT="${TTX_REC_PORT:-8090}"
 WORK="$(mktemp -d -t ttx-rec)"
 T0=$(date +%s)
@@ -46,7 +46,7 @@ TTX_PID=$!
 trap 'kill $TTX_PID 2>/dev/null || true' EXIT
 for _ in $(seq 60); do curl -sf "http://localhost:$PORT/api/health" >/dev/null && break; sleep 0.5; done
 export TTX_MASTER_KEY=$(python3 -c 'import re,sys; text=open(sys.argv[1]).read(); match=re.search(r"/play.html\?token=([0-9a-f]{64})",text); print(match.group(1) if match else "")' "$WORK/run/ttx.log")
-: "${TTX_MASTER_KEY:?No Director key found in simulator log}"
+: "${TTX_MASTER_KEY:?No EXCON key found in simulator log}"
 sleep 3 # let the window come up
 
 phase "session"

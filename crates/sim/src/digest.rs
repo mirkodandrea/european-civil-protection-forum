@@ -20,7 +20,7 @@ pub mod cell_code {
     pub const POSSIBLE: u8 = 5;
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BuildingView {
     pub id: u32,
     /// 0 intact, 1 damaged, 2 destroyed
@@ -33,7 +33,7 @@ pub struct BuildingView {
 
 impl World {
     /// Compact JSON describing the situation, for an LLM prompt. `role`
-    /// restricts resources to that role; `None` is the Master's full view.
+    /// restricts resources to that role; `None` is the EXCON's full view.
     pub fn digest(&self, role: Option<&str>) -> Value {
         let s = self.stats();
         let w = self.fire.weather();
@@ -77,7 +77,7 @@ impl World {
             .iter()
             .map(|r| {
                 let st = &self.d.roads[&r.id];
-                json!({"id": r.id, "name": r.name, "closed": st.closed, "cut_by_fire": st.cut_by_fire})
+                json!({"id": r.id, "name": r.name, "closed": st.closed, "cut_by_fire": st.cut_by_fire, "fire_closed_links": st.fire_closed_links})
             })
             .collect();
         let pools: Value = match role {
@@ -144,10 +144,9 @@ impl World {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
-    /// Dynamic state for the web UIs.
-    pub fn view(&self) -> Value {
-        let buildings: Vec<BuildingView> = self
-            .d
+    /// Per-building state as the web maps draw it.
+    pub fn building_views(&self) -> Vec<BuildingView> {
+        self.d
             .buildings
             .iter()
             .map(|b| BuildingView {
@@ -162,12 +161,16 @@ impl World {
                 evacuating: b.evac_done_at.is_some(),
                 evacuated: b.evacuated,
             })
-            .collect();
+            .collect()
+    }
+
+    /// Dynamic state for the web UIs.
+    pub fn view(&self) -> Value {
+        let buildings = self.building_views();
         json!({
             "operations":self.scn.operations,
+            "tactical_policy":self.scn.tactical_policy,
             "traffic":self.traffic_view(),
-            "communication_sites":self.d.hazard.sites,
-            "pending_warnings":self.d.hazard.pending_warnings,
             "deployments":self.deployment_view(),
             "travel_settings":self.d.travel_settings,
             "stats": self.stats(),
@@ -200,6 +203,7 @@ impl World {
             "fuel": base64::engine::general_purpose::STANDARD.encode(fuel),
             "buildings": self.scn.buildings,
             "roads": self.scn.roads,
+            "road_segments": self.network.segments(),
             "places": self.scn.places,
             "roles": self.scn.roles,
             "resource_types": self.scn.resource_types,

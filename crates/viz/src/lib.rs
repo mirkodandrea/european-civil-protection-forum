@@ -1,75 +1,81 @@
 //! The big-screen renderer.
 //!
-//! Reads the shared [`Exercise`] (never writes it): each frame it `try_lock`s
-//! the mutex and, when the exercise `generation` has moved, copies what it
-//! draws into a [`Snapshot`] resource. A slow request on the server side
-//! therefore never stalls a frame, and the renderer can never change the
-//! exercise.
+//! Knows the exercise only through a [`view::ViewSource`]: each frame it polls
+//! for a newer [`view::ViewState`] (never blocking) and, when one arrives,
+//! copies what it draws into a [`Snapshot`] resource. The model can live in
+//! this process, in the browser's WASM, or behind HTTP on another machine, and
+//! the renderer can never change it: it has no dependency on the simulator or
+//! the exercise.
 //!
-//! Turns are simulated live: while the Director resolves a turn the server
+//! Turns are simulated live: while the EXCON resolves a turn the model
 //! advances the world one simulated minute at a time (optionally paced), and
-//! every step bumps `generation`, so this renderer shows the fire, the
+//! every step is a new view state, so this renderer shows the fire, the
 //! buildings and the counters as they change.
 //!
-//! Vegetation meshes (pine, oak, bush) are the Blender bakes from
-//! `propagator_abm` (`assets/models/meshes.json`).
+//! Vegetation, landmarks and articulated unit bakes come from `propagator_abm`
+//! under EUPL-1.2.
 
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
-use exercise::Exercise;
+use view::{
+    BuildingDraw, Cue, Deployment, Ensemble, FireLine, Have, RoadSegment, Stats, TurnWindow,
+    Vehicle, ViewSource,
+};
 
+pub mod editor;
+mod architecture;
+mod bench;
 mod camera;
 mod deployments;
+mod fire_field;
+mod fire_shader;
+mod fire_textures;
 mod flames;
 mod frame;
 mod hud;
+mod materials;
 mod models;
+mod night;
 mod objects;
+mod quality;
+mod quality_live;
+mod sky;
+mod sky_light;
+mod snapshot;
 mod terrain;
 
 pub use frame::Frame;
 
-#[derive(Resource, Clone)]
-pub struct Shared(pub Arc<Mutex<Exercise>>);
+#[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct SceneSetup;
 
-#[derive(Resource)]
-pub struct ServerPort(pub u16);
-
-#[derive(Clone, Default)]
-pub struct BuildingDraw {
-    /// 0 intact, 1 damaged, 2 destroyed
-    pub damage: u8,
-    pub threatened: bool,
-    pub evacuating: bool,
-    pub empty_evacuated: bool,
+/// What the HUD says about the surroundings of the viewer.
+#[derive(Resource, Clone, Default)]
+pub struct Info {
+    /// The AI model the exercise uses ("off" when none).
+    pub llm_model: String,
+    /// Port of the exercise web server, when this process hosts it.
+    pub port: Option<u16>,
+    /// Where the state comes from, when it is not this process.
+    pub remote: Option<String>,
 }
 
-/// Something worth looking at, derived from the exercise log (see `camera`).
-#[derive(Clone, Debug)]
-pub struct Cue {
-    pub pos: scenario::Pos,
-    /// Size of what to frame, metres.
-    pub radius_m: f32,
-    /// How long to hold the shot, seconds.
-    pub hold_s: f32,
-    pub label: String,
-}
-
-/// Everything the renderer draws, copied from the exercise.
+/// Everything the renderer draws, copied from the view state.
 #[derive(Resource, Default)]
 pub struct Snapshot {
-    pub deployments: Vec<(sim::DeploymentTask, u32)>,
-    pub traffic: Vec<(scenario::Pos, u32, bool)>,
+    pub deployments: Vec<Deployment>,
+    pub traffic: Vec<Vehicle>,
     pub generation: u64,
     pub turn: u32,
     pub phase: String,
     pub time_s: i64,
     pub clock: String,
     pub weather: Option<scenario::WeatherSpec>,
-    pub stats: Option<sim::Stats>,
-    /// Final per-cell code (see `sim::digest::cell_code`).
+    pub stats: Option<Stats>,
+    pub ensemble: Option<Ensemble>,
+    /// Final per-cell code (see [`view::cell`]).
     pub cells: Vec<u8>,
     pub arrival: Vec<i32>,
     /// Ensemble-mean fireline intensity (kW/m) and fraction of runs reached, per cell.
@@ -77,18 +83,19 @@ pub struct Snapshot {
     pub probability: Vec<f32>,
     pub buildings: Vec<BuildingDraw>,
     pub roads: Vec<(bool, bool)>,
-    pub lines: Vec<(scenario::Pos, scenario::Pos, f32)>,
-    pub drops: Vec<(scenario::Pos, f32)>,
+    pub road_segments: Vec<RoadSegment>,
+    pub lines: Vec<FireLine>,
+    pub drops: Vec<view::Drop>,
     pub warned: Vec<String>,
-    pub last_turn: Option<exercise::TurnWindow>,
-    /// `(turn, from_s, to_s)` while a turn is being simulated.
-    pub resolving: Option<(u32, i64, i64)>,
+    pub last_turn: Option<TurnWindow>,
+    /// While a turn is being simulated.
+    pub resolving: Option<TurnWindow>,
+    /// EXCON free-running clock between turns (distinct from `resolving`).
+    pub clock_running: bool,
     pub feed: Vec<String>,
-    pub llm_model: String,
-    pub ensemble: Option<fire::FireOptions>,
     /// Camera cues, append-only.
     pub cues: Vec<Cue>,
-    log_seen: u64,
+    cue_seen: u64,
 }
 
 /// The scenario, shared by all systems.
@@ -96,24 +103,46 @@ pub struct Snapshot {
 pub struct Scn(pub Arc<scenario::Scenario>);
 
 /// Open the window and run until it is closed.
-pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
-    let scn = ex
-        .lock()
-        .map(|e| e.world.scn.clone())
-        .expect("exercise lock");
-    let primary_window = Window {
+///
+/// The renderer knows the exercise only through `source`: in this process
+/// (`server::view::ExerciseSource`) or on another machine.
+pub fn run(source: Box<dyn ViewSource>, info: Info) {
+    run_internal(source, info, None);
+}
+
+fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<editor::Editor>) {
+    let scn = match source.scenario() {
+        Ok(scn) => scn,
+        Err(e) => {
+            eprintln!("cannot load the scenario: {e}");
+            return;
+        }
+    };
+    let quality = quality::Quality::from_env();
+    let capture = std::env::var("TTX_SNAPSHOT").is_ok();
+    #[allow(unused_mut)] // mutated only on wasm32
+    let mut primary_window = Window {
         title: "PPRD East TTX — simulator".into(),
-        resolution: (1600., 900.).into(),
+        visible: !capture,
+        focused: !capture,
+        resolution: snapshot::resolution(),
+        present_mode: if snapshot::bench_s().is_some() {
+            bevy::window::PresentMode::AutoNoVsync
+        } else {
+            bevy::window::PresentMode::AutoVsync
+        },
         ..default()
     };
     #[cfg(target_arch = "wasm32")]
-    let primary_window = Window {
-        canvas: Some("#standalone-3d".into()),
-        fit_canvas_to_parent: true,
-        focused: false,
-        ..primary_window
-    };
-    App::new()
+    {
+        primary_window.canvas = Some("#standalone-3d".into());
+        primary_window.fit_canvas_to_parent = true;
+    }
+    let mut app = App::new();
+    if let Some(editor) = editor {
+        app.insert_resource(editor);
+    }
+    app
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -125,19 +154,33 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
         )
         .add_plugins(EguiPlugin)
         .add_plugins(flames::FlamesPlugin)
+        .add_plugins(materials::MaterialsPlugin)
+        .add_plugins(sky::SkyPlugin)
+        .add_plugins(snapshot::SnapshotPlugin)
+        .insert_resource(if capture {
+            bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(
+                1.0 / 60.0,
+            ))
+        } else {
+            bevy::time::TimeUpdateStrategy::Automatic
+        })
+        .insert_resource(quality.msaa_mode())
+        .insert_resource(bevy::pbr::DirectionalLightShadowMap {
+            size: quality.shadow_map,
+        })
+        .insert_resource(quality)
+        .init_resource::<quality::Rebuild>()
         .insert_resource(ClearColor(camera::SKY))
         // Sky-tinted fill light; the sun does the modelling.
         .insert_resource(AmbientLight {
             color: Color::srgb(0.70, 0.78, 0.95),
             brightness: 140.0,
         })
-        .insert_resource(Shared(ex))
-        .insert_resource(ServerPort(port))
+        .insert_resource(Source(Mutex::new(source)))
+        .insert_resource(info)
         .insert_resource(Scn(scn))
-        .insert_resource(Snapshot {
-            llm_model,
-            ..default()
-        })
+        .init_resource::<Snapshot>()
+        .init_resource::<fire_field::FirePresentation>()
         .init_resource::<Frame>()
         .add_systems(
             Startup,
@@ -145,324 +188,197 @@ pub fn run(ex: Arc<Mutex<Exercise>>, port: u16, llm_model: String) {
                 camera::setup,
                 terrain::setup,
                 objects::setup,
+                night::setup,
                 deployments::setup,
             ),
         )
+        .add_systems(
+            SceneSetup,
+            (
+                camera::setup,
+                terrain::setup,
+                objects::setup,
+                night::setup,
+                deployments::setup,
+                flames::setup.after(terrain::setup),
+            ),
+        )
+        .add_systems(First, replace_scene)
+        .add_systems(PreUpdate, editor::paste_input
+            .after(bevy_egui::EguiSet::ProcessInput)
+            .before(bevy_egui::EguiSet::BeginFrame))
         .add_systems(
             Update,
             (
                 sync,
                 frame::update.after(sync),
-                terrain::update.after(frame::update),
+                fire_field::toggle,
+                terrain::update
+                    .after(frame::update)
+                    .after(fire_field::toggle),
                 objects::update.after(frame::update),
+                objects::night_windows,
+                night::update,
+                deployments::night_vehicles,
                 deployments::update.after(frame::update),
                 camera::control.after(frame::update),
                 camera::fire_lights.after(frame::update),
-                hud::draw.after(frame::update),
+                hud::draw.after(frame::update).after(fire_field::toggle),
+                editor::draw,
+                editor::interact.after(editor::draw),
                 screenshot,
                 record,
+                snapshot::hold.after(camera::control).after(sync),
+                snapshot::capture.after(snapshot::hold),
+                terrain::lod,
+                quality_live::apply,
             ),
         )
         .run();
 }
 
-/// Copy the exercise into the [`Snapshot`] whenever it changed (during a
-/// resolution: after every simulated minute).
-fn sync(shared: Res<Shared>, mut snap: ResMut<Snapshot>) {
-    let Ok(ex) = shared.0.try_lock() else { return };
-    if ex.generation == snap.generation {
+/// The source of views, polled each frame. Its `poll` never blocks.
+#[derive(Resource)]
+pub struct Source(Mutex<Box<dyn ViewSource>>);
+
+/// The newest edited scenario that has been shown only through the light
+/// refresh (terrain mesh), waiting for a full rebuild once the brush rests.
+#[derive(Resource, Default)]
+struct SceneBuild {
+    pending: Option<Arc<scenario::Scenario>>,
+}
+
+/// Rebuild only presentation entities. The source owns the exercise and all physics.
+fn replace_scene(world: &mut World) {
+    let current = world.resource::<Scn>().0.clone();
+    // A graphics level whose knobs are baked into the scene (terrain stride,
+    // plant density) was picked: build it again from the scenario in hand.
+    if world.get_resource_mut::<quality::Rebuild>().is_some_and(|mut r| std::mem::take(&mut r.0)) {
+        return replace_with(world, current.clone(), current);
+    }
+    let polled = world
+        .resource::<Source>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut source| source.poll_scene(&current));
+    // A full rebuild reconstructs terrain textures and vegetation (seconds on a
+    // large territory), so while the editor brush is working only the terrain
+    // mesh follows; the rebuild happens once the brush has rested.
+    let now = world.get_resource::<Time>().map_or(0., |t| t.elapsed_seconds_f64());
+    if world.get_resource::<editor::Editor>().is_some_and(|e| e.busy(now)) {
+        if let Some(next) = polled {
+            let same_grid = current.grid.rows == next.grid.rows
+                && current.grid.cols == next.grid.cols
+                && current.grid.cellsize == next.grid.cellsize;
+            if same_grid {
+                terrain::reshape(world, &next);
+                world.insert_resource(Scn(next.clone()));
+                world.get_resource_or_insert_with(SceneBuild::default).pending = Some(next);
+                return;
+            }
+            world.get_resource_or_insert_with(SceneBuild::default).pending = None;
+            return replace_with(world, current, next);
+        }
         return;
     }
-    let w = &ex.world;
-    snap.traffic =
-        w.d.traffic
-            .vehicles
-            .iter()
-            .filter(|v| v.departed && !v.completed)
-            .map(|v| (w.traffic_position(v, w.time_s()), v.people, v.at_risk))
-            .collect();
-    snap.deployments =
-        w.d.tasks
-            .iter()
-            .map(|task| (task.clone(), w.task_active_qty(task)))
-            .collect();
-    snap.generation = ex.generation;
-    snap.turn = ex.turn;
-    snap.phase = format!("{:?}", ex.phase).to_lowercase();
-    snap.time_s = w.time_s();
-    snap.clock = w.clock();
-    snap.weather = Some(w.fire.weather());
-    snap.ensemble = Some(w.fire.options());
-    snap.stats = Some(w.stats());
-    let cleared = w.fire.cleared();
-    let wet = w.fire.added_moisture();
-    let prob = w.fire.probability();
-    snap.cells = w
-        .fire
-        .state()
-        .iter()
-        .enumerate()
-        .map(|(i, s)| match s {
-            fire::CellFire::Burning => 1,
-            fire::CellFire::Burnt => 2,
-            fire::CellFire::Unburnt if cleared[i] => 3,
-            fire::CellFire::Unburnt if wet[i] > 10.0 => 4,
-            fire::CellFire::Unburnt if prob[i] > 0.0 => 5,
-            fire::CellFire::Unburnt => 0,
+    let pending = world.get_resource_or_insert_with(SceneBuild::default).pending.take();
+    let Some(next) = polled.or(pending) else {
+        return;
+    };
+    replace_with(world, current, next);
+}
+
+fn replace_with(world: &mut World, current: Arc<scenario::Scenario>, next: Arc<scenario::Scenario>) {
+    let preserve_orbit = world.contains_resource::<editor::Editor>()
+        && current.grid.rows == next.grid.rows
+        && current.grid.cols == next.grid.cols
+        && current.grid.cellsize == next.grid.cellsize;
+    let orbit = preserve_orbit
+        .then(|| {
+            world
+                .get_resource::<camera::Orbit>()
+                .map(|o| camera::Orbit {
+                    focus: o.focus,
+                    yaw: o.yaw,
+                    pitch: o.pitch,
+                    dist: o.dist,
+                    auto: false,
+                })
         })
+        .flatten();
+    // Keep the window (including its egui context) and the atmosphere. All scene
+    // roots and their children belong to this renderer and are reconstructed.
+    let roots: Vec<Entity> = world
+        .query_filtered::<Entity, (Without<Parent>, Without<Window>, Without<sky::SkyDome>)>()
+        .iter(world)
         .collect();
-    snap.arrival = w.fire.arrival_times().to_vec();
-    snap.intensity = w.fire.intensity().to_vec();
-    snap.probability = w.fire.probability().to_vec();
-    snap.buildings =
-        w.d.buildings
-            .iter()
-            .map(|b| BuildingDraw {
-                damage: match b.damage {
-                    sim::Damage::Intact => 0,
-                    sim::Damage::Damaged => 1,
-                    sim::Damage::Destroyed => 2,
-                },
-                threatened: b.threatened,
-                evacuating: b.evac_done_at.is_some(),
-                empty_evacuated: b.people_inside == 0 && b.evacuated > 0,
-            })
-            .collect();
-    snap.roads = w
-        .scn
-        .roads
-        .iter()
-        .map(|r| {
-            w.d.roads
-                .get(&r.id)
-                .map(|s| (s.closed, s.cut_by_fire))
-                .unwrap_or_default()
-        })
-        .collect();
-    snap.lines =
-        w.d.lines
-            .iter()
-            .map(|l| (l.from, l.to, l.width_m))
-            .collect();
-    snap.drops = w.d.drops.iter().map(|d| (d.at, d.radius_m)).collect();
-    snap.warned = w.d.warned.iter().cloned().collect();
-    snap.feed = ex
-        .log
-        .iter()
-        .rev()
-        .filter_map(feed_line)
-        .take(9)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    snap.last_turn = ex.last_turn;
-    // Camera cues from new log entries.
-    let first = snap.log_seen;
-    for e in ex.log.iter().filter(|e| e.seq > first) {
-        if let Some(c) = cue_for(&ex, e) {
-            snap.cues.push(c);
-        }
-        snap.log_seen = e.seq;
+    for entity in roots {
+        world.entity_mut(entity).despawn_recursive();
     }
-    snap.resolving = ex.resolving.as_ref().map(|r| (r.turn, r.from_s, r.to_s));
+    world.insert_resource(Scn(next));
+    world.insert_resource(Snapshot::default());
+    world.insert_resource(Frame::default());
+    world.run_schedule(SceneSetup);
+    if let Some(orbit) = orbit {
+        world.insert_resource(orbit);
+    }
 }
 
-/// Where an order acts, and how big an area it covers.
-fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f32)> {
-    use sim::{Area, Command as C};
-    let zone = |z: &str| {
-        w.zone_code(z)
-            .and_then(|c| w.scn.zone_centre(&c))
-            .map(|p| (p, 300.0))
+/// Copy the newest view into the [`Snapshot`] whenever the model has changed
+/// (during a resolution: after every simulated minute).
+fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
+    let have = Have {
+        generation: snap.generation,
+        cue: snap.cue_seen,
     };
-    let building = |b: &str| w.find_building(b).map(|i| (w.scn.buildings[i].pos, 160.0));
-    match cmd {
-        C::CutFireLine {
-            from, to, along, ..
-        } => {
-            let (a, b) = match along {
-                Some(code) => w.scn.zone_edge(code)?,
-                None => (
-                    w.resolve_loc(from.as_ref()?).ok()?,
-                    w.resolve_loc(to.as_ref()?).ok()?,
-                ),
-            };
-            let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
-            Some(([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], len / 2.0 + 80.0))
-        }
-        C::DeployEngine { at } | C::WaterDrop { at } | C::Ignite { at, .. } => {
-            w.resolve_loc(at).ok().map(|p| (p, 180.0))
-        }
-        C::EvacuateZone { zone: z, .. } | C::IssueWarning { zone: z } => zone(z),
-        C::EvacuateBuilding { building: b, .. } | C::OpenShelter { building: b } => building(b),
-        C::SetBuildingStatus { building: b, .. } => building(b).or_else(|| zone(b)),
-        C::CloseRoad { road } | C::ReopenRoad { road } => w
-            .find_road(road)
-            .and_then(|id| w.scn.road(&id))
-            .and_then(|r| r.points.get(r.points.len() / 2).copied())
-            .map(|p| (p, 350.0)),
-        C::Extinguish { area } => match area {
-            Area::Named(n) => zone(n).or_else(|| w.scn.resolve_place(n).map(|p| (p, 250.0))),
-            Area::Circle { at, radius_m } => w.resolve_loc(at).ok().map(|p| (p, *radius_m)),
-        },
-        _ => None,
-    }
-}
-
-/// The first place a text names: a facility, a gazetteer place (or alias), or a zone code.
-fn named_place(w: &sim::World, text: &str) -> Option<(scenario::Pos, f32)> {
-    let lower = text.to_lowercase();
-    let mut best: Option<(usize, scenario::Pos, f32)> = None;
-    let mut consider = |name: &str, pos: scenario::Pos, r: f32| {
-        if name.len() < 3 {
-            return;
-        }
-        if let Some(i) = lower.find(&name.to_lowercase()) {
-            if best.is_none_or(|(j, _, _)| i < j) {
-                best = Some((i, pos, r));
-            }
-        }
+    let Some(v) = source.0.lock().ok().and_then(|mut s| s.poll(have)) else {
+        return;
     };
-    for b in &w.scn.buildings {
-        if let Some(n) = &b.name {
-            consider(n, b.pos, 170.0);
-        }
+    if !v.scenario_id.is_empty() && v.scenario_id != scn.0.id {
+        return;
     }
-    for p in &w.scn.places {
-        consider(&p.name, p.pos, 300.0);
-        for a in &p.aliases {
-            consider(a, p.pos, 300.0);
-        }
-    }
-    for token in text.split(|c: char| !c.is_alphanumeric()) {
-        if token.len() == 2 {
-            if let (Some(c), Some(pos)) = (w.zone_code(token), text.find(token)) {
-                if best.is_none_or(|(j, _, _)| pos < j) {
-                    best = w.scn.zone_centre(&c).map(|p| (pos, p, 300.0));
-                }
-            }
-        }
-    }
-    best.map(|(_, p, r)| (p, r))
-}
-
-fn cue_for(ex: &Exercise, e: &exercise::LogEntry) -> Option<Cue> {
-    let w = &ex.world;
-    let d = &e.data;
-    let cmds_cue = |cmds: &[sim::Command], label: String, hold: f32| {
-        cmds.iter()
-            .find_map(|c| command_place(w, c))
-            .map(|(pos, radius_m)| Cue {
-                pos,
-                radius_m,
-                hold_s: hold,
-                label,
-            })
-    };
-    match e.kind.as_str() {
-        "inject_sent" => {
-            let title = d["title"].as_str().unwrap_or_default();
-            let text = ex
-                .messages
-                .iter()
-                .rev()
-                .find(|m| m.title.as_deref() == Some(title))
-                .map(|m| m.text_en.clone())
-                .unwrap_or_default();
-            let (pos, radius_m) = named_place(w, &format!("{title} {text}"))?;
-            Some(Cue {
-                pos,
-                radius_m,
-                hold_s: 6.0,
-                label: format!("inject: {title}"),
-            })
-        }
-        "proposal_parsed" => {
-            let cmds: Vec<sim::Command> = serde_json::from_value(d["commands"].clone()).ok()?;
-            cmds_cue(&cmds, format!("proposal from {}", e.actor), 5.0)
-        }
-        "proposal_decided" if d["approve"].as_bool() == Some(true) => {
-            let p = ex.proposal(d["proposal"].as_u64()?)?;
-            cmds_cue(&p.commands, "approved".into(), 5.0)
-        }
-        "master_command" => {
-            let c: sim::Command = serde_json::from_value(d["command"].clone()).ok()?;
-            cmds_cue(std::slice::from_ref(&c), c.describe(), 6.0)
-        }
-        _ => None,
+    snap.generation = v.generation;
+    snap.turn = v.turn;
+    snap.phase = v.phase;
+    snap.time_s = v.time_s;
+    snap.clock = v.clock;
+    snap.weather = v.weather;
+    snap.ensemble = v.ensemble;
+    snap.stats = v.stats;
+    snap.cells = v.cells;
+    snap.arrival = v.arrival;
+    snap.intensity = v.intensity;
+    snap.probability = v.probability;
+    snap.buildings = v.buildings;
+    snap.roads = v.roads;
+    snap.road_segments = v.road_segments;
+    snap.lines = v.lines;
+    snap.drops = v.drops;
+    snap.traffic = v.traffic;
+    snap.deployments = v.deployments;
+    snap.warned = v.warned;
+    snap.last_turn = v.last_turn;
+    snap.resolving = v.resolving;
+    snap.clock_running = v.clock_running;
+    snap.feed = v.feed;
+    for cue in v.cues {
+        snap.cue_seen = snap.cue_seen.max(cue.seq);
+        snap.cues.push(cue);
     }
 }
-
-/// What the audience sees in the HUD feed.
-fn feed_line(e: &exercise::LogEntry) -> Option<String> {
-    let d = &e.data;
-    let s = match e.kind.as_str() {
-        "inject_sent" => format!(
-            "INJECT  {} -> {}",
-            d["title"].as_str()?,
-            d["recipients"]
-                .as_array()?
-                .iter()
-                .filter_map(|r| r.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        "proposal_decided" if d["approve"].as_bool()? => format!(
-            "APPROVED  {}",
-            d["facts"]
-                .as_str()?
-                .lines()
-                .next()?
-                .trim_start_matches("APPROVED: ")
-        ),
-        "proposal_decided" => "REJECTED  a proposal".to_string(),
-        "master_command" => format!(
-            "DIRECTOR  {}",
-            serde_json::from_value::<sim::Command>(d["command"].clone())
-                .ok()?
-                .describe()
-        ),
-        "turn_resolving" => format!("TURN {} SIMULATING  ({} min)", d["turn"], d["minutes"]),
-        "turn_resolved" => format!("TURN {} RESOLVED  ({} min)", d["turn"], d["minutes"]),
-        // The English summary, not the raw reply: the HUD font has no Armenian, Georgian… glyphs.
-        "proposal_parsed" if e.actor != exercise::MASTER => format!(
-            "ORDERS  {}: {}",
-            e.actor,
-            truncate(d["summary"].as_str().filter(|s| !s.is_empty())?, 90)
-        ),
-        "rollback" => format!("ROLLBACK to turn {}", d["to_turn"]),
-        _ => return None,
-    };
-    Some(format!(
-        "{}  {}",
-        &e.clock[e.clock.len().saturating_sub(5)..],
-        s
-    ))
-}
-
-fn truncate(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(n).collect::<String>())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn screenshot() {}
-#[cfg(target_arch = "wasm32")]
-fn record() {}
 
 /// `P` saves a screenshot to `runs/`; so does writing a target path into
 /// `runs/shot.req` (for unattended captures — the file is consumed).
-#[cfg(not(target_arch = "wasm32"))]
 fn screenshot(
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
     mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
     mut tick: Local<u32>,
 ) {
+    if std::env::var_os("TTX_SNAPSHOT").is_some() {
+        return;
+    }
     *tick += 1;
     let mut target = None;
     if keys.just_pressed(KeyCode::KeyP) {
@@ -492,7 +408,6 @@ pub const RECORD_EVERY: u32 = 2;
 
 /// The recording stream: raw frames piped into an ffmpeg child that encodes
 /// on the fly (hardware H.264), so there is no pile of PNGs to encode later.
-#[cfg(not(target_arch = "wasm32"))]
 struct Recorder {
     tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
     writer: Option<std::thread::JoinHandle<()>>,
@@ -500,7 +415,6 @@ struct Recorder {
     dropped: u64,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Recorder> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -561,7 +475,6 @@ fn start_recorder(width: u32, height: u32, bgra: bool) -> std::io::Result<Record
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Recorder {
     fn drop(&mut self) {
         eprintln!(
@@ -578,14 +491,12 @@ impl Drop for Recorder {
 /// Whether recording is on, and the running recorder. The flag matters:
 /// screenshots still in flight when recording stops must not start a new
 /// recorder (which would truncate the finished file).
-#[cfg(not(target_arch = "wasm32"))]
 type RecSlot = std::sync::Arc<std::sync::Mutex<(bool, Option<Recorder>)>>;
 
 /// While `runs/rec/ON` exists, stream every [`RECORD_EVERY`]-th frame into
 /// `runs/rec/sim.mkv` (encoded while recording) and write the wall-clock time
 /// of the first frame to `runs/rec/sim_start_ms.txt`. Removing the flag
 /// closes the stream.
-#[cfg(not(target_arch = "wasm32"))]
 fn record(
     windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
     mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
@@ -593,6 +504,9 @@ fn record(
     mut state: Local<(u32, bool, f32)>,
     slot: Local<RecSlot>,
 ) {
+    if std::env::var_os("TTX_SNAPSHOT").is_some() {
+        return;
+    }
     let (frame_no, on, check) = &mut *state;
     let t = time.elapsed_seconds();
     if t >= *check {
@@ -647,4 +561,52 @@ fn record(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod territory_tests {
+    use super::*;
+    struct Replacement(Option<Arc<scenario::Scenario>>);
+    impl ViewSource for Replacement {
+        fn scenario(&mut self) -> Result<Arc<scenario::Scenario>, String> {
+            Err("unused".into())
+        }
+        fn poll_scene(&mut self, _: &Arc<scenario::Scenario>) -> Option<Arc<scenario::Scenario>> {
+            self.0.take()
+        }
+        fn poll(&mut self, _: Have) -> Option<view::ViewState> {
+            None
+        }
+    }
+    #[test]
+    fn scene_switch_discards_old_geometry_and_state_but_keeps_window() {
+        let old = Arc::new(scenario::synthetic::generate(7));
+        let mut next = (*old).clone();
+        next.id = "second-map".into();
+        let mut world = World::new();
+        world.insert_resource(Scn(old));
+        world.insert_resource(Source(Mutex::new(Box::new(Replacement(Some(Arc::new(
+            next,
+        )))))));
+        world.insert_resource(Snapshot {
+            generation: 99,
+            cells: vec![1; 4],
+            ..default()
+        });
+        world.insert_resource(Frame::default());
+        world.add_schedule(bevy::ecs::schedule::Schedule::new(SceneSetup));
+        let window = world.spawn(Window::default()).id();
+        let sky = world.spawn(sky::SkyDome).id();
+        let root = world.spawn(SpatialBundle::default()).id();
+        let child = world.spawn(SpatialBundle::default()).id();
+        world.entity_mut(root).add_child(child);
+        replace_scene(&mut world);
+        assert_eq!(world.resource::<Scn>().0.id, "second-map");
+        assert_eq!(world.resource::<Snapshot>().generation, 0);
+        assert!(world.resource::<Snapshot>().cells.is_empty());
+        assert!(world.get_entity(root).is_none());
+        assert!(world.get_entity(child).is_none());
+        assert!(world.get_entity(window).is_some());
+        assert!(world.get_entity(sky).is_some());
+    }
 }

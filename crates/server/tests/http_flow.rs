@@ -1,18 +1,19 @@
-//! The full Master ↔ player workflow over HTTP, with a mock LLM.
+//! The full EXCON ↔ player workflow over HTTP, with a mock LLM.
+use rocket::http::{ContentType, Header, Method, Status};
+use rocket::local::asynchronous::Client;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use axum::Router;
-use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use tower::ServiceExt;
+
+type TestApp = std::sync::Arc<Client>;
 
 fn mock_llm() -> llm::Llm {
     llm::Llm::mock(|task, _system, user| {
         Ok(match task {
             "translate" => format!("[it] {user}"),
+            "prepare_decision" if user.contains("where?") && !user.contains("F4 confirmed") => r#"{"message":"Warn the area","detected_language":"en","translation_en":"Warn the area","actions":[],"messages":[],"clarification":"Which zone should receive the warning?","summary":"A zone is missing"}"#.into(),
+            "prepare_decision" => r#"{"message":"Warn F4","detected_language":"en","translation_en":"Warn F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into(),
             "parse_reply" if user.contains("where?") => r#"{"detected_language":"it","translation_en":"where?","actions":[],"messages":[],"clarification":"Quale zona?","summary":"unclear"}"#.into(),
             "parse_reply" => r#"{"detected_language":"it","translation_en":"Warn F4 and tell the fire commander","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[{"to":"fire_commander","text":"We warned F4"}],"clarification":null,"summary":"Warn F4"}"#.into(),
             "master_prompt" => r#"{"actions":[{"type":"SetWeather","wind_speed_kmh":60}],"injects":[{"recipients":["all"],"title":"Wind","sender":"Weather service","text":"Wind rising to 60 km/h"}],"clarification":null,"summary":"stronger wind"}"#.into(),
@@ -24,42 +25,69 @@ fn mock_llm() -> llm::Llm {
 }
 
 fn access() -> server::access::Access {
-    server::access::Access { master:"test-master".into(), players: std::collections::BTreeMap::from([("mayor".into(), "test-mayor".into()), ("fire_commander".into(), "test-fire".into())]), evaluators: std::collections::BTreeMap::from([("eval-one".into(), "test-eval-one".into()), ("eval-two".into(), "test-eval-two".into())]) }
+    server::access::Access::with_keys("test-master".into(), std::collections::BTreeMap::from([
+            ("mayor".into(), "test-mayor".into()),
+            ("fire_commander".into(), "test-fire".into()),
+        ]), std::collections::BTreeMap::from([
+            ("eval-one".into(), "test-eval-one".into()),
+            ("eval-two".into(), "test-eval-two".into()),
+        ]))
 }
 
-async fn app() -> Router {
-    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+async fn app() -> TestApp {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    server::router_with_access(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).0
+    build(Arc::new(Mutex::new(ex)), mock_llm(), None, access())
+        .await
+        .0
 }
 
-async fn call(app: &Router, method: &str, uri: &str, mut body: Option<Value>) -> (StatusCode, Value) {
+async fn call(app: &TestApp, method: &str, uri: &str, mut body: Option<Value>) -> (Status, Value) {
     if method == "POST" && uri.ends_with("/reply") {
         if let Some(body) = body.as_mut() {
-            if body.get("evidence").is_none() { body["evidence"] = json!({"basis":{"kind":"operational_judgment", "reference":"Operational judgment based on the received inject"}}); }
+            if body.get("evidence").is_none() {
+                body["evidence"] = json!({"basis":{"kind":"operational_judgment", "reference":"Operational judgment based on the received inject"}});
+            }
         }
     }
-    let req = Request::builder().method(method).uri(uri).header("content-type", "application/json").header("authorization", "Bearer test-master");
-    let req = req.body(body.map(|b| Body::from(b.to_string())).unwrap_or(Body::empty())).unwrap();
-    let resp = app.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    call_key(app, method, uri, body, Some("test-master")).await
 }
 
-async fn reply_parent(app: &Router, role: &str) -> u64 {
+async fn reply_parent(app: &TestApp, role: &str) -> u64 {
     let (_, p) = call(app, "GET", &format!("/api/player/{role}"), None).await;
-    call(app, "POST", &format!("/api/player/{role}/language"), Some(json!({"language":p["player"]["language"]}))).await;
-    if let Some(m) = p["inbox"].as_array().unwrap().iter().rev().find(|m| m["kind"] == "inject") {
+    call(
+        app,
+        "POST",
+        &format!("/api/player/{role}/language"),
+        Some(json!({"language":p["player"]["language"]})),
+    )
+    .await;
+    if let Some(m) = p["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|m| m["kind"] == "inject")
+    {
         return m["id"].as_u64().unwrap();
     }
-    if p["phase"] != "orders" { return 0; }
-    let (_, sent) = call(app, "POST", "/api/master/inject", Some(json!({"title":"Task", "recipients":[role], "text":"Exercise task"}))).await;
+    if p["phase"] != "orders" {
+        return 0;
+    }
+    let (_, sent) = call(
+        app,
+        "POST",
+        "/api/master/inject",
+        Some(json!({"title":"Task", "recipients":[role], "text":"Exercise task"})),
+    )
+    .await;
     sent["messages"][0].as_u64().unwrap()
 }
 
 /// Poll `GET uri` until `pred` holds (LLM work runs in spawned tasks).
-async fn eventually(app: &Router, uri: &str, pred: impl Fn(&Value) -> bool) -> Value {
+async fn eventually(app: &TestApp, uri: &str, pred: impl Fn(&Value) -> bool) -> Value {
     for _ in 0..100 {
         let (_, v) = call(app, "GET", uri, None).await;
         if pred(&v) {
@@ -74,104 +102,283 @@ async fn eventually(app: &Router, uri: &str, pred: impl Fn(&Value) -> bool) -> V
 async fn master_player_llm_round_trip() {
     let app = app().await;
     let (s, v) = call(&app, "GET", "/api/static", None).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     assert_eq!(v["roles"].as_array().unwrap().len(), 3);
     assert!(v["msel"].as_array().unwrap().len() >= 5);
 
     // Replies are refused before the exercise starts.
-    let (s, _) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "hi", "reply_to": reply_parent(&app, "mayor").await}))).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text": "hi", "reply_to": reply_parent(&app, "mayor").await})),
+    )
+    .await;
+    assert_eq!(s, Status::BadRequest);
 
-    assert_eq!(call(&app, "POST", "/api/master/start", None).await.0, StatusCode::OK);
+    assert_eq!(
+        call(&app, "POST", "/api/master/start", None).await.0,
+        Status::Ok
+    );
 
     // MSEL inject, translated for the Italian-speaking mayor only.
     let (s, _) = call(&app, "POST", "/api/master/msel/I-01/send", None).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     let (_, mayor) = call(&app, "GET", "/api/player/mayor", None).await;
-    assert!(mayor["inbox"][0]["text"].as_str().unwrap().starts_with("[it] "));
+    assert!(mayor["inbox"][0]["text"]
+        .as_str()
+        .unwrap()
+        .starts_with("[it] "));
     let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
     assert!(!fc["inbox"][0]["text"].as_str().unwrap().starts_with("[it]"));
 
     // Player reply -> parsed proposal + message delivered to the fire commander.
     let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "Allertate F4 e avvisate i pompieri", "reply_to": reply_parent(&app, "mayor").await}))).await;
     let pid = r["proposal"].as_u64().unwrap();
-    let m = eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid && p["status"] == "pending")).await;
-    let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap().clone();
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == pid && p["status"] == "pending")
+    })
+    .await;
+    let p = m["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == pid)
+        .unwrap()
+        .clone();
     assert_eq!(p["commands"][0]["type"], "IssueWarning");
-    assert_eq!(p["verdicts"][0]["verdict"], "ok");
+    assert_eq!(p["verdicts"][0]["verdict"], "ok", "{p}");
     let (_, before) = call(&app, "GET", "/api/player/fire_commander", None).await;
-    assert!(!before["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"), "operational AI drafts await Master approval and execution");
+    assert!(
+        !before["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "role_message"),
+        "operational AI drafts await EXCON approval and execution"
+    );
 
-    // Master approves -> translated feedback to the player.
-    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": true}))).await;
-    assert_eq!(s, StatusCode::OK, "{out}");
-    eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "feedback" && m["text"].as_str().unwrap().starts_with("[it]"))).await;
+    // EXCON approves -> translated feedback to the player.
+    let (s, out) = call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve": true})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok, "{out}");
+    eventually(&app, "/api/player/mayor", |v| {
+        v["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "feedback" && m["text"].as_str().unwrap().starts_with("[it]"))
+    })
+    .await;
 
     // Unclear reply -> clarification question back to the player.
-    let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "evacuate where?", "reply_to": reply_parent(&app, "mayor").await}))).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text": "evacuate where?", "reply_to": reply_parent(&app, "mayor").await})),
+    )
+    .await;
     let pid2 = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |v| v["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid2 && p["status"] == "needs_clarification")).await;
-    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid2}/decide"), Some(json!({"approve": true, "note": "Send the clarification"}))).await;
-    assert_eq!(s, StatusCode::OK);
-    eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
+    eventually(&app, "/api/master", |v| {
+        v["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == pid2 && p["status"] == "needs_clarification")
+    })
+    .await;
+    let (s, _) = call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid2}/decide"),
+        Some(json!({"approve": true, "note": "Send the clarification"})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok);
+    eventually(&app, "/api/player/mayor", |v| {
+        v["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "clarification")
+    })
+    .await;
 
-    // Master prompt -> proposal with a command and an inject draft; approval applies both.
-    let (_, r) = call(&app, "POST", "/api/master/prompt", Some(json!({"text": "make the wind much stronger and tell everyone"}))).await;
+    // EXCON prompt -> proposal with a command and an inject draft; approval applies both.
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/master/prompt",
+        Some(json!({"text": "make the wind much stronger and tell everyone"})),
+    )
+    .await;
     let mp = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == mp && p["status"] == "pending")).await;
-    call(&app, "POST", &format!("/api/master/proposals/{mp}/decide"), Some(json!({"approve": true}))).await;
-    let st = eventually(&app, "/api/state", |v| v["world"]["weather"]["wind_speed_kmh"] == 60.0).await;
+    eventually(&app, "/api/master", |m| {
+        m["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == mp && p["status"] == "pending")
+    })
+    .await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{mp}/decide"),
+        Some(json!({"approve": true})),
+    )
+    .await;
+    let st = eventually(&app, "/api/state", |v| {
+        v["world"]["weather"]["wind_speed_kmh"] == 60.0
+    })
+    .await;
     assert_eq!(st["turn"], 1);
-    eventually(&app, "/api/player/regional_cp", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["title"] == "Wind")).await;
+    eventually(&app, "/api/player/regional_cp", |v| {
+        v["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["title"] == "Wind")
+    })
+    .await;
 
     // Direct commands "by code": a list, one of which fails.
-    let (s, r) = call(&app, "POST", "/api/master/command", Some(json!([{"type":"Extinguish","area":"G3"},{"type":"WaterDrop","at":"Atlantis"}]))).await;
-    assert_eq!(s, StatusCode::OK);
+    let (s, r) = call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!([{"type":"Extinguish","area":"G3"},{"type":"WaterDrop","at":"Atlantis"}])),
+    )
+    .await;
+    assert_eq!(s, Status::Ok);
     assert_eq!(r["results"][0]["ok"], true);
     assert_eq!(r["results"][1]["ok"], false);
-    let (s, _) = call(&app, "POST", "/api/master/command", Some(json!({"type":"NotACommand"}))).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"NotACommand"})),
+    )
+    .await;
+    assert_eq!(s, Status::BadRequest);
 
     // Resolve the turn -> applied actions, time advanced, situation updates to every player.
-    let (s, rep) = call(&app, "POST", "/api/master/resolve", Some(json!({"minutes": 30}))).await;
-    assert_eq!(s, StatusCode::OK, "{rep}");
+    let (s, rep) = call(
+        &app,
+        "POST",
+        "/api/master/resolve",
+        Some(json!({"minutes": 30})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok, "{rep}");
     assert_eq!(rep["to_s"], 1800);
-    assert!(rep["applied"].as_array().unwrap().iter().any(|a| a["action"] == "Issue warning to zone F4" && a["ok"] == true));
-    eventually(&app, "/api/player/fire_commander", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message")).await;
+    assert!(rep["applied"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|a| a["action"] == "Issue warning to zone F4" && a["ok"] == true));
+    eventually(&app, "/api/player/fire_commander", |v| {
+        v["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "role_message")
+    })
+    .await;
     for role in ["mayor", "fire_commander", "regional_cp"] {
-        eventually(&app, &format!("/api/player/{role}"), |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "situation")).await;
+        eventually(&app, &format!("/api/player/{role}"), |v| {
+            v["inbox"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["kind"] == "situation")
+        })
+        .await;
     }
     let (_, st) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(st["turn"], 2);
     assert_eq!(st["world"]["stats"]["clock"], "Day 1 13:30");
 
     // Rollback and debrief.
-    assert_eq!(call(&app, "POST", "/api/master/rollback", Some(json!({"turn": 1}))).await.0, StatusCode::OK);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/rollback",
+            Some(json!({"turn": 1}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
     let (_, st) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(st["turn"], 1);
-    assert_eq!(call(&app, "POST", "/api/master/end", None).await.0, StatusCode::OK);
+    assert_eq!(
+        call(&app, "POST", "/api/master/end", None).await.0,
+        Status::Ok
+    );
     let (_, d) = call(&app, "GET", "/api/debrief", None).await;
     assert!(d["log"].as_array().unwrap().len() > 10);
 }
 
 #[tokio::test]
 async fn works_without_llm() {
-    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
     call(&app, "POST", "/api/master/start", None).await;
-    call(&app, "POST", "/api/master/inject", Some(json!({"title": "t", "recipients": ["mayor"], "text": "english only"}))).await;
+    call(
+        &app,
+        "POST",
+        "/api/master/inject",
+        Some(json!({"title": "t", "recipients": ["mayor"], "text": "english only"})),
+    )
+    .await;
     let (_, m) = call(&app, "GET", "/api/player/mayor", None).await;
     assert_eq!(m["inbox"][0]["text"], "english only");
     let (_, r) = call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "line along G3 south edge", "reply_to": reply_parent(&app, "fire_commander").await}))).await;
     let pid = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid && p["status"] == "pending")).await;
-    // The Master types the command for the player.
-    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": true, "commands": [{"type":"CutFireLine","along":"G3:S"}]}))).await;
-    assert_eq!(s, StatusCode::OK, "{out}");
+    eventually(&app, "/api/master", |m| {
+        m["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == pid && p["status"] == "pending")
+    })
+    .await;
+    // The EXCON types the command for the player.
+    let (s, out) = call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve": true, "commands": [{"type":"CutFireLine","along":"G3:S"}]})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok, "{out}");
     let (_, rep) = call(&app, "POST", "/api/master/resolve", None).await;
     assert_eq!(rep["applied"][0]["ok"], true);
-    eventually(&app, "/api/player/fire_commander", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "situation")).await;
+    eventually(&app, "/api/player/fire_commander", |v| {
+        v["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "situation")
+    })
+    .await;
 }
 
 /// With a pace set, a resolving turn is visible from outside: phase
@@ -181,10 +388,25 @@ async fn resolution_runs_live_and_is_observable() {
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
     // 60x: one simulated minute per second, a 20-minute turn in ~20 s... too slow for a test: 600x → ~2 s.
-    let (_, set) = call(&app, "POST", "/api/master/settings", Some(json!({"speed": 600.0}))).await;
+    let (_, set) = call(
+        &app,
+        "POST",
+        "/api/master/settings",
+        Some(json!({"speed": 600.0})),
+    )
+    .await;
     assert_eq!(set["speed"], 600.0);
+    let parent = reply_parent(&app, "mayor").await;
     let a2 = app.clone();
-    let resolver = tokio::spawn(async move { call(&a2, "POST", "/api/master/resolve", Some(json!({"minutes": 20}))).await });
+    let resolver = tokio::spawn(async move {
+        call(
+            &a2,
+            "POST",
+            "/api/master/resolve",
+            Some(json!({"minutes": 20})),
+        )
+        .await
+    });
 
     let mut seen_times = std::collections::BTreeSet::new();
     for _ in 0..200 {
@@ -192,8 +414,16 @@ async fn resolution_runs_live_and_is_observable() {
         if st["phase"] == "resolving" {
             assert_eq!(st["resolving"]["to_s"], 1200);
             seen_times.insert(st["world"]["stats"]["time_s"].as_i64().unwrap());
-            let (s, _) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "hi", "reply_to": reply_parent(&app, "mayor").await}))).await;
-            assert_eq!(s, StatusCode::BAD_REQUEST, "replies are refused while resolving");
+            if seen_times.len() == 1 {
+                let (s, _) = call(
+                    &app,
+                    "POST",
+                    "/api/player/mayor/reply",
+                    Some(json!({"text": "hi", "reply_to": parent})),
+                )
+                .await;
+                assert_eq!(s, Status::BadRequest, "replies are refused while resolving");
+            }
         }
         if resolver.is_finished() {
             break;
@@ -201,9 +431,12 @@ async fn resolution_runs_live_and_is_observable() {
         tokio::time::sleep(Duration::from_millis(15)).await;
     }
     let (s, rep) = resolver.await.unwrap();
-    assert_eq!(s, StatusCode::OK, "{rep}");
+    assert_eq!(s, Status::Ok, "{rep}");
     assert_eq!(rep["to_s"], 1200);
-    assert!(seen_times.len() >= 5, "intermediate times should be observable, saw {seen_times:?}");
+    assert!(
+        seen_times.len() >= 5,
+        "intermediate times should be observable, saw {seen_times:?}"
+    );
     assert!(seen_times.iter().all(|t| *t < 1200), "{seen_times:?}");
     let (_, st) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(st["phase"], "orders");
@@ -220,28 +453,59 @@ async fn player_conversation_keeps_context() {
     let llm = llm::Llm::mock(move |task, _s, user| {
         if task == "parse_reply" {
             log.lock().unwrap().push(user.to_string());
-            return Ok(if user.contains("over there") && !user.contains("east edge") {
-                r#"{"actions":[],"clarification":"Which zone edge?","summary":"unclear"}"#.into()
-            } else {
-                r#"{"actions":[{"type":"CutFireLine","along":"F4:E"}],"summary":"line"}"#.into()
-            });
+            return Ok(
+                if user.contains("over there") && !user.contains("east edge") {
+                    r#"{"actions":[],"clarification":"Which zone edge?","summary":"unclear"}"#
+                        .into()
+                } else {
+                    r#"{"actions":[{"type":"CutFireLine","along":"F4:E"}],"summary":"line"}"#.into()
+                },
+            );
         }
         Ok(format!("ok {task}"))
     });
-    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let app = server::router_with_access(Arc::new(Mutex::new(ex)), llm, None, access()).0;
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
     call(&app, "POST", "/api/master/start", None).await;
     call(&app, "POST", "/api/master/msel/I-03/send", None).await;
     call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "send the crews over there", "reply_to": reply_parent(&app, "fire_commander").await}))).await;
-    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["status"] == "needs_clarification")).await;
+    eventually(&app, "/api/master", |m| {
+        m["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["status"] == "needs_clarification")
+    })
+    .await;
     call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "the east edge of F4", "reply_to": reply_parent(&app, "fire_commander").await}))).await;
-    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().filter(|p| p["status"] == "pending").count() == 1).await;
+    eventually(&app, "/api/master", |m| {
+        m["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["status"] == "pending")
+            .count()
+            == 1
+    })
+    .await;
     let calls = seen.lock().unwrap().clone();
     assert_eq!(calls.len(), 2);
-    assert!(calls[0].contains("INJECT") && calls[0].contains("Fire behaviour estimate"), "the inject is context: {}", calls[0]);
-    assert!(calls[1].contains("send the crews over there"), "earlier reply in history");
-    assert!(calls[1].contains("Which zone edge?"), "earlier clarification in history");
+    assert!(
+        calls[0].contains("INJECT") && calls[0].contains("Fire behaviour estimate"),
+        "the inject is context: {}",
+        calls[0]
+    );
+    assert!(
+        calls[1].contains("send the crews over there"),
+        "earlier reply in history"
+    );
+    assert!(
+        calls[1].contains("Which zone edge?"),
+        "earlier clarification in history"
+    );
     assert!(calls[1].contains("the east edge of F4"));
 }
 
@@ -249,55 +513,167 @@ async fn player_conversation_keeps_context() {
 async fn reply_api_rejects_missing_unknown_and_other_roles_parent() {
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
-    let (_, sent) = call(&app, "POST", "/api/master/inject", Some(json!({"title":"Fire", "recipients":["mayor"], "text":"Reported fire"}))).await;
+    let (_, sent) = call(
+        &app,
+        "POST",
+        "/api/master/inject",
+        Some(json!({"title":"Fire", "recipients":["mayor"], "text":"Reported fire"})),
+    )
+    .await;
     let parent = sent["messages"][0].as_u64().unwrap();
-    call(&app, "POST", "/api/player/mayor/language", Some(json!({"language":"it"}))).await;
-    assert_eq!(call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello"}))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello", "reply_to":99999}))).await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text":"hello", "reply_to":parent}))).await.0, StatusCode::BAD_REQUEST);
+    call(
+        &app,
+        "POST",
+        "/api/player/mayor/language",
+        Some(json!({"language":"it"})),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/reply",
+            Some(json!({"text":"hello"}))
+        )
+        .await
+        .0,
+        Status::UnprocessableEntity
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/reply",
+            Some(json!({"text":"hello", "reply_to":99999}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/fire_commander/reply",
+            Some(json!({"text":"hello", "reply_to":parent}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert!(master["proposals"].as_array().unwrap().is_empty());
-    let (status, reply) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"hello", "reply_to":parent, "declaration_kind":"request"}))).await;
-    assert_eq!(status, StatusCode::OK);
+    let (status, reply) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"hello", "reply_to":parent, "declaration_kind":"request"})),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["proposals"][0]["reply_to"], parent);
     assert_eq!(master["proposals"][0]["declaration_kind"], "request");
     assert_eq!(master["proposals"][0]["history"][0]["status"], "parsing");
     assert_eq!(master["messages"][1]["proposal"], reply["proposal"]);
-    assert_eq!(master["messages"][1]["inject_id"], master["messages"][0]["inject_id"]);
+    assert_eq!(
+        master["messages"][1]["inject_id"],
+        master["messages"][0]["inject_id"]
+    );
 }
 
 #[tokio::test]
 async fn operational_drafts_require_master_review_and_deliver_edited_text_once() {
-    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
     let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
-    let (app, state) = server::router_with_access(Arc::new(Mutex::new(ex)), mock_llm(), None, access());
+    let (app, state) = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await;
     call(&app, "POST", "/api/master/start", None).await;
     let parent = reply_parent(&app, "mayor").await;
-    let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4", "reply_to":parent}))).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"warn F4", "reply_to":parent})),
+    )
+    .await;
     let pid = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
     server::flow::send_drafts(&state, pid).await;
     let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
-    assert!(!fc["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"));
+    assert!(!fc["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["kind"] == "role_message"));
     let edited = json!([{"to":"fire_commander","from":"mayor","kind":"role_message","title":"Warning coordination","text_en":"The warning to F4 is now issued; please confirm receipt."}]);
-    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true, "communication_drafts":edited}))).await;
-    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":true, "communication_drafts":edited})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok);
     server::flow::send_drafts(&state, pid).await;
     let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
-    assert!(!fc["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message"), "action-dependent message waits for actual execution");
-    assert_eq!(call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await.0, StatusCode::OK);
-    eventually(&app, "/api/player/fire_commander", |p| p["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "role_message")).await;
+    assert!(
+        !fc["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "role_message"),
+        "action-dependent message waits for actual execution"
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/resolve",
+            Some(json!({"minutes":1}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    eventually(&app, "/api/player/fire_commander", |p| {
+        p["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "role_message")
+    })
+    .await;
     server::flow::send_drafts(&state, pid).await;
     server::flow::send_drafts(&state, pid).await;
     let (_, fc) = call(&app, "GET", "/api/player/fire_commander", None).await;
-    let delivered = fc["inbox"].as_array().unwrap().iter().filter(|m| m["kind"] == "role_message").collect::<Vec<_>>();
+    let delivered = fc["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "role_message")
+        .collect::<Vec<_>>();
     assert_eq!(delivered.len(), 1);
-    assert_eq!(delivered[0]["text_en"], "The warning to F4 is now issued; please confirm receipt.");
+    assert_eq!(
+        delivered[0]["text_en"],
+        "The warning to F4 is now issued; please confirm receipt."
+    );
     assert_eq!(delivered[0]["proposal"], pid);
     let (_, m) = call(&app, "GET", "/api/master", None).await;
-    assert!(m["log"].as_array().unwrap().iter().any(|l| l["kind"] == "communications_reviewed"));
-    assert!(m["log"].as_array().unwrap().iter().any(|l| l["kind"] == "approved_communication_delivered"));
+    assert!(m["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "communications_reviewed"));
+    assert!(m["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "approved_communication_delivered"));
 }
 
 #[tokio::test]
@@ -305,18 +681,43 @@ async fn rejected_ai_suggestions_never_deliver_or_change_world() {
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
     let (_, before) = call(&app, "GET", "/api/state", None).await;
-    let (_, r) = call(&app, "POST", "/api/master/prompt", Some(json!({"text":"stronger wind and tell everyone"}))).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/master/prompt",
+        Some(json!({"text":"stronger wind and tell everyone"})),
+    )
+    .await;
     let pid = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
     let (_, proposed) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(proposed["world"], before["world"]);
-    call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":false}))).await;
-    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":false})),
+    )
+    .await;
+    call(
+        &app,
+        "POST",
+        "/api/master/resolve",
+        Some(json!({"minutes":1})),
+    )
+    .await;
     let (_, state) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(state["world"]["weather"], before["world"]["weather"]);
     for role in ["mayor", "fire_commander", "regional_cp"] {
         let (_, p) = call(&app, "GET", &format!("/api/player/{role}"), None).await;
-        assert!(!p["inbox"].as_array().unwrap().iter().any(|m| m["title"] == "Wind"));
+        assert!(!p["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["title"] == "Wind"));
     }
 }
 
@@ -325,35 +726,89 @@ async fn api_requires_basis_and_exposes_supporting_evidence_through_lifecycle() 
     let app = app().await;
     call(&app, "POST", "/api/master/start", None).await;
     let parent = reply_parent(&app, "mayor").await;
-    let req = Request::builder().method("POST").uri("/api/player/mayor/reply").header("content-type", "application/json").header("authorization", "Bearer test-master")
-        .body(Body::from(json!({"text":"warn F4","reply_to":parent}).to_string())).unwrap();
-    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"warn F4","reply_to":parent})),
+        Some("test-master"),
+    )
+    .await;
+    assert_eq!(status, Status::UnprocessableEntity);
     let evidence = json!({"basis":{"kind":"plan","reference":"Municipal warning plan, annex 3"},"attachments":[{"title":"Area map","url":"https://example.test/map.pdf"}]});
     let invalid = json!({"basis":{"kind":"plan","reference":""}});
-    assert_eq!(call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4","reply_to":parent,"evidence":invalid}))).await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(call(&app, "POST", "/api/player/mayor/language", Some(json!({"language":"unsupported"}))).await.0, StatusCode::BAD_REQUEST);
-    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence}))).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/reply",
+            Some(json!({"text":"warn F4","reply_to":parent,"evidence":invalid}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/language",
+            Some(json!({"language":"unsupported"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let (s, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok);
     let pid = r["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
-    call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true}))).await;
-    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":true})),
+    )
+    .await;
+    call(
+        &app,
+        "POST",
+        "/api/master/resolve",
+        Some(json!({"minutes":1})),
+    )
+    .await;
     let (_, p) = call(&app, "GET", "/api/player/mayor", None).await;
     assert_eq!(p["proposals"][0]["evidence"], evidence);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["proposals"][0]["evidence"], evidence);
-    call(&app, "POST", "/api/master/rollback", Some(json!({"turn":1}))).await;
+    call(
+        &app,
+        "POST",
+        "/api/master/rollback",
+        Some(json!({"turn":1})),
+    )
+    .await;
     let (_, d) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(d["proposals"][0]["evidence"], evidence);
 }
 
-async fn call_key(app: &Router, method: &str, uri: &str, body: Option<Value>, key: Option<&str>) -> (StatusCode, Value) {
-    let mut req = Request::builder().method(method).uri(uri).header("content-type", "application/json");
-    if let Some(key) = key { req = req.header("authorization", format!("Bearer {key}")); }
-    let resp = app.clone().oneshot(req.body(body.map(|v| Body::from(v.to_string())).unwrap_or(Body::empty())).unwrap()).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+async fn call_key(
+    app: &TestApp,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    key: Option<&str>,
+) -> (Status, Value) {
+    request(app, method, uri, body, key).await
 }
 
 #[tokio::test]
@@ -361,24 +816,93 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
     let app = app().await;
     let (_, mut before) = call(&app, "GET", "/api/state", None).await;
     before.as_object_mut().unwrap().remove("wall_ms");
-    for path in ["/api/state", "/api/master", "/api/debrief", "/api/catalogue", "/api/master/access", "/api/player/fire_commander"] {
-        assert_eq!(call_key(&app, "GET", path, None, Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
-        assert_eq!(call_key(&app, "GET", path, None, None).await.0, StatusCode::UNAUTHORIZED, "{path}");
+    for path in [
+        "/api/state",
+        "/api/master",
+        "/api/debrief",
+        "/api/catalogue",
+        "/api/master/access",
+        "/api/player/fire_commander",
+    ] {
+        assert_eq!(
+            call_key(&app, "GET", path, None, Some("test-mayor"))
+                .await
+                .0,
+            Status::Forbidden,
+            "{path}"
+        );
+        assert_eq!(
+            call_key(&app, "GET", path, None, None).await.0,
+            Status::Unauthorized,
+            "{path}"
+        );
     }
-    for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/resource-limits", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/player/fire_commander/reply", "/api/player/fire_commander/language"] {
-        assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some("test-mayor")).await.0, StatusCode::FORBIDDEN, "{path}");
+    for path in [
+        "/api/master/start",
+        "/api/master/end",
+        "/api/master/command",
+        "/api/master/inject",
+        "/api/master/msel/I-01/send",
+        "/api/master/proposals/1/decide",
+        "/api/master/prompt",
+        "/api/master/resolve",
+        "/api/master/rollback",
+        "/api/master/settings",
+        "/api/master/resource-limits",
+        "/api/master/clock",
+        "/api/master/phase",
+        "/api/master/schedules",
+        "/api/master/schedules/1/cancel",
+        "/api/master/proposals/1/execute",
+        "/api/master/knowledge",
+        "/api/player/fire_commander/reply",
+        "/api/player/fire_commander/language",
+    ] {
+        assert_eq!(
+            call_key(&app, "POST", path, Some(json!({})), Some("test-mayor"))
+                .await
+                .0,
+            Status::Forbidden,
+            "{path}"
+        );
     }
-    assert_eq!(call_key(&app, "GET", "/api/state?token=test-master", None, None).await.0, StatusCode::UNAUTHORIZED);
-    assert_eq!(call_key(&app, "GET", "/ws", None, None).await.0, StatusCode::UNAUTHORIZED);
-    assert_eq!(call_key(&app, "GET", "/api/health", None, None).await, (StatusCode::OK, json!({"ok":true})));
+    assert_eq!(
+        call_key(&app, "GET", "/api/state?token=test-master", None, None)
+            .await
+            .0,
+        Status::Unauthorized
+    );
+    assert_eq!(
+        call_key(&app, "GET", "/ws", None, None).await.0,
+        Status::Unauthorized
+    );
+    assert_eq!(
+        call_key(&app, "GET", "/api/health", None, None).await,
+        (Status::Ok, json!({"ok":true}))
+    );
     let (_, mut after) = call(&app, "GET", "/api/state", None).await;
     after.as_object_mut().unwrap().remove("wall_ms");
     assert_eq!(before, after);
     let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
-    assert!(own.get("msel").is_none() && own.get("reinforcements").is_none() && own.get("description").is_none());
+    assert!(
+        own.get("msel").is_none()
+            && own.get("reinforcements").is_none()
+            && own.get("description").is_none()
+    );
     assert_eq!(own["roles"].as_array().unwrap().len(), 1);
     assert!(own["buildings"][0].get("occupants").is_none());
-    assert_eq!(call_key(&app, "POST", "/api/player/mayor/language", Some(json!({"language":"it"})), Some("test-mayor")).await.0, StatusCode::OK);
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/player/mayor/language",
+            Some(json!({"language":"it"})),
+            Some("test-mayor")
+        )
+        .await
+        .0,
+        Status::Ok
+    );
 }
 
 #[tokio::test]
@@ -387,32 +911,74 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
     call(&app, "POST", "/api/master/start", None).await;
     let report = json!({"locations":[[2500,2500]],"cells":[{"row":3,"col":4,"state":1}]});
     let (status, sent) = call(&app, "POST", "/api/master/inject", Some(json!({"title":"Field report","recipients":["mayor"],"text":"A fire is reported at these coordinates.","observation":report}))).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, Status::Ok);
     let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(mayor["map"]["cells"], report["cells"]);
     assert_eq!(mayor["knowledge_events"][0]["message"], sent["messages"][0]);
-    assert!(mayor.get("world").is_none() && mayor["map"].get("fire").is_none() && mayor["map"].get("stats").is_none());
-    let (_, fire) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(
+        mayor.get("world").is_none()
+            && mayor["map"].get("fire").is_none()
+            && mayor["map"].get("stats").is_none()
+    );
+    let (_, fire) = call_key(
+        &app,
+        "GET",
+        "/api/player/fire_commander",
+        None,
+        Some("test-fire"),
+    )
+    .await;
     assert!(fire["map"]["cells"].as_array().unwrap().is_empty());
     assert!(fire["knowledge_events"].as_array().unwrap().is_empty());
-    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":"G5","radius_m":60}))).await;
-    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"Ignite","at":"G5","radius_m":60})),
+    )
+    .await;
+    call(
+        &app,
+        "POST",
+        "/api/master/resolve",
+        Some(json!({"minutes":1})),
+    )
+    .await;
     let (_, unchanged) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(unchanged["map"], mayor["map"]);
     let update = json!({"role":"mayor","source":"Field team observation","observation":{"cells":[{"row":3,"col":4,"state":2},{"row":3,"col":5,"state":1}]}});
-    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(update)).await.0, StatusCode::OK);
+    assert_eq!(
+        call(&app, "POST", "/api/master/knowledge", Some(update))
+            .await
+            .0,
+        Status::Ok
+    );
     let (_, updated) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(updated["map"]["cells"].as_array().unwrap().len(), 2);
     assert_eq!(updated["map"]["cells"][0]["state"], 2);
     let (_, before_invalid) = call(&app, "GET", "/api/master", None).await;
-    assert_eq!(call(&app, "POST", "/api/master/inject", Some(json!({"title":"Invalid","recipients":["mayor"],"text":"bad report","observation":{"cells":[{"row":999999,"col":0,"state":1}]}}))).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app, "POST", "/api/master/inject", Some(json!({"title":"Invalid","recipients":["mayor"],"text":"bad report","observation":{"cells":[{"row":999999,"col":0,"state":1}]}}))).await.0, Status::BadRequest);
     let (_, after_invalid) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(before_invalid["messages"], after_invalid["messages"]);
-    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"Reviewed aerial perimeter","current_perimeter":true}))).await.0, StatusCode::OK);
-    let (_, acquired) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"Reviewed aerial perimeter","current_perimeter":true}))).await.0, Status::Ok);
+    let (_, acquired) = call_key(
+        &app,
+        "GET",
+        "/api/player/fire_commander",
+        None,
+        Some("test-fire"),
+    )
+    .await;
     assert!(!acquired["map"]["cells"].as_array().unwrap().is_empty());
     let (_, debrief) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(debrief["knowledge_events"].as_array().unwrap().len(), 3);
+    // Zone disclosure: only the chosen zone becomes known; a bad zone is rejected untouched.
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"fire_commander","source":"x","zones":["ZZ99"]}))).await.0, Status::BadRequest);
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(json!({"role":"mayor","source":"Zone patrol","zones":["G5"],"layers":["fire","buildings","roads","lines","units"]}))).await.0, Status::Ok);
+    let (_, zoned) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(zoned["map"]["known_zones"], json!(["G5"]));
+    assert!(zoned["map"]["cells"].as_array().unwrap().len() > 2);
+    assert!(zoned["map"].get("stats").is_none());
 }
 
 #[tokio::test]
@@ -420,299 +986,2574 @@ async fn multiple_evaluators_can_read_master_evidence_but_never_mutate() {
     let app = app().await;
     let (_, before) = call(&app, "GET", "/api/debrief", None).await;
     for key in ["test-eval-one", "test-eval-two"] {
-        for path in ["/api/static", "/api/state", "/api/master", "/api/catalogue", "/api/debrief", "/api/evaluator"] {
-            assert_eq!(call_key(&app, "GET", path, None, Some(key)).await.0, StatusCode::OK, "{key} {path}");
+        for path in [
+            "/api/static",
+            "/api/state",
+            "/api/master",
+            "/api/catalogue",
+            "/api/debrief",
+            "/api/evaluator",
+        ] {
+            assert_eq!(
+                call_key(&app, "GET", path, None, Some(key)).await.0,
+                Status::Ok,
+                "{key} {path}"
+            );
         }
-        assert_eq!(call_key(&app, "GET", "/api/master/access", None, Some(key)).await.0, StatusCode::FORBIDDEN);
-        for path in ["/api/master/start", "/api/master/end", "/api/master/command", "/api/master/inject", "/api/master/msel/I-01/send", "/api/master/proposals/1/decide", "/api/master/prompt", "/api/master/resolve", "/api/master/rollback", "/api/master/settings", "/api/master/resource-limits", "/api/master/clock", "/api/master/phase", "/api/master/schedules", "/api/master/schedules/1/cancel", "/api/master/proposals/1/execute", "/api/master/knowledge", "/api/master/references", "/api/player/mayor/reply", "/api/player/mayor/language", "/api/evaluator"] {
-            assert_eq!(call_key(&app, "POST", path, Some(json!({})), Some(key)).await.0, StatusCode::FORBIDDEN, "{key} {path}");
+        assert_eq!(
+            call_key(&app, "GET", "/api/master/access", None, Some(key))
+                .await
+                .0,
+            Status::Forbidden
+        );
+        for path in [
+            "/api/master/start",
+            "/api/master/end",
+            "/api/master/command",
+            "/api/master/inject",
+            "/api/master/msel/I-01/send",
+            "/api/master/proposals/1/decide",
+            "/api/master/prompt",
+            "/api/master/resolve",
+            "/api/master/rollback",
+            "/api/master/settings",
+            "/api/master/resource-limits",
+            "/api/master/clock",
+            "/api/master/phase",
+            "/api/master/schedules",
+            "/api/master/schedules/1/cancel",
+            "/api/master/proposals/1/execute",
+            "/api/master/knowledge",
+            "/api/master/references",
+            "/api/player/mayor/reply",
+            "/api/player/mayor/language",
+            "/api/evaluator",
+        ] {
+            assert_eq!(
+                call_key(&app, "POST", path, Some(json!({})), Some(key))
+                    .await
+                    .0,
+                Status::Forbidden,
+                "{key} {path}"
+            );
         }
     }
     let (_, after) = call(&app, "GET", "/api/debrief", None).await;
     assert_eq!(before, after);
     let (s, identity) = call_key(&app, "GET", "/api/access", None, Some("test-eval-two")).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, Status::Ok);
     assert_eq!(identity, json!({"kind":"evaluator","id":"eval-two"}));
-    assert_eq!(call_key(&app, "GET", "/api/evaluator", None, Some("test-mayor")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        call_key(&app, "GET", "/api/evaluator", None, Some("test-mayor"))
+            .await
+            .0,
+        Status::Forbidden
+    );
 }
 
 #[tokio::test]
 async fn evaluator_filters_trace_retained_chain_objectives_and_reference_materials() {
     let app = app().await;
     let references = json!([{"basis":{"kind":"procedure","reference":"Warning procedure, section 3"},"attachments":[{"title":"Procedure","url":"https://example.test/procedure.pdf"}]}]);
-    assert_eq!(call(&app, "POST", "/api/master/references", Some(json!({"references":references}))).await.0, StatusCode::OK);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/references",
+            Some(json!({"references":references}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
     call(&app, "POST", "/api/master/start", None).await;
     call(&app, "POST", "/api/master/msel/I-01/send", None).await;
     let parent = reply_parent(&app, "mayor").await;
     let evidence = json!({"basis":{"kind":"procedure","reference":"Warning procedure, section 3"},"attachments":[{"title":"Map","url":"https://example.test/map.pdf"}]});
-    let (_, response) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence}))).await;
+    let (_, response) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"warn F4","reply_to":parent,"evidence":evidence})),
+    )
+    .await;
     let pid = response["proposal"].as_u64().unwrap();
-    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
-    call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true,"note":"Follow the procedure"}))).await;
-    call(&app, "POST", "/api/master/resolve", Some(json!({"minutes":1}))).await;
-    let (s, view) = call_key(&app, "GET", "/api/evaluator?role=mayor&turn=1&phase=orders&status=applied", None, Some("test-eval-one")).await;
-    assert_eq!(s, StatusCode::OK);
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":true,"note":"Follow the procedure"})),
+    )
+    .await;
+    call(
+        &app,
+        "POST",
+        "/api/master/resolve",
+        Some(json!({"minutes":1})),
+    )
+    .await;
+    let (s, view) = call_key(
+        &app,
+        "GET",
+        "/api/evaluator?role=mayor&turn=1&phase=orders&status=applied",
+        None,
+        Some("test-eval-one"),
+    )
+    .await;
+    assert_eq!(s, Status::Ok);
     assert_eq!(view["chains"].as_array().unwrap().len(), 1);
     let chain = &view["chains"][0];
     assert_eq!(chain["proposal"]["evidence"], evidence);
     assert_eq!(chain["proposal"]["decision"]["approve"], true);
     assert_eq!(chain["proposal"]["executions"][0]["ok"], true);
     assert!(chain["reply_delay_wall_ms"].is_number() && chain["master_queue_wall_ms"].is_number());
-    assert!(chain["messages"].as_array().unwrap().iter().any(|m| m["id"] == parent));
-    assert!(view["messages"].as_array().unwrap().iter().all(|m| m["to"] == "mayor" || m["from"] == "mayor"));
+    assert!(chain["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["id"] == parent));
+    assert!(view["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|m| m["to"] == "mayor" || m["from"] == "mayor"));
     assert_eq!(view["reference_materials"], references);
     assert_eq!(view["objectives"][0]["msel_id"], "I-01");
-    assert!(!view["objectives"][0]["objective"].as_str().unwrap().is_empty());
+    assert!(!view["objectives"][0]["objective"]
+        .as_str()
+        .unwrap()
+        .is_empty());
     let inject = chain["proposal"]["inject_id"].as_u64().unwrap();
-    let (_, filtered) = call_key(&app, "GET", &format!("/api/evaluator?inject={inject}&kind=message&limit=1"), None, Some("test-eval-two")).await;
+    let (_, filtered) = call_key(
+        &app,
+        "GET",
+        &format!("/api/evaluator?inject={inject}&kind=message&limit=1"),
+        None,
+        Some("test-eval-two"),
+    )
+    .await;
     assert_eq!(filtered["timeline"].as_array().unwrap().len(), 1);
     assert_eq!(filtered["timeline"][0]["kind"], "message");
     assert!(filtered["timeline_total"].as_u64().unwrap() > 1);
-    let (_, older) = call_key(&app, "GET", &format!("/api/evaluator?inject={inject}&kind=message&limit=1&offset=1"), None, Some("test-eval-two")).await;
+    let (_, older) = call_key(
+        &app,
+        "GET",
+        &format!("/api/evaluator?inject={inject}&kind=message&limit=1&offset=1"),
+        None,
+        Some("test-eval-two"),
+    )
+    .await;
     assert_ne!(filtered["timeline"][0]["seq"], older["timeline"][0]["seq"]);
-    call(&app, "POST", "/api/master/rollback", Some(json!({"turn":1}))).await;
-    let (_, rolled) = call_key(&app, "GET", "/api/evaluator?role=mayor&status=rolled_back", None, Some("test-eval-one")).await;
+    call(
+        &app,
+        "POST",
+        "/api/master/rollback",
+        Some(json!({"turn":1})),
+    )
+    .await;
+    let (_, rolled) = call_key(
+        &app,
+        "GET",
+        "/api/evaluator?role=mayor&status=rolled_back",
+        None,
+        Some("test-eval-one"),
+    )
+    .await;
     assert_eq!(rolled["chains"][0]["proposal"]["evidence"], evidence);
     assert_eq!(rolled["chains"][0]["proposal"]["executions"][0]["ok"], true);
     let (_, export) = call_key(&app, "GET", "/api/debrief", None, Some("test-eval-two")).await;
     assert_eq!(export["reference_materials"], references);
     assert_eq!(export["proposals"][0]["evidence"], evidence);
-    assert!(export["log"].as_array().unwrap().iter().any(|l| l["kind"] == "rollback"));
-    assert_eq!(call_key(&app, "GET", "/api/evaluator?role=unknown", None, Some("test-eval-one")).await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(call_key(&app, "GET", "/api/evaluator?status=unknown", None, Some("test-eval-one")).await.0, StatusCode::BAD_REQUEST);
+    assert!(export["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "rollback"));
+    assert_eq!(
+        call_key(
+            &app,
+            "GET",
+            "/api/evaluator?role=unknown",
+            None,
+            Some("test-eval-one")
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call_key(
+            &app,
+            "GET",
+            "/api/evaluator?status=unknown",
+            None,
+            Some("test-eval-one")
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
 }
 
 #[tokio::test]
 async fn three_scheduled_injects_arrive_in_one_turn_and_training_phase() {
-    let app=app().await;
-    assert_eq!(call(&app,"POST","/api/master/clock",Some(json!({"running":true,"ratio":60}))).await.0,StatusCode::BAD_REQUEST);
-    call(&app,"POST","/api/master/start",None).await;
-    for (id,clock) in [("I-01","13:00"),("I-02","13:30"),("I-03","14:00")] {
-        assert_eq!(call(&app,"POST","/api/master/schedules",Some(json!({"msel_id":id,"at_clock":clock}))).await.0,StatusCode::OK);
+    let app = app().await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/clock",
+            Some(json!({"running":true,"ratio":60}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    call(&app, "POST", "/api/master/start", None).await;
+    for (id, clock) in [("I-01", "13:00"), ("I-02", "13:30"), ("I-03", "14:00")] {
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/api/master/schedules",
+                Some(json!({"msel_id":id,"at_clock":clock}))
+            )
+            .await
+            .0,
+            Status::Ok
+        );
     }
-    assert_eq!(call(&app,"POST","/api/master/clock",Some(json!({"running":true,"ratio":86400,"reason":"Compressed acceptance exercise"}))).await.0,StatusCode::OK);
-    let delivered=eventually(&app,"/api/state",|s|s["scheduled_injects"].as_array().unwrap().iter().all(|i|i["status"]=="delivered")).await;
-    assert_eq!(delivered["turn"],1);assert_eq!(delivered["phase"],"orders");assert_eq!(delivered["exercise_phase"],"early_warning");
-    assert_eq!(delivered["scheduled_injects"].as_array().unwrap().iter().map(|i|i["triggered_s"].as_i64().unwrap()).collect::<Vec<_>>(),vec![0,1800,3600]);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/clock",
+            Some(json!({"running":true,"ratio":86400,"reason":"Compressed acceptance exercise"}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    let delivered = eventually(&app, "/api/state", |s| {
+        s["scheduled_injects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["status"] == "delivered")
+    })
+    .await;
+    assert_eq!(delivered["turn"], 1);
+    assert_eq!(delivered["phase"], "orders");
+    assert_eq!(delivered["exercise_phase"], "early_warning");
+    assert_eq!(
+        delivered["scheduled_injects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["triggered_s"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![0, 1800, 3600]
+    );
     for i in delivered["scheduled_injects"].as_array().unwrap() {
-        assert!(i["delivered_s"].as_i64().unwrap()>=i["due_s"].as_i64().unwrap());
-        assert!(i["delivered_wall_ms"].as_u64().unwrap()>=i["triggered_wall_ms"].as_u64().unwrap());
+        assert!(i["delivered_s"].as_i64().unwrap() >= i["due_s"].as_i64().unwrap());
+        assert!(
+            i["delivered_wall_ms"].as_u64().unwrap() >= i["triggered_wall_ms"].as_u64().unwrap()
+        );
         assert!(!i["messages"].as_array().unwrap().is_empty());
     }
-    call(&app,"POST","/api/master/clock",Some(json!({"running":false,"ratio":60,"reason":"Review phase"}))).await;
-    let (_,paused)=call(&app,"GET","/api/state",None).await;
+    call(
+        &app,
+        "POST",
+        "/api/master/clock",
+        Some(json!({"running":false,"ratio":60,"reason":"Review phase"})),
+    )
+    .await;
+    let (_, paused) = call(&app, "GET", "/api/state", None).await;
     tokio::time::sleep(Duration::from_millis(70)).await;
-    let (_,still)=call(&app,"GET","/api/state",None).await;assert_eq!(paused["world"],still["world"]);
-    call(&app,"POST","/api/master/phase",Some(json!({"phase":"early_action","reason":"Begin protective measures"}))).await;
-    let (_,next)=call(&app,"GET","/api/state",None).await;assert_eq!(next["turn"],1);assert_eq!(next["world"],paused["world"]);
-    assert_eq!(next["exercise_phase"],"early_action");
-    assert_eq!(call(&app,"POST","/api/master/phase",Some(json!({"phase":"escalation","reason":""}))).await.0,StatusCode::BAD_REQUEST);
-    assert_eq!(call(&app,"POST","/api/master/clock",Some(json!({"running":true,"ratio":0}))).await.0,StatusCode::BAD_REQUEST);
-    assert_eq!(call(&app,"POST","/api/master/schedules",Some(json!({"msel_id":"I-01","at_clock":"25:00"}))).await.0,StatusCode::BAD_REQUEST);
-    let (_,debrief)=call(&app,"GET","/api/debrief",None).await;
-    assert_eq!(debrief["scheduled_injects"].as_array().unwrap().len(),3);
-    assert!(debrief["log"].as_array().unwrap().iter().any(|l|l["kind"]=="clock_configured"));
-    assert!(debrief["log"].as_array().unwrap().iter().any(|l|l["kind"]=="exercise_phase_changed"));
+    let (_, still) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(paused["world"], still["world"]);
+    call(
+        &app,
+        "POST",
+        "/api/master/phase",
+        Some(json!({"phase":"early_action","reason":"Begin protective measures"})),
+    )
+    .await;
+    let (_, next) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(next["turn"], 1);
+    assert_eq!(next["world"], paused["world"]);
+    assert_eq!(next["exercise_phase"], "early_action");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/phase",
+            Some(json!({"phase":"escalation","reason":""}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/clock",
+            Some(json!({"running":true,"ratio":0}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/schedules",
+            Some(json!({"msel_id":"I-01","at_clock":"25:00"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let (_, debrief) = call(&app, "GET", "/api/debrief", None).await;
+    assert_eq!(debrief["scheduled_injects"].as_array().unwrap().len(), 3);
+    assert!(debrief["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "clock_configured"));
+    assert!(debrief["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "exercise_phase_changed"));
 }
 
 #[tokio::test]
 async fn scheduled_delivery_cancellation_and_approved_execution_are_master_only() {
-    let app=app().await;call(&app,"POST","/api/master/start",None).await;
-    let (_,s)=call(&app,"POST","/api/master/schedules",Some(json!({"msel_id":"I-01","at_s":3600}))).await;
-    let id=s["schedule"].as_u64().unwrap();
-    assert_eq!(call(&app,"POST",&format!("/api/master/schedules/{id}/cancel"),Some(json!({"reason":"Change the scenario sequence"}))).await.0,StatusCode::OK);
-    let parent=reply_parent(&app,"mayor").await;
-    let (_,r)=call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"warn F4","reply_to":parent}))).await;
-    let pid=r["proposal"].as_u64().unwrap();
-    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::BAD_REQUEST);
-    eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
-    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true}))).await;
-    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::OK);
-    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::BAD_REQUEST);
-    let (_,state)=call(&app,"GET","/api/state",None).await;assert_eq!(state["turn"],1);assert_eq!(state["scheduled_injects"][0]["status"],"cancelled");
-    let (_,e)=call_key(&app,"GET","/api/evaluator?exercise_phase=early_warning",None,Some("test-eval-one")).await;
-    assert_eq!(e["chains"][0]["proposal"]["status"],"applied");
-    assert!(e["timeline"].as_array().unwrap().iter().all(|l|l["exercise_phase"]=="early_warning"));
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, s) = call(
+        &app,
+        "POST",
+        "/api/master/schedules",
+        Some(json!({"msel_id":"I-01","at_s":3600})),
+    )
+    .await;
+    let id = s["schedule"].as_u64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/master/schedules/{id}/cancel"),
+            Some(json!({"reason":"Change the scenario sequence"}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    let parent = reply_parent(&app, "mayor").await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"warn F4","reply_to":parent})),
+    )
+    .await;
+    let pid = r["proposal"].as_u64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/master/proposals/{pid}/execute"),
+            None
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":true})),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/master/proposals/{pid}/execute"),
+            None
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/master/proposals/{pid}/execute"),
+            None
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(state["turn"], 1);
+    assert_eq!(state["scheduled_injects"][0]["status"], "cancelled");
+    let (_, e) = call_key(
+        &app,
+        "GET",
+        "/api/evaluator?exercise_phase=early_warning",
+        None,
+        Some("test-eval-one"),
+    )
+    .await;
+    assert_eq!(e["chains"][0]["proposal"]["status"], "applied");
+    assert!(e["timeline"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|l| l["exercise_phase"] == "early_warning"));
 }
 
 #[tokio::test]
 async fn ai_resource_limits_are_recommendations_until_reviewed_and_approved() {
-    let scn=Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
-    let ex=exercise::Exercise::new(sim::World::new(scn,1).unwrap());
-    let llm=llm::Llm::mock(|task,_,_|if task=="master_prompt"{Ok(r#"{"resource_limits":{"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":1}}},"actions":[],"summary":"Limit first-phase deployment to one crew"}"#.into())}else{anyhow::bail!("unexpected task")});
-    let app=server::router_with_access(Arc::new(Mutex::new(ex)),llm,None,access()).0;
-    call(&app,"POST","/api/master/start",None).await;
-    let (_,before)=call(&app,"GET","/api/state",None).await;
-    let (_,p)=call(&app,"POST","/api/master/prompt",Some(json!({"text":"Recommend initial crew deployment limits"}))).await;
-    let pid=p["proposal"].as_u64().unwrap();
-    let proposal=eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
-    assert_eq!(proposal["proposals"][0]["resource_limit_draft"]["total"]["ground_crews"],1);
-    let (_,pending)=call(&app,"GET","/api/state",None).await;
-    assert_eq!(pending["resource_limits"],before["resource_limits"]);assert_eq!(pending["world"],before["world"]);
-    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"Master edits recommendation to two crews"}))).await.0,StatusCode::OK);
-    let (_,effective)=call(&app,"GET","/api/state",None).await;assert_eq!(effective["resource_limits"]["total"]["ground_crews"],2);
-    assert_eq!(effective["resource_accounting"]["fire_commander"]["ground_crews"]["available"],2);
-    let (_,evidence)=call_key(&app,"GET","/api/evaluator",None,Some("test-eval-one")).await;
-    assert_eq!(evidence["chains"][0]["proposal"]["decision"]["resource_limits"]["total"]["ground_crews"],2);
-    assert!(evidence["timeline"].as_array().unwrap().iter().any(|l|l["kind"]=="resource_limit_draft_reviewed"));
-    assert!(evidence["timeline"].as_array().unwrap().iter().any(|l|l["kind"]=="resource_limits_changed" && l["data"]["proposal"]==pid));
-    let (_,p)=call(&app,"POST","/api/master/prompt",Some(json!({"text":"Recommend another limit"}))).await;
-    let pid=p["proposal"].as_u64().unwrap();
-    eventually(&app,"/api/master",|m|m["proposals"][1]["status"]=="pending").await;
-    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":false}))).await;
-    let (_,after)=call(&app,"GET","/api/state",None).await;assert_eq!(after["resource_limits"],effective["resource_limits"]);
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let llm = llm::Llm::mock(|task, _, _| {
+        if task == "master_prompt" {
+            Ok(r#"{"resource_limits":{"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":1}}},"actions":[],"summary":"Limit first-phase deployment to one crew"}"#.into())
+        } else {
+            anyhow::bail!("unexpected task")
+        }
+    });
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, before) = call(&app, "GET", "/api/state", None).await;
+    let (_, p) = call(
+        &app,
+        "POST",
+        "/api/master/prompt",
+        Some(json!({"text":"Recommend initial crew deployment limits"})),
+    )
+    .await;
+    let pid = p["proposal"].as_u64().unwrap();
+    let proposal = eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    assert_eq!(
+        proposal["proposals"][0]["resource_limit_draft"]["total"]["ground_crews"],
+        1
+    );
+    let (_, pending) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(pending["resource_limits"], before["resource_limits"]);
+    assert_eq!(pending["world"], before["world"]);
+    assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"resource_limits":{"total":{"ground_crews":2},"phases":{"early_warning":{"ground_crews":2}}},"note":"EXCON edits recommendation to two crews"}))).await.0,Status::Ok);
+    let (_, effective) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(effective["resource_limits"]["total"]["ground_crews"], 2);
+    assert_eq!(
+        effective["resource_accounting"]["fire_commander"]["ground_crews"]["available"],
+        2
+    );
+    let (_, evidence) = call_key(&app, "GET", "/api/evaluator", None, Some("test-eval-one")).await;
+    assert_eq!(
+        evidence["chains"][0]["proposal"]["decision"]["resource_limits"]["total"]["ground_crews"],
+        2
+    );
+    assert!(evidence["timeline"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "resource_limit_draft_reviewed"));
+    assert!(evidence["timeline"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["kind"] == "resource_limits_changed" && l["data"]["proposal"] == pid));
+    let (_, p) = call(
+        &app,
+        "POST",
+        "/api/master/prompt",
+        Some(json!({"text":"Recommend another limit"})),
+    )
+    .await;
+    let pid = p["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][1]["status"] == "pending"
+    })
+    .await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":false})),
+    )
+    .await;
+    let (_, after) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(after["resource_limits"], effective["resource_limits"]);
 }
 
 #[tokio::test]
 async fn configured_limit_controls_enforce_capacity_and_reject_unknown_resources() {
-    let app=app().await;call(&app,"POST","/api/master/start",None).await;
-    let body=json!({"limits":{"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":0}}},"reason":"Initial stand-by phase"});
-    assert_eq!(call(&app,"POST","/api/master/resource-limits",Some(body.clone())).await.0,StatusCode::OK);
-    let (_,fc)=call_key(&app,"GET","/api/player/fire_commander",None,Some("test-fire")).await;
-    assert_eq!(fc["resource_accounting"]["ground_crews"]["available"],0);
-    assert_eq!(fc["resource_accounting"]["ground_crews"]["inventory_available"],3);
-    assert_eq!(call(&app,"POST","/api/master/resource-limits",Some(json!({"limits":{"total":{"invented":2}},"reason":"invalid"}))).await.0,StatusCode::BAD_REQUEST);
-    let (_,state)=call(&app,"GET","/api/state",None).await;assert_eq!(state["resource_limits"],body["limits"]);
-    assert_eq!(call_key(&app,"POST","/api/master/resource-limits",Some(body),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let body = json!({"limits":{"total":{"ground_crews":1},"phases":{"early_warning":{"ground_crews":0}}},"reason":"Initial stand-by phase"});
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/resource-limits",
+            Some(body.clone())
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    let (_, fc) = call_key(
+        &app,
+        "GET",
+        "/api/player/fire_commander",
+        None,
+        Some("test-fire"),
+    )
+    .await;
+    assert_eq!(fc["resource_accounting"]["ground_crews"]["available"], 0);
+    assert_eq!(
+        fc["resource_accounting"]["ground_crews"]["inventory_available"],
+        3
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/resource-limits",
+            Some(json!({"limits":{"total":{"invented":2}},"reason":"invalid"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(state["resource_limits"], body["limits"]);
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/master/resource-limits",
+            Some(body),
+            Some("test-eval-one")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
 }
 
 #[tokio::test]
 async fn evaluator_assessment_cites_snapshot_is_cached_and_never_mutates_exercise() {
-    let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counted=calls.clone();
-    let model=llm::Llm::mock(move |task, system, user| {
-        if task=="parse_reply" { return Ok(r#"{"detected_language":"en","translation_en":"Warn F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into()); }
-        if task=="translate" { return Ok(user.into()); }
-        assert_eq!(task,"evaluator_assessment");
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = calls.clone();
+    let model = llm::Llm::mock(move |task, system, user| {
+        if task == "parse_reply" {
+            return Ok(r#"{"detected_language":"en","translation_en":"Warn F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into());
+        }
+        if task == "translate" {
+            return Ok(user.into());
+        }
+        assert_eq!(task, "evaluator_assessment");
         assert!(system.contains("external documents have NOT been fetched"));
-        counted.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
-        let pack:Value=serde_json::from_str(user)?;
-        assert_eq!(pack["evidence"]["reference:0"]["basis"]["reference"],"Plan section 3");
-        let chain=pack["evidence"].as_object().unwrap().iter().find(|(id,_)|id.starts_with("proposal:")).unwrap().1;
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let pack: Value = serde_json::from_str(user)?;
+        assert_eq!(
+            pack["evidence"]["reference:0"]["basis"]["reference"],
+            "Plan section 3"
+        );
+        let chain = pack["evidence"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id.starts_with("proposal:"))
+            .unwrap()
+            .1;
         assert!(chain["reply_delay_wall_ms"].is_number());
         assert!(chain["master_queue_wall_ms"].is_null());
-        assert_eq!(chain["proposal"]["evidence"]["basis"]["reference"],"Plan section 3");
-        let id=pack["evidence"].as_object().unwrap().keys().find(|id|id.starts_with("message:")).unwrap();
+        assert_eq!(
+            chain["proposal"]["evidence"]["basis"]["reference"],
+            "Plan section 3"
+        );
+        let id = pack["evidence"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .find(|id| id.starts_with("message:"))
+            .unwrap();
         Ok(json!({"findings":[{"category":"coordination","assessment":"A message was delivered","evidence":[id],"uncertainty":"Delivery does not establish acknowledgement or plan compliance","debrief_question":"How was receipt confirmed?"}]}).to_string())
     });
-    let scn=Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
-    let mut ex=exercise::Exercise::new(sim::World::new(scn,1).unwrap());
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
     ex.set_reference_materials(serde_json::from_value(json!([{"basis":{"kind":"plan","reference":"Plan section 3"},"attachments":[{"title":"Plan","url":"https://example.test/plan.pdf"}]}])).unwrap()).unwrap();
     ex.start().unwrap();
-    let (app,_)=server::router_with_access(Arc::new(Mutex::new(ex)),model,None,access());
-    let parent=reply_parent(&app,"mayor").await;
+    let (app, _) = build(Arc::new(Mutex::new(ex)), model, None, access()).await;
+    let parent = reply_parent(&app, "mayor").await;
     call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"Warn F4","reply_to":parent,"evidence":{"basis":{"kind":"plan","reference":"Plan section 3"}}}))).await;
-    eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
-    let (_,before)=call(&app,"GET","/api/debrief",None).await;
-    let (status,report)=call_key(&app,"GET","/api/evaluator/assessment",None,Some("test-eval-one")).await;
-    assert_eq!(status,StatusCode::OK);
-    assert_eq!(report["error"],Value::Null);
-    let citation=report["derived_assessment"]["findings"][0]["evidence"][0].as_str().unwrap();
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    let (_, before) = call(&app, "GET", "/api/debrief", None).await;
+    let (status, report) = call_key(
+        &app,
+        "GET",
+        "/api/evaluator/assessment",
+        None,
+        Some("test-eval-one"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(report["error"], Value::Null);
+    let citation = report["derived_assessment"]["findings"][0]["evidence"][0]
+        .as_str()
+        .unwrap();
     assert!(report["snapshot"]["evidence"].get(citation).is_some());
-    let (_,second)=call_key(&app,"GET","/api/evaluator/assessment",None,Some("test-eval-two")).await;
-    assert_eq!(second,report);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),1);
-    let (_,after)=call(&app,"GET","/api/debrief",None).await;
-    assert_eq!(before,after);
-    assert_eq!(call_key(&app,"GET","/api/evaluator/assessment",None,Some("test-mayor")).await.0,StatusCode::FORBIDDEN);
-    assert_eq!(call_key(&app,"POST","/api/evaluator/assessment",Some(json!({})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+    let (_, second) = call_key(
+        &app,
+        "GET",
+        "/api/evaluator/assessment",
+        None,
+        Some("test-eval-two"),
+    )
+    .await;
+    assert_eq!(second, report);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let (_, after) = call(&app, "GET", "/api/debrief", None).await;
+    assert_eq!(before, after);
+    assert_eq!(
+        call_key(
+            &app,
+            "GET",
+            "/api/evaluator/assessment",
+            None,
+            Some("test-mayor")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/evaluator/assessment",
+            Some(json!({})),
+            Some("test-eval-one")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
 }
 
 #[tokio::test]
 async fn invalid_ai_assessment_keeps_recorded_evidence_and_no_operational_effects() {
-    let model=llm::Llm::mock(|_,_,_|Ok(r#"{"findings":[],"commands":[{"type":"Ignite"}]}"#.into()));
-    let scn=Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
-    let ex=exercise::Exercise::new(sim::World::new(scn,1).unwrap());
-    let (app,_)=server::router_with_access(Arc::new(Mutex::new(ex)),model,None,access());
-    let (_,before)=call(&app,"GET","/api/debrief",None).await;
-    let (_,report)=call(&app,"GET","/api/evaluator/assessment",None).await;
-    assert_eq!(report["derived_assessment"],Value::Null);
+    let model =
+        llm::Llm::mock(|_, _, _| Ok(r#"{"findings":[],"commands":[{"type":"Ignite"}]}"#.into()));
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let (app, _) = build(Arc::new(Mutex::new(ex)), model, None, access()).await;
+    let (_, before) = call(&app, "GET", "/api/debrief", None).await;
+    let (_, report) = call(&app, "GET", "/api/evaluator/assessment", None).await;
+    assert_eq!(report["derived_assessment"], Value::Null);
     assert!(report["error"].as_str().unwrap().contains("validation"));
-    assert!(!report["snapshot"]["evidence"].as_object().unwrap().is_empty());
-    assert_eq!(call(&app,"GET","/api/debrief",None).await.1,before);
+    assert!(!report["snapshot"]["evidence"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+    assert_eq!(call(&app, "GET", "/api/debrief", None).await.1, before);
 }
 
 #[tokio::test]
 async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adaptation() {
- let app=app().await;
- let design=json!({"objectives":["Contain fire"],"phases":{"early_warning":"Mobilise","early_action":"Contained","escalation":"Escalated"},"decision_points":[{"id":"fire","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0},{"type":"executed_action","kind":"IssueWarning"}]},{"path":"escalation","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1},{"type":"executed_action","kind":"IssueWarning"}]}]}]});
- assert_eq!(call(&app,"POST","/api/master/design",Some(design.clone())).await.0,StatusCode::OK);
- call(&app,"POST","/api/master/start",None).await;
- assert_eq!(call(&app,"POST","/api/master/design",Some(design.clone())).await.0,StatusCode::BAD_REQUEST);
- assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Premature"}))).await.0,StatusCode::BAD_REQUEST);
- let parent=reply_parent(&app,"mayor").await;
- let (_,declared)=call(&app,"POST","/api/player/mayor/reply",Some(json!({"text":"Warn F4","reply_to":parent}))).await;
- let pid=declared["proposal"].as_u64().unwrap();
- eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
- call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true}))).await;
- assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Approved but not executed"}))).await.0,StatusCode::BAD_REQUEST);
- call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await;
- let (_,state)=call(&app,"GET","/api/state",None).await;
- assert!(state["world"]["stats"]["burning_cells"].as_u64().unwrap()>0);
- call(&app,"POST","/api/master/command",Some(json!({"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}}))).await;
- assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Observed all cells extinguished"}))).await.0,StatusCode::OK);
- assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Force escalation"}))).await.0,StatusCode::BAD_REQUEST);
- assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Exercise a plausible second incident while retaining original containment","adaptation":true}))).await.0,StatusCode::OK);
- let (_,e)=call_key(&app,"GET","/api/evaluator",None,Some("test-eval-one")).await;
- assert_eq!(e["context"]["stats"]["burning_cells"],0);
- assert_eq!(e["training_design"]["original"],design);
- assert_eq!(e["training_design"]["current_path"],"escalation");
- assert_eq!(e["training_design"]["history"][1]["deviation"],true);
- assert_eq!(e["training_design"]["history"][1]["approved_by"],"master");
- assert_eq!(call_key(&app,"POST","/api/master/path",Some(json!({})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+    let app = app().await;
+    let design = json!({"objectives":["Contain fire"],"phases":{"early_warning":"Mobilise","early_action":"Contained","escalation":"Escalated"},"decision_points":[{"id":"fire","phase":"early_warning","branches":[{"path":"contained","phase":"early_action","conditions":[{"type":"burning_at_most","cells":0},{"type":"executed_action","kind":"IssueWarning"}]},{"path":"escalation","phase":"escalation","conditions":[{"type":"burning_at_least","cells":1},{"type":"executed_action","kind":"IssueWarning"}]}]}]});
+    assert_eq!(
+        call(&app, "POST", "/api/master/design", Some(design.clone()))
+            .await
+            .0,
+        Status::Ok
+    );
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":{"x":3150,"y":2720},"radius_m":120}))).await;
+    assert_eq!(
+        call(&app, "POST", "/api/master/design", Some(design.clone()))
+            .await
+            .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/path",
+            Some(json!({"point":"fire","path":"contained","reason":"Premature"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let parent = reply_parent(&app, "mayor").await;
+    let (_, declared) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text":"Warn F4","reply_to":parent})),
+    )
+    .await;
+    let pid = declared["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":true})),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/path",
+            Some(json!({"point":"fire","path":"escalation","reason":"Approved but not executed"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/execute"),
+        None,
+    )
+    .await;
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert!(state["world"]["stats"]["burning_cells"].as_u64().unwrap() > 0);
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}})),
+    )
+    .await;
+    assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Observed all cells extinguished"}))).await.0,Status::Ok);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/path",
+            Some(json!({"point":"fire","path":"escalation","reason":"Force escalation"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"escalation","reason":"Exercise a plausible second incident while retaining original containment","adaptation":true}))).await.0,Status::Ok);
+    let (_, e) = call_key(&app, "GET", "/api/evaluator", None, Some("test-eval-one")).await;
+    assert_eq!(e["context"]["stats"]["burning_cells"], 0);
+    assert_eq!(e["training_design"]["original"], design);
+    assert_eq!(e["training_design"]["current_path"], "escalation");
+    assert_eq!(e["training_design"]["history"][1]["deviation"], true);
+    assert_eq!(e["training_design"]["history"][1]["approved_by"], "master");
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/master/path",
+            Some(json!({})),
+            Some("test-eval-one")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
 }
 
 #[tokio::test]
 async fn physical_preview_is_read_only_apply_rechecks_generation_and_correction_is_traceable() {
- let app=app().await;
- call(&app,"POST","/api/master/start",None).await;
- let cmds=json!([{"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}}]);
- let (_,before)=call(&app,"GET","/api/debrief",None).await;
- let (_,preview)=call(&app,"POST","/api/master/preview",Some(json!({"commands":cmds}))).await;
- assert_eq!(preview["after"]["burning_cells"],0);
- assert!(preview["results"][0]["geometry"]["nominal_area_ha"].as_f64().unwrap()>10000.0);
- assert_eq!(call(&app,"GET","/api/debrief",None).await.1,before);
- let (_,applied)=call(&app,"POST","/api/master/preview/apply",Some(json!({"commands":cmds,"generation":preview["generation"],"reason":"Reviewed whole-map extinction for exercise demonstration"}))).await;
- assert_eq!(applied["results"][0]["ok"],true);
- assert_eq!(call(&app,"POST","/api/master/preview/apply",Some(json!({"commands":cmds,"generation":preview["generation"],"reason":"Duplicate"}))).await.0,StatusCode::BAD_REQUEST);
- assert_eq!(call(&app,"POST","/api/master/correct-intervention",Some(json!({"reason":"Whole area was unintended"}))).await.0,StatusCode::OK);
- let (_,corrected)=call(&app,"GET","/api/debrief",None).await;
- assert_eq!(corrected["stats"],before["stats"]);
- assert!(corrected["log"].as_array().unwrap().iter().any(|e|e["kind"]=="physical_intervention_corrected"));
- // A subsequent recorded change protects intervening state from checkpoint restore.
- call(&app,"POST","/api/master/command",Some(cmds[0].clone())).await;
- call(&app,"POST","/api/master/phase",Some(json!({"phase":"early_action","reason":"Subsequent progress"}))).await;
- assert_eq!(call(&app,"POST","/api/master/correct-intervention",Some(json!({"reason":"Too late"}))).await.0,StatusCode::BAD_REQUEST);
- assert_eq!(call_key(&app,"POST","/api/master/preview",Some(json!({"commands":cmds})),Some("test-eval-one")).await.0,StatusCode::FORBIDDEN);
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let cmds = json!([{"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}}]);
+    let (_, before) = call(&app, "GET", "/api/debrief", None).await;
+    let (_, preview) = call(
+        &app,
+        "POST",
+        "/api/master/preview",
+        Some(json!({"commands":cmds})),
+    )
+    .await;
+    assert_eq!(preview["after"]["burning_cells"], 0);
+    assert!(
+        preview["results"][0]["geometry"]["nominal_area_ha"]
+            .as_f64()
+            .unwrap()
+            > 10000.0
+    );
+    assert_eq!(call(&app, "GET", "/api/debrief", None).await.1, before);
+    let (_,applied)=call(&app,"POST","/api/master/preview/apply",Some(json!({"commands":cmds,"generation":preview["generation"],"reason":"Reviewed whole-map extinction for exercise demonstration"}))).await;
+    assert_eq!(applied["results"][0]["ok"], true);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/preview/apply",
+            Some(json!({"commands":cmds,"generation":preview["generation"],"reason":"Duplicate"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/correct-intervention",
+            Some(json!({"reason":"Whole area was unintended"}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    let (_, corrected) = call(&app, "GET", "/api/debrief", None).await;
+    assert_eq!(corrected["stats"], before["stats"]);
+    assert!(corrected["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "physical_intervention_corrected"));
+    // A subsequent recorded change protects intervening state from checkpoint restore.
+    call(&app, "POST", "/api/master/command", Some(cmds[0].clone())).await;
+    call(
+        &app,
+        "POST",
+        "/api/master/phase",
+        Some(json!({"phase":"early_action","reason":"Subsequent progress"})),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/correct-intervention",
+            Some(json!({"reason":"Too late"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/master/preview",
+            Some(json!({"commands":cmds})),
+            Some("test-eval-one")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
 }
 
 #[tokio::test]
 async fn only_executed_approved_deployments_move_and_player_sees_only_own_tasks() {
- let app=app().await;
- call(&app,"POST","/api/master/start",None).await;
- call(&app,"POST","/api/master/command",Some(json!({"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":{"x":1000,"y":1000},"speed_mps":10}))).await;
- let parent=reply_parent(&app,"fire_commander").await;
- let (_,declared)=call(&app,"POST","/api/player/fire_commander/reply",Some(json!({"text":"Cut a line","reply_to":parent}))).await;let pid=declared["proposal"].as_u64().unwrap();
- eventually(&app,"/api/master",|m|m["proposals"][0]["status"]=="pending").await;
- assert_eq!(call(&app,"GET","/api/state",None).await.1["world"]["deployments"],json!([]));
- call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"commands":[{"type":"CutFireLine","from":{"x":2000,"y":1000},"to":{"x":2500,"y":1000}}]}))).await;
- assert_eq!(call(&app,"GET","/api/state",None).await.1["world"]["deployments"],json!([]),"approval does not dispatch");
- call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await;
- let (_,player)=call_key(&app,"GET","/api/player/fire_commander",None,Some("test-fire")).await;
- assert_eq!(player["deployments"][0]["task"]["status"],"en_route");
- assert_eq!(player["deployments"][0]["position_m"],json!([1000.0,1000.0]));
- assert_eq!(player["resource_accounting"]["ground_crews"]["deployed"],1);
- assert_eq!(call_key(&app,"GET","/api/player/mayor",None,Some("test-mayor")).await.1["deployments"],json!([]));
- call(&app,"POST","/api/master/command",Some(json!({"type":"AdvanceTime","minutes":1}))).await;
- let (_,moved)=call(&app,"GET","/api/player/fire_commander",None).await;
- assert_eq!(moved["deployments"][0]["position_m"],json!([1600.0,1000.0]));
- assert_eq!(moved["deployments"][0]["task"]["status"],"en_route");
- call(&app,"POST","/api/master/command",Some(json!({"type":"AdvanceTime","minutes":1}))).await;
- let (_,arrived)=call_key(&app,"GET","/api/evaluator?role=fire_commander",None,Some("test-eval-one")).await;
- assert_eq!(arrived["deployments"][0]["task"]["arrived_s"],100);
- assert_eq!(arrived["deployments"][0]["task"]["status"],"completed");
- assert_eq!(arrived["deployments"][0]["active_qty"],1);
- assert_eq!(call(&app,"POST",&format!("/api/master/proposals/{pid}/execute"),None).await.0,StatusCode::BAD_REQUEST);
- call(&app,"POST","/api/master/rollback",Some(json!({"turn":1}))).await;
- assert_eq!(call(&app,"GET","/api/state",None).await.1["world"]["deployments"],json!([]),"rollback removes actual deployments but retains audit");
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app,"POST","/api/master/command",Some(json!({"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":{"x":1000,"y":1000},"speed_mps":10}))).await;
+    let parent = reply_parent(&app, "fire_commander").await;
+    let (_, declared) = call(
+        &app,
+        "POST",
+        "/api/player/fire_commander/reply",
+        Some(json!({"text":"Cut a line","reply_to":parent})),
+    )
+    .await;
+    let pid = declared["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    assert_eq!(
+        call(&app, "GET", "/api/state", None).await.1["world"]["deployments"],
+        json!([])
+    );
+    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"commands":[{"type":"CutFireLine","from":{"x":2000,"y":1000},"to":{"x":2500,"y":1000}}]}))).await;
+    assert_eq!(
+        call(&app, "GET", "/api/state", None).await.1["world"]["deployments"],
+        json!([]),
+        "approval does not dispatch"
+    );
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/execute"),
+        None,
+    )
+    .await;
+    let (_, player) = call_key(
+        &app,
+        "GET",
+        "/api/player/fire_commander",
+        None,
+        Some("test-fire"),
+    )
+    .await;
+    assert_eq!(player["deployments"][0]["task"]["status"], "en_route");
+    assert_eq!(
+        player["deployments"][0]["position_m"],
+        json!([1000.0, 1000.0])
+    );
+    assert_eq!(player["resource_accounting"]["ground_crews"]["deployed"], 1);
+    assert_eq!(
+        call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor"))
+            .await
+            .1["deployments"],
+        json!([])
+    );
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":1})),
+    )
+    .await;
+    let (_, moved) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    assert_eq!(
+        moved["deployments"][0]["position_m"],
+        json!([1600.0, 1000.0])
+    );
+    assert_eq!(moved["deployments"][0]["task"]["status"], "en_route");
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":1})),
+    )
+    .await;
+    let (_, arrived) = call_key(
+        &app,
+        "GET",
+        "/api/evaluator?role=fire_commander",
+        None,
+        Some("test-eval-one"),
+    )
+    .await;
+    assert_eq!(arrived["deployments"][0]["task"]["arrived_s"], 100);
+    assert_eq!(arrived["deployments"][0]["task"]["status"], "completed");
+    assert_eq!(arrived["deployments"][0]["active_qty"], 1);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/master/proposals/{pid}/execute"),
+            None
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    call(
+        &app,
+        "POST",
+        "/api/master/rollback",
+        Some(json!({"turn":1})),
+    )
+    .await;
+    assert_eq!(
+        call(&app, "GET", "/api/state", None).await.1["world"]["deployments"],
+        json!([]),
+        "rollback removes actual deployments but retains audit"
+    );
+}
+
+#[tokio::test]
+async fn chat_is_direct_private_and_orders_wait_for_excon() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    for role in ["mayor", "fire_commander"] {
+        call(
+            &app,
+            "POST",
+            &format!("/api/player/{role}/language"),
+            Some(json!({"language":"en"})),
+        )
+        .await;
+    }
+    let (_, before) = call(&app, "GET", "/api/state", None).await;
+    let (_, injected) = call(
+        &app,
+        "POST",
+        "/api/master/inject",
+        Some(json!({"title":"Access","recipients":["mayor"],"text":"Check F4 access"})),
+    )
+    .await;
+    let root = injected["messages"][0].as_u64().unwrap();
+    // Role-bound keys cannot impersonate another player.
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/player/fire_commander/chat",
+            Some(json!({"to":"master","text":"spoof"})),
+            Some("test-mayor")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
+    let (status, chat) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/chat",
+        Some(json!({"to":"fire_commander","text":"Access update","reply_to":root})),
+        Some("test-mayor"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let chat_id = chat["message"].as_u64().unwrap();
+    let (status, prepared) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"Warn F4","reply_to":chat_id})),
+        Some("test-mayor"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let (_, private) = call(&app, "GET", "/api/master", None).await;
+    assert!(!private.to_string().contains("Access update"));
+    assert!(private["proposals"].as_array().unwrap().is_empty());
+    let (status, delivered) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/draft/submit",
+        Some(json!({"draft":prepared["draft"]["id"],"revision":prepared["draft"]["revision"]})),
+        Some("test-mayor"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let pid = delivered["proposal"].as_u64().unwrap();
+    let master = eventually(&app, "/api/master", |v| {
+        v["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == pid && p["status"] == "pending")
+    })
+    .await;
+    let proposal = master["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == pid)
+        .unwrap();
+    assert!(
+        proposal["communication_drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "direct chat must not be delivered again as an inferred message"
+    );
+    assert_eq!(proposal["reply_to"], chat_id);
+    assert!(proposal["thread"].to_string().contains("Access update"));
+    for role in ["mayor"] {
+        let (_, player) = call(&app, "GET", &format!("/api/player/{role}"), None).await;
+        assert!(player["inbox"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == delivered["message"] && m["original"] == "Warn F4"));
+    }
+    let (_, other) = call(&app, "GET", "/api/player/regional_cp", None).await;
+    assert!(!other["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["id"] == delivered["message"]));
+    let (_, after) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(
+        before["world"], after["world"],
+        "chat and AI interpretation cannot change physics"
+    );
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve":true})),
+    )
+    .await;
+    let (_, approved) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(
+        before["world"], approved["world"],
+        "approval queues the order"
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/resolve",
+            Some(json!({"minutes":1}))
+        )
+        .await
+        .0,
+        Status::Ok
+    );
+    let (_, resolved) = call(&app, "GET", "/api/master", None).await;
+    assert!(resolved["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == pid && p["status"] == "applied"));
+    call(
+        &app,
+        "POST",
+        "/api/master/rollback",
+        Some(json!({"turn":1})),
+    )
+    .await;
+    let (_, rolled) = call(&app, "GET", "/api/master", None).await;
+    assert!(
+        !rolled["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == chat_id),
+        "peer chat stays private after rollback"
+    );
+    for role in ["mayor"] {
+        let (_, player) = call(&app, "GET", &format!("/api/player/{role}"), None).await;
+        assert!(
+            player["inbox"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["id"] == delivered["message"]),
+            "participants retain chat history after rollback"
+        );
+    }
+    assert!(rolled["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == pid && p["status"] == "rolled_back"));
+}
+
+#[tokio::test]
+async fn chat_translation_and_no_ai_fallback_preserve_the_original() {
+    let app = app().await;
+    let (_, seeded) = call(
+        &app,
+        "POST",
+        "/api/master/inject",
+        Some(json!({"title":"Context","recipients":["mayor"],"text":"Status?"})),
+    )
+    .await;
+    let parent = seeded["messages"][0].as_u64().unwrap();
+    call(
+        &app,
+        "POST",
+        "/api/player/mayor/language",
+        Some(json!({"language":"it"})),
+    )
+    .await;
+    call(
+        &app,
+        "POST",
+        "/api/player/fire_commander/language",
+        Some(json!({"language":"fr"})),
+    )
+    .await;
+    let (status, sent) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/chat",
+        Some(json!({"to":"fire_commander","text":"Ricevuto","reply_to":parent})),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let (_, recipient) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    let message = recipient["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == sent["message"])
+        .unwrap();
+    assert_eq!(message["original"], "Ricevuto");
+    assert_eq!(message["language_src"], "it");
+    assert_eq!(message["text_en"], "[it] Ricevuto");
+    assert_eq!(message["text"], "[it] [it] Ricevuto");
+    assert!(sent["proposal"].is_null());
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.set_language("mayor", "it").unwrap();
+    let parent = ex
+        .send_inject(
+            None,
+            "Context",
+            "master",
+            &["mayor".into()],
+            "Status?",
+            &Default::default(),
+        )
+        .unwrap()[0];
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let (status, sent) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/chat",
+        Some(json!({"to":"fire_commander","text":"Ricevuto","reply_to":parent})),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(sent["translation_failed"], true);
+    let (_, recipient) = call(&app, "GET", "/api/player/fire_commander", None).await;
+    let message = recipient["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == sent["message"])
+        .unwrap();
+    assert_eq!(message["original"], "Ricevuto");
+    assert_eq!(message["text"], "Ricevuto");
+    for (endpoint, to) in [
+        ("/api/player/mayor/chat", "master"),
+        ("/api/master/chat", "mayor"),
+    ] {
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                endpoint,
+                Some(json!({"to":to,"text":"Direct chat"}))
+            )
+            .await
+            .0,
+            Status::BadRequest
+        );
+    }
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/master/chat",
+            Some(json!({"to":"unknown","text":"Hi"}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/chat",
+            Some(json!({"to":"master","text":"order","interpret":true}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+}
+
+#[tokio::test]
+async fn informational_chat_does_not_enter_the_approval_queue() {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "it").unwrap();
+    let llm = llm::Llm::mock(|_, _, _| {
+        Ok(
+            r#"{"message":"Ricevuto","detected_language":"it","translation_en":"Acknowledged","actions":[],"messages":[],"summary":"Ricevuto"}"#
+                .into(),
+        )
+    });
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    let (_, prepared) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"Understood"})),
+    )
+    .await;
+    let (status, sent) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft/submit",
+        Some(json!({"draft":prepared["draft"]["id"],"revision":prepared["draft"]["revision"]})),
+    )
+    .await;
+    assert_eq!(prepared["draft"]["status"], "unsupported");
+    assert_eq!(
+        prepared["draft"]["failure"],
+        "Questa richiesta non corrisponde ad azioni supportate dal simulatore."
+    );
+    assert_eq!(status, Status::BadRequest);
+    assert!(sent["proposal"].is_null());
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert!(master["proposals"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn peer_action_preparation_uses_visible_thread_without_private_inject_body() {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let root = ex
+        .send_inject(
+            None,
+            "Private",
+            "master",
+            &["mayor".into()],
+            "Mayor secret detail",
+            &Default::default(),
+        )
+        .unwrap()[0];
+    let chat = ex
+        .chat_reply(
+            "mayor",
+            "fire_commander",
+            "Road is blocked",
+            "Road is blocked",
+            "Road is blocked",
+            false,
+            false,
+            Some(root),
+        )
+        .unwrap()
+        .0;
+    let captured = Arc::new(Mutex::new(String::new()));
+    let evidence = captured.clone();
+    let llm = llm::Llm::mock(move |task, _, user| {
+        if task == "prepare_decision" {
+            *evidence.lock().unwrap() = user.into();
+            return Ok(r#"{"message":"Acknowledged","detected_language":"en","translation_en":"Acknowledged","actions":[],"messages":[],"clarification":null,"summary":"Acknowledged"}"#.into());
+        }
+        anyhow::bail!("unexpected task {task}")
+    });
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    let (status, prepared) = call_key(
+        &app,
+        "POST",
+        "/api/player/fire_commander/draft",
+        Some(json!({"to":"master","text":"Acknowledged","reply_to":chat})),
+        Some("test-fire"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(prepared["draft"]["status"], "unsupported");
+    let seen = captured.lock().unwrap();
+    assert!(seen.contains("Road is blocked"));
+    assert!(!seen.contains("Mayor secret detail"));
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert!(master["proposals"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn submitted_peer_thread_uses_english_for_excon_and_visible_text_for_player() {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "it").unwrap();
+    ex.set_language("fire_commander", "fr").unwrap();
+    let translations =
+        std::collections::BTreeMap::from([("mayor".into(), "Dettaglio segreto".into())]);
+    let root = ex
+        .send_inject(
+            None,
+            "Private",
+            "master",
+            &["mayor".into()],
+            "Secret English detail",
+            &translations,
+        )
+        .unwrap()[0];
+    let chat = ex
+        .chat_reply(
+            "mayor",
+            "fire_commander",
+            "Strada chiusa",
+            "Road closed",
+            "Route fermée",
+            false,
+            false,
+            Some(root),
+        )
+        .unwrap()
+        .0;
+    let proposal = ex
+        .player_reply(
+            "fire_commander",
+            "Deploy crews",
+            chat,
+            exercise::DecisionEvidence::judgment("Based on the received road report"),
+        )
+        .unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let review = master["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == proposal)
+        .unwrap();
+    assert_eq!(review["thread"][0]["text"], "Road closed");
+    assert!(!review["thread"]
+        .to_string()
+        .contains("Secret English detail"));
+    let (_, player) = call_key(
+        &app,
+        "GET",
+        "/api/player/fire_commander",
+        None,
+        Some("test-fire"),
+    )
+    .await;
+    let own = player["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == proposal)
+        .unwrap();
+    assert_eq!(own["thread"][0]["text"], "Route fermée");
+    assert!(!own["thread"].to_string().contains("Dettaglio segreto"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn translated_chat_cannot_cross_a_rollback() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let started = Arc::new(AtomicBool::new(false));
+    let signal = started.clone();
+    let llm = llm::Llm::mock(move |_, _, text| {
+        signal.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(100));
+        Ok(text.into())
+    });
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "it").unwrap();
+    let parent = ex
+        .send_inject(
+            None,
+            "Context",
+            "master",
+            &["mayor".into()],
+            "Status?",
+            &Default::default(),
+        )
+        .unwrap()[0];
+    let ex = Arc::new(Mutex::new(ex));
+    let app = build(ex.clone(), llm, None, access()).await.0;
+    let worker = app.clone();
+    let request = tokio::spawn(async move {
+        call(
+            &worker,
+            "POST",
+            "/api/player/mayor/chat",
+            Some(json!({"to":"fire_commander", "text":"Warn F4", "interpret":false, "reply_to":parent})),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !started.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    ex.lock().unwrap().rollback(1).unwrap();
+    assert_eq!(request.await.unwrap().0, Status::BadRequest);
+    let ex = ex.lock().unwrap();
+    assert!(ex.proposals.is_empty());
+    assert!(!ex
+        .messages
+        .iter()
+        .any(|m| m.kind == exercise::MsgKind::Chat));
+}
+
+#[tokio::test]
+async fn player_clarifies_privately_then_confirms_the_exact_revision() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(
+        &app,
+        "POST",
+        "/api/player/mayor/language",
+        Some(json!({"language":"en"})),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/chat",
+            Some(json!({"to":"master","text":"where?","interpret":true}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let (status, first) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"where?"})),
+        Some("test-mayor"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(first["draft"]["status"], "needs_clarification");
+    assert_eq!(
+        first["draft"]["question"],
+        "Which zone should receive the warning?"
+    );
+    let first = first["draft"].clone();
+    for endpoint in ["/api/master", "/api/debrief"] {
+        let (_, public) = call(&app, "GET", endpoint, None).await;
+        assert!(
+            !public.to_string().contains("where?"),
+            "private drafting must not reach EXCON or the committed log"
+        );
+    }
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/draft/submit",
+            Some(json!({"draft":first["id"],"revision":first["revision"]}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/player/mayor/draft/submit",
+            Some(json!({"draft":first["id"],"revision":first["revision"]})),
+            Some("test-fire")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
+    let (status, second)=call(&app,"POST","/api/player/mayor/draft",Some(json!({"to":"master","text":"F4 confirmed","draft":first["id"],"revision":first["revision"]}))).await;
+    assert_eq!(status, Status::Ok);
+    let second = second["draft"].clone();
+    assert_eq!(second["status"], "ready");
+    assert_eq!(second["message"], "Warn F4");
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert!(master["messages"].as_array().unwrap().is_empty());
+    assert!(master["proposals"].as_array().unwrap().is_empty());
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/draft/submit",
+            Some(json!({"draft":first["id"],"revision":first["revision"]}))
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let submission = json!({"draft":second["id"],"revision":second["revision"]});
+    let (status, sent) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft/submit",
+        Some(submission.clone()),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert!(sent["proposal"].is_number());
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["proposals"][0]["original"], "Warn F4");
+    assert_eq!(master["proposals"][0]["status"], "pending");
+    assert_eq!(master["messages"][0]["original"], "Warn F4");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/draft/submit",
+            Some(submission)
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+}
+
+#[tokio::test]
+async fn unavailable_private_ai_blocks_submission_and_rollback_expires_drafts() {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "en").unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let (_, prepared) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"Warn F4"})),
+    )
+    .await;
+    assert_eq!(prepared["draft"]["status"], "ai_unavailable");
+    let submission =
+        json!({"draft":prepared["draft"]["id"],"revision":prepared["draft"]["revision"]});
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/player/mayor/draft/submit",
+            Some(submission.clone())
+        )
+        .await
+        .0,
+        Status::BadRequest
+    );
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert!(master["messages"].as_array().unwrap().is_empty());
+    let mut manual = submission.clone();
+    manual["manual"] = json!(true);
+    assert_eq!(
+        call(&app, "POST", "/api/player/mayor/draft/submit", Some(manual))
+            .await
+            .0,
+        Status::BadRequest
+    );
+    let (_, again) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"Warn F4"})),
+    )
+    .await;
+    call(
+        &app,
+        "POST",
+        "/api/master/rollback",
+        Some(json!({"turn":1})),
+    )
+    .await;
+    assert_eq!(call(&app,"POST","/api/player/mayor/draft/submit",Some(json!({"draft":again["draft"]["id"],"revision":again["draft"]["revision"],"manual":true}))).await.0,Status::BadRequest);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn private_interpretation_finishing_after_rollback_is_discarded() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let started = Arc::new(AtomicBool::new(false));
+    let signal = started.clone();
+    let llm = llm::Llm::mock(move |_, _, _| {
+        signal.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(100));
+        Ok(r#"{"message":"Warn F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[]}"#.into())
+    });
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "en").unwrap();
+    let ex = Arc::new(Mutex::new(ex));
+    let app = build(ex.clone(), llm, None, access()).await.0;
+    let worker = app.clone();
+    let request = tokio::spawn(async move {
+        call(
+            &worker,
+            "POST",
+            "/api/player/mayor/draft",
+            Some(json!({"to":"master","text":"Warn F4"})),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !started.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    ex.lock().unwrap().rollback(1).unwrap();
+    assert_eq!(request.await.unwrap().0, Status::BadRequest);
+    let ex = ex.lock().unwrap();
+    assert!(ex.player_drafts("mayor").is_empty());
+    assert!(ex.proposals.is_empty());
+    assert!(!ex
+        .messages
+        .iter()
+        .any(|message| message.kind == exercise::MsgKind::Chat));
+}
+
+#[tokio::test]
+async fn a_missing_working_translation_is_not_presented_as_ready() {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "it").unwrap();
+    let llm = llm::Llm::mock(|_, _, _| {
+        Ok(r#"{"message":"Allerta F4","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[]}"#.into())
+    });
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    let (_, prepared) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"Allerta F4"})),
+    )
+    .await;
+    assert_eq!(prepared["draft"]["status"], "ai_unavailable");
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert!(master["messages"].as_array().unwrap().is_empty());
+    assert!(master["proposals"].as_array().unwrap().is_empty());
+}
+
+async fn build(
+    ex: std::sync::Arc<std::sync::Mutex<exercise::Exercise>>,
+    llm: llm::Llm,
+    web: Option<std::path::PathBuf>,
+    access: server::access::Access,
+) -> (TestApp, server::AppState) {
+    let (app, state) = server::router_with_access(ex, llm, web, access);
+    (
+        std::sync::Arc::new(Client::untracked(app).await.expect("Rocket ignition")),
+        state,
+    )
+}
+
+async fn request(
+    app: &TestApp,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    key: Option<&str>,
+) -> (Status, Value) {
+    let mut request = app
+        .req(method.parse::<Method>().unwrap(), uri)
+        .header(ContentType::JSON);
+    if let Some(key) = key {
+        request = request.header(Header::new("Authorization", format!("Bearer {key}")));
+    }
+    if let Some(body) = body {
+        request = request.body(body.to_string());
+    }
+    let response = request.dispatch().await;
+    let status = response.status();
+    (status, response.into_json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn structured_player_actions_wait_for_review_without_ai() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let before = call(&app, "GET", "/api/state", None).await.1["world"].clone();
+    let body = json!({"text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let (status, sent) = call_key(
+        &app,
+        "POST",
+        "/api/player/mayor/actions",
+        Some(body.clone()),
+        Some("test-mayor"),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        call(&app, "GET", "/api/state", None).await.1["world"],
+        before
+    );
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let proposal = master["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == sent["proposal"])
+        .unwrap();
+    assert_eq!(proposal["status"], "pending");
+    assert_eq!(proposal["commands"], body["commands"]);
+    assert_eq!(
+        call_key(
+            &app,
+            "POST",
+            "/api/player/mayor/actions",
+            Some(body),
+            Some("test-fire")
+        )
+        .await
+        .0,
+        Status::Forbidden
+    );
+    let (status, _) = call_key(&app, "POST", "/api/player/mayor/actions", Some(json!({"text":"Invalid parent", "commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":999999})), Some("test-mayor")).await;
+    assert_eq!(status, Status::BadRequest);
+}
+
+#[tokio::test]
+async fn master_history_retains_all_operational_events() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    for i in 0..350 {
+        ex.record("history_fixture", "master", json!({"index":i}));
+    }
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let events = master["log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "history_fixture")
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 350);
+    assert_eq!(events[0]["data"]["index"], 0);
+    assert_eq!(events[349]["data"]["index"], 349);
+}
+
+#[tokio::test]
+async fn structured_fire_line_action_endpoints_terminate() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let body = json!({"text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
+    let (status, _) = call_key(&app, "POST", "/api/player/fire_commander/actions", Some(body), Some("test-fire")).await;
+    assert_eq!(status, Status::Ok);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["proposals"].as_array().unwrap().len(), 1);
+    let (s, _) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(s, Status::Ok);
+    let (s, _) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert_eq!(s, Status::Ok);
+}
+
+#[tokio::test]
+async fn factory_operational_fire_line_endpoints_are_fast() {
+    let mut scn: scenario::Scenario = serde_json::from_str(include_str!(
+        "../../../data/scenarios/valverde_factory.json"
+    ))
+    .unwrap();
+    scn.enable_operational_model();
+    let world = sim::World::with_options(
+        Arc::new(scn),
+        1,
+        sim::FireOptions { realizations: 32, cutoff: 0.5 },
+    )
+    .unwrap();
+    let mut ex = exercise::Exercise::new(world);
+    ex.start().unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).await.0;
+    let t = std::time::Instant::now();
+    let body = json!({"text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
+    let (status, sent) = call_key(&app, "POST", "/api/player/fire_commander/actions", Some(body), Some("test-fire")).await;
+    assert_eq!(status, Status::Ok);
+    eprintln!("submit {:?}", t.elapsed());
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    eprintln!("master {:?}", t.elapsed());
+    let pid = sent["proposal"].as_u64().unwrap();
+    let p = master["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
+    eprintln!("verdicts {}", p["verdicts"]);
+    call(&app, "GET", "/api/state", None).await;
+    eprintln!("state {:?}", t.elapsed());
+    call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    eprintln!("player {:?}", t.elapsed());
+    let (s, d) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true,"commands":p["commands"],"note":""})), ).await;
+    eprintln!("decide {:?} {:?} {}", t.elapsed(), s, d);
+    call(&app, "GET", "/api/master", None).await;
+    eprintln!("master2 {:?}", t.elapsed());
+    assert!(t.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[tokio::test]
+async fn invalid_ai_answer_after_clarification_reports_reason_and_keeps_readable_message() {
+    let llm = llm::Llm::mock(|task, _system, user| {
+        Ok(match task {
+            "prepare_decision" if !user.contains("main road") => r#"{"message":"x","detected_language":"en","translation_en":"x","actions":[],"messages":[],"clarification":"Which road?","summary":"road missing"}"#.into(),
+            "prepare_decision" => r#"{"message":"x","detected_language":"en","translation_en":"x","actions":[{"type":"NoSuchAction"}],"messages":[],"clarification":null,"summary":"bad"}"#.into(),
+            other => anyhow::bail!("unexpected task {other}"),
+        })
+    });
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    ex.set_language("mayor", "en").unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    let (_, first) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/draft",
+        Some(json!({"to":"master","text":"Close the road"})),
+    )
+    .await;
+    let first = first["draft"].clone();
+    assert_eq!(first["status"], "needs_clarification");
+    let (_, second) = call(&app, "POST", "/api/player/mayor/draft", Some(json!({"to":"master","text":"The main road south","draft":first["id"],"revision":first["revision"]}))).await;
+    let second = &second["draft"];
+    assert_eq!(second["status"], "unsupported");
+    assert_eq!(second["message"], "Close the road. The main road south");
+    assert_eq!(
+        second["failure"],
+        "This request does not match a supported simulator action."
+    );
+    for manual in [false, true] {
+        let (status, _) = call(
+            &app,
+            "POST",
+            "/api/player/mayor/draft/submit",
+            Some(json!({"draft":second["id"],"revision":second["revision"],"manual":manual})),
+        )
+        .await;
+        assert_eq!(status, Status::BadRequest);
+    }
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert!(master["proposals"].as_array().unwrap().is_empty());
+}
+
+/// A rejected player proposal carries the EXCON reason back to the player.
+#[tokio::test]
+async fn rejection_note_reaches_the_player() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let body = json!({"text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let (status, sent) = call_key(&app, "POST", "/api/player/mayor/actions", Some(body), Some("test-mayor")).await;
+    assert_eq!(status, Status::Ok);
+    let pid = sent["proposal"].as_u64().unwrap();
+    let note = "Zona gia' evacuata: riformula";
+    let (s, out) = call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/decide"),
+        Some(json!({"approve": false, "note": note})),
+    )
+    .await;
+    assert_eq!(s, Status::Ok, "{out}");
+    let (s, player) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(s, Status::Ok);
+    let found = player["proposals"]
+        .as_array()
+        .expect("proposals")
+        .iter()
+        .find(|p| p["id"] == pid)
+        .unwrap_or_else(|| panic!("proposal {pid} missing: {player}"));
+    assert_eq!(found["status"], "rejected");
+    assert_eq!(found["decision"]["approve"], false);
+    assert_eq!(found["decision"]["note"], note);
+}
+
+#[tokio::test]
+async fn planned_injects_track_recipients_and_skip_served_roles() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let plan = m["planned_injects"].as_array().unwrap();
+    assert_eq!(plan.len(), 8);
+    let secs: Vec<i64> = plan.iter().map(|p| p["scenario_time_s"].as_i64().unwrap()).collect();
+    assert!(secs.windows(2).all(|w| w[0] <= w[1]), "chronological");
+    assert_eq!(plan[0]["id_inject"], "I-01");
+    assert!(!plan[0]["event"].as_str().unwrap().is_empty());
+    assert_eq!(plan[0]["sent_to"], json!([]));
+    // First send to one role only.
+    let (s, r) = call(&app, "POST", "/api/master/msel/I-01/send", Some(json!({"recipients":["mayor"]}))).await;
+    assert_eq!(s, Status::Ok);
+    assert_eq!(r["messages"].as_array().unwrap().len(), 1);
+    // Planned recipients ("all"): the mayor is skipped silently.
+    let (s, r) = call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    assert_eq!(s, Status::Ok);
+    assert_eq!(r["messages"].as_array().unwrap().len(), 2);
+    // Everyone served: nothing more is delivered.
+    let (_, r) = call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    assert!(r["messages"].as_array().unwrap().is_empty());
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let p = m["planned_injects"].as_array().unwrap().iter().find(|p| p["id_inject"] == "I-01").unwrap();
+    assert_eq!(p["sent_to"].as_array().unwrap().len(), 3);
+    assert_eq!(p["not_yet_sent_to"], json!([]));
+    assert_eq!(m["inject_responses"].as_array().unwrap().len(), 3);
+    assert_eq!(m["sent_injects"], json!(["I-01"]));
+}
+
+#[tokio::test]
+async fn excon_clarify_endpoint_asks_the_player_and_keeps_the_proposal_open() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text": "warn the area", "reply_to": reply_parent(&app, "mayor").await})),
+    )
+    .await;
+    let pid = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |v| {
+        v["proposals"].as_array().unwrap().iter().any(|p| p["id"] == pid && p["status"] == "pending")
+    })
+    .await;
+    // The note is required.
+    let uri = format!("/api/master/proposals/{pid}/clarify");
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"note": " "}))).await;
+    assert_ne!(s, Status::Ok);
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"note": "Which zone exactly?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let m = eventually(&app, "/api/master", |v| {
+        v["proposals"].as_array().unwrap().iter().any(|p| {
+            p["id"] == pid && p["status"] == "needs_clarification" && p["clarification_request"] == "Which zone exactly?"
+        })
+    })
+    .await;
+    let row = m["inject_responses"].as_array().unwrap().iter()
+        .flat_map(|r| r["pending_proposals"].as_array().unwrap().clone())
+        .find(|p| p["id"] == pid)
+        .expect("still listed as open");
+    assert_eq!(row["awaiting_clarification"], true);
+    let player = eventually(&app, "/api/player/mayor", |v| {
+        v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification" && m["proposal"] == pid)
+    })
+    .await;
+    let q = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "clarification").unwrap();
+    assert!(q["text"].as_str().unwrap().contains("Which zone exactly?"));
+    let mine = player["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
+    assert_eq!(mine["status"], "needs_clarification");
+    assert_eq!(mine["clarification_request"], "Which zone exactly?");
+    // Not rejected: the EXCON can still decide.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve": false, "note": "Not needed"}))).await;
+    assert_eq!(s, Status::Ok);
+    // Decided proposals cannot be sent back.
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"note": "again"}))).await;
+    assert_ne!(s, Status::Ok);
+}
+
+#[tokio::test]
+async fn clarification_thread_runs_several_rounds_and_can_be_closed() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (_, r) = call(
+        &app,
+        "POST",
+        "/api/player/mayor/reply",
+        Some(json!({"text": "warn the area", "reply_to": reply_parent(&app, "mayor").await})),
+    )
+    .await;
+    let p1 = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |v| {
+        v["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1 && p["status"] == "pending")
+    })
+    .await;
+    // Round 1: EXCON asks, the player answers in text.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{p1}/clarify"), Some(json!({"note": "Which zone?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let player = eventually(&app, "/api/player/mayor", |v| {
+        v["clarification_threads"].as_array().unwrap().iter().any(|t| t["entries"].as_array().unwrap().len() == 2)
+    })
+    .await;
+    let t = &player["clarification_threads"][0];
+    assert_eq!((t["id"].as_u64(), t["status"].as_str()), (Some(p1), Some("awaiting_player")));
+    assert!(t["entries"][0].get("text_en").is_none(), "players do not see the working copy");
+    let q1 = t["entries"][1]["message"].as_u64().unwrap();
+    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "Zone F4", "reply_to": q1}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    let p2 = r["proposal"].as_u64().unwrap();
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p2 && p["status"] == "pending")
+    })
+    .await;
+    let th = m["clarification_threads"].as_array().unwrap().iter().find(|t| t["id"] == p1).unwrap();
+    assert_eq!((th["status"].as_str(), th["current_proposal"].as_u64()), (Some("awaiting_excon"), Some(p2)));
+    assert_eq!(th["entries"].as_array().unwrap().len(), 3);
+    // The same messages are tagged in the per-response thread.
+    let row = m["inject_responses"].as_array().unwrap().iter()
+        .find(|r| r["clarification_threads"].as_array().is_some_and(|a| !a.is_empty()))
+        .expect("row with clarification thread");
+    assert_eq!(row["thread"].as_array().unwrap().iter().filter(|x| x["clarification_thread"] == p1).count(), 3);
+    // Round 2 on the new proposal, still the same thread.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{p2}/clarify"), Some(json!({"note": "Which side?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let m = eventually(&app, "/api/master", |m| {
+        m["clarification_threads"].as_array().unwrap().iter().any(|t| t["id"] == p1 && t["entries"].as_array().unwrap().len() == 4)
+    })
+    .await;
+    assert_eq!(m["clarification_threads"].as_array().unwrap().len(), 1);
+    // EXCON closes: the proposal is back in the plain review queue.
+    let uri = format!("/api/master/clarifications/{p1}/close");
+    let (s, t) = call(&app, "POST", &uri, None).await;
+    assert_eq!(s, Status::Ok, "{t}");
+    assert_eq!(t["status"], "closed");
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p2 && p["status"] == "pending")
+    })
+    .await;
+    assert_eq!(m["clarification_threads"][0]["status"], "closed");
+    let (s, _) = call(&app, "POST", &uri, None).await;
+    assert_ne!(s, Status::Ok, "already closed");
+    let (s, _) = call(&app, "POST", "/api/master/clarifications/999999/close", None).await;
+    assert_ne!(s, Status::Ok);
+}
+
+#[tokio::test]
+async fn revalidate_and_supersede_endpoints() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-03/send", None).await;
+    let parent = reply_parent(&app, "fire_commander").await;
+    call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "Warn F4", "reply_to": parent}))).await;
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["status"] == "pending")
+    })
+    .await;
+    let old = m["proposals"].as_array().unwrap().iter().find(|p| p["status"] == "pending").unwrap()["id"].as_u64().unwrap();
+    // Revalidate with an infeasible edit, then a feasible one; status never changes.
+    let uri = format!("/api/master/proposals/{old}/revalidate");
+    let (s, p) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"IssueWarning","zone":"F4"}]}))).await;
+    assert_eq!(s, Status::Ok, "{p}");
+    assert_eq!(p["status"], "pending");
+    assert_eq!(p["commands"][0]["type"], "IssueWarning");
+    assert!(p["descriptions"].as_array().unwrap().len() == 1 && p["verdicts"][0]["verdict"] == "rejected");
+    let (s, p) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"CutFireLine","along":"F4:E"}]}))).await;
+    assert_eq!(s, Status::Ok);
+    assert_eq!(p["commands"][0]["type"], "CutFireLine");
+    assert_eq!(p["verdicts"][0]["verdict"], "ok", "{p}");
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"Nope"}]}))).await;
+    assert_ne!(s, Status::Ok);
+    // EXCON asks; the player's answer comes back as a message on the same proposal.
+    let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{old}/clarify"), Some(json!({"note":"Which zone?"}))).await;
+    assert_eq!(s, Status::Ok);
+    let inbox = eventually(&app, "/api/player/fire_commander", |p| {
+        p["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")
+    })
+    .await;
+    let q = inbox["inbox"].as_array().unwrap().iter().rev().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
+    let (s, r) = call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "Warn F4 now", "reply_to": q}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    // The answer is a message: the same proposal is pending again and still editable.
+    let m = eventually(&app, "/api/master", |m| {
+        m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == old && p["status"] == "pending")
+    })
+    .await;
+    assert!(m["proposals"].as_array().unwrap().iter().all(|p| p["superseded_by"].is_null()));
+    let (s, p) = call(&app, "POST", &uri, Some(json!({}))).await;
+    assert_eq!(s, Status::Ok, "{p}");
+}
+
+#[tokio::test]
+async fn view_is_excon_only_incremental_and_complete() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn.clone(), 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    for path in ["/api/view/scene", "/api/view/state"] {
+        for key in ["test-mayor", "test-eval-one"] {
+            assert_eq!(
+                call_key(&app, "GET", path, None, Some(key)).await.0,
+                Status::Forbidden,
+                "{path} must not leak the ground truth to {key}"
+            );
+        }
+        assert_eq!(
+            call_key(&app, "GET", path, None, None).await.0,
+            Status::Unauthorized
+        );
+    }
+    let (status, scene) = call(&app, "GET", "/api/view/scene", None).await;
+    assert_eq!(status, Status::Ok);
+    let scene: scenario::Scenario = serde_json::from_value(scene).unwrap();
+    assert_eq!(scene.grid.len(), scn.grid.len());
+
+    let (_, first) = call(&app, "GET", "/api/view/state", None).await;
+    let state: view::ViewState = serde_json::from_value(first).unwrap();
+    assert_eq!(state.cells.len(), scn.grid.len());
+    assert_eq!(state.probability.len(), scn.grid.len());
+    assert_eq!(state.buildings.len(), scn.buildings.len());
+    assert_eq!(state.roads.len(), scn.roads.len());
+    // Nothing changed: the viewer has everything.
+    let same = format!(
+        "/api/view/state?generation={}&cue={}",
+        state.generation,
+        state.cues.iter().map(|c| c.seq).max().unwrap_or(0)
+    );
+    assert_eq!(call(&app, "GET", &same, None).await.1, Value::Null);
+    // A change is a new generation, and only unseen cues are sent.
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":1})),
+    )
+    .await;
+    let (_, next) = call(&app, "GET", &same, None).await;
+    let next: view::ViewState = serde_json::from_value(next).unwrap();
+    assert!(next.generation > state.generation);
+    assert!(next.time_s > state.time_s);
+    let seen = state.cues.iter().map(|c| c.seq).max().unwrap_or(0);
+    assert!(next.cues.iter().all(|c| c.seq > seen));
+}
+
+#[tokio::test]
+async fn view_tracks_follow_the_model_and_flames_agree() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    call(&app,"POST","/api/master/command",Some(json!({"type":"SetDeploymentTravel","role":"fire_commander","resource":"ground_crews","at":{"x":1000,"y":1000},"speed_mps":10}))).await;
+    let parent = reply_parent(&app, "fire_commander").await;
+    let (_, declared) = call(
+        &app,
+        "POST",
+        "/api/player/fire_commander/reply",
+        Some(json!({"text":"Cut a line","reply_to":parent})),
+    )
+    .await;
+    let pid = declared["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| {
+        m["proposals"][0]["status"] == "pending"
+    })
+    .await;
+    call(&app,"POST",&format!("/api/master/proposals/{pid}/decide"),Some(json!({"approve":true,"commands":[{"type":"CutFireLine","from":{"x":2000,"y":1000},"to":{"x":2500,"y":1000}}]}))).await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/master/proposals/{pid}/execute"),
+        None,
+    )
+    .await;
+    // Before, during and after the work: the view's track is the model's motion.
+    for minutes in [0, 1, 1, 3] {
+        if minutes > 0 {
+            call(
+                &app,
+                "POST",
+                "/api/master/command",
+                Some(json!({"type":"AdvanceTime","minutes":minutes})),
+            )
+            .await;
+        }
+        let ex = shared.lock().unwrap();
+        let state = server::view::extract(&ex, view::Have::default()).unwrap();
+        assert_eq!(state.deployments.len(), ex.world.d.tasks.len());
+        assert!(!state.deployments.is_empty());
+        for (task, shown) in ex.world.d.tasks.iter().zip(&state.deployments) {
+            assert_eq!(shown.id, task.id);
+            assert_eq!(shown.qty, ex.world.task_active_qty(task));
+            let from = task.departed_s.min(ex.world.time_s());
+            for t in (from - 30..from + 400).step_by(5) {
+                let (model, view) = (task.position(t), shown.position(t));
+                assert!(
+                    (model[0] - view[0]).abs() < 0.5 && (model[1] - view[1]).abs() < 0.5,
+                    "task {} at {t}s: model {model:?} view {view:?}",
+                    task.id
+                );
+            }
+        }
+    }
+    for fli in [-1.0f32, 0.0, 1.0, 50.0, 1800.0, 40_000.0] {
+        assert_eq!(view::flame_length_m(fli), fire::flame_length_m(fli));
+    }
+}
+
+#[tokio::test]
+async fn view_frames_are_compressed_differential_and_excon_only() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let fetch = |uri: String, key: &'static str| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .req(Method::Get, uri)
+                .header(Header::new("Authorization", format!("Bearer {key}")))
+                .dispatch()
+                .await;
+            (response.status(), response.into_bytes().await.unwrap_or_default())
+        }
+    };
+    assert_eq!(
+        fetch("/api/view/frame".into(), "test-mayor").await.0,
+        Status::Forbidden
+    );
+    let (status, zscene) = fetch("/api/view/scene.z".into(), "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let scene: scenario::Scenario =
+        serde_json::from_slice(&view::wire::decompress(&zscene).unwrap()).unwrap();
+    assert_eq!(scene.grid.len(), shared.lock().unwrap().world.scn.grid.len());
+    assert_eq!(
+        fetch("/api/view/scene.z".into(), "test-mayor").await.0,
+        Status::Forbidden
+    );
+    let (status, body) = fetch("/api/view/frame".into(), "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let view::wire::Frame::Full(first) = view::wire::decode(&body).unwrap() else {
+        panic!("a viewer with nothing gets the whole state")
+    };
+    let uri = format!("/api/view/frame?generation={}", first.generation);
+    assert_eq!(fetch(uri.clone(), "test-master").await.0, Status::NoContent);
+    call(
+        &app,
+        "POST",
+        "/api/master/command",
+        Some(json!({"type":"AdvanceTime","minutes":5})),
+    )
+    .await;
+    let (status, body) = fetch(uri, "test-master").await;
+    assert_eq!(status, Status::Ok);
+    let view::wire::Frame::Delta(delta) = view::wire::decode(&body).unwrap() else {
+        panic!("a known base gets a delta")
+    };
+    let rebuilt = view::wire::apply(&first, &delta).unwrap();
+    let truth = server::view::extract(&shared.lock().unwrap(), view::Have::default()).unwrap();
+    assert_eq!(rebuilt.cells, truth.cells);
+    assert_eq!(rebuilt.arrival, truth.arrival);
+    assert_eq!(rebuilt.generation, truth.generation);
+    assert!(body.len() * 5 < serde_json::to_vec(&*first).unwrap().len());
+}
+
+fn gust(id: &str, offset_s: i64) -> scenario::InjectAction {
+    scenario::InjectAction {
+        id: id.into(),
+        title: "Gust front".into(),
+        command: json!({"type": "SetWeather", "wind_speed_kmh": 55.0}),
+        offset_s,
+        note: String::new(),
+    }
+}
+
+/// Scenario whose first inject (planned at 600 s) carries `actions`.
+fn app_with_inject_actions(actions: Vec<scenario::InjectAction>) -> (exercise::Exercise, String) {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    for (n, i) in scn.msel.iter_mut().enumerate() {
+        i.at_s = Some(100_000 + n as i64 * 60);
+    }
+    scn.msel[0].at_s = Some(600);
+    scn.msel[0].actions = actions;
+    let id = scn.msel[0].id.clone();
+    let mut ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    ex.turn_minutes = 30;
+    (ex, id)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inject_actions_run_when_the_inject_is_sent() {
+    let (ex, id) = app_with_inject_actions(vec![gust("gust", 0), gust("later", 120)]);
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+
+    let (st, sent) = call(&app, "POST", &format!("/api/master/msel/{id}/send"), Some(json!({"actions": ["gust"]}))).await;
+    assert_eq!(st, Status::Ok, "{sent}");
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let row = master["planned_injects"].as_array().unwrap().iter().find(|i| i["id_inject"] == id.as_str()).unwrap().clone();
+    assert_eq!(row["actions"][0]["status"], "done");
+    assert_eq!(row["actions"][1]["status"], "not_run");
+    assert_eq!(master["inject_actions"][0]["status"], "done");
+
+    // A custom inject carries its own actions.
+    let body = json!({"title": "T", "recipients": ["mayor"], "text": "x",
+        "actions": [{"id": "c1", "title": "Gust", "command": {"type": "SetWeather", "wind_speed_kmh": 40.0}, "offset_s": 60}]});
+    let (st, rep) = call(&app, "POST", "/api/master/inject", Some(body)).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let c1 = master["inject_actions"].as_array().unwrap().iter().find(|a| a["id"] == "c1").unwrap().clone();
+    assert_eq!(c1["status"], "approved");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn next_inject_stops_at_the_inject_then_closes_the_turn() {
+    let (ex, id) = app_with_inject_actions(vec![gust("pre", -300)]);
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["agenda"]["planned_end_s"], 1800);
+    assert_eq!(master["agenda"]["next_event_s"], 600);
+    assert_eq!(master["agenda"]["advance"]["to_s"], 600);
+    assert_eq!(master["agenda"]["advance"]["closes_turn"], false);
+
+    // The scan runs through the pre-action and stops at the inject, now due.
+    let body = json!({"until": "next_inject"});
+    let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    assert_eq!(rep["to_s"], 600);
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!((state["turn"].as_i64(), state["phase"].as_str()), (Some(1), Some("orders")));
+    assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["inject_actions"][0]["status"], "done");
+    assert_eq!(master["inject_actions"][0]["executed_s"], 300);
+    let item = master["agenda"]["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap().clone();
+    assert_eq!(item["due"], true);
+
+    // "Non inviare": no longer pending; the next advance closes the turn.
+    let (st, _) = call(&app, "POST", &format!("/api/master/msel/{id}/skip"), None).await;
+    assert_eq!(st, Status::Ok);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["agenda"]["advance"]["closes_turn"], true);
+    let (st, _) = call(&app, "POST", &format!("/api/master/msel/{id}/restore"), None).await;
+    assert_eq!(st, Status::Ok);
+    let (st, _) = call(&app, "POST", &format!("/api/master/msel/{id}/skip"), None).await;
+    assert_eq!(st, Status::Ok);
+    let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(json!({"until": "next_inject"}))).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    assert_eq!(rep["to_s"], 1800);
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(state["turn"], 2);
+}
+
+/// "Ferma qui": a resolution at 60x that would run 30 minutes is ended at the
+/// current second; the turn stays open and the waiting request returns.
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_ends_a_running_resolution_and_keeps_the_turn_open() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (st, _) = call(&app, "POST", "/api/master/resolve/stop", None).await;
+    assert_ne!(st, Status::Ok, "nothing is running");
+    call(&app, "POST", "/api/master/settings", Some(json!({"speed": 60.0}))).await;
+    let a2 = app.clone();
+    let resolver = tokio::spawn(async move {
+        call(&a2, "POST", "/api/master/resolve", Some(json!({"until": "turn_end"}))).await
+    });
+    let mut seen = 0;
+    for _ in 0..300 {
+        let (_, state) = call(&app, "GET", "/api/state", None).await;
+        seen = state["turn_window"]["now_s"].as_i64().unwrap();
+        if state["phase"] == "resolving" && seen >= 60 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(seen >= 60, "the resolution should be under way");
+    let (st, stop) = call(&app, "POST", "/api/master/resolve/stop", None).await;
+    assert_eq!(st, Status::Ok, "{stop}");
+    let (st, rep) = tokio::time::timeout(std::time::Duration::from_secs(10), resolver)
+        .await
+        .expect("the waiting resolve returns after the stop")
+        .unwrap();
+    assert_eq!(st, Status::Ok, "{rep}");
+    let at = stop["at_s"].as_i64().unwrap();
+    assert!((60..1800).contains(&at), "stopped mid-turn at {at}");
+    assert_eq!(rep["to_s"], at);
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!((state["turn"].clone(), state["phase"].clone()), (json!(1), json!("orders")));
+    assert!(state["resolving"].is_null());
+    assert_eq!(state["turn_window"]["now_s"], at);
+    assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
+}
+
+/// EXCON asks for a clarification; the player's text answer is only translated,
+/// never interpreted: no AI parse call, the proposal keeps its commands and is
+/// Pending again for the EXCON to approve.
+#[tokio::test]
+async fn clarification_answer_is_translated_not_interpreted_and_proposal_stays_approvable() {
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = calls.clone();
+    let llm = llm::Llm::mock(move |task, _s, user| {
+        log.lock().unwrap().push(task.to_string());
+        Ok(match task {
+            "translate" => format!("[en] {user}"),
+            "parse_reply" => r#"{"detected_language":"it","translation_en":"warn","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into(),
+            "feedback" => format!("[feedback] {user}"),
+            other => anyhow::bail!("unexpected task {other}"),
+        })
+    });
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    let parent = reply_parent(&app, "mayor").await;
+    let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "avvisa la gente", "reply_to": parent}))).await;
+    let p1 = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1 && p["status"] == "pending")).await;
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p1}/clarify"), Some(json!({"note": "Which side?"}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
+    let player = eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
+    let q = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
+    // A structured action cannot be sent as the answer.
+    let (s, _) = call(&app, "POST", "/api/player/mayor/actions", Some(json!({"text":"x","commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":q}))).await;
+    assert_eq!(s, Status::BadRequest);
+    let parses_before = calls.lock().unwrap().iter().filter(|t| *t == "parse_reply").count();
+    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "lato nord", "reply_to": q}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    assert_eq!((r["proposal"].as_u64(), r["answered"].clone()), (Some(p1), json!(true)));
+    // Nothing is parsed: the state is final as soon as the call returns.
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == p1).unwrap();
+    assert_eq!(p["status"], "pending");
+    assert_eq!(p["commands"][0]["type"], "IssueWarning", "original commands intact");
+    assert_eq!(m["proposals"].as_array().unwrap().iter().filter(|p| p["status"] == "superseded").count(), 0);
+    assert_eq!(calls.lock().unwrap().iter().filter(|t| *t == "parse_reply").count(), parses_before, "the answer is not interpreted");
+    let row = m["inject_responses"].as_array().unwrap().iter().find(|r| r["role"] == "mayor" && r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1)).expect("row").clone();
+    let mid = r["message"].as_u64().unwrap();
+    let entry = row["thread"].as_array().unwrap().iter().find(|t| t["id"] == mid).expect("answer in thread").clone();
+    assert!(entry["text"].as_str().unwrap().starts_with("[en] "), "English copy for EXCON: {entry}");
+    assert_eq!(entry["original"], "lato nord");
+    assert_eq!(m["clarification_threads"][0]["status"], "awaiting_excon");
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p1}/decide"), Some(json!({"approve": true}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
 }

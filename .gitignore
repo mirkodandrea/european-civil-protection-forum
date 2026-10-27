@@ -1,3 +1,4 @@
+/real-scenarios/
 .DS_Store
 .env
 /runs
@@ -5,5 +6,11 @@
 node_modules/
 scripts/record/.cache/
 
+__pycache__/
+.worktrees/chat-interface
+
+/web/dist/
+
 /web/standalone/
+
 /_site/

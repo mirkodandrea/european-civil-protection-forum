@@ -7,10 +7,11 @@ fn scenario() -> Scenario {
     synthetic::generate(synthetic::DEFAULT_SEED)
 }
 
+use scenario::synthetic::{IGNITION as IGN, IGNITION_RADIUS_M as IGN_R};
+
 fn started(scn: &Scenario, seed: u64) -> FireSim {
     let mut f = FireSim::new(scn, seed).unwrap();
-    let ign = &scn.initial_ignitions[0];
-    f.ignite(ign.at, ign.radius_m).unwrap();
+    f.ignite(IGN, IGN_R).unwrap();
     f
 }
 
@@ -123,7 +124,7 @@ fn extinguish_stops_the_fire() {
     let scn = scenario();
     let mut f = started(&scn, 1);
     f.advance(20 * 60).unwrap();
-    f.extinguish(scn.initial_ignitions[0].at, 900.0);
+    f.extinguish(IGN, 900.0);
     assert_eq!(f.burning_cells(), 0);
     let area = f.burned_area_ha();
     f.advance(60 * 60).unwrap();
@@ -176,7 +177,7 @@ fn extinguish_a_whole_zone() {
     let scn = scenario();
     let mut f = started(&scn, 1);
     f.advance(15 * 60).unwrap();
-    let zone = scn.zone_of(scn.initial_ignitions[0].at).unwrap();
+    let zone = scn.zone_of(IGN).unwrap();
     let b = scn.zone_bounds(&zone).unwrap();
     let before = f.burning_cells();
     let out = f.extinguish_rect(b);
@@ -190,8 +191,7 @@ fn extinguish_a_whole_zone() {
 
 fn started_with(scn: &Scenario, seed: u64, options: fire::FireOptions) -> FireSim {
     let mut f = FireSim::with_options(scn, seed, options).unwrap();
-    let ign = &scn.initial_ignitions[0];
-    f.ignite(ign.at, ign.radius_m).unwrap();
+    f.ignite(IGN, IGN_R).unwrap();
     f
 }
 
@@ -224,9 +224,8 @@ fn ensemble_fire_only_grows_and_is_reproducible() {
     let scn = scenario();
     let mut a = FireSim::new(&scn, 7).unwrap();
     let mut b = FireSim::new(&scn, 7).unwrap();
-    let ign = &scn.initial_ignitions[0];
-    a.ignite(ign.at, ign.radius_m).unwrap();
-    b.ignite(ign.at, ign.radius_m).unwrap();
+    a.ignite(IGN, IGN_R).unwrap();
+    b.ignite(IGN, IGN_R).unwrap();
     let mut last = 0.0;
     for _ in 0..12 {
         a.advance(300).unwrap();

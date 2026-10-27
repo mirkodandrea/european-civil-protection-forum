@@ -30,8 +30,10 @@ const VALVERDE_R: f32 = 380.0;
 const PINETA: Pos = [2800.0, 2250.0];
 const PINETA_R: f32 = 170.0;
 const PINE_HILL: Pos = [3350.0, 3000.0];
-/// The opening fire, on the lower south-west flank of Pine Hill.
-const IGNITION: Pos = [3150.0, 2720.0];
+/// The opening fire, on the lower south-west flank of Pine Hill: the `Ignite`
+/// action of inject I-01.
+pub const IGNITION: Pos = [3150.0, 2720.0];
+pub const IGNITION_RADIUS_M: f32 = 120.0;
 
 /// Smooth value noise in [0, 1], `octaves` layers from a `base` wavelength.
 struct Noise {
@@ -161,6 +163,7 @@ pub fn generate(seed: u64) -> Scenario {
         let id = v.len() as u32 + 1;
         v.push(Building {
             id,
+            visual_kind: None,
             kind,
             name: name.map(str::to_string),
             pos,
@@ -168,6 +171,7 @@ pub fn generate(seed: u64) -> Scenario {
             occupants,
             sector: String::new(),
             shelter_capacity: shelter,
+            rotation_deg: 0.0,
         });
     }
 
@@ -314,16 +318,18 @@ pub fn generate(seed: u64) -> Scenario {
     // Every building sits on a non-burnable cell: houses never burn in the CA
     // (they are threatened by exposure instead, see `sim::buildings`).
     let mut scn = Scenario {
-        operations: Default::default(), communication_sites: vec![], fuel_definitions: vec![],
+        tactical_policy: Default::default(),
+        operations: Default::default(), fuel_definitions: vec![],
         id: "synthetic_valley".into(),
         name: "Valverde valley (synthetic)".into(),
         description: "Synthetic 4 x 4 km wildland-urban-interface valley: forested ridge, the village of Pineta on the forest edge with its primary school and fuel station, the town of Valverde with hospital and sports centre, farmland and a river. A wildfire is burning on Pine Hill under a north-easterly wind.".into(),
         grid,
         fuel,
         dem,
+        render_terrain: None,
         start_clock_s: 13 * 3600,
+        turn_minutes: crate::DEFAULT_TURN_MINUTES,
         weather: WeatherSpec { wind_dir_deg: 45.0, wind_speed_kmh: 45.0, moisture_pct: 4.0 },
-        initial_ignitions: vec![IgnitionSpec { at: IGNITION, radius_m: 120.0 }],
         buildings,
         roads: roads(),
         sectors,
@@ -331,8 +337,13 @@ pub fn generate(seed: u64) -> Scenario {
         places: places(),
         resource_types: resource_types(),
         roles: roles(),
+        excon_roles: vec![],
+        default_persona: String::new(),
         reinforcements: reinforcements(),
         msel: msel(),
+        timeline: vec![],
+        staging_base: Some("Valverde Town Hall".into()),
+        operational_grants: crate::legacy_grants(),
     };
     for i in 0..scn.buildings.len() {
         let p = scn.buildings[i].pos;
@@ -410,6 +421,7 @@ fn places() -> Vec<Place> {
         name: name.into(),
         aliases: aliases.iter().map(|s| s.to_string()).collect(),
         pos,
+        ..Default::default()
     };
     vec![
         place("Pine Hill", &["Monte Pino", "Collina dei Pini"], PINE_HILL),
@@ -459,6 +471,7 @@ fn resource_types() -> Vec<ResourceType> {
         id: id.into(),
         name: name.into(),
         description: d.into(),
+        speed_mps: None,
     };
     vec![
         rt(
@@ -567,9 +580,19 @@ fn msel() -> Vec<InjectTemplate> {
                 recipients: to.iter().map(|s| s.to_string()).collect(),
                 text: text.into(),
                 objective: objective.into(),
+                event: match id {
+                    "I-01" | "I-02" | "I-03" => "Pine Hill fire",
+                    "I-04" => "Weather escalation",
+                    "I-05" => "Evacuation traffic",
+                    "I-06" => "Fuel station threat",
+                    _ => "Capacity and international assistance",
+                }
+                .into(),
+                at_s: None,
+                actions: vec![],
             }
         };
-    vec![
+    let mut msel = vec![
         inj("I-01", 1, "Fire reported on Pine Hill", "112 Dispatch", &["all"],
             "13:00 – Multiple calls report a wildfire on Pine Hill, in the North Forest about 600 m north-east of Pineta. Wind from the north-east at 45 km/h, very dry vegetation. The fire is estimated at 5 hectares and spreading south-west.",
             "Initial situational awareness and information sharing"),
@@ -594,7 +617,15 @@ fn msel() -> Vec<InjectTemplate> {
         inj("I-08", 4, "Local capacity exhausted", "Fire operations room", &["regional_cp", "fire_commander"],
             "All local ground crews are committed and exhausted. A second fire front is developing on the western forest edge. Local capacity is no longer sufficient.",
             "Escalation decision under capacity stress"),
-    ]
+    ];
+    msel[0].actions.push(InjectAction {
+        id: "A-01".into(),
+        title: "Innesco Pine Hill".into(),
+        command: serde_json::json!({"type": "Ignite", "at": {"x": IGNITION[0], "y": IGNITION[1]}, "radius_m": IGNITION_RADIUS_M}),
+        offset_s: 0,
+        note: "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01.".into(),
+    });
+    msel
 }
 
 #[cfg(test)]
@@ -635,7 +666,7 @@ mod tests {
     #[test]
     fn ignition_is_in_the_forest() {
         let s = generate(DEFAULT_SEED);
-        let c = s.cell_of(s.initial_ignitions[0].at).unwrap();
+        let c = s.cell_of(IGNITION).unwrap();
         assert!(s.is_burnable(c));
     }
 

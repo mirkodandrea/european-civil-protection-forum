@@ -1,0 +1,100 @@
+{
+  "scenarios": [
+    {
+      "name": "historical",
+      "path": "../../data/scenarios/synthetic_valley.json"
+    },
+    {
+      "name": "factory",
+      "path": "../../data/scenarios/valverde_factory.json"
+    }
+  ],
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "duration_s": 3600,
+  "sample_s": 60,
+  "realizations": 4,
+  "cutoff": 0.5,
+  "variants": [
+    {
+      "name": "operational",
+      "operational": true,
+      "parameters": {}
+    }
+  ],
+  "strategies": [
+    {
+      "name": "early_attack",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": {
+              "x": 3050,
+              "y": 2650
+            },
+            "to": {
+              "x": 3300,
+              "y": 2650
+            },
+            "width_m": 6
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "fire_commander",
+          "command": {
+            "type": "WaterDrop",
+            "at": {
+              "x": 3150,
+              "y": 2650
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "structure_defence",
+      "orders": [
+        {
+          "at_s": 300,
+          "actor": "fire_commander",
+          "command": {
+            "type": "CutFireLine",
+            "from": "Pineta north edge",
+            "to": "Pineta east edge",
+            "width_m": 6
+          }
+        },
+        {
+          "at_s": 300,
+          "actor": "fire_commander",
+          "command": {
+            "type": "WaterDrop",
+            "at": "Pineta north edge"
+          }
+        }
+      ]
+    },
+    {
+      "name": "hospital_evacuation",
+      "orders": [
+        {
+          "at_s": 0,
+          "actor": "mayor",
+          "command": {
+            "type": "EvacuateBuilding",
+            "building": "Valverde Hospital",
+            "destination": "Valverde Sports Centre"
+          }
+        }
+      ]
+    }
+  ],
+  "injects": []
+}

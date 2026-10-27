@@ -55,7 +55,6 @@ def nature(args):
         picks.append(good[np.argmax(d)])
         d = np.minimum(d, ((good-picks[-1])**2).sum(axis=1))
     ignitions = [list(grid.to_xy(int(r),int(c))) for r,c in picks]
-    scn['initial_ignitions'] = [{'at': ignitions[0], 'radius_m': 60}]
     write(args.output / 'scenario.json', scn)
     write(args.output / 'ignitions.json', ignitions)
     print(f'Generated {candidate.name}: {args.output}')
@@ -63,9 +62,9 @@ def nature(args):
 
 def sweep(args):
     scn = read(args.scenario)
-    starts = read(args.ignitions) if args.ignitions else [i['at'] for i in scn['initial_ignitions']]
-    if not starts:
-        raise ValueError('Author initial_ignitions or pass --ignitions')
+    if not args.ignitions:
+        raise ValueError('Pass --ignitions (the ignitions.json written by the landscape step)')
+    starts = read(args.ignitions)
     jobs = [{'name': f'I{i+1}_w{wind}_s{seed}', 'seed': seed, 'at': at,
         'radius_m': 60, 'wind_from_deg': wind, 'wind_kmh': args.wind_kmh,
         'moisture_pct': args.moisture, 'minutes': args.minutes,
@@ -114,6 +113,22 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('nature'); p.add_argument('--candidate', choices=['t1','t2','t3','t4'], default='t4')
     p.add_argument('--seed', type=int); p.add_argument('--output', type=Path, default=ROOT/'runs/factory/nature'); p.set_defaults(run=nature)
+    def landscape(args):
+        from factory.valverde import landscape as run
+        run(args)
+    p = sub.add_parser('landscape', help='Regenerate the populated TTX valley')
+    p.add_argument('--template', type=Path, default=ROOT/'data/scenarios/synthetic_valley.json')
+    p.add_argument('--seed', type=int, default=11)
+    p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/valverde_factory.json')
+    p.set_defaults(run=landscape)
+    def selvariva(args):
+        from factory.selvariva import landscape as run
+        run(args)
+    p = sub.add_parser('selvariva', help='Generate the fictional basin and festival exercise')
+    p.add_argument('--template', type=Path, default=ROOT/'data/scenarios/synthetic_valley.json')
+    p.add_argument('--seed', type=int, default=33)
+    p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/selvariva_basin.json')
+    p.set_defaults(run=selvariva)
     p = sub.add_parser('sweep'); p.add_argument('scenario', type=Path); p.add_argument('--ignitions', type=Path)
     p.add_argument('--output', type=Path, default=ROOT/'runs/factory/sweep')
     p.add_argument('--seeds', nargs='+', type=int, default=[1,2,3]); p.add_argument('--winds', nargs='+', type=int, default=list(range(0,360,45)))

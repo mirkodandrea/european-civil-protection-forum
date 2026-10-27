@@ -2,7 +2,7 @@
 //! [`Command`]s and by the passage of simulated time.
 //!
 //! - [`World::validate_batch`] is deterministic and side-effect free: it tells
-//!   the Master whether a proposal is feasible (authority, resources, places).
+//!   the EXCON whether a proposal is feasible (authority, resources, places).
 //! - [`World::apply`] executes one command.
 //! - [`World::advance`] moves simulated time in 60 s sub-steps: fire spread,
 //!   building exposure and damage, evacuations completing, roads cut by fire,
@@ -22,12 +22,13 @@ use serde::Serialize;
 pub mod command;
 pub mod digest;
 pub mod hazard;
+pub mod impact;
 pub mod network;
 pub mod traffic;
 pub mod travel;
 pub use travel::{DeploymentTask, TaskStatus, TravelSetting};
 
-pub use command::{catalogue, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
+pub use command::{catalogue, catalogue_for, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
 pub use fire::FireOptions;
 
 /// Sub-step of [`World::advance`], seconds. Buildings, evacuations, roads and
@@ -121,6 +122,9 @@ pub struct BuildingState {
 pub struct RoadState {
     pub closed: bool,
     pub cut_by_fire: bool,
+    /// None uses legacy whole-road closure; Some stores stable directed link ids.
+    /// Closures persist until scenario reset/rollback; no automatic reopening assumption.
+    pub fire_closed_links: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,12 +210,14 @@ impl WorldSnapshot {
 }
 
 /// Precomputed geometry: which fire cells matter to each building and road.
+#[derive(Clone)]
 struct Cache {
     /// Per building: (cell index, weight) within 70 m.
     near: Vec<Vec<(usize, f32)>>,
     roads: Vec<(String, Vec<usize>)>,
 }
 
+#[derive(Clone)]
 pub struct World {
     pub scn: Arc<Scenario>,
     pub seed: u64,
@@ -233,10 +239,7 @@ impl World {
         seed: u64,
         options: fire::FireOptions,
     ) -> Result<World> {
-        let mut fire = FireSim::with_options(&scn, seed, options)?;
-        for ign in &scn.initial_ignitions {
-            fire.ignite(ign.at, ign.radius_m)?;
-        }
+        let fire = FireSim::with_options(&scn, seed, options)?;
         let buildings = scn
             .buildings
             .iter()
@@ -262,6 +265,7 @@ impl World {
                     RoadState {
                         closed: false,
                         cut_by_fire: false,
+                        fire_closed_links: scn.operations.segment_fire_closures.then(Vec::new),
                     },
                 )
             })
@@ -280,7 +284,9 @@ impl World {
             })
             .collect();
         let origin = scn
-            .resolve_place("Valverde Town Hall")
+            .staging_base
+            .as_deref()
+            .and_then(|name| scn.resolve_place(name))
             .unwrap_or([scn.grid.width_m() * 0.5, scn.grid.height_m() * 0.5]);
         let travel_settings = scn
             .roles
@@ -291,11 +297,7 @@ impl World {
                     scn.resource_types
                         .iter()
                         .map(|resource| {
-                            let speed_mps = match resource.id.as_str() {
-                                "air_tankers" => 90.0,
-                                "buses" => 8.0,
-                                _ => 10.0,
-                            };
+                            let speed_mps = resource.speed();
                             (resource.id.clone(), TravelSetting { origin, speed_mps })
                         })
                         .collect(),
@@ -329,7 +331,6 @@ impl World {
             network,
             next_allocation_id: 1,
         };
-        world.d.hazard.sites = world.operational_sites();
         world.d.hazard.updated_s = -10;
         world.refresh_hazard();
         Ok(world)
@@ -730,7 +731,7 @@ impl World {
                 Some(r)
             }
         };
-        // Consume `n` units of `res` from the acting role (the Master is unconstrained).
+        // Consume `n` units of `res` from the acting role (the EXCON is unconstrained).
         let mut take = |res: &str, n: u32, what: &str| -> Result<(), String> {
             let Some(r) = role else { return Ok(()) };
             let pool = pools.get_mut(&r.id).and_then(|p| p.get_mut(res));
@@ -786,10 +787,10 @@ impl World {
                             && route
                                 .legs
                                 .last()
-                                .is_some_and(|l| l.road.is_none() && l.length_m > 60.0)
+                                .is_some_and(|l| l.road.is_none() && l.length_m > self.engine_hose_reach_m())
                         {
                             return Err(
-                                "engine target exceeds 60 m hose reach from a drivable road".into(),
+                                format!("engine target exceeds {:.0} m hose reach from a drivable road",self.engine_hose_reach_m()),
                             );
                         }
                     }
@@ -1272,30 +1273,7 @@ impl World {
             }
             Command::IssueWarning { zone } => {
                 let code = self.zone_code(zone).unwrap();
-                if self.scn.operations.communications
-                    && self
-                        .scn
-                        .buildings
-                        .iter()
-                        .filter(|b| self.scn.zone_of(b.pos).as_deref() == Some(&code))
-                        .any(|b| self.d.hazard.warning_lost(b.pos))
-                {
-                    if !self
-                        .d
-                        .hazard
-                        .pending_warnings
-                        .iter()
-                        .any(|(z, _)| z == &code)
-                    {
-                        self.d
-                            .hazard
-                            .pending_warnings
-                            .push((code.clone(), t + 1200));
-                    }
-                    out.push("Warning delayed 20 simulated minutes: communication outage; fallback delivery".into());
-                } else {
-                    self.d.warned.insert(code.clone());
-                }
+                self.d.warned.insert(code.clone());
                 self.event(
                     "warning",
                     format!("{by} issued a warning to zone {code}"),
@@ -1466,7 +1444,7 @@ impl World {
                 }
                 self.event(
                     "building_status",
-                    format!("Master set {}", cmd.describe().trim_start_matches("Set ")),
+                    format!("EXCON set {}", cmd.describe().trim_start_matches("Set ")),
                     None,
                 );
             }
@@ -1737,6 +1715,40 @@ impl World {
 
     fn step_roads(&mut self) {
         if self.scn.operations.road_routing && self.d.hazard.updated_s != self.time_s() {
+            return;
+        }
+        if self.scn.operations.segment_fire_closures {
+            let mut cuts = Vec::new();
+            for segment in self.network.segments() {
+                let n = (network::distance(segment.from, segment.to)
+                    / (self.scn.grid.cellsize * 0.5))
+                    .ceil()
+                    .max(1.0) as usize;
+                let unsafe_segment = (0..=n).any(|i| {
+                    let p = network::interpolate(segment.from, segment.to, i as f32 / n as f32);
+                    self.d.hazard.at(p).danger >= 0.55
+                        || self.scn.cell_of(p).is_some_and(|c| {
+                            self.fire.state()[self.scn.grid.index(c)] == CellFire::Burning
+                        })
+                });
+                if unsafe_segment {
+                    let state = self.d.roads.get_mut(&segment.road).unwrap();
+                    let links = state.fire_closed_links.get_or_insert_with(Vec::new);
+                    if !links.contains(&segment.links[0]) {
+                        links.extend(segment.links);
+                        links.sort_unstable();
+                        state.cut_by_fire = true;
+                        cuts.push(segment);
+                    }
+                }
+            }
+            for segment in cuts {
+                self.event(
+                    "road_segment_cut",
+                    format!("{} links {:?} cut by fire", segment.road, segment.links),
+                    self.scn.zone_of(segment.from),
+                );
+            }
             return;
         }
         let state = self.fire.state();

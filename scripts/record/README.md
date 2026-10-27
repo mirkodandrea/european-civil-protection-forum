@@ -1,11 +1,10 @@
 # Recording the narrated demo
 
-`record.sh` produces `docs/media/ttx_demo.mp4`: a scripted two-turn session in which every role is played in the phone-sized all-roles page (`play.html`, left) next to the 3D simulator with its cinematic camera (right), narrated by Google Gemini TTS through OpenRouter, with subtitles.
+`record.sh` produces `runs/demo/ttx_demo.mp4` by default: a scripted two-turn session in which every role is played in the phone-sized all-roles page (`play.html`, left) next to the 3D simulator with its cinematic camera (right), narrated by Google Gemini TTS through OpenRouter, with subtitles.
 
 ```bash
 cargo build --release -p app
-./scripts/record/record.sh              # → docs/media/ttx_demo.mp4, .srt, .vtt, _captions.json, _log.jsonl
-python3 scripts/record/readme_demo.py   # refresh the timeline and outcome tables in docs/demo.md
+./scripts/record/record.sh              # → runs/demo/ttx_demo.mp4 and sidecar files
 ```
 
 Options (environment):
@@ -42,8 +41,8 @@ Recording is real time by nature (the browser and the window are captured live),
 
 ## Files
 
-- `narration.json`: the script (`text` = subtitle, `say` = what the voice reads when it differs, `who` / `shows` for the timeline in docs/demo.md)
+- `narration.json`: narration text and speaker/show metadata for the video
 - `llm_cassette.jsonl`: recorded model answers (committed, so anyone can re-record the same video without calling the model)
-- `session.js`, `tts.js`, `render_subs.js`, `compose.py`, `record.sh`, `readme_demo.py`
+- `session.js`, `tts.js`, `render_subs.js`, `compose.py`, `record.sh`
 
 A single screenshot of the simulator window: press `P`, or write a target path into `runs/shot.req`.

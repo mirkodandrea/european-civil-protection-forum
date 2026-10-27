@@ -18,8 +18,13 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "embedded")]
+pub mod embedded;
 pub mod factory;
+pub mod editor;
+pub mod pack;
 pub mod synthetic;
+pub use pack::{RunOptions, ScenarioEdits, ScenarioPack};
 
 /// Fuel codes of the fire core's legacy 7-class table.
 pub mod fuel {
@@ -61,8 +66,11 @@ pub struct Operations {
     pub progressive_suppression: bool,
     pub traffic: bool,
     pub intensity_exposure: bool,
-    pub communications: bool,
     pub spotting: bool,
+    pub segment_fire_closures: bool,
+    pub terrain_travel: bool,
+    pub emergency_congestion: bool,
+    pub local_autonomy: bool,
 }
 impl Operations {
     pub fn enhanced() -> Self {
@@ -71,16 +79,46 @@ impl Operations {
             progressive_suppression: true,
             traffic: true,
             intensity_exposure: true,
-            communications: true,
             spotting: false,
+            segment_fire_closures: true,
+            terrain_travel: true,
+            emergency_congestion: true,
+            local_autonomy: true,
         }
     }
 }
+
+/// Authored training assumptions for execution within an approved engine mission.
+/// Distances are metres, rates use simulated seconds; these are not safety guidance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommunicationSite {
-    pub id: String,
-    pub pos: Pos,
-    pub radius_m: f32,
+#[serde(default, deny_unknown_fields)]
+pub struct TacticalPolicy {
+    pub version: String,
+    pub sector_radius_m: f32,
+    pub hose_reach_m: f32,
+    pub wet_limit_pts: f32,
+    pub reassess_s: i64,
+    pub parking_danger: f32,
+    pub work_danger: f32,
+    pub share_work: bool,
+    pub resume_after_withdrawal: bool,
+    pub regroup_s: i64,
+}
+impl Default for TacticalPolicy {
+    fn default() -> Self {
+        Self {
+            version: "ttx-local-v1".into(),
+            sector_radius_m: 300.0,
+            hose_reach_m: 60.0,
+            wet_limit_pts: 30.0,
+            reassess_s: 60,
+            parking_danger: 0.10,
+            work_danger: 0.35,
+            share_work: true,
+            resume_after_withdrawal: true,
+            regroup_s: 60,
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuelDefinition {
@@ -140,12 +178,6 @@ pub struct WeatherSpec {
     pub moisture_pct: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IgnitionSpec {
-    pub at: Pos,
-    pub radius_m: f32,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildingKind {
@@ -169,6 +201,10 @@ impl BuildingKind {
 pub struct Building {
     pub id: u32,
     pub kind: BuildingKind,
+    /// Source artwork category, retained by the Factory importer. Presentation
+    /// only: does not grant capacity, affect exposure, or change operational kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_kind: Option<String>,
     /// Named facilities carry a name and are addressable from the gazetteer.
     #[serde(default)]
     pub name: Option<String>,
@@ -181,6 +217,14 @@ pub struct Building {
     /// Can host evacuees (shelter / assembly area) once opened.
     #[serde(default)]
     pub shelter_capacity: u32,
+    /// Footprint rotation, degrees counter-clockwise seen from above (0 = `size[0]`
+    /// along east). Presentation only: exposure and routing use `pos`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation_deg: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,19 +338,86 @@ impl ZoneGrid {
 }
 
 /// A named point, for the LLM to resolve "the ridge" or "la scuola" to a place.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Place {
     pub name: String,
     #[serde(default)]
     pub aliases: Vec<String>,
     pub pos: Pos,
+    /// Optional circular area around `pos`, metres (e.g. a district or a valley).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius_m: Option<f32>,
+    /// Buildings (by id) and roads (by id) that belong to the place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buildings: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roads: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceType {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// Straight-line travel speed from the staging base, m/s. `None` keeps the
+    /// built-in default for the id (air tankers 90, buses 8, anything else 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_mps: Option<f32>,
+}
+
+impl ResourceType {
+    /// Travel speed in metres per second.
+    pub fn speed(&self) -> f32 {
+        self.speed_mps.unwrap_or(match self.id.as_str() {
+            "air_tankers" => 90.0,
+            "buses" => 8.0,
+            _ => 10.0,
+        })
+    }
+}
+
+/// What the operational model adds to one role: units of a resource, the
+/// command that uses them and, if the scenario lacks it, the resource itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperationalGrant {
+    pub role: String,
+    pub resource: String,
+    pub qty: u32,
+    /// Command kind the role may propose (e.g. `DeployEngine`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// Resource type added when no type has `resource` as its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub define: Option<ResourceType>,
+}
+
+/// The grant older scenario packages relied on.
+pub(crate) fn legacy_grants() -> Vec<OperationalGrant> {
+    vec![OperationalGrant {
+        role: "fire_commander".into(),
+        resource: "engines".into(),
+        qty: 2,
+        action: Some("DeployEngine".into()),
+        define: Some(ResourceType {
+            id: "engines".into(),
+            name: "Road engines".into(),
+            description: "2,500 L training engine; 60 m hose reach; refills at staging".into(),
+            speed_mps: None,
+        }),
+    }]
+}
+
+/// Turn length when the scenario does not set one.
+pub const DEFAULT_TURN_MINUTES: u32 = 30;
+
+fn default_turn_minutes() -> u32 {
+    DEFAULT_TURN_MINUTES
+}
+
+/// Place deployments start from when the scenario names none: where older
+/// scenario packages staged their resources.
+fn legacy_staging() -> Option<String> {
+    Some("Valverde Town Hall".into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,10 +447,10 @@ pub struct ReinforcementOffer {
 }
 
 /// One prepared inject of the Master Scenario Events List.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InjectTemplate {
     pub id: String,
-    /// Suggested turn (the Master decides when to send).
+    /// Suggested turn (the EXCON decides when to send).
     pub turn: u32,
     pub title: String,
     /// The simulated sender (e.g. "112 Dispatch", "ERCC").
@@ -349,14 +460,100 @@ pub struct InjectTemplate {
     /// Text in the working language (English).
     pub text: String,
     pub objective: String,
+    /// Incident/event name used only to group injects in the EXCON view.
+    #[serde(default)]
+    pub event: String,
+    /// Planned instant, simulated seconds from the start of the exercise.
+    /// Without it the inject is planned at the start of its suggested `turn`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_s: Option<i64>,
+    /// World changes that go with the inject: run by EXCON when the inject is
+    /// sent, `offset_s` from it (see [`InjectAction`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<InjectAction>,
+}
+
+impl InjectTemplate {
+    /// Planned instant in simulated seconds: its own `at_s`, otherwise the
+    /// start of its suggested turn counted with `turn_minutes`.
+    pub fn planned_s(&self, turn_minutes: u32) -> i64 {
+        self.at_s
+            .unwrap_or_else(|| (self.turn.max(1) as i64 - 1) * turn_minutes as i64 * 60)
+    }
+}
+
+/// A scripted world change that belongs to an inject. With `offset_s >= 0` it
+/// runs when EXCON sends the inject: at once as an EXCON command for 0,
+/// otherwise approved to apply `offset_s` after the send, during the following
+/// resolution. With `offset_s < 0` it is a pre-action: it runs by itself
+/// `-offset_s` before the inject's planned time during the time scan (unless
+/// EXCON disabled it or skipped the inject), or at send time if the inject is
+/// sent early. Ids are unique across the scenario.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InjectAction {
+    pub id: String,
+    pub title: String,
+    /// An EXCON `sim::Command` as JSON; validated when the exercise loads.
+    pub command: serde_json::Value,
+    /// Seconds after the inject is sent; negative: before its planned time.
+    #[serde(default, alias = "delay_s")]
+    pub offset_s: i64,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// Legacy standalone timeline action, still read from old packs and converted
+/// into an [`InjectAction`] on load (see [`Scenario::migrate_legacy_timeline`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimelineAction {
+    pub id: String,
+    pub title: String,
+    /// Planned instant, simulated seconds from the start of the exercise.
+    pub at_s: i64,
+    /// An EXCON `sim::Command` as JSON; validated when the exercise loads.
+    pub command: serde_json::Value,
+    /// Inject this action accompanies (informational link in the timeline).
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// Optional supplied visual heightfield, sampled at grid nodes (row 0 north).
+/// Rendering only: routing, slope, fire and exposure continue using `dem`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderTerrain {
+    pub rows: usize,
+    pub cols: usize,
+    pub posting_m: f32,
+    pub world_size_m: [f32; 2],
+    pub elev: Vec<f32>,
+}
+
+impl RenderTerrain {
+    /// Row and column ranges of the postings that can lie within `radius` of `at`.
+    pub fn footprint(&self, at: Pos, radius: f32) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+        let span = |lo: f32, hi: f32, n: usize| {
+            let a = (lo / self.posting_m).floor().max(0.) as usize;
+            let b = ((hi / self.posting_m).ceil().max(0.) as usize + 1).min(n);
+            a.min(n)..b
+        };
+        let cols = span(at[0] - radius, at[0] + radius, self.cols);
+        let rows = span(
+            self.world_size_m[1] - at[1] - radius,
+            self.world_size_m[1] - at[1] + radius,
+            self.rows,
+        );
+        (rows, cols)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
     #[serde(default)]
-    pub operations: Operations,
+    pub tactical_policy: TacticalPolicy,
     #[serde(default)]
-    pub communication_sites: Vec<CommunicationSite>,
+    pub operations: Operations,
     #[serde(default)]
     pub fuel_definitions: Vec<FuelDefinition>,
     pub id: String,
@@ -367,10 +564,15 @@ pub struct Scenario {
     pub fuel: Vec<i32>,
     /// Row-major elevation, metres.
     pub dem: Vec<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_terrain: Option<RenderTerrain>,
     /// Exercise clock at t = 0, seconds since Day 1 00:00.
     pub start_clock_s: i64,
+    /// Length of one turn in minutes: sizes the timeline bands and places
+    /// injects that have no `at_s`. EXCON may still change the live length.
+    #[serde(default = "default_turn_minutes")]
+    pub turn_minutes: u32,
     pub weather: WeatherSpec,
-    pub initial_ignitions: Vec<IgnitionSpec>,
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
     pub sectors: Vec<Sector>,
@@ -378,29 +580,64 @@ pub struct Scenario {
     pub places: Vec<Place>,
     pub resource_types: Vec<ResourceType>,
     pub roles: Vec<Role>,
+    /// Parts the EXCON plays (e.g. «Centrale 112»), the senders of injects. Separate from `roles`.
+    #[serde(default)]
+    pub excon_roles: Vec<String>,
+    /// Name under which the exercise control speaks to players when no other
+    /// persona applies. Empty: a built-in neutral name ("Operations room").
+    #[serde(default)]
+    pub default_persona: String,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
+    /// Legacy standalone actions: read for old files, emptied by
+    /// [`Scenario::migrate_legacy_timeline`] and never written back.
+    #[serde(default, skip_serializing)]
+    pub timeline: Vec<TimelineAction>,
+    /// Named place resources travel from (the exercise can move it later).
+    /// Unknown or `None`: the centre of the map.
+    #[serde(default = "legacy_staging")]
+    pub staging_base: Option<String>,
+    /// Added to roles when the operational model is enabled.
+    #[serde(default = "legacy_grants")]
+    pub operational_grants: Vec<OperationalGrant>,
 }
 
 impl Scenario {
+    /// The persona exercise control speaks as by default, in `language`.
+    pub fn default_persona_name(&self, language: &str) -> String {
+        let name = self.default_persona.trim();
+        if !name.is_empty() {
+            return name.into();
+        }
+        match language {
+            "it" => "Sala operativa",
+            _ => "Operations room",
+        }
+        .into()
+    }
+
     /// Enable the enhanced training model, adding engine capability to the
     /// synthetic Fire Commander when loading an older scenario package.
     pub fn enable_operational_model(&mut self) {
         let spotting = self.operations.spotting;
         self.operations = Operations::enhanced();
         self.operations.spotting = spotting;
-        if let Some(role) = self.roles.iter_mut().find(|r| r.id == "fire_commander") {
-            role.resources.entry("engines".into()).or_insert(2);
-            if !role.allowed_actions.iter().any(|a| a == "DeployEngine") {
-                role.allowed_actions.push("DeployEngine".into());
+        for grant in self.operational_grants.clone() {
+            let Some(role) = self.roles.iter_mut().find(|r| r.id == grant.role) else {
+                continue;
+            };
+            role.resources
+                .entry(grant.resource.clone())
+                .or_insert(grant.qty);
+            if let Some(action) = &grant.action {
+                if !role.allowed_actions.contains(action) {
+                    role.allowed_actions.push(action.clone());
+                }
             }
-            if !self.resource_types.iter().any(|r| r.id == "engines") {
-                self.resource_types.push(ResourceType {
-                    id: "engines".into(),
-                    name: "Road engines".into(),
-                    description: "2,500 L training engine; 60 m hose reach; refills at staging"
-                        .into(),
-                });
+            if let Some(define) = grant.define {
+                if !self.resource_types.iter().any(|r| r.id == grant.resource) {
+                    self.resource_types.push(define);
+                }
             }
         }
     }
@@ -408,8 +645,9 @@ impl Scenario {
         let path = path.as_ref();
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let scn: Scenario =
+        let mut scn: Scenario =
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        scn.migrate_legacy_timeline()?;
         scn.check()?;
         Ok(scn)
     }
@@ -425,6 +663,24 @@ impl Scenario {
 
     /// Internal consistency: raster sizes, unique ids, references.
     pub fn check(&self) -> Result<()> {
+        let p = &self.tactical_policy;
+        anyhow::ensure!(
+            !p.version.trim().is_empty()
+                && p.version.len() <= 100
+                && p.sector_radius_m.is_finite()
+                && (0.0..=2000.0).contains(&p.sector_radius_m)
+                && p.hose_reach_m.is_finite()
+                && (1.0..=300.0).contains(&p.hose_reach_m)
+                && p.wet_limit_pts.is_finite()
+                && (1.0..=100.0).contains(&p.wet_limit_pts)
+                && (1..=3600).contains(&p.reassess_s)
+                && (0..=3600).contains(&p.regroup_s)
+                && p.parking_danger.is_finite()
+                && p.work_danger.is_finite()
+                && (0.0..=1.0).contains(&p.parking_danger)
+                && (p.parking_danger..=1.0).contains(&p.work_danger),
+            "invalid tactical policy"
+        );
         anyhow::ensure!(
             self.grid.rows > 0
                 && self.grid.cols > 0
@@ -432,17 +688,19 @@ impl Scenario {
                 && self.grid.cellsize > 0.0,
             "invalid grid"
         );
+        if let Some(t) = &self.render_terrain {
+            anyhow::ensure!(t.rows >= 2 && t.cols >= 2 && t.rows.checked_mul(t.cols).is_some_and(|n| n <= 4_194_304 && n == t.elev.len())
+                && t.posting_m.is_finite() && t.posting_m > 0.0 && t.posting_m <= self.grid.cellsize
+                && t.elev.iter().all(|h|h.is_finite())
+                && t.world_size_m.iter().all(|v|v.is_finite() && *v>0.0)
+                && (t.world_size_m[0]-self.grid.width_m()).abs()<0.1
+                && (t.world_size_m[1]-self.grid.height_m()).abs()<0.1
+                && ((t.cols-1) as f32*t.posting_m-t.world_size_m[0]).abs()<0.1
+                && ((t.rows-1) as f32*t.posting_m-t.world_size_m[1]).abs()<0.1,
+                "visual terrain must be finite, <=4M nodes, no coarser than physics and cover exactly the scenario extent");
+        }
         let n = self.grid.len();
         anyhow::ensure!(self.dem.iter().all(|x| x.is_finite()), "non-finite terrain");
-        for site in &self.communication_sites {
-            anyhow::ensure!(
-                self.cell_of(site.pos).is_some()
-                    && site.radius_m.is_finite()
-                    && site.radius_m > 0.0,
-                "invalid communication site {}",
-                site.id
-            );
-        }
         for road in &self.roads {
             anyhow::ensure!(
                 road.points.len() >= 2
@@ -498,6 +756,64 @@ impl Scenario {
                     i.id
                 );
             }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for i in &self.msel {
+            for a in &i.actions {
+                anyhow::ensure!(
+                    !a.id.trim().is_empty() && !a.title.trim().is_empty(),
+                    "action {} of inject {} needs an id and a title",
+                    a.id,
+                    i.id
+                );
+                anyhow::ensure!(seen.insert(a.id.as_str()), "duplicate action id {}", a.id);
+                anyhow::ensure!(
+                    a.command.is_object(),
+                    "action {} command must be a JSON object",
+                    a.id
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Convert legacy standalone `timeline` actions into inject actions and
+    /// empty the legacy list. An action with `after` joins that inject; one
+    /// without joins the latest inject planned at or before its time, or the
+    /// first inject if none is. `offset_s` is the time past the inject's
+    /// planned instant (negative: a pre-action). Fails when there is no inject to
+    /// attach to or `after` names an unknown one.
+    pub fn migrate_legacy_timeline(&mut self) -> Result<()> {
+        if self.timeline.is_empty() {
+            return Ok(());
+        }
+        let tm = self.turn_minutes;
+        let planned: Vec<i64> = self.msel.iter().map(|i| i.planned_s(tm)).collect();
+        let legacy = std::mem::take(&mut self.timeline);
+        for a in legacy {
+            let idx = match &a.after {
+                Some(id) => self
+                    .msel
+                    .iter()
+                    .position(|i| &i.id == id)
+                    .with_context(|| format!("timeline action {} follows unknown inject {id}", a.id))?,
+                None => {
+                    let latest = (0..planned.len())
+                        .filter(|n| planned[*n] <= a.at_s)
+                        .max_by_key(|n| (planned[*n], *n));
+                    let first = (0..planned.len()).min_by_key(|n| (planned[*n], *n));
+                    latest.or(first).with_context(|| {
+                        format!("timeline action {} has no inject to attach to", a.id)
+                    })?
+                }
+            };
+            self.msel[idx].actions.push(InjectAction {
+                id: a.id,
+                title: a.title,
+                command: a.command,
+                offset_s: a.at_s - planned[idx],
+                note: a.note,
+            });
         }
         Ok(())
     }
@@ -630,7 +946,112 @@ pub fn format_clock(clock_s: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retired_communication_keys_are_ignored_by_old_scenarios() {
+        let s = synthetic::generate(synthetic::DEFAULT_SEED);
+        let mut v = serde_json::to_value(&s).unwrap();
+        v["communication_sites"] =
+            serde_json::json!([{"id": "mast", "pos": [100.0, 100.0], "radius_m": 500.0}]);
+        v["operations"]["communications"] = serde_json::json!(true);
+        let old: Scenario = serde_json::from_value(v).expect("retired keys must still load");
+        assert_eq!(
+            serde_json::to_value(&old.operations).unwrap(),
+            serde_json::to_value(&s.operations).unwrap()
+        );
+        assert!(old.check().is_ok());
+    }
+
+    #[test]
+    fn visual_category_is_optional_and_does_not_replace_operational_kind() {
+        let legacy = serde_json::json!({"id":1,"kind":"sports_centre","name":"Assembly",
+            "pos":[20.,20.],"size":[30.,30.],"occupants":0,"sector":"a","shelter_capacity":100});
+        let b: super::Building = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(b.visual_kind.is_none());
+        assert_eq!(serde_json::to_value(&b).unwrap(), legacy);
+        let mut authored = legacy;
+        authored["visual_kind"] = serde_json::json!("assembly");
+        let b: super::Building = serde_json::from_value(authored.clone()).unwrap();
+        assert_eq!(b.kind, super::BuildingKind::SportsCentre);
+        assert_eq!(b.shelter_capacity, 100);
+        assert!(!b.kind.needs_transport());
+        assert_eq!(serde_json::to_value(&b).unwrap(), authored);
+    }
+
     use super::*;
+
+    #[test]
+    fn supplied_visual_terrain_is_separate_and_validated() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        let original = s.dem.clone();
+        s.render_terrain = Some(RenderTerrain {
+            rows: 401,
+            cols: 401,
+            posting_m: 10.0,
+            world_size_m: [4000.0, 4000.0],
+            elev: vec![123.0; 401 * 401],
+        });
+        s.check().unwrap();
+        assert_eq!(s.dem, original);
+        s.render_terrain.as_mut().unwrap().world_size_m[0] = 3990.0;
+        assert!(s.check().is_err());
+        s.render_terrain.as_mut().unwrap().world_size_m[0] = 4000.0;
+        s.render_terrain.as_mut().unwrap().elev[10] = f32::NAN;
+        assert!(s.check().is_err());
+    }
+
+    fn legacy(id: &str, at_s: i64, after: Option<&str>) -> TimelineAction {
+        TimelineAction {
+            id: id.into(),
+            title: id.into(),
+            at_s,
+            command: serde_json::json!({"type": "SetWeather", "wind_dir_deg": 10.0}),
+            after: after.map(String::from),
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn legacy_timeline_actions_become_inject_actions() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        for (n, i) in s.msel.iter_mut().enumerate() {
+            i.at_s = Some(1000 + n as i64 * 1000);
+        }
+        let (first, second) = (s.msel[0].id.clone(), s.msel[1].id.clone());
+        s.timeline = vec![
+            legacy("linked", 1500, Some(&second)), // after an inject: attaches to it, offset 1500 - 2000
+            legacy("between", 2500, None),         // latest inject at or before: the second, +500
+            legacy("before_all", 200, None),       // earlier than any: the first, -800 (pre-action)
+        ];
+        s.migrate_legacy_timeline().unwrap();
+        assert!(s.timeline.is_empty());
+        let find = |id: &str| {
+            s.msel
+                .iter()
+                .flat_map(|i| i.actions.iter().map(move |a| (i.id.clone(), a.offset_s, a.id.clone())))
+                .find(|a| a.2 == id)
+                .unwrap()
+        };
+        assert_eq!(find("linked"), (second.clone(), -500, "linked".into()));
+        assert_eq!(find("between"), (second, 500, "between".into()));
+        assert_eq!(find("before_all"), (first, -800, "before_all".into()));
+        s.check().unwrap();
+        // The legacy field is never written back, and old files still load.
+        let v = serde_json::to_value(&s).unwrap();
+        assert!(v.get("timeline").is_none());
+        let again: Scenario = serde_json::from_value(v).unwrap();
+        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 4);
+    }
+
+    #[test]
+    fn legacy_timeline_needs_an_inject_and_unique_ids() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        s.timeline = vec![legacy("x", 0, Some("missing"))];
+        assert!(s.migrate_legacy_timeline().is_err());
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        s.timeline = vec![legacy("dup", 0, None), legacy("dup", 10, None)];
+        s.migrate_legacy_timeline().unwrap();
+        assert!(s.check().is_err(), "duplicate action ids are refused");
+    }
 
     #[test]
     fn clock_format() {

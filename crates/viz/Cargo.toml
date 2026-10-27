@@ -7,15 +7,19 @@ description = "Bevy big-screen renderer: 3D terrain, vegetation, fire, buildings
 
 [dependencies]
 scenario.workspace = true
-sim.workspace = true
-fire.workspace = true
-exercise.workspace = true
+view.workspace = true
 serde_json.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 bevy = { version = "0.14", default-features = true }
 bevy_egui = { version = "0.28", default-features = false, features = ["open_url", "default_fonts", "render"] }
 
+# Same wgpu version as Bevy 0.14, for the source GPU timestamp probes.
+wgpu = { version = "0.20", default-features = false }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1", features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy_egui = { version = "0.28", default-features = false, features = ["manage_clipboard"] }

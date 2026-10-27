@@ -42,11 +42,32 @@ impl Vehicle {
         let Some(leg) = route.legs.get(self.leg) else {
             return self.target.unwrap_or(origin);
         };
+        if self.waiting {
+            return leg.from;
+        }
         interpolate(
             leg.from,
             leg.to,
             ((t - self.entered_s) as f32 * leg.speed_mps / leg.length_m.max(0.01)).clamp(0.0, 1.0),
         )
+    }
+}
+impl Traffic {
+    /// Snapshot FIFO delay at dispatch: bake it into the same leg duration used
+    /// by both ETA and position. Does not reserve priority over civilian traffic.
+    pub fn delay_route(&self, route: &mut Route, speed: f32) {
+        for leg in &mut route.legs {
+            let queued = leg
+                .link
+                .and_then(|id| self.links.get(&id))
+                .map_or(0, |q| q.queue.len());
+            if queued == 0 || leg.length_m <= 0.01 {
+                continue;
+            }
+            let base_s = leg.length_m / leg.speed_mps.min(speed).max(0.01);
+            let delay_s = queued as f32 / leg.flow_per_s.max(0.01);
+            leg.speed_mps = leg.length_m / (base_s + delay_s);
+        }
     }
 }
 impl World {
@@ -125,7 +146,14 @@ impl World {
             .filter_map(|(p, d)| {
                 self.network
                     .route(origin, p, &self.d.roads, true, false)
-                    .map(|r| (r, p, d))
+                    .map(|mut r| {
+                        // The speed cap used for destination ETA must also govern
+                        // the physical movement clock on motorway-class links.
+                        for leg in &mut r.legs {
+                            leg.speed_mps = leg.speed_mps.min(20.0);
+                        }
+                        (r, p, d)
+                    })
             })
             .min_by(|(a, _, _), (b, _, _)| a.seconds(20.0).total_cmp(&b.seconds(20.0)))
     }
@@ -165,11 +193,7 @@ impl World {
                 continue;
             };
             if v.waiting {
-                if leg
-                    .road
-                    .as_ref()
-                    .is_some_and(|id| self.d.roads[id].cut_by_fire || self.d.roads[id].closed)
-                {
+                if !self.network.leg_open(&leg, &self.d.roads, true) {
                     v.route = None;
                     v.ready_s = t;
                     v.detail = "Rerouting around closed or unsafe road".into();
@@ -234,11 +258,7 @@ impl World {
                         .unwrap_or(true)
                 })
             });
-            let next_open = next.is_none_or(|l| {
-                l.road
-                    .as_ref()
-                    .is_none_or(|id| !self.d.roads[id].cut_by_fire && !self.d.roads[id].closed)
-            });
+            let next_open = next.is_none_or(|l| self.network.leg_open(l, &self.d.roads, true));
             let release = leg.link.is_none_or(|id| {
                 let q = self.d.traffic.links.entry(id).or_default();
                 q.queue.first() == Some(&i) && t as f32 >= q.next_release_s
@@ -293,7 +313,12 @@ impl World {
         let target = v.target?;
         self.network
             .route(origin, target, &self.d.roads, true, false)
-            .map(|r| (r, target, v.destination))
+            .map(|mut r| {
+                for leg in &mut r.legs {
+                    leg.speed_mps = leg.speed_mps.min(20.0);
+                }
+                (r, target, v.destination)
+            })
     }
     fn complete_vehicle(&mut self, v: &mut Vehicle) {
         v.completed = true;

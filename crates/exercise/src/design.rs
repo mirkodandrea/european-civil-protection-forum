@@ -66,7 +66,7 @@ impl Exercise {
         let b=p.branches.iter().find(|b|b.path==path).ok_or_else(||anyhow::anyhow!("unknown path"))?;
         let observations=b.conditions.iter().map(|c|self.condition_evidence(c)).collect::<Vec<_>>();
         let divergence=p.phase!=self.exercise_phase || observations.iter().any(|e|e["met"]!=true);
-        if divergence && !adaptation { bail!("unplanned divergence: conditions/phase do not match; explicit Master adaptation required"); }
+        if divergence && !adaptation { bail!("unplanned divergence: conditions/phase do not match; explicit EXCON adaptation required"); }
         let to=b.phase;
         self.validate_limits_for_phase(&self.resource_limits,to)?;
         let evidence=json!({"point":point,"from_path":self.current_path,"path":path,"from_phase":self.exercise_phase,"to_phase":to,"observations":observations,"deviation":divergence,"adaptation":adaptation,"reason":reason,"approved_by":MASTER,"turn":self.turn,"t_s":self.world.time_s(),"wall_ms":crate::wall_ms()});
