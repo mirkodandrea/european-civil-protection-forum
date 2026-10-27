@@ -23,6 +23,7 @@ fn local_ip() -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut ctx: EguiContexts,
+    editor: Option<Res<crate::editor::Editor>>,
     snap: Res<Snapshot>,
     frame: Res<Frame>,
     scn: Res<Scn>,
@@ -35,6 +36,9 @@ pub fn draw(
     mut ip: Local<Option<String>>,
     mut show_labels: Local<Option<bool>>,
 ) {
+    if editor.is_some() {
+        return;
+    }
     // The embedded viewer shares its small viewport with the browser controls.
     // Operational information is already rendered by the surrounding role UI.
     if cfg!(target_arch = "wasm32") {

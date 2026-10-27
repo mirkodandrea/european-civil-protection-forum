@@ -24,6 +24,7 @@ use view::{
     Vehicle, ViewSource,
 };
 
+pub mod editor;
 mod architecture;
 mod bench;
 mod camera;
@@ -104,7 +105,11 @@ pub struct Scn(pub Arc<scenario::Scenario>);
 ///
 /// The renderer knows the exercise only through `source`: in this process
 /// (`server::view::ExerciseSource`) or on another machine.
-pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
+pub fn run(source: Box<dyn ViewSource>, info: Info) {
+    run_internal(source, info, None);
+}
+
+fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<editor::Editor>) {
     let scn = match source.scenario() {
         Ok(scn) => scn,
         Err(e) => {
@@ -132,7 +137,11 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
         primary_window.canvas = Some("#standalone-3d".into());
         primary_window.fit_canvas_to_parent = true;
     }
-    App::new()
+    let mut app = App::new();
+    if let Some(editor) = editor {
+        app.insert_resource(editor);
+    }
+    app
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -197,6 +206,9 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
             ),
         )
         .add_systems(First, replace_scene)
+        .add_systems(PreUpdate, editor::paste_input
+            .after(bevy_egui::EguiSet::ProcessInput)
+            .before(bevy_egui::EguiSet::BeginFrame))
         .add_systems(
             Update,
             (
@@ -214,6 +226,8 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
                 camera::control.after(frame::update),
                 camera::fire_lights.after(frame::update),
                 hud::draw.after(frame::update).after(fire_field::toggle),
+                editor::draw,
+                editor::interact.after(editor::draw),
                 screenshot,
                 record,
                 snapshot::hold.after(camera::control).after(sync),
@@ -240,6 +254,23 @@ fn replace_scene(world: &mut World) {
     let Some(next) = next else {
         return;
     };
+    let preserve_orbit = world.contains_resource::<editor::Editor>()
+        && current.grid.rows == next.grid.rows
+        && current.grid.cols == next.grid.cols
+        && current.grid.cellsize == next.grid.cellsize;
+    let orbit = preserve_orbit
+        .then(|| {
+            world
+                .get_resource::<camera::Orbit>()
+                .map(|o| camera::Orbit {
+                    focus: o.focus,
+                    yaw: o.yaw,
+                    pitch: o.pitch,
+                    dist: o.dist,
+                    auto: false,
+                })
+        })
+        .flatten();
     // Keep the window (including its egui context) and the atmosphere. All scene
     // roots and their children belong to this renderer and are reconstructed.
     let roots: Vec<Entity> = world
@@ -253,6 +284,9 @@ fn replace_scene(world: &mut World) {
     world.insert_resource(Snapshot::default());
     world.insert_resource(Frame::default());
     world.run_schedule(SceneSetup);
+    if let Some(orbit) = orbit {
+        world.insert_resource(orbit);
+    }
 }
 
 /// Copy the newest view into the [`Snapshot`] whenever the model has changed

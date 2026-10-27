@@ -1,5 +1,6 @@
 [package]
 name = "app"
+default-run = "ttx"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -26,3 +27,8 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy = "0.15"
+
+[[bin]]
+name = "scenario-editor"
+path = "src/bin_scenario_editor.rs"
+required-features = ["viz"]

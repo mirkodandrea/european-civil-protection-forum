@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "embedded")]
 pub mod embedded;
 pub mod factory;
+pub mod editor;
 pub mod pack;
 pub mod synthetic;
 pub use pack::{RunOptions, ScenarioEdits, ScenarioPack};

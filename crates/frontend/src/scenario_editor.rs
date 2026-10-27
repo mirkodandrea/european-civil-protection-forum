@@ -1505,6 +1505,7 @@ pub fn scenario_editor(props: &Props) -> Html {
     html! {<main class="page scenario-editor" id="scenario-editor">
         if open.is_none() {<section class="card">
             <h2>{ex("Scenari")}</h2>
+            if cfg!(feature="standalone") {<a class="button" href="?editor=1">{"Apri editor scenario 3D"}</a>}
             <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, inneschi, meteo e inject. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
             <ul class="scenario-legend muted">
                 <li><span class="pill">{ex("in corso")}</span> {ex("è l’esercitazione che sta girando ora.")}</li>

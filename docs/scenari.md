@@ -69,3 +69,57 @@ Gli scenari forniti (`valverde_factory` e il pack `valverde_night_wind`) non han
 
 API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_end"}` (`next_event` è un alias di `next_inject`); `POST /api/master/resolve/stop` (ferma l'avanzamento in corso, il turno resta aperto); `GET /api/master` espone `planned_injects` (con `actions`, `skipped`) e `inject_actions` (ogni esecuzione con il suo stato).
 
+
+## Editor scenario 3D
+
+L’editor 3D modifica una **bozza di scenario completo**, incluso il territorio.
+È separato dalla simulazione: non avvia HTTP o AI e non applica interventi
+all’esercitazione in corso. La vista Scenario descritta sopra resta l’editor dei
+pack sopra un territorio; il nuovo ambiente serve anche ad authoring geometrico.
+
+- **Web standalone:** dalla vista Scenario, «Apri editor scenario 3D», oppure
+  aprire `?editor=1`. Richiede una build standalone
+  (`./scripts/build_frontend.sh --features standalone`).
+- **App Bevy:** `cargo run --release -p app --bin scenario-editor`.
+  Opzioni: `--scenarios-dir DIR` (default `data/scenarios`) e `--scenario ID`.
+  La libreria comprende territori e pack, risolti sulla propria base.
+
+«Crea territorio vuoto» costruisce una griglia piatta senza edifici, strade,
+ruoli o inject ereditati. Si scelgono identificativo, celle per lato e metri per
+cella. «Apri scenario esistente» carica un territorio o il contenuto completo di
+un pack; «Clona scenario corrente» assegna alla copia un nuovo ID e conserva
+territorio e contenuti dell’esercitazione. Aprire un altro progetto con modifiche
+non salvate richiede una scelta esplicita nell’interfaccia.
+
+Gli strumenti lavorano con un clic sulla superficie 3D: quota assoluta e
+vegetazione con pennello circolare, edifici, luoghi, inneschi (raggio minimo
+40 m), strade con due estremi. Gli oggetti si scelgono dalla lista o sulla mappa;
+le proprietà permettono di cambiare coordinate e attributi, oppure eliminarli.
+Le strade sono selezionabili dalla lista. «Scenario e meteo» modifica nome,
+descrizione, orario iniziale, durata dei turni e meteo. Importazione/esportazione
+JSON (download nel browser, copia negli appunti nel desktop) trasferisce l’intero scenario e permette di modificare anche ruoli,
+risorse, inject e politiche avanzate. Il formato è quello dei territori `.json`,
+non quello dei pack `.pack.json`. Nel browser è possibile usare poi l’editor
+pack ordinario sul nuovo territorio per i moduli di ruoli, risorse e timeline.
+
+Annulla/ripristina conserva fino a 32 revisioni della bozza. Una modifica non
+valida lascia intatti documento e cronologia. I pennelli di quota aggiornano
+anche l’eventuale terreno visuale ad alta risoluzione. Ogni modifica confermata
+ricostruisce la scena in sola lettura, preservando la camera a parità di griglia;
+l’authoring di territori grandi può quindi richiedere un’attesa.
+
+Salvataggio nativo: `<scenarios-dir>/<id>.json`, con sostituzione atomica.
+Un ID già usato da un pack richiede un nuovo identificativo. Salvataggio web:
+`localStorage`, chiave `ttx.standalone.territories`; i territori compaiono nella
+libreria ordinaria e possono essere avviati o usati da nuovi pack. Gli ID inclusi
+nell’app non sono sovrascrivibili nel browser: clonare prima. Gli errori di quota
+del browser sono mostrati e non segnano la bozza come salvata. Per trasferire un
+territorio tra browser e nativo usare il JSON completo. La sessione browser
+verifica anche l’impronta dei territori creati dall’editor prima del ripristino.
+
+Verifica grafica invisibile, senza avviare l’esercitazione:
+
+```sh
+cargo build --release -p app --bin scenario-editor
+TTX_SNAPSHOT="$PWD/runs/editor.png" TTX_SCALE=1 target/release/scenario-editor
+```

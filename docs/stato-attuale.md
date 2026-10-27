@@ -8,6 +8,16 @@ dettagli implementativi restano nel codice.
 
 Disponibili Valverde (4 × 4 km) e Selvariva (6 × 6 km), con catalogo delle basi nello standalone, filtro nell’editor e caricamento della base dichiarata da ciascun pack. Il cambio scenario ricostruisce la scena 3D locale; il viewer remoto riceve l’identità del territorio e carica la mappa corrispondente. Il pack `selvariva_festival` propone otto inject per una demo facilitata di un’ora: festival, scolaresca, due abitati, rotazione del vento e assistenza narrativa. Territorio, nomi e quantità sono sintetici. Vedi [traccia e validazione](scenario-selvariva.md).
 
+## Authoring 3D degli scenari
+
+Editor dedicato condiviso tra standalone web (`?editor=1`) e app Bevy
+(`scenario-editor`): territorio vuoto, apertura e clonazione degli scenari,
+pennelli di quota e combustibile, edifici, strade, luoghi e inneschi,
+proprietà, meteo, annulla/ripristina e import/export JSON completo.
+La bozza è indipendente dall’esercitazione. I salvataggi sono territori JSON
+nella libreria nativa oppure territori in localStorage nel browser, disponibili
+anche all’editor pack e all’avvio dell’esercitazione. Vedi [uso e limiti](scenari.md#editor-scenario-3d).
+
 ## Scopo e ruoli
 
 Il simulatore è pensato per esercitazioni da tavolo su emergenze. Lo scenario

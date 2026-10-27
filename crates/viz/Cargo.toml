@@ -20,3 +20,6 @@ wgpu = { version = "0.20", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1", features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy_egui = { version = "0.28", default-features = false, features = ["manage_clipboard"] }

@@ -1,3 +1,5 @@
+#[cfg(feature = "standalone")]
+mod editor3d;
 mod action_form;
 mod advanced;
 mod controllo;
@@ -1034,6 +1036,13 @@ impl Component for App {
     }
 }
 fn main() {
+    #[cfg(feature = "standalone")]
+    if api::window().location().search().unwrap_or_default()
+        .split(['&', '?']).any(|p| p == "editor=1")
+    {
+        editor3d::start();
+        return;
+    }
     #[cfg(not(feature = "standalone"))]
     if api::window()
         .location()

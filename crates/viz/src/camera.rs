@@ -231,7 +231,7 @@ fn smooth_damp3(current: Vec3, target: Vec3, vel: &mut Vec3, smooth_time: f32, d
 #[derive(Component)]
 pub struct FireLight(usize);
 
-fn home(scn: &scenario::Scenario) -> Orbit {
+fn home(scn: &scenario::Scenario, editing: bool) -> Orbit {
     let auto = std::env::var("TTX_SNAPSHOT").is_err()
         && ["TTX_ORBIT", "TTX_CINEMATIC"]
             .iter()
@@ -250,6 +250,15 @@ fn home(scn: &scenario::Scenario) -> Orbit {
             auto,
         };
     }
+    if editing {
+        return Orbit {
+            focus: to_bevy(scn, [scn.grid.width_m() * 0.5, scn.grid.height_m() * 0.5], 0.0),
+            yaw: 0.6,
+            pitch: 0.85,
+            dist: scn.grid.width_m().max(scn.grid.height_m()) * 1.4,
+            auto: false,
+        };
+    }
     Orbit {
         focus: to_bevy(scn, [2600.0, 2250.0], 0.0),
         yaw: 0.6,
@@ -259,8 +268,8 @@ fn home(scn: &scenario::Scenario) -> Orbit {
     }
 }
 
-pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality::Quality>) {
-    let o = home(&scn.0);
+pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality::Quality>, editor: Option<Res<crate::editor::Editor>>) {
+    let o = home(&scn.0, editor.is_some());
     let mut camera = commands.spawn((
         Camera3dBundle {
             camera: Camera {
@@ -408,6 +417,7 @@ fn ease(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
 
 #[allow(clippy::too_many_arguments)]
 pub fn control(
+    editor: Option<Res<crate::editor::Editor>>,
     mut o: ResMut<Orbit>,
     mut dir: ResMut<Director>,
     mut cam: Query<&mut Transform, With<Camera3d>>,
@@ -435,7 +445,7 @@ pub fn control(
     {
         *o = Orbit {
             auto: o.auto,
-            ..home(s)
+            ..home(s, editor.is_some())
         };
         dir.manual_until = now + 15.0;
         dir.v_focus = Vec3::ZERO;

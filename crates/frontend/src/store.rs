@@ -61,12 +61,9 @@ pub fn load_session() -> Option<SavedSession> {
     match serde_json::from_str::<SavedSession>(&text) {
         Ok(s)
             if s.v == FORMAT
-                && scenario::embedded::territory(&s.pack.base).is_ok()
+                && authoring_base(&s.pack.base).is_ok()
                 && (s.territory_fingerprint.is_empty()
-                    || scenario::embedded::fingerprint(&s.pack.base)
-                        .ok()
-                        .as_deref()
-                        == Some(&s.territory_fingerprint)) =>
+                    || territory_fingerprint(&s.pack.base) == s.territory_fingerprint) =>
         {
             Some(s)
         }
@@ -99,8 +96,53 @@ pub fn activate(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Complete authored territories, shared by the 3D editor and exercise library.
+const TERRITORIES_KEY: &str = "ttx.standalone.territories";
+pub fn authored_territories() -> BTreeMap<String, scenario::Scenario> {
+    get(TERRITORIES_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+pub fn authoring_base(id: &str) -> Result<scenario::Scenario, String> {
+    if let Some(s) = authored_territories().remove(id) {
+        return Ok(s);
+    }
+    scenario::embedded::load(id).map_err(|e| e.to_string())
+}
+pub fn save_territory(s: &scenario::Scenario) -> Result<(), String> {
+    scenario::editor::validate(s).map_err(|e| e.to_string())?;
+    if embedded_id(&s.id)
+        || embedded_packs().iter().any(|p| p.id == s.id)
+        || saved_packs().contains_key(&s.id)
+    {
+        return Err(
+            "Identificativo già usato da un territorio incluso o un pack: clona con un nuovo ID"
+                .into(),
+        );
+    }
+    let mut all = authored_territories();
+    all.insert(s.id.clone(), s.clone());
+    set(
+        TERRITORIES_KEY,
+        &serde_json::to_string(&all).map_err(|e| e.to_string())?,
+    )
+}
+fn territory_fingerprint(id: &str) -> String {
+    if let Some(s) = authored_territories().remove(id) {
+        let json = serde_json::to_string(&s).unwrap_or_default();
+        let hash = json.bytes().fold(0xcbf29ce484222325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+        });
+        return format!("{id}:{hash:016x}");
+    }
+    scenario::embedded::fingerprint(id).unwrap_or_default()
+}
+
 /// Lazy per-territory cache. Selecting a pack always loads its declared base.
 fn embedded_base(id: &str) -> Result<Arc<scenario::Scenario>, String> {
+    if let Some(s) = authored_territories().remove(id) {
+        return Ok(Arc::new(s));
+    }
     thread_local! { static BASES: RefCell<BTreeMap<String, Arc<scenario::Scenario>>> = const { RefCell::new(BTreeMap::new()) }; }
     BASES.with(|bases| {
         if let Some(base) = bases.borrow().get(id) {
@@ -126,6 +168,7 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
         scenario::embedded::TERRITORIES
             .iter()
             .map(|t| t.id.into())
+            .chain(authored_territories().into_keys())
             .collect()
     }
     fn list(&self) -> Vec<server::library::PackInfo> {
@@ -145,11 +188,19 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
                 info(&p, true)
             })
             .collect::<Vec<_>>();
+        out.extend(authored_territories().values().map(|s| {
+            let mut p = scenario::ScenarioPack::plain(&s.id, &s.name, &s.id);
+            p.description = s.description.clone();
+            info(&p, true)
+        }));
         out.extend(embedded_packs().iter().map(|p| info(p, true)));
         out.extend(saved_packs().values().map(|p| info(p, false)));
         out
     }
     fn load(&self, id: &str) -> Option<scenario::ScenarioPack> {
+        if let Some(s) = authored_territories().remove(id) {
+            return Some(scenario::ScenarioPack::plain(&s.id, &s.name, &s.id));
+        }
         if let Ok(t) = scenario::embedded::territory(id) {
             let mut pack = scenario::ScenarioPack::plain(t.id, t.name, t.id);
             pack.description = t.description.into();
@@ -160,7 +211,10 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
             .or_else(|| embedded_packs().into_iter().find(|p| p.id == id))
     }
     fn save(&self, pack: &scenario::ScenarioPack) -> Result<(), String> {
-        if embedded_id(&pack.id) || embedded_packs().iter().any(|p| p.id == pack.id) {
+        if embedded_id(&pack.id)
+            || authored_territories().contains_key(&pack.id)
+            || embedded_packs().iter().any(|p| p.id == pack.id)
+        {
             return Err(format!("«{}» è uno scenario incluso nell’app", pack.id));
         }
         let mut packs = saved_packs();
@@ -203,9 +257,7 @@ pub fn scenarios() -> Arc<server::library::Scenarios> {
             )?;
             Ok(exercise::Exercise::new(world))
         }),
-        fingerprint: Arc::new(|pack| {
-            scenario::embedded::fingerprint(&pack.base).unwrap_or_default()
-        }),
+        fingerprint: Arc::new(|pack| territory_fingerprint(&pack.base)),
         default_id: scenario::embedded::DEFAULT_TERRITORY.into(),
         running: std::sync::Mutex::new(None),
     })
@@ -272,7 +324,7 @@ pub fn autosave(state: &server::AppState, force: bool) {
     }
     let session = SavedSession {
         v: FORMAT,
-        territory_fingerprint: scenario::embedded::fingerprint(&pack.base).unwrap_or_default(),
+        territory_fingerprint: territory_fingerprint(&pack.base),
         pack,
         journal,
         tape,
