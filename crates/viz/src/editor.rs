@@ -439,12 +439,23 @@ pub(crate) fn draw(
     if let (Ok(window), Ok(mut camera)) = (windows.get_single(), cameras.get_single_mut()) {
         let rect = ctx.available_rect();
         let scale = window.scale_factor();
+        // egui's rect can be ahead of the render target for a frame after a
+        // resize; wgpu rejects a viewport outside the target.
+        let target = camera
+            .physical_target_size()
+            .unwrap_or_else(|| UVec2::new(window.physical_width(), window.physical_height()))
+            .max(UVec2::splat(2));
+        let position = UVec2::new((rect.min.x * scale) as u32, (rect.min.y * scale) as u32)
+            .min(target - UVec2::ONE);
+        let size = UVec2::new(
+            (rect.width() * scale).max(1.) as u32,
+            (rect.height() * scale).max(1.) as u32,
+        )
+        .min(target - position)
+        .max(UVec2::ONE);
         camera.viewport = Some(bevy::render::camera::Viewport {
-            physical_position: UVec2::new((rect.min.x * scale) as u32, (rect.min.y * scale) as u32),
-            physical_size: UVec2::new(
-                (rect.width() * scale).max(1.) as u32,
-                (rect.height() * scale).max(1.) as u32,
-            ),
+            physical_position: position,
+            physical_size: size,
             ..Default::default()
         });
     }
