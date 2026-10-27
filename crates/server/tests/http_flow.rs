@@ -3173,7 +3173,7 @@ async fn revalidate_and_supersede_endpoints() {
     assert_eq!(p["verdicts"][0]["verdict"], "ok", "{p}");
     let (s, _) = call(&app, "POST", &uri, Some(json!({"commands":[{"type":"Nope"}]}))).await;
     assert_ne!(s, Status::Ok);
-    // EXCON asks; the player's answer supersedes the old proposal.
+    // EXCON asks; the player's answer comes back as a message on the same proposal.
     let (s, _) = call(&app, "POST", &format!("/api/master/proposals/{old}/clarify"), Some(json!({"note":"Which zone?"}))).await;
     assert_eq!(s, Status::Ok);
     let inbox = eventually(&app, "/api/player/fire_commander", |p| {
@@ -3181,19 +3181,16 @@ async fn revalidate_and_supersede_endpoints() {
     })
     .await;
     let q = inbox["inbox"].as_array().unwrap().iter().rev().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
-    call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "Warn F4 now", "reply_to": q}))).await;
+    let (s, r) = call(&app, "POST", "/api/player/fire_commander/reply", Some(json!({"text": "Warn F4 now", "reply_to": q}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    // The answer is a message: the same proposal is pending again and still editable.
     let m = eventually(&app, "/api/master", |m| {
-        m["proposals"].as_array().unwrap().iter().any(|p| p["supersedes"] == old && p["status"] == "pending")
+        m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == old && p["status"] == "pending")
     })
     .await;
-    let ps = m["proposals"].as_array().unwrap();
-    let o = ps.iter().find(|p| p["id"] == old).unwrap();
-    assert_eq!(o["status"], "superseded");
-    let n = ps.iter().find(|p| p["supersedes"] == old).unwrap();
-    assert_eq!(o["superseded_by"], n["id"]);
-    // Superseded proposals can no longer be revalidated.
-    let (s, _) = call(&app, "POST", &uri, Some(json!({}))).await;
-    assert_ne!(s, Status::Ok);
+    assert!(m["proposals"].as_array().unwrap().iter().all(|p| p["superseded_by"].is_null()));
+    let (s, p) = call(&app, "POST", &uri, Some(json!({}))).await;
+    assert_eq!(s, Status::Ok, "{p}");
 }
 
 #[tokio::test]
@@ -3505,4 +3502,57 @@ async fn stop_ends_a_running_resolution_and_keeps_the_turn_open() {
     assert!(state["resolving"].is_null());
     assert_eq!(state["turn_window"]["now_s"], at);
     assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
+}
+
+/// EXCON asks for a clarification; the player's text answer is only translated,
+/// never interpreted: no AI parse call, the proposal keeps its commands and is
+/// Pending again for the EXCON to approve.
+#[tokio::test]
+async fn clarification_answer_is_translated_not_interpreted_and_proposal_stays_approvable() {
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = calls.clone();
+    let llm = llm::Llm::mock(move |task, _s, user| {
+        log.lock().unwrap().push(task.to_string());
+        Ok(match task {
+            "translate" => format!("[en] {user}"),
+            "parse_reply" => r#"{"detected_language":"it","translation_en":"warn","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into(),
+            "feedback" => format!("[feedback] {user}"),
+            other => anyhow::bail!("unexpected task {other}"),
+        })
+    });
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    let parent = reply_parent(&app, "mayor").await;
+    let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "avvisa la gente", "reply_to": parent}))).await;
+    let p1 = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1 && p["status"] == "pending")).await;
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p1}/clarify"), Some(json!({"note": "Which side?"}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
+    let player = eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
+    let q = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
+    // A structured action cannot be sent as the answer.
+    let (s, _) = call(&app, "POST", "/api/player/mayor/actions", Some(json!({"text":"x","commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":q}))).await;
+    assert_eq!(s, Status::BadRequest);
+    let parses_before = calls.lock().unwrap().iter().filter(|t| *t == "parse_reply").count();
+    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "lato nord", "reply_to": q}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    assert_eq!((r["proposal"].as_u64(), r["answered"].clone()), (Some(p1), json!(true)));
+    // Nothing is parsed: the state is final as soon as the call returns.
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == p1).unwrap();
+    assert_eq!(p["status"], "pending");
+    assert_eq!(p["commands"][0]["type"], "IssueWarning", "original commands intact");
+    assert_eq!(m["proposals"].as_array().unwrap().iter().filter(|p| p["status"] == "superseded").count(), 0);
+    assert_eq!(calls.lock().unwrap().iter().filter(|t| *t == "parse_reply").count(), parses_before, "the answer is not interpreted");
+    let row = m["inject_responses"].as_array().unwrap().iter().find(|r| r["role"] == "mayor" && r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1)).expect("row").clone();
+    let mid = r["message"].as_u64().unwrap();
+    let entry = row["thread"].as_array().unwrap().iter().find(|t| t["id"] == mid).expect("answer in thread").clone();
+    assert!(entry["text"].as_str().unwrap().starts_with("[en] "), "English copy for EXCON: {entry}");
+    assert_eq!(entry["original"], "lato nord");
+    assert_eq!(m["clarification_threads"][0]["status"], "awaiting_excon");
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p1}/decide"), Some(json!({"approve": true}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
 }

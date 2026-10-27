@@ -1147,20 +1147,11 @@ impl Exercise {
         let parent = self.validate_action_reference(role, reply_to)?;
         let inject_id = parent.inject_id;
         let thread = self.thread_evidence(role, reply_to)?;
-        let old = self.clarification_target(role, reply_to);
+        if self.clarification_target(role, reply_to).is_some() {
+            bail!("this answers an open EXCON question: send it as a text answer, or create a new action without replying to the question");
+        }
         let pid = self.open_chat_proposal(role, text, inject_id, Some(reply_to), Some(evidence))?;
         self.proposal_mut(pid)?.thread = thread;
-        if let Some(old) = old {
-            self.proposal_mut(pid)?.supersedes = Some(old);
-            self.proposal_mut(old)?.superseded_by = Some(pid);
-            self.transition(
-                old,
-                ProposalStatus::Superseded,
-                role,
-                &format!("Superseded by the player's answer (proposal {pid})"),
-            )?;
-            self.record("proposal_superseded", role, json!({"proposal": old, "superseded_by": pid}));
-        }
         self.add_message_in_thread(
             role,
             MASTER,
@@ -1223,25 +1214,85 @@ impl Exercise {
         Ok(pid)
     }
 
-    /// The EXCON-questioned proposal of `role` that a reply to message `parent` answers.
-    fn clarification_target(&self, role: &str, parent: u64) -> Option<u64> {
-        let live = |p: &Proposal| {
-            p.status == ProposalStatus::NeedsClarification
-                && p.clarification_request.is_some()
-                && matches!(&p.source, Source::Player(r) if r == role)
-        };
+    /// The EXCON-questioned proposal of `role` that a reply to message `parent`
+    /// answers: `parent` must be EXCON's question about a proposal still waiting for it.
+    pub fn clarification_target(&self, role: &str, parent: u64) -> Option<u64> {
         let m = self.messages.iter().find(|m| m.id == parent)?;
-        if m.kind == MsgKind::Clarification {
-            if let Some(p) = m.proposal.and_then(|pid| self.proposal(pid)).filter(|p| live(p)) {
-                return Some(p.id);
-            }
+        if m.kind != MsgKind::Clarification || m.to != role {
+            return None;
         }
-        // Replying to the original inject again also answers the open question.
-        self.proposals
-            .iter()
-            .filter(|p| live(p) && p.reply_to == Some(parent))
+        m.proposal
+            .and_then(|pid| self.proposal(pid))
+            .filter(|p| {
+                p.status == ProposalStatus::NeedsClarification
+                    && p.clarification_request.is_some()
+                    && !p.clarification_closed
+                    && matches!(&p.source, Source::Player(r) if r == role)
+            })
             .map(|p| p.id)
-            .max()
+    }
+
+    /// A player's text answer to an EXCON question. It is a plain message to the
+    /// EXCON, never interpreted: the questioned proposal keeps its commands and
+    /// returns to `Pending` for the EXCON to approve, edit, reject or question again.
+    /// `text_en` is the English working copy (the translation of `text`).
+    pub fn answer_clarification(
+        &mut self,
+        role: &str,
+        text: &str,
+        reply_to: u64,
+        text_en: &str,
+        translation_failed: bool,
+    ) -> Result<(u64, u64)> {
+        if self.phase != Phase::Orders {
+            bail!("no turn is open for answers");
+        }
+        if !self.players.contains_key(role) {
+            bail!("unknown role {role}");
+        }
+        if text.trim().is_empty() {
+            bail!("empty answer");
+        }
+        let parent = self.validate_action_reference(role, reply_to)?;
+        let inject_id = parent.inject_id;
+        let Some(pid) = self.clarification_target(role, reply_to) else {
+            bail!("there is no open EXCON question to answer");
+        };
+        let language = self.language_of(role);
+        let id = self.add_message_in_thread(
+            role,
+            MASTER,
+            MsgKind::Reply,
+            None,
+            text,
+            text_en,
+            Some(pid),
+            inject_id.map(|root| (root, Some(reply_to), vec![MASTER.into()])),
+            Some(reply_to),
+        );
+        let message = self.messages.last_mut().expect("recorded answer");
+        message.original = Some(text.into());
+        message.language_src = Some(language);
+        message.translation_failed = translation_failed;
+        let recorded = message.clone();
+        self.record("reply_source", role, json!(recorded));
+        self.transition(
+            pid,
+            ProposalStatus::Pending,
+            role,
+            "Player answered the EXCON question; awaiting EXCON",
+        )?;
+        self.record(
+            "clarification_answered",
+            role,
+            json!({"proposal": pid, "message": id, "reply_to": reply_to}),
+        );
+        self.converse(
+            role,
+            "user",
+            format!("[{}] PLAYER ANSWER to the EXCON clarification:\n{text_en}", self.world.clock()),
+        );
+        Ok((id, pid))
     }
 
     fn open_chat_proposal(

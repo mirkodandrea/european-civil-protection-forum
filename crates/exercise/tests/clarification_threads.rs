@@ -53,24 +53,25 @@ fn several_rounds_stay_in_one_thread_and_show_in_inject_responses() {
     assert_eq!(t.entries[1].text, "Quale zona?");
     assert_eq!(t.entries[1].text_en, "Which zone?");
 
-    let p2 = ex.player_reply("mayor", "F4", q1, ev()).unwrap();
-    ex.attach_parse(p2, parsed("F4")).unwrap();
+    let (a1, p2) = ex.answer_clarification("mayor", "F4", q1, "F4", false).unwrap();
+    assert_eq!(p2, p1, "an answer is a message on the same proposal");
     let t = ex.clarification_thread_of(p2).unwrap();
-    assert_eq!(t.id, p1, "the thread keeps the originating proposal as id");
-    assert_eq!((t.status, t.current_proposal), (ThreadStatus::AwaitingExcon, p2));
+    assert_eq!(t.id, p1);
+    assert_eq!((t.status, t.current_proposal), (ThreadStatus::AwaitingExcon, p1));
     assert_eq!(t.entries.len(), 3);
-    assert_eq!(t.entries[2].proposal, Some(p2));
+    assert_eq!(t.entries[2].message, a1);
 
-    // Second round on the new proposal.
-    ex.request_clarification(p2, "Which side of F4?").unwrap();
-    let q2 = ex.deliver_clarification(p2, "Quale lato?", "Which side?").unwrap();
+    // Second round on the same proposal.
+    ex.request_clarification(p1, "Which side of F4?").unwrap();
+    let q2 = ex.deliver_clarification(p1, "Quale lato?", "Which side?").unwrap();
     assert_eq!(ex.clarification_thread(p1).unwrap().status, ThreadStatus::AwaitingPlayer);
-    let p3 = ex.player_reply("mayor", "the north side", q2, ev()).unwrap();
-    ex.attach_parse(p3, parsed("north side")).unwrap();
+    let (a2, _) = ex.answer_clarification("mayor", "the north side", q2, "the north side", false).unwrap();
     let t = ex.clarification_thread(p1).unwrap();
-    assert_eq!(t.proposals, vec![p1, p2, p3]);
+    let p3 = p1;
+    assert_eq!(t.proposals, vec![p1]);
     assert_eq!(t.entries.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
-    assert_eq!(t.entries.last().unwrap().text_en, "north side");
+    assert_eq!(t.entries.last().unwrap().text_en, "the north side");
+    assert_eq!(t.entries.last().unwrap().message, a2);
 
     // The same entries appear in the per-response thread of the EXCON view, tagged.
     let row = ex.inject_responses().into_iter().find(|r| r["role"] == "mayor").unwrap();
@@ -127,7 +128,9 @@ fn clarification_without_inject_can_still_be_answered() {
     ex.request_clarification(pid, "Why F4?").unwrap();
     let q = ex.deliver_clarification(pid, "Perche F4?", "Why F4?").unwrap();
     assert_eq!(ex.messages.iter().find(|m| m.id == q).unwrap().inject_id, None);
-    let next = ex.player_reply("mayor", "wind", q, ev()).unwrap();
-    assert_eq!(ex.proposal(next).unwrap().supersedes, Some(pid));
-    assert_eq!(ex.clarification_thread(pid).unwrap().entries.len(), 2, "structured actions leave no declaration message");
+    let (a, next) = ex.answer_clarification("mayor", "vento", q, "wind", false).unwrap();
+    assert_eq!(next, pid);
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(ex.clarification_thread(pid).unwrap().entries.len(), 2, "question and answer");
+    assert_eq!(ex.clarification_thread(pid).unwrap().entries[1].message, a);
 }

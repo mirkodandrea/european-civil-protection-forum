@@ -235,18 +235,8 @@ impl App {
         let awaiting = it.threads.iter().find(|t| has_status(t, "awaiting_player")).copied();
         let incoming = it.threads.iter().any(|t| has_status(t, "awaiting_excon") && !list(&t["entries"]).iter().any(|e| e["author"] == "excon"));
         let composer = if let Some(t) = awaiting {
-            // "Rivedi l'azione" re-opens the structured proposal behind the question.
-            let pid = t["current_proposal"].to_string();
-            let parent = all_proposals.iter().find(|p| p["id"] == t["current_proposal"]).and_then(|p| p["reply_to"].as_u64()).map(|n| n.to_string()).unwrap_or_default();
-            let revise = {
-                let link = ctx.link().clone();
-                Callback::from(move |_| {
-                    link.send_message(Msg::OpenWork(Some(parent.clone())));
-                    link.send_message(Msg::Field("work:clarify".into(), pid.clone()));
-                })
-            };
-            let revise = html! {<button class="link-button" data-reply-clarification={t["current_proposal"].to_string()} disabled={!can_act} onclick={revise}>{i18n::t(l,"thread_revise")}</button>};
-            html! {<footer class="inj-composer">{self.clarify_composer(ctx,can_act,t,revise)}</footer>}
+            // The answer is a plain message to EXCON; a changed action is a new action.
+            html! {<footer class="inj-composer">{self.clarify_composer(ctx,can_act,t,html!{})}</footer>}
         } else if let Some(m) = it.msg {
             let label = if o.tone == "bad" { "reply_again" } else if it.proposals.is_empty() { "reply" } else { "another_reply" };
             let id = m["id"].to_string();
