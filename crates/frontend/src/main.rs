@@ -49,6 +49,9 @@ pub enum ActionKind {
     Download,
     /// Remove this form field once the request succeeded.
     ClearField(String),
+    /// An inject send in its own slot: it neither blocks nor is blocked by
+    /// other actions, and only one send per slot is in flight at a time.
+    Inject { slot: String, then: Box<ActionKind> },
 }
 #[derive(Clone, PartialEq)]
 pub struct Action {
@@ -70,6 +73,15 @@ impl Action {
             body,
             kind: ActionKind::Store(key.into()),
         }
+    }
+    /// Runs this inject send in `slot`, beside other actions.
+    pub fn in_slot(mut self, slot: impl Into<String>) -> Self {
+        let then = std::mem::replace(&mut self.kind, ActionKind::Ordinary);
+        self.kind = ActionKind::Inject {
+            slot: slot.into(),
+            then: Box::new(then),
+        };
+        self
     }
 }
 #[derive(Clone)]
@@ -131,6 +143,8 @@ pub struct App {
     notice: String,
     done: u64,
     busy: bool,
+    /// Inject sends in flight, by slot (see `ActionKind::Inject`).
+    pending: BTreeSet<String>,
     reading: bool,
     resolving_request: bool,
     /// Pre-advance review: (resolve body, target second) of an advance that
@@ -414,6 +428,7 @@ impl Component for App {
             notice: String::new(),
             done: 0,
             busy: false,
+            pending: BTreeSet::new(),
             reading: false,
             resolving_request: false,
             due_modal: None,
@@ -573,19 +588,27 @@ impl Component for App {
                     });
                     return true;
                 }
-                if self.busy {
-                    return false;
-                }
-                self.busy = true;
-                self.error.clear();
-                self.notice = match &action.kind {
-                    ActionKind::Prepare(_) => crate::i18n::ex("L’AI sta analizzando il messaggio…"),
-                    ActionKind::Submit(_) | ActionKind::Send(_, _) => {
-                        crate::i18n::ex("Traduzione e invio in corso…")
+                if let ActionKind::Inject { slot, .. } = &action.kind {
+                    if !self.pending.insert(slot.clone()) {
+                        return false;
                     }
-                    _ => crate::i18n::ex("Elaborazione…"),
+                } else {
+                    if self.busy {
+                        return false;
+                    }
+                    self.busy = true;
+                    self.notice = match &action.kind {
+                        ActionKind::Prepare(_) => {
+                            crate::i18n::ex("L’AI sta analizzando il messaggio…")
+                        }
+                        ActionKind::Submit(_) | ActionKind::Send(_, _) => {
+                            crate::i18n::ex("Traduzione e invio in corso…")
+                        }
+                        _ => crate::i18n::ex("Elaborazione…"),
+                    }
+                    .into();
                 }
-                .into();
+                self.error.clear();
                 let key = self.token.clone();
                 ctx.link().send_future(async move {
                     let body = action.body.clone();
@@ -626,7 +649,16 @@ impl Component for App {
             }
             Msg::Done(kind, result) => {
                 self.done += 1;
-                self.busy = false;
+                let (kind, slot) = match kind {
+                    ActionKind::Inject { slot, then } => (*then, Some(slot)),
+                    other => (other, None),
+                };
+                match slot {
+                    Some(slot) => {
+                        self.pending.remove(&slot);
+                    }
+                    None => self.busy = false,
+                }
                 match result {
                     Err(e) => {
                         self.error = e;
@@ -738,7 +770,7 @@ impl Component for App {
                             ActionKind::ClearField(key) => {
                                 self.fields.remove(&key);
                             }
-                            ActionKind::Ordinary => {}
+                            ActionKind::Ordinary | ActionKind::Inject { .. } => {}
                         }
                     }
                 }
@@ -958,13 +990,11 @@ impl Component for App {
             self.name(&self.own)
         };
         let phase = text(&self.state["phase"]);
-        // Before the exercise starts, EXCON gets only the start control, Scenario and Controllo.
+        // Before the exercise starts the EXCON screens stay open, but their actions are disabled.
         let gated = self.is_master() && !self.is_evaluator() && phase == "briefing";
-        let open_before_start = |id: &str| !gated || matches!(id, "map" | "scenario");
         let nav = |id: &str, label: &str| {
             let id = id.to_string();
             let active = self.active == id;
-            let disabled = !open_before_start(&id);
             let unread = if id == "chat" && !self.is_master() {
                 self.chat_unread()
             } else if id == "map" && !self.is_master() && !self.is_evaluator() {
@@ -974,7 +1004,7 @@ impl Component for App {
             } else {
                 0
             };
-            html! {<button class={if active{"active"}else{""}} data-view={id.clone()} disabled={disabled} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}if unread>0{<span class="unread" data-chat-unread="true">{unread}</span>}</button>}
+            html! {<button class={if active{"active"}else{""}} data-view={id.clone()} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}if unread>0{<span class="unread" data-chat-unread="true">{unread}</span>}</button>}
         };
         let l = self.lang();
         let l = l.as_str();
@@ -1008,16 +1038,15 @@ impl Component for App {
             <div id="error" class="error" role="alert">{&self.error}</div>
             if (self.page=="advanced"||self.active=="advanced"||(self.is_master()&&self.active=="map")||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
             if self.state.is_null(){<p class="page">{i18n::t(l,"loading")}</p>}
-            else if gated&&self.page!="advanced"&&!open_before_start(&self.active){<main class="page"><section class="card" id="excon-gate" role="status"><h2>{i18n::t(l,"awaiting_start")}</h2><p>{crate::i18n::ex("Le schermate di gestione si aprono all’avvio dell’esercitazione.")}</p></section></main>}
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()} roles={self.roles()}/> }
             else if self.page=="advanced"&&self.is_master(){<controllo::Controllo stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} error={self.error.clone()} done={self.done} action={self.action(ctx)}/>}
             else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{crate::i18n::ex("Apri la console conversazionale")}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
-            else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy} oninject={ctx.link().callback(Msg::OpenInject)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
+            else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy||gated} pending={self.pending.clone()} oninject={ctx.link().callback(Msg::OpenInject)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
-            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy}/></main>}
+            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
             else{{self.view_chat(ctx)}}
-            if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
+            if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} pending={self.pending.clone()} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject personalizzato").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 
         </>}

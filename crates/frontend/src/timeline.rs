@@ -31,6 +31,11 @@ pub fn send_body(selected: &BTreeSet<String>) -> Value {
     json!({"recipients": selected.iter().collect::<Vec<_>>()})
 }
 
+/// Send slot of an inject: its sends run beside other actions, one at a time.
+pub fn send_slot(id: &str) -> String {
+    format!("msel:{id}")
+}
+
 /// Body for `POST /api/master/msel/<id>/send` with the actions to run.
 pub fn send_body_with(selected: &BTreeSet<String>, actions: &BTreeSet<String>) -> Value {
     json!({"recipients": selected.iter().collect::<Vec<_>>(), "actions": actions.iter().collect::<Vec<_>>()})
@@ -186,7 +191,7 @@ fn send_dialog(props: &SendDialogProps) -> Html {
         let onclose = props.onclose.clone();
         let id = id.clone();
         Callback::from(move |_| {
-            action.emit(Action::post(format!("/api/master/msel/{id}/send"), send_body_with(&selected, &chosen_actions)));
+            action.emit(Action::post(format!("/api/master/msel/{id}/send"), send_body_with(&selected, &chosen_actions)).in_slot(send_slot(&id)));
             onclose.emit(());
         })
     };
@@ -556,6 +561,8 @@ pub struct AdvanceReviewProps {
     pub agenda: Value,
     pub roles: Vec<Value>,
     pub busy: bool,
+    /// Inject sends in flight (slots, see `send_slot`).
+    pub pending: BTreeSet<String>,
     pub action: Callback<Action>,
     pub onclose: Callback<()>,
 }
@@ -598,15 +605,16 @@ pub fn advance_review_dialog(props: &AdvanceReviewProps) -> Html {
                 let id=text(&inj["id_inject"]).to_string();
                 let why=match reach{Reach::Overdue=>crate::i18n::ex("in ritardo"),Reach::Reached=>crate::i18n::ex("raggiunto"),Reach::Crossed=>crate::i18n::ex("attraversato dall’avanzamento")};
                 let at=inj["scenario_time_s"].as_i64().unwrap_or(0);
+                let in_flight=props.pending.contains(&send_slot(&id));
                 let send_now={let (action,id)=(props.action.clone(),id.clone());let body=send_body(&default_recipients(inj));
-                    Callback::from(move |_|action.emit(Action::post(format!("/api/master/msel/{id}/send"),body.clone())))};
+                    Callback::from(move |_|action.emit(Action::post(format!("/api/master/msel/{id}/send"),body.clone()).in_slot(send_slot(&id))))};
                 let skip={let (action,id)=(props.action.clone(),id.clone());Callback::from(move |_|action.emit(Action::post(format!("/api/master/msel/{id}/skip"),json!({}))))};
                 let choose={let (sending,id)=(sending.clone(),id.clone());Callback::from(move |_|sending.set(Some(id.clone())))};
                 html!{<li class="planned-inject review-row" data-review-inject={id.clone()} key={id.clone()}>
                     <span class="planned-times"><b>{compact_clock(origin,at)}</b></span>
                     <span class="planned-body"><span class="row"><b class="planned-title">{text(&inj["title"])}</b><span class={classes!("pill","due-now",(*reach==Reach::Overdue).then_some("late"))}>{why}</span></span>
                         <small class="muted">{recipients_summary(inj)}</small></span>
-                    <span class="review-send"><button class="primary" data-review-send="" disabled={props.busy} onclick={send_now}>{crate::i18n::ex("Invia ora")}</button>
+                    <span class="review-send"><button class="primary" data-review-send="" disabled={props.busy||in_flight} aria-busy={in_flight.to_string()} onclick={send_now}>{if in_flight{html!{<><span class="loader" aria-hidden="true"></span>{crate::i18n::ex("Invio in corso…")}</>}}else{html!{crate::i18n::ex("Invia ora")}}}</button>
                         <button disabled={props.busy} onclick={choose}>{crate::i18n::ex("Destinatari…")}</button>
                         <button data-review-skip="" disabled={props.busy} onclick={skip}>{crate::i18n::ex("Non inviare")}</button></span></li>}
             })}</ul>}
@@ -624,7 +632,7 @@ pub fn advance_review_dialog(props: &AdvanceReviewProps) -> Html {
                     <span class="review-send"><label class="inline-check"><input type="checkbox" data-pre-toggle={aid.clone()} checked={enabled} disabled={props.busy} onchange={toggle}/> {crate::i18n::ex("esegui")}</label></span></li>}
             })}</ul>}
         <div class="row send-actions"><div class="grow"/>
-            <button class={confirm_class} data-due-confirm="" disabled={props.busy} onclick={confirm}>{if unsent.is_empty(){confirm_label}else{crate::exfmt!("Avanza comunque · {}","Advance anyway · {}",confirm_label)}}</button></div>
+            <button class={confirm_class} data-due-confirm="" disabled={props.busy||!props.pending.is_empty()} title={(!props.pending.is_empty()).then(|| crate::i18n::ex("Attendi la fine degli invii in corso"))} onclick={confirm}>{if unsent.is_empty(){confirm_label}else{crate::exfmt!("Avanza comunque · {}","Advance anyway · {}",confirm_label)}}</button></div>
         if let Some(inject)=open_inject{<SendDialog key={text(&inject["id_inject"]).to_string()} inject={inject.clone()} roles={props.roles.clone()} busy={props.busy} action={props.action.clone()} onclose={{let s=sending.clone();Callback::from(move |_|s.set(None))}}/>}
     </section></div>}
 }
@@ -855,6 +863,8 @@ pub struct ExconTimelineProps {
     pub last_report: Value,
     pub action: Callback<Action>,
     pub busy: bool,
+    /// Inject sends in flight (slots, see `send_slot`).
+    pub pending: BTreeSet<String>,
     pub oninject: Callback<String>,
     /// Advance to the given simulated second with this resolve body.
     pub onadvance: Callback<(Value, i64)>,
@@ -942,6 +952,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             html! {<ul class="pi-actions">{for l.iter().map(|a|action_sub_row(i,a,can_toggle,&props.action))}</ul>}
         };
         let send_label = if due { crate::i18n::ex("Invia") } else if complete { crate::i18n::ex("Altri destinatari…") } else { crate::i18n::ex("Invia…") };
+        let sending = props.pending.contains(&send_slot(&id));
         html! {<li class={classes!("planned-inject","pi",open.then_some("is-selected"),sent.then_some("is-sent"),complete.then_some("is-complete"),sent.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"),skipped.then_some("is-skipped"))} data-inject={id.clone()} key={key.clone()}>
             {subs(&pre)}
             <div class="pi-line">{time}
@@ -953,7 +964,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
                 <small class="pi-recips muted">{recipients_summary(i)}</small>
                 if skipped{<button class="planned-open" data-restore="" onclick={skip_cb(&id,true)} disabled={props.busy||!started}>{crate::i18n::ex("Ripristina")}</button>}
                 else{<>
-                    <button class={classes!("planned-open",due.then_some("primary"))} data-send-open="" {onclick} disabled={props.busy} aria-label={crate::exfmt!("Apri l’invio dell’inject {}","Open sending for inject {}",text(&i["title"]))}>{send_label}</button>
+                    <button class={classes!("planned-open",due.then_some("primary"))} data-send-open="" {onclick} disabled={props.busy||sending} aria-busy={sending.to_string()} aria-label={crate::exfmt!("Apri l’invio dell’inject {}","Open sending for inject {}",text(&i["title"]))}>{if sending{html!{<><span class="loader" aria-hidden="true"></span>{crate::i18n::ex("Invio in corso…")}</>}}else{html!{send_label}}}</button>
                     if due{<button class="planned-open" data-skip="" onclick={skip_cb(&id,false)} disabled={props.busy} title={crate::i18n::ex("Non invia questo inject: l’avanzamento prosegue oltre e le sue azioni anticipate vengono annullate. Si può ripristinare.")}>{crate::i18n::ex("Non inviare")}</button>}
                 </>}</div>
             if open{<div class="pi-detail"><span class="planned-text">{text(&i["text"])}</span>
