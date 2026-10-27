@@ -42,6 +42,9 @@ fn outcome(l: &str, it: &Item) -> Outcome {
     let Some(latest) = it.proposals.iter().rev().find(|p| p["status"] != "superseded").or(it.proposals.last()) else {
         return o("inj_todo", "action", true);
     };
+    if latest["narrative"] == true && latest["status"] == "approved" {
+        return o(if list(&latest["narrative_outcomes"]).is_empty() {"narrative_approved"} else {"narrative_resolved"}, "done", false);
+    }
     match text(&latest["status"]) {
         "rejected" => o("st_rejected", "bad", true),
         "failed" => o("st_failed", "bad", false),
@@ -63,6 +66,7 @@ enum Kind {
     /// EXCON rejection reason.
     Reason,
     Question,
+    Answer,
     Closed,
 }
 
@@ -91,14 +95,26 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         let status = text(&p["status"]);
         // The player's answers are proposals too: take their time from the thread.
         let when = entries.iter().find(|e| e["author"] == "player" && e["proposal"] == p["id"]).map(|e| text(&e["clock"]).to_string()).unwrap_or_else(|| format_offset(p["t_s"].as_i64().unwrap_or(0)));
-        out.push(Ev { status: status.to_string(), executions: p["executions"].clone(), ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
+        out.push(Ev { status: if p["narrative"]==true && status=="approved" {if list(&p["narrative_outcomes"]).is_empty(){"narrative_approved"}else{"narrative_resolved"}}else{status}.to_string(), executions: p["executions"].clone(), ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
         let note = text(&p["decision"]["note"]);
         if !note.is_empty() {
             let kind = if status == "rejected" { Kind::Reason } else { Kind::Decision };
             out.push(ev(kind, "EXCON".into(), format_offset(p["decision"]["t_s"].as_i64().unwrap_or(0)), note));
         }
-        for e in entries.iter().filter(|e| e["author"] == "excon" && e["proposal"] == p["id"]) {
-            out.push(ev(Kind::Question, "EXCON".into(), text(&e["clock"]).to_string(), text(&e["text"])));
+        if p["narrative"]==true {
+            for e in entries.iter().filter(|e|e["proposal"]==p["id"]).skip(1) {
+                let (kind,who)=if e["author"]=="excon"{(Kind::Question,"EXCON".into())}else{(Kind::Answer,i18n::t(l,"thread_you").into())};
+                out.push(ev(kind,who,text(&e["clock"]).into(),text(&e["text"])));
+            }
+        } else {
+            for e in entries.iter().filter(|e| e["author"] == "excon" && e["proposal"] == p["id"]) {
+                out.push(ev(Kind::Question, "EXCON".into(), text(&e["clock"]).to_string(), text(&e["text"])));
+            }
+        }
+        if p["status"] != "rolled_back" {
+            for outcome in list(&p["narrative_outcomes"]) {
+                out.push(ev(Kind::Decision, i18n::t(l,"narrative_outcome").into(), format_offset(outcome["t_s"].as_i64().unwrap_or(0)), text(&outcome["text"])));
+            }
         }
     }
     for _ in it.threads.iter().filter(|t| has_status(t, "closed")) {
@@ -224,6 +240,7 @@ impl App {
                     Kind::Proposal => (true, format!("proposal st-{}", e.status), Some(html! {<span class={classes!("pill",(e.status=="rejected").then_some("bad"))}>{i18n::status(l,&e.status)}</span>})),
                     Kind::Decision => (false, "decision".into(), None),
                     Kind::Reason => (false, "decision rejected".into(), Some(html! {<span class="pill bad">{i18n::t(l,"reason")}</span>})),
+                    Kind::Answer => (true, "reply".into(), None),
                     Kind::Question => (false, "question".into(), Some(html! {<span class="pill kind">{i18n::t(l,"inj_clar_label")}</span>})),
                     Kind::Closed => return html! {<li class="inj-sys">{e.text}</li>},
                 };

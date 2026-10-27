@@ -44,6 +44,8 @@ pub fn event_label(kind: &str) -> String {
         "map_information_acquired" => crate::i18n::ex("Informazione di mappa acquisita"),
         "physical_intervention_corrected" => crate::i18n::ex("Intervento fisico corretto"),
         "player_draft_submitted" => crate::i18n::ex("Bozza del player inviata"),
+        "narrative_submitted" => crate::i18n::ex("Iniziativa narrativa ricevuta"),
+        "narrative_outcome" => crate::i18n::ex("Esito narrativo EXCON"),
         "reference_materials_updated" => crate::i18n::ex("Materiali di riferimento aggiornati"),
         "resource_limit_draft_reviewed" => crate::i18n::ex("Limiti di risorse rivisti"),
         "resource_limits_changed" => crate::i18n::ex("Limiti di risorse modificati"),

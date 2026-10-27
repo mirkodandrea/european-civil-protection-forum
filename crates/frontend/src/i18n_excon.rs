@@ -35,6 +35,15 @@ pub fn ex(it: &'static str) -> &'static str {
 }
 pub fn en(it: &str) -> Option<&'static str> {
     Some(match it {
+        "Iniziativa narrativa" => "Narrative initiative",
+        "Iniziativa narrativa ricevuta" => "Narrative initiative received",
+        "Approva iniziativa narrativa" => "Approve narrative initiative",
+        "Iniziativa narrativa: approvazione ed esito sono decisi da EXCON. Non modifica la simulazione." => "Narrative initiative: EXCON decides approval and outcome. It does not change the simulation.",
+        "Esito narrativo EXCON" => "EXCON narrative outcome",
+        "Registra esito narrativo" => "Record narrative outcome",
+        "Approvata · esito EXCON in attesa" => "Approved · awaiting EXCON outcome",
+        "Esito narrativo registrato" => "Narrative outcome recorded",
+
         "L’AI sta analizzando il messaggio…" => "The AI is analysing the message…",
         "Traduzione e invio in corso…" => "Translating and sending…",
         "Elaborazione…" => "Processing…",

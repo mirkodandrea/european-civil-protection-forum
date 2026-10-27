@@ -97,6 +97,35 @@ La simulazione applica solo comandi autorizzati e approvati. EXCON può annullar
 un ramo dell'esercitazione con il rollback. Può inoltre calcolare previsioni del
 fuoco, revisionarle e pubblicarle ai ruoli scelti.
 
+### Iniziative narrative dei partecipanti
+
+Dal modulo di risposta a un inject ricevuto, il player può scegliere **Iniziativa
+narrativa** e inviare un testo senza comandi simulati e senza verifica AI. Il testo
+originale è conservato; l'eventuale AI serve solo alla traduzione. Se la traduzione
+non riesce, il testo viene comunque consegnato con l'indicazione del problema.
+Una bozza operativa non supportata può essere ripresa esplicitamente come iniziativa
+narrativa, da rivedere e inviare: non viene convertita automaticamente.
+
+EXCON riceve l'iniziativa in Risposte e può approvarla, rifiutarla con una nota o
+chiedere chiarimenti. La risposta a un chiarimento è un messaggio solo tradotto e
+mantiene la stessa iniziativa. Dopo l'approvazione, EXCON registra un **esito
+narrativo**, che può aggiornare con registrazioni successive. L'approvazione resta
+separata dall'esito: non indica una missione completata. Le iniziative narrative
+non eseguono comandi, non assegnano risorse e non alterano le grandezze fisiche.
+Le eventuali conseguenze fisiche richiedono gli interventi o le proposte operative
+ordinari, con i rispettivi controlli.
+
+Il player vede gli esiti EXCON nel thread dell'inject; registro, valutatore e debrief
+li distinguono dalle esecuzioni fisiche. Il salvataggio della sessione li ripristina;
+il rollback annulla gli esiti registrati nei turni annullati, conservando quelli
+precedenti. Gli altri ruoli non ricevono le iniziative o gli esiti privati.
+
+API: `POST /api/player/<role>/narrative {text, reply_to}` (riferimento a un inject
+ricevuto); decisioni e chiarimenti usano le rotte ordinarie delle proposte;
+`POST /api/master/proposals/<id>/narrative-outcome {text, language?}` registra l'esito di
+un'iniziativa narrativa approvata. Nessuna azione operativa con comandi vuoti diventa
+approvabile implicitamente.
+
 ## Capacità modellate
 
 - Propagazione del fuoco influenzata da terreno, combustibile e meteo, calcolata

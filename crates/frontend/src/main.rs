@@ -191,6 +191,7 @@ pub enum Msg {
     ExconLang(String),
     OpenInject(String),
     OpenWork(Option<String>),
+    NarrativeFromDraft(String),
     CloseInject,
     View(String),
     Field(String, String),
@@ -727,10 +728,10 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify"] {
+                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative"] {
                                     self.fields.remove(key);
                                 }
-                                self.notice = crate::i18n::ex("Proposta inviata a EXCON per revisione").into();
+                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Proposta inviata a EXCON per revisione")}.into();
                             }
                             ActionKind::ClearField(key) => {
                                 self.fields.remove(&key);
@@ -740,6 +741,10 @@ impl Component for App {
                     }
                 }
                 self.request_refresh(ctx);
+            }
+            Msg::NarrativeFromDraft(text) => {
+                self.fields.insert("work:narrative".into(), text);
+                self.fields.insert("work:mode".into(), "narrative".into());
             }
             Msg::OpenWork(parent) => {
                 self.fields.remove("work:clarify");

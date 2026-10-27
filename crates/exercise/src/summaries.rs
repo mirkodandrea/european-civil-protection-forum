@@ -52,6 +52,7 @@ impl Exercise {
                 .collect::<Vec<_>>();
             let actions = self.proposals.iter().filter(|p| p.source.label() == role && p.turn == turn)
                 .map(|p| json!({"text":p.original,"status":p.status,"reply_to":p.reply_to,
+                    "narrative":p.narrative,"narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"simulated":false})).collect::<Vec<_>>(),
                     "thread":p.thread.iter().filter_map(|entry| self.messages.iter().find(|m| m.id == entry.id))
                         .map(|m| json!({"id":m.id,"from":m.from,"to":m.to,"kind":m.kind,
                             "text":if m.from == role {m.original.as_ref().unwrap_or(&m.text)} else {&m.text},

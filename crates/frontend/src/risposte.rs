@@ -130,6 +130,9 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
         <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
         <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
         {thread_view(props,r,roles)}
+        {for list(&props.master["proposals"]).iter().filter(|p|p["narrative"]==true&&p["status"]=="approved"&&p["inject_id"]==r["delivery_id"]&&p["source"]["role"]==r["role"]).map(|p|html!{
+            <Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={Value::Null} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()}/>
+        })}
         if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
         {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();

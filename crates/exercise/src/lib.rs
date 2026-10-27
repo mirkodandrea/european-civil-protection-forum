@@ -30,6 +30,7 @@ pub mod drafts;
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
+pub mod narrative;
 pub mod summaries;
 pub mod threads;
 pub mod planned;
@@ -278,6 +279,9 @@ pub struct CommunicationDraft {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
+    /// Explicit EXCON-adjudicated initiative with no simulated commands.
+    pub narrative: bool,
+    pub narrative_outcomes: Vec<narrative::NarrativeOutcome>,
     pub resource_limit_draft: Option<Value>,
     pub evidence: Option<DecisionEvidence>,
     pub communication_drafts: Vec<CommunicationDraft>,
@@ -736,7 +740,7 @@ impl Exercise {
         let approved: Vec<u64> = self
             .proposals
             .iter()
-            .filter(|p| p.status == ProposalStatus::Approved)
+            .filter(|p| p.status == ProposalStatus::Approved && !p.narrative)
             .map(|p| p.id)
             .collect();
         for pid in approved {
@@ -867,6 +871,7 @@ impl Exercise {
         };
         self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
+        self.rollback_narrative_outcomes(turn);
         self.player_drafts.clear();
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
@@ -1306,6 +1311,8 @@ impl Exercise {
         let pid = self.id();
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
+            narrative: false,
+            narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence,
             communication_drafts: Vec::new(),
@@ -1471,6 +1478,8 @@ impl Exercise {
     pub fn master_prompt(&mut self, text: &str) -> u64 {
         let pid = self.id();
         self.proposals.push(Proposal {
+            narrative: false,
+            narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence: None,
             communication_drafts: Vec::new(),
@@ -1574,6 +1583,9 @@ impl Exercise {
             .proposal(pid)
             .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?
             .clone();
+        if p.narrative {
+            bail!("narrative initiatives require an EXCON narrative outcome, not physical execution");
+        }
         if p.status != ProposalStatus::Approved
             || p.decision.as_ref().map(|d| d.approve) != Some(true)
         {
@@ -1709,6 +1721,9 @@ impl Exercise {
     }
 
     fn set_commands(&mut self, pid: u64, commands: Vec<Command>) -> Result<()> {
+        if self.proposal(pid).is_some_and(|p| p.narrative) && !commands.is_empty() {
+            bail!("narrative initiatives cannot contain simulated commands; submit a separate operational proposal");
+        }
         let actor = self
             .proposal(pid)
             .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?
@@ -1727,6 +1742,9 @@ impl Exercise {
     /// Attach the LLM's interpretation. Returns the clarification question
     /// (in the player's language) if the player must be asked one.
     pub fn attach_parse(&mut self, pid: u64, parsed: ParsedInput) -> Result<Option<String>> {
+        if self.proposal(pid).is_some_and(|p| p.narrative) {
+            bail!("narrative initiatives are not interpreted as commands");
+        }
         if self.proposal(pid).map(|p| p.status) != Some(ProposalStatus::Parsing) {
             bail!("proposal is no longer awaiting interpretation");
         }
@@ -1885,6 +1903,9 @@ impl Exercise {
             ProposalStatus::Parsing | ProposalStatus::Pending | ProposalStatus::NeedsClarification
         ) {
             bail!("proposal already decided");
+        }
+        if p.narrative && (communications.as_ref().is_some_and(|v| !v.is_empty()) || injects.as_ref().is_some_and(|v| !v.is_empty())) {
+            bail!("narrative initiatives cannot contain executable communication or inject drafts");
         }
         if let Some(drafts) = &communications {
             for d in drafts {
@@ -2059,7 +2080,8 @@ impl Exercise {
                 Some(p.communication_drafts.clone()),
                 Some(p.inject_drafts.clone()),
             )?;
-            if p.commands.is_empty()
+            if !p.narrative
+                && p.commands.is_empty()
                 && p.inject_drafts.is_empty()
                 && p.communication_drafts.is_empty()
                 && p.resource_limit_draft.is_none()
@@ -2121,7 +2143,9 @@ impl Exercise {
                 MASTER,
                 note.as_deref().unwrap_or("Approved by EXCON"),
             )?;
-            if matches!(p.source, Source::Master) || p.commands.is_empty() {
+            if p.narrative {
+                facts.push("Narrative initiative approved by EXCON. Its outcome is pending EXCON adjudication; no simulated action was executed.".into());
+            } else if matches!(p.source, Source::Master) || p.commands.is_empty() {
                 self.execute_proposal(pid)?;
                 facts.extend(self.proposal(pid).unwrap().results.clone());
                 if p.commands.is_empty()

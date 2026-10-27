@@ -96,6 +96,7 @@ impl App {
         let work_reply_to = self.field("work:reply_to", "");
         let work_mode = self.field("work:mode", "action");
         let work_reply = self.field("work:reply", "");
+        let narrative_text = self.field("work:narrative", "");
         let work_clarifying = work_private["status"] == "needs_clarification";
         let work_draft_id = work_private["id"].clone();
         let work_revision = work_private["revision"].clone();
@@ -159,7 +160,17 @@ impl App {
         let work_missing = if self.state["phase"] != "orders" { Some("work_need_orders") } else if work_allowed.is_empty() { Some("work_need_action") } else if work_action != "RequestReinforcement" && work_location.trim().is_empty() { Some("work_need_place") } else if work_action == "CutFireLine" && work_destination.trim().is_empty() { Some("work_need_second") } else { None };
         let work_editor = html! {            <section class="card" id="player-work">
 
-            <div class="work-modes" role="tablist" aria-label={i18n::t(l,"proposal_mode")}><button role="tab" aria-selected={(work_mode=="action").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:mode".into(),"action".into()))}>{i18n::t(l,"mode_action")}</button><button role="tab" aria-selected={(work_mode=="ai").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:mode".into(),"ai".into()))}>{i18n::t(l,"mode_ai")}</button></div>
+            <div class="work-modes" role="tablist" aria-label={i18n::t(l,"proposal_mode")}><button role="tab" aria-selected={(work_mode=="action").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:mode".into(),"action".into()))}>{i18n::t(l,"mode_action")}</button><button role="tab" aria-selected={(work_mode=="ai").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:mode".into(),"ai".into()))}>{i18n::t(l,"mode_ai")}</button><button role="tab" aria-selected={(work_mode=="narrative").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:mode".into(),"narrative".into()))}>{i18n::t(l,"narrative_mode")}</button></div>
+            <div hidden={work_mode!="narrative"} data-narrative-composer="">
+                <label for="narrative-parent">{i18n::t(l,"narrative_pick_inject")}</label>
+                <select id="narrative-parent" value={work_reply_to.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:reply_to".into(),api::select(e)))}>
+                    <option value="">{i18n::t(l,"narrative_pick_inject")}</option>
+                    {for self.messages().iter().filter(|m|m["kind"]=="inject").map(|m|{let id=m["id"].to_string();html!{<option value={id.clone()} selected={id==work_reply_to}>{format!("{} · {}",text(&m["clock"]),text(&m["title"]))}</option>}})}
+                </select>
+                <label for="narrative-text">{i18n::t(l,"narrative_mode")}</label>
+                <textarea id="narrative-text" maxlength="8000" value={narrative_text.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
+                <button class="primary" data-send-narrative="" disabled={self.busy||self.state["phase"]!="orders"||narrative_text.trim().is_empty()||work_reply_to.parse::<u64>().is_err()} onclick={ctx.link().callback({let own=own.clone();let text=narrative_text.clone();let parent=work_reply_to.parse::<u64>().ok();move |_|{let mut a=Action::post(format!("/api/player/{own}/narrative"),json!({"text":text,"reply_to":parent}));a.kind=ActionKind::WorkSubmit;Msg::Action(a)}})}>{i18n::t(l,"narrative_send")}</button>
+            </div>
             <div hidden={work_mode!="action"}>
             <label for="work-action">{i18n::t(l,"action_type")}</label>
             <select id="work-action" value={work_action.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:action".into(),api::select(e)))}>
@@ -189,6 +200,7 @@ impl App {
                     if work_private["status"]=="needs_clarification" {<p>{text(&work_private["question"])}</p>}
                     else {<p>{text(&work_private["message"])}</p>}
                     if work_private["status"]=="unsupported" || work_private["status"]=="ready" && list(&work_private["actions"]).is_empty() {<p class="error" role="alert">{i18n::t(l,"unsupported_draft")}</p>}
+                    if work_private["status"]=="unsupported" {<button disabled={self.busy} onclick={ctx.link().callback({let text=work_free_text.clone();move |_|Msg::NarrativeFromDraft(text.clone())})}>{i18n::t(l,"narrative_mode")}</button>}
                     if work_private["status"]=="ai_unavailable" {<p class="error" role="alert">{if l=="it"{"Verifica AI non riuscita: riprova o scegli un’azione dal modulo. Nessuna richiesta è stata inviata."}else{"AI validation failed: retry or choose an action from the form. Nothing has been submitted."}}</p>}
                     if work_private["status"]=="ai_unavailable" && !text(&work_private["failure"]).is_empty() {<p class="muted">{format!("{}: {}",i18n::t(l,"reason"),text(&work_private["failure"]))}</p>}
                     {for {let lines:Vec<String>=if list(&work_private["actions"]).is_empty(){list(&work_private["action_descriptions"]).iter().map(|d|text(d).to_string()).collect()}else{list(&work_private["actions"]).iter().map(|c|widgets::command_summary(l,c)).collect()};lines}.into_iter().map(|l|html!{<p>{l}</p>})}
@@ -300,9 +312,9 @@ impl App {
             if self.field("work:open","false")=="true"{<crate::inject_panel::ModalShell class={classes!("modal-backdrop","work-backdrop")} onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::Field("work:open".into(),"false".into()));}})}}><section class="work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title"><header><h2 id="work-modal-title">{if let Some(message)=selected_context{if message["kind"]=="inject"{i18n::t(l,"reply_inject_title")}else{i18n::t(l,"reply_chat_title")}}else{i18n::t(l,"new_action_title")}}</h2><button aria-label={i18n::t(l,"close_reply")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Field("work:open".into(),"false".into()))}>{i18n::t(l,"close")}</button></header>
                 if let Some(message)=selected_context{<div class="work-context"><strong>{if message["kind"]=="inject"{text(&message["title"]).to_string()}else{self.name(text(&message["from"]))}}</strong><small>{text(&message["clock"])}</small><p>{text(if message["from"]==own && message["original"].is_string(){&message["original"]}else{&message["text"]})}</p>if message["kind"]=="inject"{<small>{format!("{}: {}",i18n::t(l,"reply_count"),response_count)}</small>}</div>}
                 if let Some(question)=clarifying_proposal.as_ref().and_then(|p|p["clarification_request"].as_str()){<div class="work-clarification" role="note" data-work-clarification={clarifying_proposal.as_ref().map(|p|p["id"].to_string()).unwrap_or_default()}><b>{format!("EXCON · {}",i18n::t(l,"clarif_needed"))}</b><p>{question}</p>if let Some(p)=clarifying_proposal.as_ref(){<small class="muted">{text(&p["original"])}</small>}</div>}
-                <p class="work-approval-note">{i18n::t(l,"approval_note")}</p>
+                <p class="work-approval-note">{i18n::t(l,if work_mode=="narrative"{"narrative_hint"}else{"approval_note"})}</p>
                 if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
-                <div class="work-modal-layout"><div class="work-modal-map"><p>{i18n::t(l,"select_map_target")}</p>
+                <div class="work-modal-layout" style={if work_mode=="narrative"{"grid-template-columns:1fr"}else{""}}><div class="work-modal-map" hidden={work_mode=="narrative"}><p>{i18n::t(l,"select_map_target")}</p>
                     if work_action=="CutFireLine" {<div class="endpoint-picker"><button aria-pressed={(self.field("work:target_field","work:location")=="work:location").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:target_field".into(),"work:location".into()))}>{i18n::t(l,"first_point")}</button><button aria-pressed={(self.field("work:target_field","work:location")=="work:destination").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:target_field".into(),"work:destination".into()))}>{i18n::t(l,"second_point")}</button></div>}
                     <SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} lang={l.to_string()}/></div><div class="work-modal-form">{work_editor}</div></div>
             </section></crate::inject_panel::ModalShell>}

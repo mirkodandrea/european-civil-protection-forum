@@ -786,3 +786,6 @@ button.warn:hover:not(:disabled){background:#ffe7a8}
 .action-editor{display:grid;gap:8px;margin-top:8px}
 .composer-actions{margin:6px 0}
 /* END inject actions */
+
+/* Keep long narrative outcome badges from squeezing the inject title on phones. */
+@media(max-width:600px){.inj-detail-head{flex-wrap:wrap}.inj-detail-head>div{flex-basis:100%}.inj-detail-head>.inj-badge{max-width:calc(100% - 85px);white-space:normal}.inj-detail-head>button{margin-left:auto}}

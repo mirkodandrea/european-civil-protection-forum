@@ -200,6 +200,8 @@ pub struct ProposalProps {
 #[function_component(Proposal)]
 pub fn proposal(props: &ProposalProps) -> Html {
     let p = &props.proposal;
+    let narrative = p["narrative"] == true;
+    let outcome_text = use_state(String::new);
     let commands = use_state(|| list(&p["commands"]).to_vec());
     // Last commands known from the server; local edits that differ from it are never overwritten.
     let synced = use_mut_ref(|| p["commands"].clone());
@@ -313,15 +315,24 @@ pub fn proposal(props: &ProposalProps) -> Html {
             note.set(String::new());
         })
     };
-    let no_actions=editable&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
+    let no_actions=editable&&!narrative&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
     let blocked=no_actions||editable&&!all_ok(&verdicts,commands.len());
     html! {<section class={classes!("proposal-inline",(p["status"]=="superseded").then_some("superseded"))} data-proposal={id.to_string()}>
-        <div class="proposal-head"><b>{crate::i18n::ex("Azioni proposte")}</b><span class="pill pending">{if p["status"]=="superseded"{crate::i18n::ex("sostituita")}else if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else{api::status(text(&p["status"]))}}</span></div>
+        <div class="proposal-head"><b>{if narrative{crate::i18n::ex("Iniziativa narrativa")}else{crate::i18n::ex("Azioni proposte")}}</b><span class="pill pending">{if p["status"]=="superseded"{crate::i18n::ex("sostituita")}else if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else if narrative&&p["status"]=="approved"{crate::i18n::ex(if list(&p["narrative_outcomes"]).is_empty(){"Approvata · esito EXCON in attesa"}else{"Esito narrativo registrato"})}else{api::status(text(&p["status"]))}}</span></div>
         if p["status"]=="superseded"{<p class="muted proposal-superseded" data-superseded="">{if p["superseded_by"].is_number(){crate::exfmt!("Sostituita dalla proposta #{}","Superseded by proposal #{}",p["superseded_by"])}else{crate::i18n::ex("sostituita").to_string()}}</p>}
         if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){<p class="proposal-clarification" data-clarification-request="">{format!("{}: {}",crate::i18n::ex("Domanda inviata al player"),text(&p["clarification_request"]))}</p>}
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
         if !list(&p["thread"]).is_empty() {<details class="proposal-thread"><summary>{format!("{} · {}",crate::i18n::ex("Thread collegato"),crate::i18n_excon::count_messages(list(&p["thread"]).len()))}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}
+        if narrative {
+            <p class="muted" data-narrative-proposal="">{crate::i18n::ex("Iniziativa narrativa: approvazione ed esito sono decisi da EXCON. Non modifica la simulazione.")}</p>
+            {for list(&p["narrative_outcomes"]).iter().map(|o|html!{<p class="narrative-outcome"><b>{crate::i18n::ex("Esito narrativo EXCON")}</b>{": "}{text(&o["text"])}</p>})}
+            if p["status"]=="approved" {
+                <label for={format!("narrative-outcome-{id}")}>{crate::i18n::ex("Esito narrativo EXCON")}</label>
+                <textarea id={format!("narrative-outcome-{id}")} data-narrative-outcome="" maxlength="8000" value={(*outcome_text).clone()} oninput={{let v=outcome_text.clone();Callback::from(move|e|v.set(api::input(e)))}}/>
+                <button data-record-narrative-outcome="" disabled={props.busy||outcome_text.trim().is_empty()} onclick={{let cb=props.action.clone();let v=outcome_text.clone();Callback::from(move |_|{cb.emit(Action::post(format!("/api/master/proposals/{id}/narrative-outcome"),json!({"text":v.trim(),"language":if crate::i18n_excon::is_en(){"en"}else{"it"}})));})}}>{crate::i18n::ex("Registra esito narrativo")}</button>
+            }
+        }
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
             html!{<fieldset class="command-card"><legend>{command_name(text(&cmd["type"]))}</legend>
             {for cmd.as_object().into_iter().flatten().filter(|(k,_)|k.as_str()!="type").map(|(key,value)|{
@@ -338,23 +349,24 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 Some(v)=>html!{<small class={if v[i]["verdict"]=="ok"{"verdict-ok"}else{"danger"}}>{if v[i]["verdict"]=="ok"{crate::exfmt!("✓ Verifica: {}","✓ Check: {}",if list(&v[i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&v[i]["notes"]).iter().map(|n|crate::render::localize_note(text(n))).collect::<Vec<_>>().join(" · ")})}else{text(&v[i]["reason"]).into()}}</small>},
             }}</fieldset>}
         })}</div>
-        if editable{<details class="manual-commands"><summary>{crate::i18n::ex("Modifica o aggiungi comandi JSON (interpretazione manuale EXCON)")}</summary><textarea data-manual-commands="" aria-label={crate::i18n::ex("Comandi manuali EXCON")} value={pretty(&json!(*commands))} oninput={{let commands=commands.clone();let error=error.clone();Callback::from(move |e|match serde_json::from_str::<Vec<Value>>(&api::input(e)){Ok(next)=>{commands.set(next);error.set(String::new());},Err(e)=>error.set(crate::exfmt!("Comandi non validi: {e}","Invalid commands: {e}"))})}}/></details>}
+        if editable&&!narrative{<details class="manual-commands"><summary>{crate::i18n::ex("Modifica o aggiungi comandi JSON (interpretazione manuale EXCON)")}</summary><textarea data-manual-commands="" aria-label={crate::i18n::ex("Comandi manuali EXCON")} value={pretty(&json!(*commands))} oninput={{let commands=commands.clone();let error=error.clone();Callback::from(move |e|match serde_json::from_str::<Vec<Value>>(&api::input(e)){Ok(next)=>{commands.set(next);error.set(String::new());},Err(e)=>error.set(crate::exfmt!("Comandi non validi: {e}","Invalid commands: {e}"))})}}/></details>}
         if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<div class="danger">{crate::render::render_value("",&p["invalid"])}</div>}
         if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
-        <label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa; richiesta per rifiuto o chiarimento)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
+        if !narrative||editable {<label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa; richiesta per rifiuto o chiarimento)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
         <p class="error">{&*error}</p>
+        }
         if let Some(e)=&recheck_error{<p class="danger proposal-recheck-error" role="status">{format!("{}: {}",crate::i18n::ex("Verifica non riuscita"),e)}</p>}
         if editable&&needs_reason{<small class="muted proposal-reason-hint">{crate::i18n::ex("Per rifiutare o chiedere un chiarimento scrivi una nota per il player.")}</small>}
         if blocked{<p class={if p["status"]=="needs_clarification"{"muted proposal-blocked"}else{"danger proposal-blocked"}} role="status">{if p["status"]=="needs_clarification"{crate::i18n::ex("In attesa del chiarimento del player: le azioni attuali non sarebbero approvabili (vedi verifica sopra).")}else if no_actions{crate::i18n::ex("Nessuna azione interpretata: aggiungi i comandi manualmente (JSON) oppure rifiuta la proposta.")}else{crate::i18n::ex("Non approvabile: correggi azioni o risorse (vedi verifica sopra) oppure rifiuta la proposta.")}}</p>}
         if needs_preview {<button disabled={props.busy||!editable} onclick={{let cb=props.action.clone();let commands=(*commands).clone();Callback::from(move |_|cb.emit(Action::store("/api/master/preview",Some(json!({"commands":commands})),format!("proposal:{id}"))))}}>{crate::i18n::ex("Esamina anteprima fisica")}</button>
             if !props.preview.is_null(){{preview(&props.preview)}}
         }
-        <div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{crate::i18n::ex("Approva azione")}</button><button data-reject="" disabled={props.busy||!editable||needs_reason} title={needs_reason.then_some(crate::i18n::ex("Per rifiutare o chiedere un chiarimento scrivi una nota per il player."))} onclick={decide(false)}>{crate::i18n::ex("Rifiuta")}</button>
+        if !narrative||editable {<div class="row proposal-actions"><button data-approve="" class="primary" disabled={props.busy||!editable||blocked||!error.is_empty()||(needs_preview&&!valid_preview)} onclick={decide(true)}>{if narrative{crate::i18n::ex("Approva iniziativa narrativa")}else{crate::i18n::ex("Approva azione")}}</button><button data-reject="" disabled={props.busy||!editable||needs_reason} title={needs_reason.then_some(crate::i18n::ex("Per rifiutare o chiedere un chiarimento scrivi una nota per il player."))} onclick={decide(false)}>{crate::i18n::ex("Rifiuta")}</button>
         if p["source"]["kind"]=="player"{<button data-clarify="" disabled={props.busy||!editable||note.trim().is_empty()} title={note.trim().is_empty().then_some(crate::i18n::ex("Spiega cosa chiarire al player"))} onclick={clarify}>{crate::i18n::ex("Chiedi chiarimento")}</button>}
-        if p["status"]=="approved"{<button disabled={props.busy} data-execute={id.to_string()} onclick={{let cb=props.action.clone();Callback::from(move |_|cb.emit(Action::post(format!("/api/master/proposals/{id}/execute"),json!({}))))}}>{crate::i18n::ex("Esegui ora ordine approvato")}</button>}
-        </div>{details(crate::i18n::ex("Cronologia ed esiti effettivi"),&json!({"history":p["history"],"executions":p["executions"]}))}
+        if p["status"]=="approved"&&!narrative{<button disabled={props.busy} data-execute={id.to_string()} onclick={{let cb=props.action.clone();Callback::from(move |_|cb.emit(Action::post(format!("/api/master/proposals/{id}/execute"),json!({}))))}}>{crate::i18n::ex("Esegui ora ordine approvato")}</button>}
+        </div>}{details(crate::i18n::ex("Cronologia ed esiti effettivi"),&json!({"history":p["history"],"executions":p["executions"]}))}
     </section>}
 }
 pub fn preview(value: &Value) -> Html {

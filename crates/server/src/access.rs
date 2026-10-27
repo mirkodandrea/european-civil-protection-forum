@@ -174,6 +174,7 @@ impl Principal {
                         "chat",
                         "reply",
                         "actions",
+                        "narrative",
                         "language",
                         "presence",
                     ]

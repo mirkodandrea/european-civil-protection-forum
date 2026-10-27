@@ -259,3 +259,26 @@ async fn deleting_the_session_restarts_from_the_running_scenario() {
     let (status, _) = post(&c, &s, "/api/master/storage/delete", json!({"target":"nonsense"})).await;
     assert_eq!(status, Status::BadRequest);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn narrative_approval_and_outcome_survive_restart_without_physical_execution() {
+    let d=dir("narrative");let p=storage(&d);let(c,s)=boot(&p).await;
+    assert_eq!(post(&c,&s,"/api/master/start",json!({})).await.0,Status::Ok);
+    assert_eq!(post(&c,&s,"/api/player/mayor/language",json!({"language":"en"})).await.0,Status::Ok);
+    post(&c,&s,"/api/master/inject",json!({"title":"Support","sender":"112","recipients":["mayor"],"text":"Psychological support requested"})).await;
+    let parent=s.lock().messages.iter().find(|m|m.kind==exercise::MsgKind::Inject&&m.to=="mayor").unwrap().id;
+    let(status,got)=post(&c,&s,"/api/player/mayor/narrative",json!({"text":"Activate support","reply_to":parent})).await;
+    assert_eq!(status,Status::Ok,"{got}");let id=got["proposal"].as_u64().unwrap();
+    assert_eq!(post(&c,&s,&format!("/api/master/proposals/{id}/decide"),json!({"approve":true})).await.0,Status::Ok);
+    assert_eq!(post(&c,&s,&format!("/api/master/proposals/{id}/narrative-outcome"),json!({"text":"EXCON assigns a support team"})).await.0,Status::Ok);
+    server::flow::settle(&s).await;
+    p.autosave(&s,true);
+    let saved=storage(&d).load_session().unwrap();
+    let p2=storage(&d);let(_,s2)=boot(&p2).await;
+    persist::restore(&s2,server::replay_rocket(&s2),saved).await.unwrap();
+    let ex=s2.lock();let restored=ex.proposal(id).unwrap();
+    assert!(restored.narrative);assert_eq!(restored.status,exercise::ProposalStatus::Approved);
+    assert_eq!(restored.narrative_outcomes[0].text,"EXCON assigns a support team");
+    assert!(restored.commands.is_empty());assert!(restored.executions.is_empty());
+    assert!(ex.world.d.allocations.is_empty());
+}

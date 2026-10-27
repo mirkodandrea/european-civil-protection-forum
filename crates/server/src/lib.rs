@@ -44,6 +44,7 @@ use browser::{Json, Status};
 use browser_runtime as tokio;
 pub mod access;
 mod assessment;
+mod narrative;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod persist;
 mod decision_drafts;
@@ -224,6 +225,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_master_chat,
                 post_reply,
                 post_player_actions,
+                narrative::submit,
+                narrative::outcome,
                 post_language,
                 post_start,
                 post_inject,
@@ -625,7 +628,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
                 } else { message.text.clone() };
                 Some(visible)
             }).collect::<Vec<_>>();
-            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence})
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence})
         })
         .collect();
     Ok(Json(json!({
