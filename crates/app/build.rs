@@ -26,6 +26,10 @@ fn main() {
     let status = Command::new("sh")
         .arg(root.join("scripts/build_frontend.sh"))
         .current_dir(&root)
+        // The outer Cargo process holds a lock for its own target directory.
+        // Trunk runs Cargo recursively, so give that build a separate target
+        // directory to avoid waiting on the parent process forever.
+        .env("CARGO_TARGET_DIR", root.join("target/frontend"))
         .status()
         .expect(
             "could not start frontend build; install Trunk and the wasm32-unknown-unknown target",
