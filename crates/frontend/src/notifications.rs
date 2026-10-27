@@ -295,6 +295,9 @@ fn log_spec(
         | "settings"
         | "language_set"
         | "timeline_action_decided"
+        | "timeline_action_toggled"
+        | "inject_skipped"
+        | "inject_restored"
         | "inject_scheduled"
         | "inject_schedule_cancelled"
         | "communications_reviewed"
@@ -685,7 +688,7 @@ impl App {
         if master_view {
             let name = |id: &str| self.name(id);
             let action_title = |id: &str| {
-                list(&master["timeline_actions"])
+                list(&master["inject_actions"])
                     .iter()
                     .find(|a| a["id"] == id)
                     .map(|a| text(&a["title"]).to_string())
