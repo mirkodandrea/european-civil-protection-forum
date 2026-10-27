@@ -81,7 +81,9 @@ fn scroll_lines(unit: MouseScrollUnit, y: f32) -> f32 {
 }
 
 impl ViewInput<'_, '_> {
-    fn navigate(&mut self, o: &mut Orbit, nav: &mut Navigation, over_ui: bool) -> bool {
+    /// `brush`: a hold-to-paint editor tool owns the left button and the wheel
+    /// (Ctrl/Cmd + wheel still zooms).
+    fn navigate(&mut self, o: &mut Orbit, nav: &mut Navigation, over_ui: bool, brush: bool) -> bool {
         let window = self.windows.get_single().ok();
         let focused = window.is_some_and(|w| w.focused);
         let cursor = window.and_then(|w| w.cursor_position());
@@ -113,7 +115,11 @@ impl ViewInput<'_, '_> {
         if nav.mouse[0] {
             nav.moved += delta.length();
         }
-        let left = nav.mouse[0] && nav.moved >= 6.0;
+        let left = nav.mouse[0] && nav.moved >= 6.0 && !brush;
+        let command = [KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight]
+            .into_iter()
+            .any(|k| self.keys.pressed(k));
+        let scroll = if brush && !command { 0.0 } else { scroll };
         let shift = self.keys.pressed(KeyCode::ShiftLeft) || self.keys.pressed(KeyCode::ShiftRight);
         if (left && !shift) || nav.mouse[2] {
             pan(o, delta, height);
@@ -433,7 +439,12 @@ pub fn control(
     let now = time.elapsed_seconds();
     let dt = time.delta_seconds().min(0.1);
     let over_ui = egui.ctx_mut().wants_pointer_input();
-    let manual = input.navigate(&mut o, &mut navigation, over_ui);
+    let manual = input.navigate(
+        &mut o,
+        &mut navigation,
+        over_ui,
+        editor.as_ref().is_some_and(|e| e.brush_tool()),
+    );
     if manual {
         dir.manual_until = now + 15.0;
     }
@@ -656,7 +667,7 @@ mod tests {
                  mut nav: Local<Navigation>,
                  mut o: ResMut<Orbit>,
                  ui: Res<PointerUi>| {
-                    input.navigate(&mut o, &mut nav, ui.0);
+                    input.navigate(&mut o, &mut nav, ui.0, false);
                 },
             );
         let mut window = Window {

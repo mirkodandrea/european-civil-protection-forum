@@ -1,8 +1,9 @@
 //! Authoring controls send edits to the headless draft; scene systems only read it.
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use scenario::{
-    editor::{Document, Selection},
+    editor::{BuildingSpec, Document, Selection, VISUAL_KINDS},
     Scenario,
 };
 use std::sync::{Arc, Mutex};
@@ -28,7 +29,14 @@ pub struct Editor {
     general: Option<String>,
     radius: f32,
     elevation: f32,
+    /// "push" (raise, Shift lowers) or "level" (set to `elevation`).
+    sculpt_mode: String,
+    strength: f32,
+    stroking: bool,
+    stroke_clock: f32,
+    last_paint: Option<scenario::Pos>,
     fuel: i32,
+    spec: BuildingSpec,
     road_start: Option<scenario::Pos>,
     road_open: Option<usize>,
     press: Option<Vec2>,
@@ -65,6 +73,13 @@ impl ViewSource for DraftSource {
         })
     }
 }
+impl Editor {
+    /// Hold-to-paint tools take the left button and the wheel from the camera.
+    pub fn brush_tool(&self) -> bool {
+        self.tool == "height" || self.tool == "fuel"
+    }
+}
+
 pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
     let library = storage.list()?;
     let document = Arc::new(Mutex::new(Document::new(scene).map_err(|e| e.to_string())?));
@@ -80,7 +95,13 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         general: None,
         radius: 60.,
         elevation: 100.,
+        sculpt_mode: "push".into(),
+        strength: 15.,
+        stroking: false,
+        stroke_clock: 0.,
+        last_paint: None,
         fuel: 4,
+        spec: BuildingSpec::default(),
         road_start: None,
         road_open: None,
         press: None,
@@ -216,8 +237,8 @@ pub(crate) fn draw(
                 ui.heading("Strumenti");
                 for (id, label) in [
                     ("select", "Seleziona"),
-                    ("height", "Quota terreno"),
-                    ("fuel", "Vegetazione"),
+                    ("height", "Quota terreno (pennello)"),
+                    ("fuel", "Vegetazione (pennello)"),
                     ("building", "Aggiungi edificio"),
                     ("road", "Strada (polilinea)"),
                     ("place", "Aggiungi luogo"),
@@ -232,14 +253,23 @@ pub(crate) fn draw(
                     }
                 }
                 if e.tool == "height" || e.tool == "fuel" {
-                    ui.add(egui::Slider::new(&mut e.radius, 10. ..=500.).text("Raggio m"));
+                    ui.add(egui::Slider::new(&mut e.radius, 10. ..=1000.).text("Raggio m"));
+                    ui.small("Rotella: raggio · Ctrl/Cmd + rotella: zoom");
                     if e.tool == "height" {
-                        ui.add(
-                            egui::DragValue::new(&mut e.elevation)
-                                .range(-1000. ..=5000.)
-                                .prefix("Quota m "),
-                        );
+                        ui.radio_value(&mut e.sculpt_mode, "push".into(), "Alza (Maiusc: abbassa)");
+                        ui.radio_value(&mut e.sculpt_mode, "level".into(), "Livella a una quota");
+                        if e.sculpt_mode == "push" {
+                            ui.add(egui::Slider::new(&mut e.strength, 1. ..=100.).text("Intensità m/s"));
+                        } else {
+                            ui.add(
+                                egui::DragValue::new(&mut e.elevation)
+                                    .range(-1000. ..=5000.)
+                                    .prefix("Quota m "),
+                            );
+                        }
+                        ui.small("Tieni premuto sulla mappa per modellare il terreno.");
                     } else {
+                        ui.small("Tieni premuto sulla mappa per dipingere.");
                         egui::ComboBox::from_label("Combustibile")
                             .selected_text(e.fuel.to_string())
                             .show_ui(ui, |ui| {
@@ -258,6 +288,10 @@ pub(crate) fn draw(
                                 }
                             });
                     }
+                }
+                if e.tool == "building" {
+                    building_spec_fields(ui, &mut e.spec);
+                    ui.small("Q/E: ruota di 15° · clic: posiziona");
                 }
                 if e.road_start.is_some() || e.road_open.is_some() {
                     ui.label(if e.road_open.is_some() {
@@ -322,7 +356,25 @@ pub(crate) fn draw(
                 ui.label("Modifica posizione, nome e parametri; Applica conferma la bozza.");
                 if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&e.properties) {
                     let before = value.clone();
-                    property_fields(ui, &mut value, "");
+                    typed_fields(ui, selection, &mut value, &d.scene);
+                    // Keys edited by `typed_fields` are hidden from the generic list.
+                    let hidden: &[&str] = match selection {
+                        Selection::Building(_) => &["kind", "visual_kind", "rotation_deg"],
+                        Selection::Place(_) => &["radius_m", "buildings", "roads"],
+                        _ => &[],
+                    };
+                    let mut rest = value.clone();
+                    if let Some(o) = rest.as_object_mut() {
+                        hidden.iter().for_each(|k| {
+                            o.remove(*k);
+                        });
+                    }
+                    property_fields(ui, &mut rest, "");
+                    if let (Some(rest), Some(o)) = (rest.as_object(), value.as_object_mut()) {
+                        rest.iter().for_each(|(k, v)| {
+                            o.insert(k.clone(), v.clone());
+                        });
+                    }
                     if before != value {
                         e.properties = serde_json::to_string_pretty(&value).unwrap();
                     }
@@ -357,7 +409,7 @@ pub(crate) fn draw(
     }
     egui::TopBottomPanel::bottom("editor-status").show(ctx,|ui| {
         ui.label(&e.message);
-        ui.small("Clic: applica strumento · trascina: sposta vista · destro: ruota · rotella: zoom · R: inquadra territorio");
+        ui.small("Clic: applica strumento · pennelli: tieni premuto · trascina: sposta vista · destro: ruota · rotella: zoom (raggio con i pennelli) · R: inquadra");
     });
     if e.pending.is_some() {
         let mut apply = !d.dirty();
@@ -434,6 +486,170 @@ pub(crate) fn draw(
         e.show_json = open;
     }
 }
+const BUILDING_KINDS: [(&str, &str); 7] = [
+    ("House", "Abitazione"),
+    ("School", "Scuola"),
+    ("Hospital", "Ospedale"),
+    ("FuelStation", "Distributore"),
+    ("SportsCentre", "Centro sportivo"),
+    ("TownHall", "Municipio"),
+    ("Industrial", "Industria"),
+];
+fn kind_label(kind: &scenario::BuildingKind) -> &'static str {
+    let id = serde_json::to_value(kind).ok();
+    BUILDING_KINDS
+        .iter()
+        .find(|(k, _)| id.as_ref().and_then(|v| v.as_str()) == Some(*k))
+        .map_or("?", |(_, l)| l)
+}
+fn visual_label(kind: &Option<String>) -> &str {
+    kind.as_deref().unwrap_or("standard")
+}
+fn kind_combo(ui: &mut egui::Ui, id: &str, kind: &mut scenario::BuildingKind) {
+    egui::ComboBox::from_id_source(id)
+        .selected_text(kind_label(kind))
+        .show_ui(ui, |ui| {
+            for (k, label) in BUILDING_KINDS {
+                if let Ok(v) = serde_json::from_value::<scenario::BuildingKind>(k.into()) {
+                    ui.selectable_value(kind, v, label);
+                }
+            }
+        });
+}
+fn visual_combo(ui: &mut egui::Ui, id: &str, visual: &mut Option<String>) {
+    egui::ComboBox::from_id_source(id)
+        .selected_text(visual_label(visual))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(visual, None, "standard");
+            for k in VISUAL_KINDS {
+                ui.selectable_value(visual, Some(k.to_string()), *k);
+            }
+        });
+}
+fn building_spec_fields(ui: &mut egui::Ui, spec: &mut BuildingSpec) {
+    ui.horizontal(|ui| {
+        ui.label("Tipo");
+        kind_combo(ui, "spec-kind", &mut spec.kind);
+    });
+    ui.horizontal(|ui| {
+        ui.label("Variante");
+        visual_combo(ui, "spec-visual", &mut spec.visual_kind);
+    });
+    ui.horizontal(|ui| {
+        ui.label("Dimensioni m");
+        ui.add(egui::DragValue::new(&mut spec.size[0]).range(3. ..=400.));
+        ui.add(egui::DragValue::new(&mut spec.size[1]).range(3. ..=400.));
+    });
+    ui.add(egui::Slider::new(&mut spec.rotation_deg, 0. ..=359.).text("Rotazione °"));
+    ui.add(egui::DragValue::new(&mut spec.occupants).prefix("Occupanti "));
+}
+/// Typed editors for the fields JSON text boxes handle badly (enums, optional
+/// fields, references). They edit the JSON that «Applica» deserialises.
+fn typed_fields(ui: &mut egui::Ui, selection: Selection, v: &mut serde_json::Value, s: &Scenario) {
+    use serde_json::Value;
+    let Some(obj) = v.as_object_mut() else { return };
+    match selection {
+        Selection::Building(_) => {
+            let mut kind = obj
+                .get("kind")
+                .and_then(|k| serde_json::from_value(k.clone()).ok())
+                .unwrap_or(scenario::BuildingKind::House);
+            let mut visual = obj.get("visual_kind").and_then(|k| k.as_str()).map(str::to_owned);
+            let mut rotation = obj.get("rotation_deg").and_then(Value::as_f64).unwrap_or(0.) as f32;
+            ui.horizontal(|ui| {
+                ui.label("Tipo");
+                kind_combo(ui, "sel-kind", &mut kind);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Variante");
+                visual_combo(ui, "sel-visual", &mut visual);
+            });
+            ui.add(egui::Slider::new(&mut rotation, 0. ..=359.).text("Rotazione °"));
+            ui.small("Q/E ruotano l’edificio selezionato di 15° (poi «Applica»).");
+            obj.insert("kind".into(), serde_json::to_value(kind).unwrap_or_default());
+            match visual {
+                Some(k) => obj.insert("visual_kind".into(), k.into()),
+                None => obj.remove("visual_kind"),
+            };
+            obj.insert("rotation_deg".into(), Value::from(rotation));
+            ui.separator();
+        }
+        Selection::Place(_) => {
+            let mut radius = obj.get("radius_m").and_then(Value::as_f64).map(|r| r as f32);
+            let mut area = radius.is_some();
+            if ui.checkbox(&mut area, "Area associata (cerchio)").changed() {
+                radius = area.then_some(radius.unwrap_or(150.));
+            }
+            if let Some(r) = radius.as_mut() {
+                ui.add(egui::Slider::new(r, 20. ..=3000.).text("Raggio m"));
+            }
+            let at: Option<scenario::Pos> = obj
+                .get("pos")
+                .and_then(|p| serde_json::from_value(p.clone()).ok());
+            let mut buildings: Vec<u32> = obj
+                .get("buildings")
+                .and_then(|b| serde_json::from_value(b.clone()).ok())
+                .unwrap_or_default();
+            let mut roads: Vec<String> = obj
+                .get("roads")
+                .and_then(|b| serde_json::from_value(b.clone()).ok())
+                .unwrap_or_default();
+            if let (Some(at), Some(r)) = (at, radius) {
+                if ui.button("Associa ciò che cade nell’area").clicked() {
+                    buildings = s
+                        .buildings
+                        .iter()
+                        .filter(|b| scenario::editor::distance(b.pos, at) <= r)
+                        .map(|b| b.id)
+                        .collect();
+                    roads = s
+                        .roads
+                        .iter()
+                        .filter(|rd| rd.points.iter().any(|p| scenario::editor::distance(*p, at) <= r))
+                        .map(|rd| rd.id.clone())
+                        .collect();
+                }
+            }
+            ui.collapsing(format!("Edifici associati ({})", buildings.len()), |ui| {
+                for b in &s.buildings {
+                    let mut on = buildings.contains(&b.id);
+                    let label = format!("{} · {}", b.id, b.name.as_deref().unwrap_or(""));
+                    if ui.checkbox(&mut on, label).changed() {
+                        buildings.retain(|id| *id != b.id);
+                        if on {
+                            buildings.push(b.id);
+                        }
+                    }
+                }
+            });
+            ui.collapsing(format!("Strade associate ({})", roads.len()), |ui| {
+                for r in &s.roads {
+                    let mut on = roads.contains(&r.id);
+                    if ui.checkbox(&mut on, &r.name).changed() {
+                        roads.retain(|id| *id != r.id);
+                        if on {
+                            roads.push(r.id.clone());
+                        }
+                    }
+                }
+            });
+            match radius {
+                Some(r) => obj.insert("radius_m".into(), Value::from(r)),
+                None => obj.remove("radius_m"),
+            };
+            for (k, val) in [
+                ("buildings", serde_json::to_value(&buildings)),
+                ("roads", serde_json::to_value(&roads)),
+            ] {
+                if let Ok(val) = val {
+                    obj.insert(k.into(), val);
+                }
+            }
+            ui.separator();
+        }
+        _ => {}
+    }
+}
 fn property_fields(ui: &mut egui::Ui, v: &mut serde_json::Value, key: &str) {
     use serde_json::Value;
     let key = match key {
@@ -505,16 +721,59 @@ fn property_fields(ui: &mut egui::Ui, v: &mut serde_json::Value, key: &str) {
     }
 }
 
+const BRUSH_TICK: f32 = 0.1;
+
 pub(crate) fn interact(
     mut contexts: EguiContexts,
     editor: Option<ResMut<Editor>>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut wheel: EventReader<MouseWheel>,
+    time: Res<Time>,
     scn: Res<crate::Scn>,
     mut gizmos: Gizmos,
 ) {
     let Some(mut e) = editor else { return };
+    let wheel_lines: f32 = wheel
+        .read()
+        .map(|w| match w.unit {
+            MouseScrollUnit::Line => w.y,
+            MouseScrollUnit::Pixel => w.y / 50.,
+        })
+        .sum();
+    // A brush stroke is one undo step; it ends when the button is released.
+    if e.stroking && !buttons.pressed(MouseButton::Left) {
+        let document = e.document.clone();
+        let locked = document.try_lock();
+        if let Ok(mut d) = locked {
+            d.end_stroke();
+            e.stroking = false;
+            e.last_paint = None;
+        }
+    }
+    // Q/E rotate the building about to be placed, or the selected one.
+    let turn = f32::from(keys.just_pressed(KeyCode::KeyE)) - f32::from(keys.just_pressed(KeyCode::KeyQ));
+    if turn != 0. && !contexts.ctx_mut().wants_keyboard_input() {
+        let step = -15. * turn; // E turns clockwise seen from above
+        if e.tool == "building" {
+            e.spec.rotation_deg = (e.spec.rotation_deg + step).rem_euclid(360.);
+        } else if let Some(Selection::Building(i)) = e.selected {
+            let document = e.document.clone();
+            let locked = document.try_lock();
+            if let Ok(mut d) = locked {
+                let result = d.edit(|s| {
+                    if let Some(b) = s.buildings.get_mut(i) {
+                        b.rotation_deg = (b.rotation_deg + step).rem_euclid(360.);
+                    }
+                    Ok(())
+                });
+                outcome(&mut e, result.map_err(|err| err.to_string()));
+                set_selection(&mut e, &d, Some(Selection::Building(i)));
+            }
+        }
+    }
     let Ok(window) = windows.get_single() else {
         return;
     };
@@ -548,11 +807,21 @@ pub(crate) fn interact(
             }
         }
     }
+    if let Some(Selection::Building(i)) = e.selected {
+        if let Some(b) = s.buildings.get(i) {
+            let (sin, cos) = b.rotation_deg.to_radians().sin_cos();
+            let (hx, hy) = (b.size[0] * 0.5, b.size[1] * 0.5);
+            let corner = |x: f32, y: f32| {
+                crate::frame::to_bevy(s, [b.pos[0] + x * cos - y * sin, b.pos[1] + x * sin + y * cos], 6.)
+            };
+            let ring = [corner(-hx, -hy), corner(hx, -hy), corner(hx, hy), corner(-hx, hy)];
+            for k in 0..4 {
+                gizmos.line(ring[k], ring[(k + 1) % 4], Color::srgb(1., 1., 0.));
+            }
+            gizmos.line(corner(0., 0.), corner(hx, 0.), Color::srgb(1., 1., 0.));
+        }
+    }
     let selected_position = match e.selected {
-        Some(Selection::Building(i)) => s
-            .buildings
-            .get(i)
-            .map(|b| (b.pos, b.size[0].max(b.size[1]))),
         Some(Selection::Place(i)) => s.places.get(i).map(|p| (p.pos, 25.)),
         _ => None,
     };
@@ -589,9 +858,40 @@ pub(crate) fn interact(
             },
         );
     }
-    for p in &s.places {
+    for (i, p) in s.places.iter().enumerate() {
         let at = crate::frame::to_bevy(s, p.pos, 8.);
         gizmos.line(at, at + Vec3::Y * 70., Color::srgb(0.1, 0.8, 1.));
+        if let Some(r) = p.radius_m {
+            let selected = e.selected == Some(Selection::Place(i));
+            gizmos.circle(
+                crate::frame::to_bevy(s, p.pos, 6.),
+                Dir3::Y,
+                r,
+                Color::srgb(0.1, 0.8, 1.).with_alpha(if selected { 0.9 } else { 0.35 }),
+            );
+        }
+    }
+    // Members of the selected place: buildings ringed, roads traced.
+    if let Some(Selection::Place(i)) = e.selected {
+        if let Some(place) = s.places.get(i) {
+            for b in s.buildings.iter().filter(|b| place.buildings.contains(&b.id)) {
+                gizmos.circle(
+                    crate::frame::to_bevy(s, b.pos, 12.),
+                    Dir3::Y,
+                    b.size[0].max(b.size[1]) * 0.8,
+                    Color::srgb(0.1, 0.8, 1.),
+                );
+            }
+            for r in s.roads.iter().filter(|r| place.roads.contains(&r.id)) {
+                for pair in r.points.windows(2) {
+                    gizmos.line(
+                        crate::frame::to_bevy(s, pair[0], 12.),
+                        crate::frame::to_bevy(s, pair[1], 12.),
+                        Color::srgb(0.1, 0.8, 1.),
+                    );
+                }
+            }
+        }
     }
     if let Some(start) = e.road_start {
         let p = crate::frame::to_bevy(s, start, 10.);
@@ -605,6 +905,12 @@ pub(crate) fn interact(
             e.press = None;
         }
         return;
+    }
+    let command = [KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight]
+        .into_iter()
+        .any(|k| keys.pressed(k));
+    if e.brush_tool() && wheel_lines != 0. && !command {
+        e.radius = (e.radius * (0.1 * wheel_lines).exp()).clamp(10., 1000.);
     }
     // Ray march the same bilinear terrain surface used by presentation.
     let Some(ray) = camera.viewport_to_world(transform, cursor - viewport_origin) else {
@@ -634,14 +940,71 @@ pub(crate) fn interact(
         }
         previous = t;
     }
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if let Some(at) = hit {
-        if e.tool == "height" || e.tool == "fuel" {
-            gizmos.circle(
-                crate::frame::to_bevy(s, at, 5.),
-                Dir3::Y,
-                e.radius,
-                Color::srgb(1., 1., 0.),
-            );
+        if e.brush_tool() {
+            let lowering = e.tool == "height" && e.sculpt_mode == "push" && shift;
+            let colour = if lowering {
+                Color::srgb(1., 0.25, 0.2)
+            } else {
+                Color::srgb(1., 1., 0.)
+            };
+            let centre = crate::frame::to_bevy(s, at, 5.);
+            gizmos.circle(centre, Dir3::Y, e.radius, colour);
+            gizmos.circle(centre, Dir3::Y, e.radius * 0.5, colour.with_alpha(0.4));
+            if buttons.pressed(MouseButton::Left) {
+                let document = e.document.clone();
+                let Ok(mut d) = document.try_lock() else {
+                    return;
+                };
+                if !Arc::ptr_eq(s, &d.scene) {
+                    return; // the scene is still rebuilding; keep the clock running
+                }
+                if !e.stroking {
+                    d.begin_stroke();
+                    e.stroking = true;
+                    e.stroke_clock = BRUSH_TICK;
+                }
+                e.stroke_clock += time.delta_seconds().min(0.1);
+                if e.stroke_clock >= BRUSH_TICK {
+                    let elapsed = e.stroke_clock.min(0.25);
+                    e.stroke_clock = 0.;
+                    let result = match (e.tool.as_str(), e.sculpt_mode.as_str()) {
+                        ("height", "push") => {
+                            let sign = if shift { -1. } else { 1. };
+                            d.sculpt(at, e.radius, sign * e.strength * elapsed)
+                        }
+                        ("height", _) => d.brush(at, e.radius, Some(e.elevation), None),
+                        _ => {
+                            // Painting is idempotent: skip until the brush has moved.
+                            if e.last_paint.is_some_and(|p| {
+                                scenario::editor::distance(p, at) < e.radius * 0.2
+                            }) {
+                                return;
+                            }
+                            e.last_paint = Some(at);
+                            d.brush(at, e.radius, None, Some(e.fuel))
+                        }
+                    };
+                    if let Err(err) = result {
+                        e.message = err.to_string();
+                    }
+                }
+            }
+            return;
+        }
+        if e.tool == "building" {
+            let (sin, cos) = e.spec.rotation_deg.to_radians().sin_cos();
+            let (hx, hy) = (e.spec.size[0] * 0.5, e.spec.size[1] * 0.5);
+            let corner = |x: f32, y: f32| {
+                crate::frame::to_bevy(s, [at[0] + x * cos - y * sin, at[1] + x * sin + y * cos], 3.)
+            };
+            let ring = [corner(-hx, -hy), corner(hx, -hy), corner(hx, hy), corner(-hx, hy)];
+            for i in 0..4 {
+                gizmos.line(ring[i], ring[(i + 1) % 4], Color::srgb(0.3, 1., 0.4));
+            }
+            // Front edge marks the +x axis so the rotation is legible.
+            gizmos.line(corner(0., 0.), corner(hx, 0.), Color::srgb(0.3, 1., 0.4));
         }
         if buttons.just_pressed(MouseButton::Left) {
             e.press = Some(cursor);
@@ -698,6 +1061,9 @@ pub(crate) fn interact(
                         Ok(())
                     }
                 }
+                "building" => d
+                    .add_building(at, e.spec.clone())
+                    .map(|sel| set_selection(&mut e, &d, Some(sel))),
                 _ => {
                     let tool = e.tool.clone();
                     d.add(&tool, at, None)

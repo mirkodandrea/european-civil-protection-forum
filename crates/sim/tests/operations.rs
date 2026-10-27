@@ -44,6 +44,7 @@ fn scene() -> scenario::Scenario {
             occupants: 120,
             sector: "test".into(),
             shelter_capacity: 0,
+            rotation_deg: 0.0,
         },
         Building {
             visual_kind: None,
@@ -55,6 +56,7 @@ fn scene() -> scenario::Scenario {
             occupants: 0,
             sector: "test".into(),
             shelter_capacity: 200,
+            rotation_deg: 0.0,
         },
     ];
     s.roads = vec![

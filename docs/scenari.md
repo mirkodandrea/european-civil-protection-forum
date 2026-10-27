@@ -91,16 +91,34 @@ un pack; «Clona scenario corrente» assegna alla copia un nuovo ID e conserva
 territorio e contenuti dell’esercitazione. Aprire un altro progetto con modifiche
 non salvate richiede una scelta esplicita nell’interfaccia.
 
-Gli strumenti lavorano con un clic sulla superficie 3D: quota assoluta e
-vegetazione con pennello circolare, edifici, luoghi, inneschi (raggio minimo
-40 m), strade come polilinee (due clic creano il tracciato, ogni clic successivo aggiunge un vertice; «Termina strada» chiude). Gli oggetti si scelgono dalla lista o sulla mappa;
-le proprietà permettono di cambiare coordinate e attributi, oppure eliminarli.
-Le strade sono selezionabili dalla lista. «Scenario e meteo» modifica nome,
-descrizione, orario iniziale, durata dei turni e meteo. Importazione/esportazione
-JSON (download nel browser, copia negli appunti nel desktop) trasferisce l’intero scenario e permette di modificare anche ruoli,
-risorse, inject e politiche avanzate. Il formato è quello dei territori `.json`,
-non quello dei pack `.pack.json`. Nel browser è possibile usare poi l’editor
-pack ordinario sul nuovo territorio per i moduli di ruoli, risorse e timeline.
+Strumenti:
+
+- **Quota terreno (pennello push/pull):** tenendo premuto il tasto sinistro il
+  terreno si alza nel cerchio, con Maiusc si abbassa (cerchio rosso); in
+  alternativa «Livella a una quota» porta il cerchio a un valore fisso.
+  L'intensità è in m/s. Un tratto di pennello è un solo passo di annulla.
+- **Vegetazione (pennello):** stessa logica, tenendo premuto si dipinge il
+  combustibile scelto.
+- **Raggio del pennello:** rotella del mouse (10–1000 m); Ctrl/Cmd + rotella
+  per lo zoom. Con un pennello attivo il tasto sinistro non sposta la vista
+  (usare il tasto destro per ruotare, il centrale per spostare).
+- **Edifici:** si sceglie prima tipo (abitazione, scuola, ospedale, …),
+  variante grafica (chiesa, cascina, piazza, campo, parcheggio, … vedi
+  `VISUAL_KINDS`), dimensioni, rotazione e occupanti; l'anteprima verde mostra
+  l'impronta ruotata. Q/E ruotano di 15° l'edificio da posizionare o quello
+  selezionato. `rotation_deg` (antiorario visto dall'alto) è solo grafico:
+  esposizione e percorsi usano ancora la posizione.
+- **Luoghi:** oltre al nome e alle alternative possono avere un'**area**
+  circolare (`radius_m`) e l'elenco di **edifici** e **strade** associati
+  (`buildings`, `roads`); «Associa ciò che cade nell'area» li riempie da solo.
+  Le associazioni sono dati di authoring e rendering: il gazetteer della
+  simulazione continua a risolvere il centro del luogo. Eliminando un edificio
+  o una strada il riferimento sparisce dai luoghi.
+- **Strade** come polilinee, **luoghi** e **inneschi** (raggio minimo 40 m)
+  con un clic. Gli oggetti si scelgono dalla lista o sulla mappa; le proprietà
+  permettono di cambiare coordinate e attributi, oppure eliminarli.
+
+«Scenario e meteo» modifica nome, descrizione, orario iniziale, durata dei turni e meteo. Importazione/esportazione JSON (download nel browser, copia negli appunti nel desktop) trasferisce l’intero scenario e permette di modificare anche ruoli, risorse, inject e politiche avanzate. Il formato è quello dei territori `.json`, non quello dei pack `.pack.json`. Nel browser è possibile usare poi l’editor pack ordinario sul nuovo territorio per i moduli di ruoli, risorse e timeline.
 
 Annulla/ripristina conserva fino a 32 revisioni della bozza. Una modifica non
 valida lascia intatti documento e cronologia. I pennelli di quota aggiornano

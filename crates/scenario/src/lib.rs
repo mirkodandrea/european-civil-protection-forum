@@ -231,6 +231,14 @@ pub struct Building {
     /// Can host evacuees (shelter / assembly area) once opened.
     #[serde(default)]
     pub shelter_capacity: u32,
+    /// Footprint rotation, degrees counter-clockwise seen from above (0 = `size[0]`
+    /// along east). Presentation only: exposure and routing use `pos`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation_deg: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,12 +352,20 @@ impl ZoneGrid {
 }
 
 /// A named point, for the LLM to resolve "the ridge" or "la scuola" to a place.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Place {
     pub name: String,
     #[serde(default)]
     pub aliases: Vec<String>,
     pub pos: Pos,
+    /// Optional circular area around `pos`, metres (e.g. a district or a valley).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius_m: Option<f32>,
+    /// Buildings (by id) and roads (by id) that belong to the place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buildings: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roads: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

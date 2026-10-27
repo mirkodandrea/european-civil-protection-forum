@@ -169,6 +169,7 @@ pub fn generate(seed: u64) -> Scenario {
             occupants,
             sector: String::new(),
             shelter_capacity: shelter,
+            rotation_deg: 0.0,
         });
     }
 
@@ -418,6 +419,7 @@ fn places() -> Vec<Place> {
         name: name.into(),
         aliases: aliases.iter().map(|s| s.to_string()).collect(),
         pos,
+        ..Default::default()
     };
     vec![
         place("Pine Hill", &["Monte Pino", "Collina dei Pini"], PINE_HILL),

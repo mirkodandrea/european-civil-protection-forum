@@ -824,7 +824,7 @@ fn places_view(props: &PlacesProps) -> Html {
                     let add = upd(open, |p, _: MouseEvent| {
                         let l = p.edits.places.get_or_insert_with(Vec::new);
                         let n = l.len() + 1;
-                        l.push(Place { name: format!("Luogo {n}"), aliases: vec![], pos: [1000.0, 1000.0] });
+                        l.push(Place { name: format!("Luogo {n}"), aliases: vec![], pos: [1000.0, 1000.0], ..Default::default() });
                     });
                     Callback::from(move |e: MouseEvent| { selected.set(n); add.emit(e) })
                 }}>{ex("Aggiungi luogo")}</button>

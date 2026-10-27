@@ -136,6 +136,7 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
                 name: name.clone(),
                 aliases: vec![],
                 pos: point,
+                ..Default::default()
             });
         }
         scn.buildings.push(Building {
@@ -147,6 +148,7 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
             size,
             occupants: occupants.remove(&id).unwrap_or(0),
             sector: "territory".into(),
+            rotation_deg: 0.0,
             shelter_capacity: if kind == BuildingKind::SportsCentre {
                 500
             } else {

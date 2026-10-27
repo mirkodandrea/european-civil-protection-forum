@@ -153,9 +153,10 @@ pub fn setup(
                         material: pal.house.clone(),
                         transform: Transform::from_translation(to_bevy(
                             s,
-                            [b.pos[0] + offset[0], b.pos[1] + offset[1]],
+                            rotated(b, offset),
                             0.6,
                         ))
+                        .with_rotation(Quat::from_rotation_y(b.rotation_deg.to_radians()))
                         .with_scale(Vec3::splat(scale)),
                         ..default()
                     });
@@ -201,16 +202,19 @@ pub fn setup(
             });
             (
                 mesh,
-                Transform::from_translation(base).with_scale(Vec3::new(
-                    b.size[0] / bounds[0].max(1.0),
-                    height / bounds[1].max(1.0),
-                    b.size[1] / bounds[2].max(1.0),
-                )),
+                Transform::from_translation(base)
+                    .with_rotation(Quat::from_rotation_y(b.rotation_deg.to_radians()))
+                    .with_scale(Vec3::new(
+                        b.size[0] / bounds[0].max(1.0),
+                        height / bounds[1].max(1.0),
+                        b.size[1] / bounds[2].max(1.0),
+                    )),
             )
         } else {
             (
                 crate::architecture::building(b.size, height, i, b.kind == BuildingKind::House),
-                Transform::from_translation(base - Vec3::Y),
+                Transform::from_translation(base - Vec3::Y)
+                    .with_rotation(Quat::from_rotation_y(b.rotation_deg.to_radians())),
             )
         };
         commands.spawn((
@@ -436,6 +440,15 @@ pub fn update(
     seen.0 = snap.generation;
 }
 
+/// World position of a footprint-local offset (metres), honouring `rotation_deg`.
+fn rotated(b: &scenario::Building, local: [f32; 2]) -> [f32; 2] {
+    let (sin, cos) = b.rotation_deg.to_radians().sin_cos();
+    [
+        b.pos[0] + local[0] * cos - local[1] * sin,
+        b.pos[1] + local[0] * sin + local[1] * cos,
+    ]
+}
+
 /// Authored open spaces remain open and follow the visual DEM. No decorative
 /// vehicles, tents or people are added to the operational model.
 fn open_ground(s: &Scenario, b: &scenario::Building, kind: &str) -> Mesh {
@@ -450,10 +463,7 @@ fn open_ground(s: &Scenario, b: &scenario::Building, kind: &str) -> Mesh {
         for x in 0..=nx {
             let u = x as f32 / nx as f32;
             let v = z as f32 / nz as f32;
-            let at = [
-                b.pos[0] + (u - 0.5) * b.size[0],
-                b.pos[1] + (0.5 - v) * b.size[1],
-            ];
+            let at = rotated(b, [(u - 0.5) * b.size[0], (0.5 - v) * b.size[1]]);
             pos.push(to_bevy(s, at, 0.6).to_array());
             let c = match kind {
                 "pitch" => {

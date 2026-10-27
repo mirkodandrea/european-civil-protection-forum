@@ -17,7 +17,37 @@ pub struct Document {
     saved: Arc<Scenario>,
     undo: Vec<Arc<Scenario>>,
     redo: Vec<Arc<Scenario>>,
+    /// While `Some`, edits belong to one brush stroke: one undo step, pushed on the first edit.
+    stroke: Option<bool>,
 }
+
+/// What a new building looks like when placed.
+#[derive(Clone, Debug)]
+pub struct BuildingSpec {
+    pub kind: BuildingKind,
+    pub visual_kind: Option<String>,
+    pub size: [f32; 2],
+    pub rotation_deg: f32,
+    pub occupants: u32,
+}
+impl Default for BuildingSpec {
+    fn default() -> Self {
+        Self {
+            kind: BuildingKind::House,
+            visual_kind: None,
+            size: [20., 20.],
+            rotation_deg: 0.,
+            occupants: 0,
+        }
+    }
+}
+
+/// Presentation variants understood by the 3D viewer (`Building::visual_kind`).
+pub const VISUAL_KINDS: &[&str] = &[
+    "church", "chapel", "fire_station", "farm", "barn", "silo", "mill", "water_tower",
+    "substation", "lighthouse", "plaza", "square", "pitch", "parking", "assembly", "lido",
+    "campsite", "harbour", "cemetery",
+];
 impl Document {
     pub fn new(scene: Scenario) -> Result<Self> {
         validate(&scene)?;
@@ -28,6 +58,7 @@ impl Document {
             revision: 1,
             undo: vec![],
             redo: vec![],
+            stroke: None,
         })
     }
     pub fn dirty(&self) -> bool {
@@ -46,14 +77,27 @@ impl Document {
         let mut next = (*self.scene).clone();
         f(&mut next)?;
         validate(&next)?;
-        self.undo.push(self.scene.clone());
-        if self.undo.len() > 32 {
-            self.undo.remove(0);
+        let push = match &mut self.stroke {
+            Some(done) => !std::mem::replace(done, true),
+            None => true,
+        };
+        if push {
+            self.undo.push(self.scene.clone());
+            if self.undo.len() > 32 {
+                self.undo.remove(0);
+            }
         }
         self.redo.clear();
         self.scene = Arc::new(next);
         self.revision += 1;
         Ok(())
+    }
+    /// Groups the edits until `end_stroke` into a single undo step.
+    pub fn begin_stroke(&mut self) {
+        self.stroke = Some(false);
+    }
+    pub fn end_stroke(&mut self) {
+        self.stroke = None;
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
@@ -142,38 +186,88 @@ impl Document {
             Ok(())
         })
     }
+    /// Push/pull: raises (`delta_m` > 0) or lowers the ground with a smooth falloff.
+    pub fn sculpt(&mut self, at: Pos, radius: f32, delta_m: f32) -> Result<()> {
+        ensure!(radius.is_finite() && radius > 0., "Raggio non valido");
+        ensure!(delta_m.is_finite(), "Variazione non valida");
+        self.edit(|s| {
+            ensure!(inside(s, at), "Punto fuori mappa");
+            let weight = |p: Pos| {
+                let t = 1. - distance(p, at) / radius;
+                (t > 0.).then(|| t * t * (3. - 2. * t))
+            };
+            for i in 0..s.grid.len() {
+                let p = s.cell_centre(Cell {
+                    row: i / s.grid.cols,
+                    col: i % s.grid.cols,
+                });
+                if let Some(w) = weight(p) {
+                    s.dem[i] = (s.dem[i] + delta_m * w).clamp(-9000., 9000.);
+                }
+            }
+            if let Some(t) = &mut s.render_terrain {
+                for row in 0..t.rows {
+                    for col in 0..t.cols {
+                        let p = [
+                            col as f32 * t.posting_m,
+                            t.world_size_m[1] - row as f32 * t.posting_m,
+                        ];
+                        if let Some(w) = weight(p) {
+                            let v = &mut t.elev[row * t.cols + col];
+                            *v = (*v + delta_m * w).clamp(-9000., 9000.);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+    pub fn add_building(&mut self, at: Pos, spec: BuildingSpec) -> Result<Selection> {
+        let mut selected = Selection::Building(0);
+        self.edit(|s| {
+            ensure!(inside(s, at), "Punto fuori mappa");
+            ensure!(
+                spec.size.iter().all(|v| v.is_finite() && *v >= 3.) && spec.rotation_deg.is_finite(),
+                "Dimensioni o rotazione non valide"
+            );
+            let id = s
+                .buildings
+                .iter()
+                .map(|b| b.id)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("ID esauriti"))?;
+            let sector = s
+                .sector_at(at)
+                .ok_or_else(|| anyhow::anyhow!("Nessun settore in questo punto"))?
+                .id
+                .clone();
+            s.buildings.push(Building {
+                id,
+                kind: spec.kind,
+                visual_kind: spec.visual_kind,
+                name: Some(format!("Edificio {id}")),
+                pos: at,
+                size: spec.size,
+                occupants: spec.occupants,
+                sector,
+                shelter_capacity: 0,
+                rotation_deg: spec.rotation_deg.rem_euclid(360.),
+            });
+            selected = Selection::Building(s.buildings.len() - 1);
+            Ok(())
+        })?;
+        Ok(selected)
+    }
     pub fn add(&mut self, kind: &str, at: Pos, end: Option<Pos>) -> Result<Selection> {
+        if kind == "building" {
+            return self.add_building(at, BuildingSpec::default());
+        }
         let mut selected = Selection::Place(0);
         self.edit(|s| {
             ensure!(inside(s, at), "Punto fuori mappa");
             selected = match kind {
-                "building" => {
-                    let id = s
-                        .buildings
-                        .iter()
-                        .map(|b| b.id)
-                        .max()
-                        .unwrap_or(0)
-                        .checked_add(1)
-                        .ok_or_else(|| anyhow::anyhow!("ID esauriti"))?;
-                    let sector = s
-                        .sector_at(at)
-                        .ok_or_else(|| anyhow::anyhow!("Nessun settore in questo punto"))?
-                        .id
-                        .clone();
-                    s.buildings.push(Building {
-                        id,
-                        kind: BuildingKind::House,
-                        visual_kind: None,
-                        name: Some(format!("Edificio {id}")),
-                        pos: at,
-                        size: [20., 20.],
-                        occupants: 0,
-                        sector,
-                        shelter_capacity: 0,
-                    });
-                    Selection::Building(s.buildings.len() - 1)
-                }
                 "road" => {
                     let end = end.ok_or_else(|| anyhow::anyhow!("Scegli il secondo punto"))?;
                     ensure!(
@@ -207,6 +301,7 @@ impl Document {
                         name: format!("Luogo {n}"),
                         aliases: vec![],
                         pos: at,
+                        ..Default::default()
                     });
                     Selection::Place(s.places.len() - 1)
                 }
@@ -233,10 +328,12 @@ impl Document {
         self.edit(|s| {
             match selection {
                 Selection::Building(i) if i < s.buildings.len() => {
-                    s.buildings.remove(i);
+                    let b = s.buildings.remove(i);
+                    s.places.iter_mut().for_each(|p| p.buildings.retain(|id| *id != b.id));
                 }
                 Selection::Road(i) if i < s.roads.len() => {
-                    s.roads.remove(i);
+                    let r = s.roads.remove(i);
+                    s.places.iter_mut().for_each(|p| p.roads.retain(|id| *id != r.id));
                 }
                 Selection::Place(i) if i < s.places.len() => {
                     let p = s.places.remove(i);
@@ -299,6 +396,7 @@ pub fn validate(s: &Scenario) -> Result<()> {
             "Edificio {} non valido",
             b.id
         );
+        ensure!(b.rotation_deg.is_finite(), "Rotazione edificio {} non valida", b.id);
     }
     for r in &s.roads {
         ensure!(
@@ -315,6 +413,17 @@ pub fn validate(s: &Scenario) -> Result<()> {
         ensure!(
             !p.name.trim().is_empty() && inside(s, p.pos),
             "Luogo non valido"
+        );
+        ensure!(
+            p.radius_m.map_or(true, |r| r.is_finite() && r > 0.),
+            "Luogo {}: area non valida",
+            p.name
+        );
+        ensure!(
+            p.buildings.iter().all(|id| s.buildings.iter().any(|b| b.id == *id))
+                && p.roads.iter().all(|id| s.roads.iter().any(|r| r.id == *id)),
+            "Luogo {}: edificio o strada inesistente",
+            p.name
         );
     }
     for i in &s.initial_ignitions {

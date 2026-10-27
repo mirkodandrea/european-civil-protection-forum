@@ -534,7 +534,7 @@ mod tests {
     fn staging_base_may_be_a_place_added_by_the_same_edit() {
         let s = base();
         let e = ScenarioEdits {
-            places: Some(vec![Place { name: "New Depot".into(), aliases: vec![], pos: [1000.0, 1000.0] }]),
+            places: Some(vec![Place { name: "New Depot".into(), aliases: vec![], pos: [1000.0, 1000.0], ..Default::default() }]),
             staging_base: Some("New Depot".into()),
             ..Default::default()
         };
