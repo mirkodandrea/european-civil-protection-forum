@@ -26,6 +26,9 @@ pub struct ScenarioEdits {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_clock_s: Option<i64>,
+    /// Turn length in minutes (1..=1440); absent keeps the base (30 by default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weather: Option<WeatherSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +136,9 @@ impl Scenario {
         if let Some(v) = e.start_clock_s {
             self.start_clock_s = v;
         }
+        if let Some(v) = e.turn_minutes {
+            self.turn_minutes = v;
+        }
         if let Some(v) = e.weather {
             self.weather = v;
         }
@@ -178,6 +184,7 @@ impl Scenario {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
             start_clock_s: Some(self.start_clock_s),
+            turn_minutes: Some(self.turn_minutes),
             weather: Some(self.weather),
             initial_ignitions: Some(self.initial_ignitions.clone()),
             places: Some(self.places.clone()),
@@ -217,6 +224,9 @@ impl Scenario {
         }
         if e.start_clock_s.is_some_and(|t| !(0..=30 * 86_400).contains(&t)) {
             out.push("Orario di inizio fuori intervallo".into());
+        }
+        if e.turn_minutes.is_some_and(|m| !(1..=1440).contains(&m)) {
+            out.push("Durata del turno: 1–1440 minuti".into());
         }
 
         for (n, r) in resources.iter().enumerate() {
@@ -394,6 +404,7 @@ impl Scenario {
             dem: vec![],
             render_terrain: None,
             start_clock_s: self.start_clock_s,
+            turn_minutes: self.turn_minutes,
             weather: self.weather,
             initial_ignitions: vec![],
             buildings: vec![],
@@ -451,6 +462,29 @@ mod tests {
         "OpenShelter",
         "RequestReinforcement",
     ];
+
+    #[test]
+    fn turn_minutes_round_trips_validates_and_defaults() {
+        let s = base();
+        assert_eq!(s.turn_minutes, 30);
+        assert_eq!(s.edits().turn_minutes, Some(30));
+        let ok = ScenarioEdits { turn_minutes: Some(15), ..Default::default() };
+        assert!(s.edit_problems(&ok, &vocab()).is_empty());
+        let mut built = s.clone();
+        built.apply_edits(&ok).unwrap();
+        assert_eq!(built.turn_minutes, 15);
+        for bad in [0, 1441] {
+            let e = ScenarioEdits { turn_minutes: Some(bad), ..Default::default() };
+            let p = s.edit_problems(&e, &vocab());
+            assert!(p.iter().any(|m| m.contains("Durata del turno")), "{p:?}");
+        }
+        // Packs written before the field existed leave it absent.
+        let old: ScenarioEdits = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.turn_minutes, None);
+        let json = serde_json::to_string(&built.edits()).unwrap();
+        let back: ScenarioEdits = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.turn_minutes, Some(15));
+    }
 
     #[test]
     fn partial_edits_keep_the_rest() {

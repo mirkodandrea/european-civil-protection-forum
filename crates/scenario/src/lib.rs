@@ -402,6 +402,13 @@ pub(crate) fn legacy_grants() -> Vec<OperationalGrant> {
     }]
 }
 
+/// Turn length when the scenario does not set one.
+pub const DEFAULT_TURN_MINUTES: u32 = 30;
+
+fn default_turn_minutes() -> u32 {
+    DEFAULT_TURN_MINUTES
+}
+
 /// Place deployments start from when the scenario names none: where older
 /// scenario packages staged their resources.
 fn legacy_staging() -> Option<String> {
@@ -507,6 +514,10 @@ pub struct Scenario {
     pub render_terrain: Option<RenderTerrain>,
     /// Exercise clock at t = 0, seconds since Day 1 00:00.
     pub start_clock_s: i64,
+    /// Length of one turn in minutes: sizes the timeline bands and places
+    /// injects that have no `at_s`. EXCON may still change the live length.
+    #[serde(default = "default_turn_minutes")]
+    pub turn_minutes: u32,
     pub weather: WeatherSpec,
     pub initial_ignitions: Vec<IgnitionSpec>,
     pub buildings: Vec<Building>,

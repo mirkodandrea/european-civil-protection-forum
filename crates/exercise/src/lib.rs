@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sim::{Actor, Command, SimEvent, Verdict, World, WorldSnapshot};
 
-pub const DEFAULT_TURN_MINUTES: u32 = 30;
+pub const DEFAULT_TURN_MINUTES: u32 = scenario::DEFAULT_TURN_MINUTES;
 /// Conversation turns kept per role (oldest dropped first).
 pub const CONVERSATION_MAX: usize = 60;
 /// Resolution granularity: the world is published after every simulated second.
@@ -503,6 +503,7 @@ impl Exercise {
                 )
             })
             .collect();
+        let turn_minutes = world.scn.turn_minutes.clamp(1, 24 * 60);
         let mut ex = Exercise {
             turn_summaries: Vec::new(),
             player_drafts: BTreeMap::new(),
@@ -525,7 +526,7 @@ impl Exercise {
             world,
             turn: 0,
             phase: Phase::Briefing,
-            turn_minutes: DEFAULT_TURN_MINUTES,
+            turn_minutes,
             turn_start_s: 0,
             substeps: Vec::new(),
             players,

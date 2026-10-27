@@ -25,6 +25,7 @@ mod standalone;
 mod store;
 mod tactical;
 mod timeline;
+mod timeline_plan;
 mod widgets;
 
 use api::{list, text, window};
