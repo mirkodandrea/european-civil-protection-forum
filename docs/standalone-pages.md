@@ -33,8 +33,8 @@ automaticamente solo nello stesso browser.
 
 ## Build e verifica
 
-Installare il target `wasm32-unknown-unknown`. Su main installare
-`wasm-bindgen-cli` 0.2.129; su dev Trunk 0.21.14. Poi:
+Installare il target `wasm32-unknown-unknown` e Trunk 0.21.14 (stesso
+build su main e dev). Poi:
 
 ```sh
 OPENROUTER_API_KEY='' TTX_LLM_CASSETTE='' ./scripts/build_standalone.sh
