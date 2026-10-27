@@ -756,3 +756,8 @@ button.warn:hover:not(:disabled){background:#ffe7a8}
   .pi-preview{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;margin-left:6px}
 }
 /* END EXCON timeline two columns */
+
+.excon-roles{margin-top:1.2rem}
+.excon-role-list{list-style:none;margin:.4rem 0;padding:0;display:grid;gap:.35rem}
+.excon-role{display:flex;gap:.35rem;align-items:center}
+.excon-role input{flex:1;min-width:0}

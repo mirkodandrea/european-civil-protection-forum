@@ -157,7 +157,12 @@ impl Scenario {
             self.roles = v.clone();
         }
         if let Some(v) = &e.excon_roles {
-            self.excon_roles = v.clone();
+            self.excon_roles = Vec::new();
+            for r in v.iter().map(|r| r.trim()).filter(|r| !r.is_empty()) {
+                if !self.excon_roles.iter().any(|x| x == r) {
+                    self.excon_roles.push(r.to_string());
+                }
+            }
         }
         if let Some(v) = &e.reinforcements {
             self.reinforcements = v.clone();

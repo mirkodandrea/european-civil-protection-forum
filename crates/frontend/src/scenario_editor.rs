@@ -354,9 +354,36 @@ fn roles_view(props: &ListProps) -> Html {
     html! {<div class="rr-tab">
         <p class="muted">{ex("Ogni ruolo è una pagina player. Azioni e risorse decidono cosa può proporre; l’EXCON approva comunque ogni azione.")}</p>
         {master_detail(items, tools, detail)}
-        {area("Ruoli interpretati dall’EXCON", "Le parti che l’EXCON recita negli inject (ad esempio «Centrale 112», «Sindaco»), una per riga. Sono distinti dai ruoli dei player e compaiono come mittenti nella costruzione degli inject.", e.excon_roles.clone().unwrap_or_default().join("\n"), "4",
-            upd(open, |p, v: String| p.edits.excon_roles = Some(v.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())))}
+        {excon_roles_list(e.excon_roles.clone().unwrap_or_default(), open)}
     </div>}
+}
+
+/// The parts the EXCON plays: one row per name, reorderable.
+fn excon_roles_list(names: Vec<String>, open: &UseStateHandle<Option<Open>>) -> Html {
+    let n = names.len();
+    fn edit_fn(open: &UseStateHandle<Option<Open>>, f: impl Fn(&mut Vec<String>) + 'static) -> Callback<MouseEvent> {
+        upd(open, move |p, _: MouseEvent| f(p.edits.excon_roles.get_or_insert_with(Vec::new)))
+    }
+    let edit = |f: Box<dyn Fn(&mut Vec<String>)>| edit_fn(open, f);
+    html! {<section class="excon-roles" aria-label={ex("Ruoli interpretati dall’EXCON")}>
+        <h4>{ex("Ruoli interpretati dall’EXCON")}</h4>
+        <p class="muted">{ex("Le parti che l’EXCON recita negli inject (ad esempio «Centrale 112», «Sindaco»). Non sono ruoli player: compaiono come mittenti quando si costruisce un inject.")}</p>
+        <ul class="excon-role-list">
+        {for names.iter().enumerate().map(|(i, name)| {
+            let dup = !name.trim().is_empty() && names.iter().filter(|x| x.trim() == name.trim()).count() > 1;
+            html!{<li key={i} class="excon-role">
+                <input value={name.clone()} placeholder={ex("Nome del ruolo")} aria-label={ex("Nome del ruolo EXCON")}
+                    oninput={upd(open, move |p, e: InputEvent| if let Some(x) = p.edits.excon_roles.as_mut().and_then(|l| l.get_mut(i)) { *x = api::input(e) })}/>
+                {if dup { html!{<span class="pill pending" title={ex("Nome duplicato.")}>{"!"}</span>} } else { Html::default() }}
+                <button type="button" title={ex("Sposta su")} disabled={i == 0} onclick={edit(Box::new(move |l: &mut Vec<String>| if i > 0 && i < l.len() { l.swap(i, i - 1) }))}>{"↑"}</button>
+                <button type="button" title={ex("Sposta giù")} disabled={i + 1 >= n} onclick={edit(Box::new(move |l: &mut Vec<String>| if i + 1 < l.len() { l.swap(i, i + 1) }))}>{"↓"}</button>
+                <button type="button" title={ex("Elimina")} onclick={edit(Box::new(move |l: &mut Vec<String>| if i < l.len() { l.remove(i); }))}>{"✕"}</button>
+            </li>}
+        })}
+        </ul>
+        {if n == 0 { html!{<p class="muted">{ex("Nessun ruolo EXCON: il mittente degli inject resta libero.")}</p>} } else { Html::default() }}
+        <button type="button" class="primary" onclick={edit(Box::new(|l: &mut Vec<String>| l.push(String::new())))}>{ex("Aggiungi ruolo EXCON")}</button>
+    </section>}
 }
 
 fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
@@ -847,7 +874,7 @@ fn injects_view(props: &InjectsProps) -> Html {
     let tm = e.turn_minutes.unwrap_or(plan::DEFAULT_TURN_MINUTES).clamp(1, 1440);
     let start_s = e.start_clock_s.unwrap_or(0);
     let roles: Vec<(String, String)> = e.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
-    let excon_roles: Vec<String> = e.excon_roles.clone().unwrap_or_default();
+    let excon_roles: Vec<String> = e.excon_roles.iter().flatten().filter(|r| !r.trim().is_empty()).cloned().collect();
     let sel = (*selected).min(n.saturating_sub(1));
     let entries = Rc::new(plan::sorted_entries(&msel, &actions, tm));
     let bands = Rc::new(plan::bands(&entries, tm));
