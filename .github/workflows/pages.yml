@@ -61,26 +61,18 @@ jobs:
         id: build-tool
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/bin/trunk
-            ~/.cargo/bin/wasm-bindgen
-          key: ${{ runner.os }}-wasm-tool-${{ matrix.branch }}-trunk-0.21.14-bindgen-0.2.129-rust-1.92
+          path: ~/.cargo/bin/trunk
+          # Both branches build with Trunk; the key must not match main's old wasm-bindgen-only cache.
+          key: ${{ runner.os }}-wasm-tool-trunk-0.21.14-rust-1.92
       - name: Test shared model and exercise controllers
         run: cargo test --locked --release -p server -p exercise -p llm
-      - name: Install pinned Trunk for dev
-        if: matrix.branch == 'dev' && steps.build-tool.outputs.cache-hit != 'true'
+      - name: Install pinned Trunk
+        if: steps.build-tool.outputs.cache-hit != 'true'
         run: |
           curl --fail --location --retry 3 -o /tmp/trunk.tar.gz https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz
           echo 'f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b  /tmp/trunk.tar.gz' | sha256sum --check
           tar -xzf /tmp/trunk.tar.gz -C /tmp
           install /tmp/trunk ~/.cargo/bin/trunk
-      - name: Install pinned wasm-bindgen for main
-        if: matrix.branch == 'main' && steps.build-tool.outputs.cache-hit != 'true'
-        run: |
-          curl --fail --location --retry 3 -o /tmp/bindgen.tar.gz https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl.tar.gz
-          echo '82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e  /tmp/bindgen.tar.gz' | sha256sum --check
-          tar -xzf /tmp/bindgen.tar.gz -C /tmp
-          install /tmp/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl/wasm-bindgen ~/.cargo/bin/wasm-bindgen
       - name: Build standalone WebAssembly
         run: ./scripts/build_standalone.sh
       - uses: actions/setup-node@v7
