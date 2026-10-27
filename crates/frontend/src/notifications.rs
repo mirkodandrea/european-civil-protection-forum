@@ -290,6 +290,7 @@ fn log_spec(
         | "proposal_superseded"
         | "clarification_requested"
         | "clarification_closed"
+        | "clarification_answered"
         | "master_command"
         | "master_prompt"
         | "settings"

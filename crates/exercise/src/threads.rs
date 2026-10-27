@@ -250,8 +250,12 @@ impl Exercise {
                     (ThreadAuthor::Excon, m.text_en.clone())
                 }
                 MsgKind::Reply | MsgKind::Chat if &m.from == role && m.to == MASTER => {
+                    // The proposal's translation belongs to the declaration (the
+                    // first player message); later answers carry their own.
+                    let first = !entries.iter().any(|e| e.author == ThreadAuthor::Player && e.proposal == Some(pid));
                     let en = self
                         .proposal(pid)
+                        .filter(|_| first)
                         .map(|p| p.translation_en.clone())
                         .filter(|t| !t.is_empty())
                         .unwrap_or_else(|| m.text_en.clone());

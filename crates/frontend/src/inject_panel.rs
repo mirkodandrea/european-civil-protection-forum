@@ -53,13 +53,6 @@ fn outcome(l: &str, it: &Item) -> Outcome {
     }
 }
 
-/// Message a revised action answers: EXCON's last question of the thread, so the
-/// server links it to the clarified proposal even when that had no inject or parent
-/// (an unlinked answer would leave the question open and the answer out of the thread).
-fn revise_parent(thread: &Value, current: Option<&Value>) -> Option<u64> {
-    crate::clarify::last_question(thread).or_else(|| current.and_then(|p| p["reply_to"].as_u64()))
-}
-
 /// What kind of event a chat line is.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
@@ -242,19 +235,8 @@ impl App {
         let awaiting = it.threads.iter().find(|t| has_status(t, "awaiting_player")).copied();
         let incoming = it.threads.iter().any(|t| has_status(t, "awaiting_excon") && !list(&t["entries"]).iter().any(|e| e["author"] == "excon"));
         let composer = if let Some(t) = awaiting {
-            // "Rivedi l'azione" re-opens the structured proposal behind the question.
-            let pid = t["current_proposal"].to_string();
-            let current = all_proposals.iter().find(|p| p["id"] == t["current_proposal"]).copied();
-            let parent = revise_parent(t, current).map(|n| n.to_string()).unwrap_or_default();
-            let revise = {
-                let link = ctx.link().clone();
-                Callback::from(move |_| {
-                    link.send_message(Msg::OpenWork(Some(parent.clone())));
-                    link.send_message(Msg::Field("work:clarify".into(), pid.clone()));
-                })
-            };
-            let revise = html! {<button class="link-button" data-reply-clarification={t["current_proposal"].to_string()} disabled={!can_act} onclick={revise}>{i18n::t(l,"thread_revise")}</button>};
-            html! {<footer class="inj-composer">{self.clarify_composer(ctx,can_act,t,revise)}</footer>}
+            // The answer is a plain message to EXCON; a changed action is a new action.
+            html! {<footer class="inj-composer">{self.clarify_composer(ctx,can_act,t,html!{})}</footer>}
         } else if let Some(m) = it.msg {
             let label = if o.tone == "bad" { "reply_again" } else if it.proposals.is_empty() { "reply" } else { "another_reply" };
             let id = m["id"].to_string();
@@ -290,15 +272,6 @@ mod tests {
     use serde_json::json;
     fn item<'a>(proposals: Vec<&'a Value>, threads: Vec<&'a Value>) -> Item<'a> {
         Item { key: "1".into(), msg: None, proposals, threads }
-    }
-    #[test]
-    fn revising_answers_the_last_excon_question() {
-        let thread = json!({"entries":[{"author":"player","message":3},{"author":"excon","message":4}]});
-        let p = json!({"reply_to": 2});
-        assert_eq!(revise_parent(&thread, Some(&p)), Some(4));
-        let bare = json!({"entries":[]});
-        assert_eq!(revise_parent(&bare, Some(&p)), Some(2));
-        assert_eq!(revise_parent(&bare, Some(&json!({"reply_to": null}))), None);
     }
     #[test]
     fn outcome_flags_what_needs_the_player() {

@@ -783,7 +783,7 @@ fn revalidate_updates_verdicts_without_deciding() {
 }
 
 #[test]
-fn player_answer_supersedes_the_clarified_proposal() {
+fn player_answer_is_a_message_and_keeps_the_clarified_proposal() {
     let mut ex = exercise();
     ex.start().unwrap();
     let old = reply(&mut ex, "fire_commander", "warn").unwrap();
@@ -792,33 +792,25 @@ fn player_answer_supersedes_the_clarified_proposal() {
     let qid = ex.deliver_clarification(old, "Quale zona?", "Which zone?").unwrap();
     let before = ex.inject_responses();
     assert!(before.iter().any(|r| r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old)));
-    let new = ex
-        .player_reply("fire_commander", "F4", qid, DecisionEvidence::judgment("answer"))
-        .unwrap();
-    ex.attach_parse(new, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();
-    let (o, n) = (ex.proposal(old).unwrap(), ex.proposal(new).unwrap());
-    assert_eq!(o.status, ProposalStatus::Superseded);
-    assert_eq!(o.superseded_by, Some(new));
-    assert_eq!(n.supersedes, Some(old));
-    assert_eq!(n.status, ProposalStatus::Pending);
-    assert_eq!(serde_json::to_value(o.status).unwrap(), "superseded");
-    assert!(ex.log.iter().any(|e| e.kind == "proposal_superseded"));
-    assert!(ex.decide(old, Decision { approve: true, ..Default::default() }).is_err());
-    for r in ex.inject_responses() {
-        assert!(!r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old));
-    }
-    // Each row carries its whole thread in message order: inject, replies, question.
+    let (_, same) = ex.answer_clarification("fire_commander", "F4", qid, "F4", false).unwrap();
+    assert_eq!(same, old);
+    let o = ex.proposal(old).unwrap();
+    assert_eq!(o.status, ProposalStatus::Pending);
+    assert_eq!((o.superseded_by, o.commands.len()), (None, 1));
+    assert!(ex.log.iter().any(|e| e.kind == "clarification_answered"));
+    // Each row carries its whole thread in message order: inject, replies, question, answer.
     let row = ex
         .inject_responses()
         .into_iter()
         .find(|r| r["role"] == "fire_commander" && !r["replies"].as_array().unwrap().is_empty())
         .expect("row with replies");
+    assert!(row["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == old && p["status"] == "pending"));
     let thread = row["thread"].as_array().unwrap();
     assert_eq!(thread[0]["kind"], "inject");
     assert!(thread.iter().any(|t| t["kind"] == "clarification"));
-    assert!(thread.iter().any(|t| t["kind"] == "reply"));
+    assert_eq!(thread.iter().filter(|t| t["kind"] == "reply").count(), 2, "declaration and answer");
     assert!(thread.windows(2).all(|w| w[0]["id"].as_u64() < w[1]["id"].as_u64()));
-    // An unrelated reply supersedes nothing.
+    // An unrelated reply is its own proposal.
     let other = reply(&mut ex, "mayor", "x").unwrap();
     assert_eq!(ex.proposal(other).unwrap().supersedes, None);
 }

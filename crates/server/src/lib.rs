@@ -917,6 +917,35 @@ async fn post_reply(
     b: Json<ReplyBody>,
 ) -> ApiResult {
     let Json(b) = b;
+    // An answer to an EXCON question is a message to the EXCON: translated, never interpreted.
+    let answering = {
+        let ex = s.lock();
+        ex.clarification_target(&role, b.reply_to)
+            .map(|_| (ex.language_of(&role), ex.turn, ex.clock_control.revision))
+    };
+    if let Some((language, turn, revision)) = answering {
+        let mut failed = false;
+        let text_en = if language == "en" || b.text.trim().is_empty() {
+            b.text.clone()
+        } else {
+            match s.llm.translate_to_english(&b.text, &language).await {
+                Ok(text) => text,
+                Err(_) => {
+                    failed = true;
+                    b.text.clone()
+                }
+            }
+        };
+        let mut ex = s.lock();
+        if ex.turn != turn || ex.clock_control.revision != revision {
+            return Err(bad("exercise changed during translation; send again"));
+        }
+        let (message, proposal) =
+            ex.answer_clarification(&role, &b.text, b.reply_to, &text_en, failed)?;
+        return Ok(Json(
+            json!({"message": message, "proposal": proposal, "answered": true, "translation_failed": failed}),
+        ));
+    }
     let pid = {
         let mut ex = s.lock();
         let pid = ex.player_reply(&role, &b.text, b.reply_to, b.evidence)?;

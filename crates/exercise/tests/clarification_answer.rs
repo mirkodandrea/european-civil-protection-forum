@@ -37,83 +37,67 @@ fn row_of(ex: &Exercise, role: &str) -> serde_json::Value {
     ex.inject_responses().into_iter().find(|r| r["role"] == role).unwrap()
 }
 
-/// An action sent without a parent cannot be linked to the open question: it must
-/// answer the question message (what the revise button of the player UI sends).
+fn warn() -> Vec<sim::Command> {
+    vec![sim::Command::IssueWarning { zone: "F4".into() }]
+}
+
+/// The answer is a message to the EXCON, not interpreted: the questioned proposal
+/// keeps its commands, returns to Pending, and the answer shows in the thread.
 #[test]
-fn structured_answer_to_an_inject_less_question_supersedes_it_only_with_the_question_as_parent() {
+fn answer_is_a_plain_message_and_the_proposal_stays_approvable() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let warn = || vec![sim::Command::IssueWarning { zone: "F4".into() }];
-    let p1 = ex.player_actions("mayor", "warn", warn(), None).unwrap();
-    ex.request_clarification(p1, "Which zone?").unwrap();
-    let q = ex.deliver_clarification(p1, "Quale zona?", "Which zone?").unwrap();
-    let linked = ex.player_actions("mayor", "warn F4", warn(), Some(q)).unwrap();
-    assert_eq!(ex.proposal(linked).unwrap().supersedes, Some(p1));
-    assert_eq!(ex.proposal(p1).unwrap().status, ProposalStatus::Superseded);
-    assert_eq!(ex.clarification_thread(p1).unwrap().current_proposal, linked);
+    let ids = ex.send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new()).unwrap();
+    let p1 = ex.player_reply("mayor", "warn people", ids[0], ev()).unwrap();
+    ex.attach_parse(p1, parsed("warn people")).unwrap();
+    ex.request_clarification(p1, "Which side?").unwrap();
+    let q = ex.deliver_clarification(p1, "Quale lato?", "Which side?").unwrap();
+    let before = ex.proposals.len();
+
+    let (mid, pid) = ex.answer_clarification("mayor", "lato nord", q, "north side", false).unwrap();
+    assert_eq!(pid, p1);
+    assert_eq!(ex.proposals.len(), before, "no new proposal, nothing superseded");
+    let p = ex.proposal(p1).unwrap();
+    assert_eq!(p.status, ProposalStatus::Pending);
+    assert_eq!(p.commands.len(), 1, "original commands intact");
+    assert_eq!(p.superseded_by, None);
+    let m = ex.messages.iter().find(|m| m.id == mid).unwrap();
+    assert_eq!((m.kind, m.reply_to, m.proposal, m.inject_id), (MsgKind::Reply, Some(q), Some(p1), ex.proposal(p1).unwrap().inject_id));
+    assert_eq!(m.text_en, "north side");
+    assert!(ex.log.iter().any(|e| e.kind == "clarification_answered"));
+
+    let t = ex.clarification_thread(p1).unwrap();
+    assert_eq!((t.status, t.current_proposal), (ThreadStatus::AwaitingExcon, p1));
+    let last = t.entries.last().unwrap();
+    assert_eq!((last.message, last.text.as_str(), last.text_en.as_str()), (mid, "lato nord", "north side"));
+    let row = row_of(&ex, "mayor");
+    assert!(row["pending_proposals"].as_array().unwrap().iter().any(|x| x["id"] == p1 && x["status"] == "pending"));
+    assert!(row["replies"].as_array().unwrap().iter().any(|x| x["id"] == mid));
+    assert!(row["thread"].as_array().unwrap().iter().any(|x| x["id"] == mid && x["clarification_thread"] == p1));
+    assert!(ex.conversation("mayor").iter().any(|c| c.content.contains("north side")), "AI history has the answer");
+
+    // EXCON may ask again (thread continues on the same proposal), or approve.
+    ex.request_clarification(p1, "And the road?").unwrap();
+    let q2 = ex.deliver_clarification(p1, "E la strada?", "And the road?").unwrap();
+    ex.answer_clarification("mayor", "chiusa", q2, "closed", false).unwrap();
+    assert_eq!(ex.clarification_thread(p1).unwrap().entries.len(), 5);
+    ex.decide(p1, Decision { approve: true, ..Default::default() }).unwrap();
 }
 
 #[test]
-fn answer_with_requested_action_reaches_excon_on_every_route() {
-    for route in ["reply", "actions", "draft"] {
-        let mut ex = exercise();
-        ex.start().unwrap();
-        let ids = ex
-            .send_inject(Some("I-01"), "Fire", "112", &["mayor".into()], "Fire", &BTreeMap::new())
-            .unwrap();
-        let p1 = ex.player_reply("mayor", "we must protect people", ids[0], ev()).unwrap();
-        ex.attach_parse(
-            p1,
-            ParsedInput {
-                language: "it".into(),
-                translation_en: "we must protect people".into(),
-                clarification: Some("Which action, where?".into()),
-                summary: "vague".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        ex.request_clarification(p1, "Which action, and where?").unwrap();
-        let q = ex.deliver_clarification(p1, "Quale azione?", "Which action, and where?").unwrap();
-
-        let p2 = match route {
-            "reply" => {
-                let p = ex.player_reply("mayor", "warn zone F4", q, ev()).unwrap();
-                ex.attach_parse(p, parsed("warn zone F4")).unwrap();
-                p
-            }
-            "actions" => ex
-                .player_actions(
-                    "mayor",
-                    "warn F4",
-                    vec![sim::Command::IssueWarning { zone: "F4".into() }],
-                    Some(q),
-                )
-                .unwrap(),
-            _ => {
-                let d = ex.begin_player_draft("mayor", MASTER, "warn zone F4", None, Some(q)).unwrap();
-                ex.finish_player_draft("mayor", d.id, d.revision, parsed("warn zone F4"), "warn zone F4".into())
-                    .unwrap();
-                ex.submit_player_draft("mayor", d.id, d.revision, "warn zone F4", "avvisa F4", false, false)
-                    .unwrap()
-                    .1
-                    .unwrap()
-            }
-        };
-        let p = ex.proposal(p2).unwrap();
-        assert_eq!(p.status, ProposalStatus::Pending, "{route}");
-        assert_eq!(p.commands.len(), 1, "{route}");
-        assert_eq!(p.supersedes, Some(p1), "{route}");
-        assert_eq!(p.inject_id, ex.proposal(p1).unwrap().inject_id, "{route}: inject link kept");
-        let row = row_of(&ex, "mayor");
-        let pending = row["pending_proposals"].as_array().unwrap();
-        assert!(pending.iter().any(|x| x["id"] == p2), "{route}: answer visible to EXCON in the inject row");
-        assert!(
-            row["replies"].as_array().unwrap().iter().any(|m| m["proposal"] == p2),
-            "{route}: reply in thread"
-        );
-        let t = ex.clarification_thread(p1).unwrap();
-        assert_eq!((t.status, t.current_proposal), (ThreadStatus::AwaitingExcon, p2), "{route}");
-        ex.decide(p2, Decision { approve: true, ..Default::default() }).unwrap();
-    }
+fn actions_or_drafts_cannot_answer_a_question_and_a_closed_question_takes_no_answer() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    let p1 = ex.player_actions("mayor", "warn", warn(), None).unwrap();
+    ex.request_clarification(p1, "Which zone?").unwrap();
+    let q = ex.deliver_clarification(p1, "Quale zona?", "Which zone?").unwrap();
+    let err = ex.player_actions("mayor", "warn F4", warn(), Some(q)).unwrap_err().to_string();
+    assert!(err.contains("open EXCON question"), "{err}");
+    assert!(ex.player_reply("mayor", "F4", q, ev()).is_err());
+    assert!(ex.begin_player_draft("mayor", MASTER, "F4", None, Some(q)).is_err());
+    assert!(ex.answer_clarification("fire_commander", "x", q, "x", false).is_err(), "someone else's question");
+    ex.close_clarification(p1).unwrap();
+    assert!(ex.answer_clarification("mayor", "late", q, "late", false).is_err());
+    // A new action on its own is fine.
+    assert!(ex.player_actions("mayor", "warn F4", warn(), None).is_ok());
 }

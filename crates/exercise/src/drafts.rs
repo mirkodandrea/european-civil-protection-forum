@@ -86,6 +86,9 @@ impl Exercise {
         }
         if let Some(parent) = reply_to {
             self.validate_action_reference(role, parent)?;
+            if self.clarification_target(role, parent).is_some() {
+                bail!("this answers an open EXCON question: send it as a text answer, or create a new action without replying to the question");
+            }
         }
         let mut draft = if let Some((id, revision)) = previous {
             let mut draft = self.private_draft(role, id, revision)?;
