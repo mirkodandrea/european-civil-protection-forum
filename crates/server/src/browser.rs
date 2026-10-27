@@ -552,6 +552,9 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/resolve/stop") => {
+            post_resolve_stop(principal.clone(), s.clone()).await
+        }
         ("POST", "/api/master/rollback") => {
             post_rollback(
                 principal.clone(),
@@ -662,6 +665,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/preview/apply"),
     ("POST", "/api/master/command"),
     ("POST", "/api/master/resolve"),
+    ("POST", "/api/master/resolve/stop"),
     ("POST", "/api/master/rollback"),
     ("POST", "/api/master/end"),
     ("POST", "/api/master/settings"),

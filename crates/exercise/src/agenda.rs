@@ -58,7 +58,8 @@ impl Exercise {
             .min();
         let due_now = items.iter().filter(|(_, v)| v["due"] == true).count();
         json!({
-            "turn": self.turn, "phase": self.phase,
+            "turn": self.turn, "phase": self.phase, "turn_minutes": self.turn_minutes,
+            "clock_origin_s": start_clock,
             "turn_start_s": from, "planned_end_s": to, "now_s": now,
             "start_clock": clock(from), "end_clock": clock(to), "now_clock": clock(now),
             "items": items.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),

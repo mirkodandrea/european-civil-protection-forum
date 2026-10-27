@@ -3451,3 +3451,43 @@ async fn substep_stops_at_the_next_event_and_keeps_the_turn_open() {
     let (_, state) = call(&app, "GET", "/api/state", None).await;
     assert_eq!(state["turn"], 2);
 }
+
+/// "Ferma qui": a resolution at 60x that would run 30 minutes is ended at the
+/// current second; the turn stays open and the waiting request returns.
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_ends_a_running_resolution_and_keeps_the_turn_open() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let (st, _) = call(&app, "POST", "/api/master/resolve/stop", None).await;
+    assert_ne!(st, Status::Ok, "nothing is running");
+    call(&app, "POST", "/api/master/settings", Some(json!({"speed": 60.0}))).await;
+    let a2 = app.clone();
+    let resolver = tokio::spawn(async move {
+        call(&a2, "POST", "/api/master/resolve", Some(json!({"until": "turn_end"}))).await
+    });
+    let mut seen = 0;
+    for _ in 0..300 {
+        let (_, state) = call(&app, "GET", "/api/state", None).await;
+        seen = state["turn_window"]["now_s"].as_i64().unwrap();
+        if state["phase"] == "resolving" && seen >= 60 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(seen >= 60, "the resolution should be under way");
+    let (st, stop) = call(&app, "POST", "/api/master/resolve/stop", None).await;
+    assert_eq!(st, Status::Ok, "{stop}");
+    let (st, rep) = tokio::time::timeout(std::time::Duration::from_secs(10), resolver)
+        .await
+        .expect("the waiting resolve returns after the stop")
+        .unwrap();
+    assert_eq!(st, Status::Ok, "{rep}");
+    let at = stop["at_s"].as_i64().unwrap();
+    assert!((60..1800).contains(&at), "stopped mid-turn at {at}");
+    assert_eq!(rep["to_s"], at);
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!((state["turn"].clone(), state["phase"].clone()), (json!(1), json!("orders")));
+    assert!(state["resolving"].is_null());
+    assert_eq!(state["turn_window"]["now_s"], at);
+    assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
+}

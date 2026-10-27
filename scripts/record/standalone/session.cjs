@@ -156,8 +156,14 @@ const POINTER = `
       await click(btn, { pause: 700 });
     }
   };
+  // The pre-advance review opens when something is unsent or needs a decision.
+  const confirmAdvance = async () => {
+    const ok = M.locator('[data-due-confirm]');
+    if (await ok.waitFor({ timeout: 1500 }).then(() => true, () => false)) await click(ok);
+  };
   const resolveTurn = async next => {
     await click(M.locator('#resolve'));
+    await confirmAdvance();
     await M.locator('#turn').filter({ hasText: next }).waitFor({ timeout: 180000 });
   };
 
@@ -322,6 +328,7 @@ const POINTER = `
     await tool.getByRole('button', { name: 'Chiudi' }).click().catch(() => {});
     await caption('resolve1');
     await click(M.locator('#resolve'));
+    await confirmAdvance();
     await M.locator('#turn').filter({ hasText: 'Turno 2' }).waitFor({ timeout: 240000 });
     await beat(2000);
     await caption('turn1_end');
@@ -361,6 +368,7 @@ const POINTER = `
       await closeDlg();
     }
     await click(M.locator('#resolve'));
+    await confirmAdvance();
     await M.locator('#turn').filter({ hasText: 'Turno 3' }).waitFor({ timeout: 240000 });
     await beat(1500);
     await caption('history');

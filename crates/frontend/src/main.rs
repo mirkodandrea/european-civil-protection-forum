@@ -123,8 +123,10 @@ pub struct App {
     busy: bool,
     reading: bool,
     resolving_request: bool,
-    /// Scripted timeline actions due in the advance about to start: (resolve body, rows).
-    due_modal: Option<(Value, Vec<Value>)>,
+    /// Pre-advance review: (resolve body, target second, scripted actions the advance crosses).
+    due_modal: Option<(Value, i64, Vec<Value>)>,
+    /// Report of the last advance run from this console, for the turn panel.
+    last_report: Value,
     /// EXCON console language; stored in this browser only.
     excon_lang: String,
     refresh_again: bool,
@@ -164,9 +166,9 @@ pub enum Msg {
     Refreshed(Result<(Value, Value), String>),
     ResolutionDone(Result<Value, String>),
     /// Advance to simulated second `.1` with resolve body `.0` (intermediate
-    /// advance or turn close), asking about the scripted actions it crosses.
+    /// advance or turn close), reviewing what it crosses first.
     Advance(Value, i64),
-    DueActions(Value, Result<Value, String>),
+    DueActions(Value, i64, Result<Value, String>),
     CloseDue,
     Action(Action),
     Done(ActionKind, Result<Value, String>),
@@ -215,6 +217,12 @@ impl App {
     }
     fn draft(&self) -> Draft {
         self.drafts.get(&self.selected).cloned().unwrap_or_default()
+    }
+    /// Planned injects still unsent whose instant an advance to `to_s` reaches or crosses.
+    fn has_unsent_before(&self, to_s: i64) -> bool {
+        let a = &self.master["agenda"];
+        let (now, start) = (a["now_s"].as_i64().unwrap_or(0), a["turn_start_s"].as_i64().unwrap_or(0));
+        !timeline::unsent_injects(list(&self.master["planned_injects"]), now, to_s, start).is_empty()
     }
     fn roles(&self) -> Vec<Value> {
         let mut roles = list(&self.stat["roles"]).to_vec();
@@ -393,6 +401,7 @@ impl Component for App {
             reading: false,
             resolving_request: false,
             due_modal: None,
+            last_report: Value::Null,
             excon_lang: web_sys::window()
                 .and_then(|w| w.local_storage().ok().flatten())
                 .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
@@ -583,22 +592,26 @@ impl Component for App {
                 let key = self.token.clone();
                 ctx.link().send_future(async move {
                     let path = format!("/api/master/due-actions?to_s={to_s}");
-                    Msg::DueActions(body, api::request(&key, &path, None).await)
+                    Msg::DueActions(body, to_s, api::request(&key, &path, None).await)
                 });
             }
-            Msg::DueActions(body, result) => match result {
-                Ok(v) if list(&v["due"]).is_empty() => {
+            Msg::DueActions(body, to_s, result) => match result {
+                // Nothing to decide and no unsent inject reached or crossed: go.
+                Ok(v) if list(&v["due"]).is_empty() && !self.has_unsent_before(to_s) => {
                     ctx.link().send_message(Msg::Action(Action::post("/api/master/resolve", body)));
                     return false;
                 }
-                Ok(v) => self.due_modal = Some((body, list(&v["due"]).to_vec())),
+                Ok(v) => self.due_modal = Some((body, to_s, list(&v["due"]).to_vec())),
                 Err(e) => self.error = e,
             },
             Msg::CloseDue => self.due_modal = None,
             Msg::ResolutionDone(result) => {
                 self.resolving_request = false;
                 match result {
-                    Ok(_) => self.notice = crate::i18n::ex("Turno risolto").into(),
+                    Ok(report) => {
+                        self.notice = crate::i18n::ex("Turno risolto").into();
+                        self.last_report = report;
+                    }
                     Err(e) => self.error = e,
                 }
                 self.request_refresh(ctx);
@@ -950,7 +963,9 @@ impl Component for App {
         let href = |path: &str| path.to_string();
         let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button></div>};
         let running = phase == "resolving" || self.state["clock_control"]["running"] == true;
-        let sim_badge = if self.state.is_null() || phase == "briefing" || phase == "debrief" {
+        // On the Timeline the turn panel owns status and time: the header keeps one indicator.
+        let compact = self.is_master() && !self.is_evaluator() && self.page == "chat" && self.active == "timeline" && phase != "briefing";
+        let sim_badge = if compact || self.state.is_null() || phase == "briefing" || phase == "debrief" {
             Html::default()
         } else if running {
             html! {<span class="pill sim-state running" id="sim-state" role="status">{i18n::t(l,"sim_running")}</span>}
@@ -958,7 +973,7 @@ impl Component for App {
             html! {<span class="pill sim-state paused" id="sim-state" role="status">{i18n::t(l,if phase=="orders"{"sim_paused_orders"}else{"sim_paused"})}</span>}
         };
         html! {<>
-            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div></div><div class="grow"/>
+            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
             if self.is_master()&&!self.is_evaluator(){<select key={self.excon_lang.clone()} id="language" aria-label={i18n::t(l,"language")} value={self.excon_lang.clone()} onchange={ctx.link().callback(|e|Msg::ExconLang(api::select(e)))}>{for api::EXCON_LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.excon_lang}>{name}</option>})}</select>}
             if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label={i18n::t(l,"language")} value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
@@ -979,11 +994,11 @@ impl Component for App {
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()} roles={self.roles()}/> }
             else if self.page=="advanced"&&self.is_master(){<controllo::Controllo stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} error={self.error.clone()} done={self.done} action={self.action(ctx)}/>}
             else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{crate::i18n::ex("Apri la console conversazionale")}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
-            else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy} oninject={ctx.link().callback(Msg::OpenInject)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
+            else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy} oninject={ctx.link().callback(Msg::OpenInject)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
             else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy}/></main>}
             else{{self.view_chat(ctx)}}
-            if let Some((body,due))=&self.due_modal{<timeline::DueActionsDialog body={body.clone()} due={due.clone()} busy={self.busy} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
+            if let Some((body,to_s,due))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} due={due.clone()} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject personalizzato").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 
         </>}

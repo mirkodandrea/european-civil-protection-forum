@@ -24,7 +24,6 @@ impl Exercise {
 
     /// All MSEL injects, chronological, with per-recipient send tracking.
     pub fn planned_injects(&self) -> Vec<Value> {
-        let ratio = self.clock_control.ratio.max(0.01);
         let start = self.world.scn.start_clock_s;
         let all = self.role_ids();
         let mut rows: Vec<(i64, usize, Value)> = self
@@ -55,7 +54,6 @@ impl Exercise {
                     json!({
                         "id_inject": t.id, "title": t.title, "event": t.event, "sender": t.sender,
                         "turn": t.turn, "text": t.text, "objective": t.objective,
-                        "real_time_offset": (due as f64 / ratio).round() as i64,
                         "scenario_time": scenario::format_clock(start + due),
                         "scenario_time_s": due,
                         "recipients_planned": planned,

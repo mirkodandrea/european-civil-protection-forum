@@ -241,6 +241,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_design,
                 post_path,
                 post_resolve,
+                post_resolve_stop,
                 post_rollback,
                 post_end,
                 post_settings,
@@ -1555,6 +1556,14 @@ async fn post_resolve(
     }
     tokio::spawn(flow::situation_updates(s.clone(), events));
     Ok(Json(json!(report)))
+}
+
+/// End the running resolution at the current simulated second; the turn stays
+/// open. The `post_resolve` request still waiting for its report returns.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/resolve/stop"))]
+async fn post_resolve_stop(_principal: Principal, s: AppState) -> ApiResult {
+    let at_s = s.lock().stop_resolution()?;
+    Ok(Json(json!({"ok": true, "at_s": at_s})))
 }
 
 #[derive(Deserialize)]

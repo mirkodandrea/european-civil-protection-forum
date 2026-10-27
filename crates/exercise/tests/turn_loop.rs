@@ -927,6 +927,37 @@ fn substep_advances_inside_the_turn_without_closing_it() {
 }
 
 #[test]
+fn stopping_a_resolution_keeps_the_turn_open_at_the_current_second() {
+    use exercise::actions::{ActionChoice, ActionStatus};
+    let mut ex = with_timeline();
+    ex.start().unwrap();
+    ex.turn_minutes = 30;
+    assert!(ex.stop_resolution().is_err(), "nothing is running yet");
+    // Closing the turn, with an action planned after the instant we stop at.
+    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Run)]);
+    ex.begin_resolution_with(None, &choices).unwrap();
+    for _ in 0..100 {
+        assert!(!ex.step_resolution(exercise::STEP_S).unwrap());
+    }
+    let at = ex.stop_resolution().unwrap();
+    assert_eq!(at, ex.world.time_s());
+    assert!(ex.step_resolution(exercise::STEP_S).unwrap(), "the resolution is over");
+    assert_eq!(ex.world.time_s(), at, "no further second is simulated");
+    let report = ex.finish_resolution().unwrap();
+    assert_eq!((report.from_s, report.to_s), (0, at));
+    assert_eq!((ex.turn, ex.phase), (1, Phase::Orders), "the turn stays open");
+    assert_eq!(ex.turn_start_s, 0);
+    assert_eq!(ex.substeps.len(), 1);
+    assert_eq!(ex.last_turn.as_ref().map(|w| w.to_s), Some(at));
+    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Approved);
+
+    // The next advance carries on to the planned end and fires the action on the way.
+    ex.resolve_turn_with(None, &choices).unwrap();
+    assert_eq!((ex.world.time_s(), ex.turn), (1800, 2));
+    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Done);
+}
+
+#[test]
 fn inject_at_s_places_it_in_the_agenda() {
     let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
     scn.msel[0].at_s = Some(600);
