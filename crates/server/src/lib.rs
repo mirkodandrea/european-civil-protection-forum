@@ -427,6 +427,7 @@ async fn get_static(s: AppState, principal: Principal) -> ApiResult {
     }
     let mut v = ex.world.static_view();
     v["msel"] = json!(ex.world.scn.msel);
+    v["excon_roles"] = json!(ex.world.scn.excon_roles);
     Ok(Json(v))
 }
 

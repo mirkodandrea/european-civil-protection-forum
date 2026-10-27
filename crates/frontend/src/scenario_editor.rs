@@ -354,6 +354,8 @@ fn roles_view(props: &ListProps) -> Html {
     html! {<div class="rr-tab">
         <p class="muted">{ex("Ogni ruolo è una pagina player. Azioni e risorse decidono cosa può proporre; l’EXCON approva comunque ogni azione.")}</p>
         {master_detail(items, tools, detail)}
+        {area("Ruoli interpretati dall’EXCON", "Le parti che l’EXCON recita negli inject (ad esempio «Centrale 112», «Sindaco»), una per riga. Sono distinti dai ruoli dei player e compaiono come mittenti nella costruzione degli inject.", e.excon_roles.clone().unwrap_or_default().join("\n"), "4",
+            upd(open, |p, v: String| p.edits.excon_roles = Some(v.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())))}
     </div>}
 }
 
@@ -845,6 +847,7 @@ fn injects_view(props: &InjectsProps) -> Html {
     let tm = e.turn_minutes.unwrap_or(plan::DEFAULT_TURN_MINUTES).clamp(1, 1440);
     let start_s = e.start_clock_s.unwrap_or(0);
     let roles: Vec<(String, String)> = e.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
+    let excon_roles: Vec<String> = e.excon_roles.clone().unwrap_or_default();
     let sel = (*selected).min(n.saturating_sub(1));
     let entries = Rc::new(plan::sorted_entries(&msel, &actions, tm));
     let bands = Rc::new(plan::bands(&entries, tm));
@@ -1062,7 +1065,7 @@ fn injects_view(props: &InjectsProps) -> Html {
     </>};
     let detail = match (act.and_then(|i| actions.get(i).map(|a| (i, a))), msel.get(sel)) {
         (Some((i, a)), _) => action_detail(i, a, &msel, warns.get(i).cloned().flatten(), tm, o, open, &act, &cmd_edit, &tool),
-        (None, Some(m)) => inject_detail(sel, n, m, tm, start_s, &roles, open, &selected),
+        (None, Some(m)) => inject_detail(sel, n, m, tm, start_s, &roles, &excon_roles, open, &selected),
         (None, None) => html! {<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>},
     };
     html! {<div class="inject-tab">
@@ -1280,7 +1283,7 @@ fn add_inject_button(
 }
 
 /// The editor of the selected inject.
-fn inject_detail(i: usize, n: usize, m: &InjectTemplate, tm: u32, start_s: i64, roles: &[(String, String)], open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>) -> Html {
+fn inject_detail(i: usize, n: usize, m: &InjectTemplate, tm: u32, start_s: i64, roles: &[(String, String)], excon_roles: &[String], open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>) -> Html {
     let set = |f: fn(&mut InjectTemplate, String)| upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { f(x, v) });
     let all = m.recipients.is_empty() || m.recipients.iter().any(|r| r == "all");
     let text_len = m.text.chars().count();
@@ -1311,7 +1314,14 @@ fn inject_detail(i: usize, n: usize, m: &InjectTemplate, tm: u32, start_s: i64, 
         {time_block(plan::Key { kind: plan::Kind::Inject, idx: i }, plan::inject_s(m, tm), m.at_s.is_some(), tm, start_s, open)}
         <div class="settings-fields">
             {field("Identificativo", "Chiave stabile dell’inject, usata da pianificazioni e report: non riutilizzarla.", m.id.clone(), set(|x, v| x.id = v))}
-            {field("Mittente", "Chi appare come mittente per i giocatori, ad esempio «Centrale 112».", m.sender.clone(), set(|x, v| x.sender = v))}
+            {if excon_roles.is_empty() {
+                field("Mittente", "Chi appare come mittente per i giocatori. Definisci i ruoli dell’EXCON nella scheda Ruoli per sceglierlo da un elenco.", m.sender.clone(), set(|x, v| x.sender = v))
+            } else {
+                let mut opts: Vec<(String, String)> = vec![(String::new(), "—".into())];
+                opts.extend(excon_roles.iter().map(|r| (r.clone(), r.clone())));
+                if !m.sender.is_empty() && !excon_roles.contains(&m.sender) { opts.push((m.sender.clone(), m.sender.clone())); }
+                choice("Mittente", "Ruolo interpretato dall’EXCON, definito nella scheda Ruoli.", &m.sender, &opts, set(|x, v| x.sender = v))
+            }}
             {field("Evento (raggruppa nella timeline)", "Gli inject con lo stesso evento sono raggruppati nella timeline dell’EXCON.", m.event.clone(), set(|x, v| x.event = v))}
         </div>
         <div class="inject-recipients" title={ex("Chi riceve l’inject: tutti i ruoli oppure solo quelli scelti.")}>

@@ -40,6 +40,8 @@ pub struct ScenarioEdits {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<Role>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub excon_roles: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reinforcements: Option<Vec<ReinforcementOffer>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msel: Option<Vec<InjectTemplate>>,
@@ -154,6 +156,9 @@ impl Scenario {
         if let Some(v) = &e.roles {
             self.roles = v.clone();
         }
+        if let Some(v) = &e.excon_roles {
+            self.excon_roles = v.clone();
+        }
         if let Some(v) = &e.reinforcements {
             self.reinforcements = v.clone();
         }
@@ -190,6 +195,7 @@ impl Scenario {
             places: Some(self.places.clone()),
             resource_types: Some(self.resource_types.clone()),
             roles: Some(self.roles.clone()),
+            excon_roles: Some(self.excon_roles.clone()),
             reinforcements: Some(self.reinforcements.clone()),
             msel: Some(self.msel.clone()),
             timeline: Some(self.timeline.clone()),
@@ -414,6 +420,7 @@ impl Scenario {
             places: vec![],
             resource_types: vec![],
             roles: vec![],
+            excon_roles: vec![],
             reinforcements: vec![],
             msel: vec![],
             timeline: vec![],

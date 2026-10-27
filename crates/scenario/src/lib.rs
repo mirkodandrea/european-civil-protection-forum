@@ -527,6 +527,9 @@ pub struct Scenario {
     pub places: Vec<Place>,
     pub resource_types: Vec<ResourceType>,
     pub roles: Vec<Role>,
+    /// Parts the EXCON plays (e.g. «Centrale 112»), the senders of injects. Separate from `roles`.
+    #[serde(default)]
+    pub excon_roles: Vec<String>,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
     /// Scripted world changes on the timeline (see [`TimelineAction`]).

@@ -150,6 +150,8 @@ pub enum FieldKind {
     Number,
     Check,
     Select(Vec<(String, String)>),
+    /// Checkbox list; the value is the selected keys joined by commas and the body gets an array.
+    Multi(Vec<(String, String)>),
 }
 #[derive(Clone, PartialEq)]
 pub struct Field {
@@ -179,6 +181,7 @@ pub fn fields_body(fields: &[Field], values: &BTreeMap<String, String>, extra: &
                 .parse::<f64>()
                 .map_err(|_| format!("{}: {}", ex(f.label), ex("numero non valido")))?),
             FieldKind::Check => json!(raw == "true"),
+            FieldKind::Multi(_) => json!(raw.split(',').filter(|k| !k.is_empty()).collect::<Vec<_>>()),
             _ => json!(raw),
         };
         body[f.key] = if arrays.contains(&f.key) { json!([v]) } else { v };
@@ -457,6 +460,19 @@ pub fn fields_modal(p: &FieldsProps) -> Html {
                 FieldKind::Area => html!{<label>{label}<textarea rows="5" value={v} oninput={Callback::from(move|e|s(api::input(e)))}/></label>},
                 FieldKind::Number => html!{<label>{label}<span class="ctl-unit"><input type="number" step="any" value={v} oninput={Callback::from(move|e|s(api::input(e)))}/>{f.unit}</span></label>},
                 FieldKind::Check => { let on = v == "true"; html!{<label class="mt-check"><input type="checkbox" checked={on} onchange={Callback::from(move|_|s((!on).to_string()))}/>{label}</label>} }
+                FieldKind::Multi(opts) => {
+                    let chosen: Vec<String> = v.split(',').filter(|k| !k.is_empty()).map(String::from).collect();
+                    html!{<fieldset class="ctl-multi"><legend>{label}</legend>{for opts.iter().map(|(k,n)| {
+                        let (on, k2, chosen, s) = (chosen.contains(k), k.clone(), chosen.clone(), s.clone());
+                        // "all" excludes the single roles, and the other way round.
+                        let toggle = Callback::from(move |_| {
+                            let mut next: Vec<String> = chosen.iter().filter(|c| **c != k2 && (k2 != "all" && *c != "all")).cloned().collect();
+                            if !on { next.push(k2.clone()); }
+                            s(next.join(","));
+                        });
+                        html!{<label class="mt-check"><input type="checkbox" checked={on} onchange={toggle}/>{n.clone()}</label>}
+                    })}</fieldset>}
+                }
                 FieldKind::Select(opts) => html!{<label>{label}<select onchange={Callback::from(move|e|s(api::select(e)))}>{for opts.iter().map(|(k,n)|html!{<option value={k.clone()} selected={*k==v}>{n.clone()}</option>})}</select></label>},
             }
         })}
@@ -753,6 +769,8 @@ pub fn controllo(p: &ControlloProps) -> Html {
         .iter()
         .map(|&(k, n)| (k.to_string(), ex(n).to_string()))
         .collect();
+    let mut senders = vec![("EXCON".to_string(), "EXCON".to_string())];
+    senders.extend(list(&p.stat["excon_roles"]).iter().map(|r| (text(r).to_string(), text(r).to_string())));
     let mut recipients = vec![("all".to_string(), ex("Tutti i player").to_string())];
     recipients.extend(list(&p.stat["roles"]).iter().map(|r| (text(&r["id"]).to_string(), text(&r["name"]).to_string())));
     let cm = common.clone();
@@ -805,10 +823,11 @@ pub fn controllo(p: &ControlloProps) -> Html {
         ),
         Some("inject") => html! {<FieldsModal title={tool_label("inject")} tip={ex("Il messaggio non cambia la fisica: arriva ai destinatari come inject.")} endpoint="/api/master/inject"
             fields={vec![
-                Field::new("recipients", "Destinatari", FieldKind::Select(recipients), "all"),
+                Field::new("recipients", "Destinatari", FieldKind::Multi(recipients), "all"),
                 Field::new("title", "Titolo", FieldKind::Text, "Inject"),
+                Field::new("sender", "Mittente", FieldKind::Select(senders), "EXCON"),
                 Field::new("text", "Testo", FieldKind::Area, ""),
-            ]} extra={json!({"sender":"EXCON","observation":{}})} arrays={vec!["recipients"]} required={vec!["text"]} common={cm.clone()}/>},
+            ]} extra={json!({"observation":{}})} required={vec!["text", "recipients"]} common={cm.clone()}/>},
         Some("prompt") => html! {<FieldsModal title={tool_label("prompt")} tip={ex("L’AI propone azioni; nulla viene eseguito senza la tua approvazione.")} endpoint="/api/master/prompt"
             fields={vec![Field::new("text", "Richiesta", FieldKind::Area, "")]} required={vec!["text"]} common={cm.clone()}/>},
         Some(id) => html! {<PanelModal tool={id.to_string()} common={common.clone()} links={p.links.clone()} catalogue={p.catalogue.clone()}/>},

@@ -335,6 +335,7 @@ pub fn generate(seed: u64) -> Scenario {
         places: places(),
         resource_types: resource_types(),
         roles: roles(),
+        excon_roles: vec![],
         reinforcements: reinforcements(),
         msel: msel(),
         timeline: vec![],
