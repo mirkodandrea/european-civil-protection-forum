@@ -22,6 +22,7 @@ mod risposte;
 mod situation;
 mod staged_commands;
 mod scenario_editor;
+mod webmcp;
 mod server_settings;
 mod settings;
 #[cfg(feature = "standalone")]
@@ -1164,6 +1165,7 @@ fn main() {
         editor3d::start();
         return;
     }
+    webmcp::register();
     #[cfg(not(feature = "standalone"))]
     if api::window()
         .location()

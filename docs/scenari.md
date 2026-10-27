@@ -163,3 +163,19 @@ Verifica grafica invisibile, senza avviare l’esercitazione:
 cargo build --release -p app --bin scenario-editor
 TTX_SNAPSHOT="$PWD/runs/editor.png" TTX_SCALE=1 target/release/scenario-editor
 ```
+
+## Tool WebMCP per agenti (ChatGPT Atlas, Chrome)
+
+`crates/frontend/src/webmcp.rs` registra su `navigator.modelContext` (WebMCP) i tool per creare e modificare scenari, sia nell'app server sia nello standalone (stesse chiamate dell'editor, `api::request`). Gli stessi tool sono sempre raggiungibili come `window.ttxWebMcp.call(nome, args)`.
+
+| Tool | Cosa fa |
+|---|---|
+| `describe_scenario_format` | guida al formato e al flusso di lavoro |
+| `list_scenarios`, `get_scenario {id}` | libreria; pack completo + nomi del territorio |
+| `validate_scenario {pack}` | tutti i problemi, senza salvare |
+| `create_scenario {id,name,copy_from?}` | copia (anche di un incluso) e salva |
+| `edit_scenario {id,operations,dry_run?}` | operazioni JSON-pointer `add/replace/remove` sul pack (`/edits/injects/-` aggiunge); tutto o niente: se non valido non salva nulla |
+| `open_in_editor {id}` | mostra lo scenario nella vista Scenario |
+| `delete_scenario`, `start_scenario` | richiedono `confirm: true`; `start` scarta l'esercitazione in corso |
+
+La vista Scenario si aggiorna da sola alle modifiche dei tool e ricarica lo scenario aperto solo se non ha modifiche non salvate. Gli scenari inclusi non si modificano: si crea prima una copia.

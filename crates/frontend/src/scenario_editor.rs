@@ -24,7 +24,7 @@ fn token() -> String {
     api::token()
 }
 
-async fn call(path: &str, body: Option<Value>) -> Result<Value, String> {
+pub(crate) async fn call(path: &str, body: Option<Value>) -> Result<Value, String> {
     api::request(&token(), path, body).await
 }
 
@@ -1228,6 +1228,35 @@ pub fn scenario_editor(props: &Props) -> Html {
         })
     };
 
+    // The WebMCP tools (an agent editing scenarios) announce their changes:
+    // refresh the list, and reload what the user has open unless they have
+    // unsaved edits. "Open in editor" always opens.
+    let current = use_mut_ref(|| None::<(Option<String>, bool)>);
+    *current.borrow_mut() = (*open).as_ref().map(|o| (o.saved_id.clone(), o.dirty));
+    {
+        let (load, refresh, current) = (load.clone(), refresh.clone(), current.clone());
+        use_effect_with((), move |_| {
+            use wasm_bindgen::JsCast;
+            if let Some(req) = crate::webmcp::take_editor_request().filter(|r| r.force) {
+                load.emit((req.id, false));
+            }
+            let handler = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+                refresh.emit(());
+                if let Some(req) = crate::webmcp::take_editor_request() {
+                    let same_clean = matches!(&*current.borrow(), Some((Some(id), false)) if *id == req.id);
+                    if req.force || same_clean {
+                        load.emit((req.id, false));
+                    }
+                }
+            });
+            let window = api::window();
+            let _ = window.add_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, handler.as_ref().unchecked_ref());
+            move || {
+                let _ = window.remove_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, handler.as_ref().unchecked_ref());
+            }
+        });
+    }
+
     // Save (and optionally start). `Ok` shows the outcome, errors list problems.
     let save = {
         let (open, message, problems, busy, refresh) =
@@ -1460,7 +1489,7 @@ pub fn scenario_editor(props: &Props) -> Html {
 }
 
 /// Begin a new exercise from `id`. In the browser the page reloads into it.
-async fn start_scenario(id: &str) -> Result<String, String> {
+pub(crate) async fn start_scenario(id: &str) -> Result<String, String> {
     #[cfg(feature = "standalone")]
     {
         crate::store::activate(id)?;
