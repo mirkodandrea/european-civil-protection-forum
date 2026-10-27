@@ -100,6 +100,7 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Destinatari" => "Recipients",
         "Tutti i player" => "All players",
         "Destinatari dello scenario" => "Scenario recipients",
+        "Scegli i destinatari…" => "Choose recipients…",
         "Il player risponde dalla vista di lavoro; la proposta appare nella timeline per l’approvazione. L’invio dell’inject non cambia la fisica." => "The player replies from the work view; the proposal appears in the timeline for approval. Sending the inject does not change the physics.",
         "Testo EXCON in inglese · tradotto per il destinatario" => "EXCON text in English · translated for the recipient",
         "Invia inject →" => "Send inject →",

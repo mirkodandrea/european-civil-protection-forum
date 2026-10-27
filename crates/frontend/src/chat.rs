@@ -130,7 +130,8 @@ impl App {
             <div id="inject-options" hidden={draft.mode!="inject"}>
                 <div class="inject-compose-row"><label for="inject-template">{crate::i18n::ex("Da scenario")}</label><select key={format!("template:{selected}:{}",draft.template)} id="inject-template" value={draft.template.clone()} onchange={select("draft:template")}><option value="" selected={draft.template.is_empty()}>{crate::i18n::ex("Inject personalizzato")}</option>{for list(&self.stat["msel"]).iter().filter(|t|selected=="all"||list(&t["recipients"]).contains(&json!("all"))||list(&t["recipients"]).contains(&json!(selected))).map(|t|html!{<option value={text(&t["id"]).to_string()} selected={t["id"]==draft.template}>{crate::exfmt!("{} · {} · turno {}","{} · {} · turn {}",text(&t["id"]),text(&t["title"]),t["turn"])}</option>})}</select></div>
                 <div class="inject-compose-grid"><label>{crate::i18n::ex("Titolo")}<input id="inject-title" value={draft.title.clone()} oninput={field("draft:title")} required={draft.mode=="inject"}/></label><label>{crate::i18n::ex("Mittente simulato")}<select id="inject-sender" onchange={select("draft:sender")}>{for std::iter::once("EXCON".to_string()).chain(list(&self.stat["excon_roles"]).iter().map(|r|text(r).to_string())).chain((!draft.sender.is_empty()).then(||draft.sender.clone())).fold(Vec::<String>::new(),|mut a,r|{if !a.contains(&r){a.push(r)};a}).into_iter().map(|r|html!{<option value={r.clone()} selected={r==draft.sender}>{r.clone()}</option>})}</select></label></div>
-                <div class="inject-compose-row"><label>{crate::i18n::ex("Destinatari")}</label><select key={format!("scope:{selected}:{}",draft.scope)} id="inject-scope" value={draft.scope.clone()} onchange={select("draft:scope")}><option value="conversation" selected={draft.scope=="conversation"}>{if selected=="all"{crate::i18n::ex("Tutti i player").to_string()}else{crate::exfmt!("Solo {}","Only {}",self.name(&selected))}}</option>if !draft.template.is_empty(){<option value="scenario" selected={draft.scope=="scenario"}>{crate::i18n::ex("Destinatari dello scenario")}</option>}</select></div>
+                <div class="inject-compose-row"><label>{crate::i18n::ex("Destinatari")}</label><select key={format!("scope:{selected}:{}",draft.scope)} id="inject-scope" value={draft.scope.clone()} onchange={select("draft:scope")}><option value="conversation" selected={draft.scope=="conversation"}>{if selected=="all"{crate::i18n::ex("Tutti i player").to_string()}else{crate::exfmt!("Solo {}","Only {}",self.name(&selected))}}</option><option value="custom" selected={draft.scope=="custom"}>{crate::i18n::ex("Scegli i destinatari…")}</option>if !draft.template.is_empty(){<option value="scenario" selected={draft.scope=="scenario"}>{crate::i18n::ex("Destinatari dello scenario")}</option>}</select></div>
+                if draft.scope=="custom"{<fieldset class="inject-compose-row ctl-multi">{for list(&self.stat["roles"]).iter().map(|r|{let id=text(&r["id"]).to_string();let chosen:Vec<String>=draft.recipients.split(',').filter(|k|!k.is_empty()).map(String::from).collect();let on=chosen.contains(&id);let link=ctx.link().clone();let id2=id.clone();html!{<label class="mt-check"><input type="checkbox" checked={on} onchange={Callback::from(move|_|{let mut next:Vec<String>=chosen.iter().filter(|c|**c!=id2).cloned().collect();if !on{next.push(id2.clone())};link.send_message(Msg::Field("draft:recipients".into(),next.join(",")))})}/>{text(&r["name"]).to_string()}</label>}})}</fieldset>}
                 <p class="muted">{crate::i18n::ex("Il player risponde dalla vista di lavoro; la proposta appare nella timeline per l’approvazione. L’invio dell’inject non cambia la fisica.")}</p>
             </div></div>}
             if self.busy{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
@@ -191,6 +192,9 @@ impl App {
             return None;
         }
         let draft = self.draft();
+        if self.is_master() && draft.scope == "custom" && draft.recipients.is_empty() {
+            return None;
+        }
         let to = self.selected.clone();
         let message = draft.text.trim();
         let reference = self.chat_reference(&draft);
@@ -224,7 +228,7 @@ impl App {
             } else {
                 action.path = "/api/master/inject".into();
                 action.body = Some(
-                    json!({"title":draft.title.trim(),"sender":draft.sender.trim(),"text":message,"recipients":if scenario{template.unwrap()["recipients"].clone()}else{json!([to])}}),
+                    json!({"title":draft.title.trim(),"sender":draft.sender.trim(),"text":message,"recipients":if scenario{template.unwrap()["recipients"].clone()}else if draft.scope=="custom"{json!(draft.recipients.split(',').filter(|k|!k.is_empty()).collect::<Vec<_>>())}else{json!([to])}}),
                 );
             }
         }

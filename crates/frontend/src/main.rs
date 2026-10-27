@@ -79,6 +79,8 @@ pub struct Draft {
     pub title: String,
     pub sender: String,
     pub scope: String,
+    /// Comma-joined role ids when `scope` is "custom".
+    pub recipients: String,
     pub private: Value,
     pub dirty: bool,
     pub clock_revision: Value,
@@ -94,6 +96,7 @@ impl Default for Draft {
             title: String::new(),
             sender: "EXCON".into(),
             scope: "conversation".into(),
+            recipients: String::new(),
             private: Value::Null,
             dirty: false,
             clock_revision: Value::Null,
@@ -882,6 +885,7 @@ impl Component for App {
                         "draft:title" => d.title = value,
                         "draft:sender" => d.sender = value,
                         "draft:scope" => d.scope = value,
+                        "draft:recipients" => d.recipients = value,
                         "draft:template" => {
                             d.template = value.clone();
                             if let Some(t) =
