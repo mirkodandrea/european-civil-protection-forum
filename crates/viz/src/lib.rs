@@ -261,7 +261,7 @@ fn replace_scene(world: &mut World) {
     // A full rebuild reconstructs terrain textures and vegetation (seconds on a
     // large territory), so while the editor brush is working only the terrain
     // mesh follows; the rebuild happens once the brush has rested.
-    let now = world.resource::<Time>().elapsed_seconds_f64();
+    let now = world.get_resource::<Time>().map_or(0., |t| t.elapsed_seconds_f64());
     if world.get_resource::<editor::Editor>().is_some_and(|e| e.busy(now)) {
         if let Some(next) = polled {
             let same_grid = current.grid.rows == next.grid.rows
