@@ -182,7 +182,7 @@ impl App {
     pub fn view_inject_panel(&self, ctx: &Context<Self>, can_act: bool, turn: u64) -> Html {
         let l = self.lang();
         let l = l.as_str();
-        let (items, proposals) = self.inject_items(l, turn);
+        let (items, _) = self.inject_items(l, turn);
         if items.is_empty() {
             return html! {<div class="tactical-empty"><b>{if self.state["phase"]=="briefing"{i18n::t(l,"awaiting_start")}else{i18n::t(l,"no_events")}}</b><p>{i18n::t(l,"empty_hint")}</p></div>};
         }
@@ -207,11 +207,11 @@ impl App {
                     </span>
                     <span class={classes!("pill","inj-badge",o.tone)}>{o.label}</span></button></li>}
             })}</ul>
-            if let Some(it)=opened{{self.view_inject_modal(ctx,can_act,it,&proposals)}}
+            if let Some(it)=opened{{self.view_inject_modal(ctx,can_act,it)}}
         </div>}
     }
 
-    fn view_inject_modal(&self, ctx: &Context<Self>, can_act: bool, it: &Item, all_proposals: &[&Value]) -> Html {
+    fn view_inject_modal(&self, ctx: &Context<Self>, can_act: bool, it: &Item) -> Html {
         let l = self.lang();
         let l = l.as_str();
         let o = outcome(l, it);

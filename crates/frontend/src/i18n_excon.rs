@@ -418,7 +418,6 @@ pub fn en(it: &str) -> Option<&'static str> {
         // BEGIN turn bar
         "Durata turno (min)" => "Turn length (min)",
         "Durata" => "Length",
-        "Avanza il tempo" => "Advance time",
         "Imposta" => "Set",
         "Minuti di avanzamento" => "Minutes to advance",
         "nessun altro evento nel turno" => "no further event in this turn",
