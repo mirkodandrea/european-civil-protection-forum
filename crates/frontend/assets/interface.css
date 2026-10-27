@@ -623,6 +623,7 @@ main.page.timeline-page{display:flex;flex-direction:column;overflow:hidden;width
 .tl-implied{color:#8a5a12}
 .tl-link-btn{border:0;background:transparent;color:var(--accent);text-decoration:underline;padding:0;font-size:11px}
 .tl-warn{margin:0 0 10px;padding:6px 10px;border-radius:6px;background:#fff0e0;border:1px solid #e3b887;color:#7a3d00;font-size:12px}
+@media (min-width:1300px){.tl-md{grid-template-columns:minmax(520px,1.1fr) minmax(480px,1fr)}.tl-row .md-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 /* END scenario editor Timeline tab */
 
 /* BEGIN turn management (timeline.rs: turn panel, pre-advance review, turn bands) */
@@ -722,3 +723,36 @@ button.warn:hover:not(:disabled){background:#ffe7a8}
 .timeline-layout{gap:10px}
 .turn-panel .tp-head{margin-bottom:0}
 /* END compact turn panel */
+
+/* BEGIN EXCON timeline two columns (timeline.rs: list left, turn panel + selected item right) */
+.tl-side{display:contents}
+.tl-detail{display:none}
+.pi-preview{display:none}
+.turn-band .planned-list{grid-template-columns:minmax(0,1fr)}
+.turn-band .pi{min-width:0}
+.pi.is-selected{outline:2px solid #2d6cdf;outline-offset:-1px}
+.pi,.pi + .pi{scroll-margin-top:70px}
+@media (min-width:1200px){
+  .timeline-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,420px);grid-template-rows:minmax(0,1fr);grid-template-areas:"list side";gap:14px}
+  .timeline-layout>#excon-timeline{grid-area:list;min-height:0}
+  .timeline-layout>.tl-side{grid-area:side;display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+  .tl-side>.card{margin:0}
+  .timeline-layout .pi-detail{display:none}
+  .tl-side .turn-panel .tp-head{flex-wrap:wrap;row-gap:6px}
+  .tl-side .turn-panel .tp-controls{flex-wrap:wrap;gap:6px}
+  .tl-side .tp-controls>#advance-next,.tl-side .tp-controls>#resolve,.tl-side .tp-attention,.tl-side .tp-last{flex:1 1 100%;justify-content:center}
+  .tl-side .tp-controls>.grow{display:none}
+  .tl-side .tp-step{flex:1 1 auto}
+  .tl-detail{display:grid;gap:8px;padding:14px 16px;align-content:start}
+  .tl-detail p{margin:0}
+  .tl-detail.empty{padding:12px 16px}
+  .tl-detail-head{display:flex;align-items:center;gap:8px}
+  .tl-detail-title{font-size:16px}
+  .tl-detail .planned-text{white-space:pre-wrap;line-height:1.45}
+  .pi-line>.pi-toggle{cursor:pointer;flex:1 1 0;min-width:0;overflow:hidden}
+  .pi-line{min-width:0;overflow:hidden}
+  .pi-chev{display:none}
+  .pi-toggle .planned-title{flex:none;max-width:45%}
+  .pi-preview{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;margin-left:6px}
+}
+/* END EXCON timeline two columns */

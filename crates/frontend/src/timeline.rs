@@ -437,17 +437,13 @@ fn reveal_rows(targets: &[(String, String)]) {
     }
 }
 
-/// Scroll the list to the first item waiting in the open turn, else its band header.
+/// Scroll the list so that the open turn's band header is at the top, under
+/// the sticky list header (`scroll-margin-top`); its waiting rows follow it.
 fn scroll_to_current_turn() {
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
         return;
     };
-    let target = doc
-        .query_selector("[data-band-current] .planned-inject.is-due")
-        .ok()
-        .flatten()
-        .or_else(|| doc.query_selector("[data-band-current]").ok().flatten());
-    if let Some(t) = target {
+    if let Some(t) = doc.query_selector("[data-band-current]>.band-head").ok().flatten() {
         t.scroll_into_view();
     }
 }
@@ -785,7 +781,8 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let grouped = use_state(|| true);
     let collapsed = use_state(BTreeSet::<String>::new);
     let opened = use_state(|| Option::<String>::None);
-    let expanded = use_state(BTreeSet::<String>::new);
+    // Row shown in the detail column (`i:<id>` / `a:<id>`); by default the first waiting item.
+    let selected = use_state(|| Option::<String>::None);
     // Bands the user toggled, against their default (past turns without pending items stay closed).
     let toggled = use_state(BTreeSet::<u32>::new);
     let agenda = &props.master["agenda"];
@@ -816,15 +813,24 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let open_inject = opened
         .as_ref()
         .and_then(|id| injects.iter().find(|i| text(&i["id_inject"]) == id).cloned());
+    let all_items = merge_items(&injects, &actions);
+    let item_key = |i: &Value| {
+        if i["item"] == "action" {
+            format!("a:{}", text(&i["id"]))
+        } else {
+            format!("i:{}", text(&i["id_inject"]))
+        }
+    };
+    let current_key = (*selected).clone().or_else(|| {
+        all_items
+            .iter()
+            .find(|i| due_ids.contains(&item_key(i).replacen("a:", "action:", 1).replacen("i:", "inject:", 1)))
+            .map(item_key)
+    });
     let toggle_expanded = |key: String| {
-        let expanded = expanded.clone();
-        Callback::from(move |_| {
-            let mut n = (*expanded).clone();
-            if !n.remove(&key) {
-                n.insert(key.clone());
-            }
-            expanded.set(n);
-        })
+        let selected = selected.clone();
+        let current = current_key.clone();
+        Callback::from(move |_| selected.set(if current.as_deref() == Some(key.as_str()) { Some(String::new()) } else { Some(key.clone()) }))
     };
     // "in ritardo" (planned before the open turn) vs "raggiunto" (instant reached in it).
     let late_pill = |due: bool, at: i64, reached: &'static str| {
@@ -844,11 +850,11 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             let fired = matches!(text(&i["status"]), "done" | "failed");
             let due = due_ids.contains(&format!("action:{id}"));
             let key = format!("a:{id}");
-            let open = expanded.contains(&key);
-            return html! {<li class={classes!("planned-inject","planned-action","pi",fired.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"))} data-action={id.clone()} key={key.clone()}>
+            let open = current_key.as_deref() == Some(key.as_str());
+            return html! {<li class={classes!("planned-inject","planned-action","pi",open.then_some("is-selected"),fired.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"))} data-action={id.clone()} key={key.clone()}>
                 <div class="pi-line">{time}
                     <span class="pill kind action" title={crate::i18n::ex("Azione pianificata")}>{crate::i18n::ex("Azione")}</span>
-                    <button class="pi-toggle" aria-expanded={open.to_string()} onclick={toggle_expanded(key)}><span class="pi-chev">{if open{"▾"}else{"▸"}}</span><b class="planned-title">{text(&i["title"])}</b></button>
+                    <button class="pi-toggle" aria-expanded={open.to_string()} onclick={toggle_expanded(key)}><span class="pi-chev">{if open{"▾"}else{"▸"}}</span><b class="planned-title">{text(&i["title"])}</b><span class="pi-preview muted" aria-hidden="true">{text(&i["summary"])}</span></button>
                     <span class="pill rcpt">{action_status_label(i)}</span>
                     {late_pill(due,at,crate::i18n::ex("raggiunta: decidi all’avanzamento"))}
                     if let Some(r)=i["run"]["result"].as_str(){<small class="pi-result muted" title={r.to_string()}>{r}</small>}</div>
@@ -860,16 +866,16 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         let complete = sent && list(&i["not_yet_sent_to"]).is_empty();
         let due = due_ids.contains(&format!("inject:{id}"));
         let key = format!("i:{id}");
-        let open = expanded.contains(&key);
+        let open = current_key.as_deref() == Some(key.as_str());
         let onclick = {
             let opened = opened.clone();
             let id = id.clone();
             Callback::from(move |_| opened.set(Some(id.clone())))
         };
-        html! {<li class={classes!("planned-inject","pi",sent.then_some("is-sent"),complete.then_some("is-complete"),sent.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"))} data-inject={id.clone()} key={key.clone()}>
+        html! {<li class={classes!("planned-inject","pi",open.then_some("is-selected"),sent.then_some("is-sent"),complete.then_some("is-complete"),sent.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"))} data-inject={id.clone()} key={key.clone()}>
             <div class="pi-line">{time}
                 <span class="pill kind inject" title={crate::i18n::ex("Inject pianificato")}>{crate::i18n::ex("Inject")}</span>
-                <button class="pi-toggle" aria-expanded={open.to_string()} onclick={toggle_expanded(key)}><span class="pi-chev">{if open{"▾"}else{"▸"}}</span><b class="planned-title">{text(&i["title"])}</b></button>
+                <button class="pi-toggle" aria-expanded={open.to_string()} onclick={toggle_expanded(key)}><span class="pi-chev">{if open{"▾"}else{"▸"}}</span><b class="planned-title">{text(&i["title"])}</b><span class="pi-preview muted" aria-hidden="true">{text(&i["text"])}</span></button>
                 {late_pill(due,at,crate::i18n::ex("raggiunto: da inviare"))}
                 if sent{<span class="pill rcpt sent">{if complete{crate::i18n::ex("Inviato")}else{crate::i18n::ex("Inviato in parte")}}</span>}
                 <small class="pi-recips muted">{recipients_summary(i)}</small>
@@ -881,7 +887,47 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let panel = (!agenda.is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving")).then(|| {
         html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={actions.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()}/>}
     });
-    html! {<div class="timeline-layout">{panel.unwrap_or_default()}<section class="card" id="excon-timeline"><div class="row tl-head"><h2>{crate::i18n::ex("Timeline EXCON")}</h2>
+    // The selected row in full, in the side column on wide screens (inline below it otherwise).
+    let detail = current_key.as_ref().and_then(|k| all_items.iter().find(|i| item_key(i) == *k)).map(|i| {
+        let at = item_time(i);
+        let close = {
+            let selected = selected.clone();
+            Callback::from(move |_| selected.set(Some(String::new())))
+        };
+        let head = |kind: Html, title: &str| html! {<div class="tl-detail-head">{kind}<b class="tl-detail-title">{title.to_string()}</b><div class="grow"/>
+            <button class="tp-small" aria-label={crate::i18n::ex("Chiudi")} onclick={close.clone()}>{"✕"}</button></div>};
+        let body = if i["item"] == "action" {
+            html! {<>
+                {head(html!{<span class="pill kind action">{crate::i18n::ex("Azione")}</span>}, text(&i["title"]))}
+                <p class="muted tl-detail-when">{clock_at(origin, at)}{" · "}{action_status_label(i)}
+                    if !text(&i["after"]).is_empty(){{" · "}{crate::exfmt!("segue l’inject {}","follows inject {}",text(&i["after"]))}}</p>
+                <p class="planned-text">{text(&i["summary"])}</p>
+                if !text(&i["note"]).is_empty(){<p class="planned-objective">{text(&i["note"])}</p>}
+                if let Some(r)=i["run"]["result"].as_str(){<p class="tl-detail-result"><b>{crate::i18n::ex("Esito")}{": "}</b>{r}</p>}
+                if due_ids.contains(&format!("action:{}", text(&i["id"]))){<p class="pill due-now">{crate::i18n::ex("Raggiunta: la decidi al prossimo avanzamento")}</p>}
+            </>}
+        } else {
+            let id = text(&i["id_inject"]).to_string();
+            let complete = i["sent"] == true && list(&i["not_yet_sent_to"]).is_empty();
+            let send = {
+                let opened = opened.clone();
+                Callback::from(move |_| opened.set(Some(id.clone())))
+            };
+            html! {<>
+                {head(html!{<span class="pill kind inject">{crate::i18n::ex("Inject")}</span>}, text(&i["title"]))}
+                <p class="muted tl-detail-when">{clock_at(origin, at)}
+                    if !text(&i["sender"]).is_empty(){{" · "}{crate::exfmt!("da {}","from {}",text(&i["sender"]))}}
+                    if !text(&i["event"]).is_empty(){{" · "}{text(&i["event"])}}</p>
+                <p class="planned-text">{text(&i["text"])}</p>
+                if !text(&i["objective"]).is_empty(){<p class="planned-objective">{crate::exfmt!("Obiettivo: {}","Objective: {}",text(&i["objective"]))}</p>}
+                {pills(i, &roles)}
+                <div class="row"><div class="grow"/><button class={classes!((!complete).then_some("primary"))} disabled={props.busy} onclick={send}>{if complete{crate::i18n::ex("Altri destinatari…")}else{crate::i18n::ex("Invia…")}}</button></div>
+            </>}
+        };
+        html! {<section class="card tl-detail" aria-label={crate::i18n::ex("Dettaglio dell’elemento selezionato")}>{body}</section>}
+    });
+    let side_hint = html! {<section class="card tl-detail empty"><p class="muted">{crate::i18n::ex("Seleziona un inject o un’azione nella lista per vederne qui il testo completo, i destinatari e l’invio.")}</p></section>};
+    html! {<div class="timeline-layout"><aside class="tl-side">{panel.unwrap_or_default()}{detail.unwrap_or(side_hint)}</aside><section class="card" id="excon-timeline"><div class="row tl-head"><h2>{crate::i18n::ex("Timeline EXCON")}</h2>
         <small class="muted">{crate::exfmt!("{} inject · {} inviati","{} injects · {} sent",injects.len(),sent_count)}</small><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="group-by-event" checked={*grouped} onchange={{let g=grouped.clone();Callback::from(move |e:Event|{use yew::TargetCast;g.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("raggruppa per evento")}</label>
         <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject personalizzato")}</button></div>
