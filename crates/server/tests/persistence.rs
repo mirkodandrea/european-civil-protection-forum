@@ -8,6 +8,14 @@ use std::sync::{Arc, Mutex};
 use server::library::{MemoryLibrary, Scenarios};
 use server::persist::{self, Persist};
 
+/// `flow::REPLAYING` is process-wide: while one test replays a session, the
+/// autosave of another is skipped and its saved session never appears. The
+/// tests of this file therefore run one at a time.
+fn gate() -> std::sync::MutexGuard<'static, ()> {
+    static GATE: Mutex<()> = Mutex::new(());
+    GATE.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 fn dir(name: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("ttx-persist-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -76,6 +84,7 @@ fn fingerprint(s: &server::AppState) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn session_survives_a_restart() {
+    let _gate = gate();
     let d = dir("session");
     let p = storage(&d);
     let (c, s) = boot(&p).await;
@@ -100,6 +109,7 @@ async fn session_survives_a_restart() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unreplayable_session_is_an_error() {
+    let _gate = gate();
     let d = dir("bad");
     let p = storage(&d);
     let (c, s) = boot(&p).await;
@@ -140,6 +150,7 @@ async fn designed(c: &Client, s: &server::AppState) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scenarios_are_listed_edited_saved_and_started() {
+    let _gate = gate();
     let d = dir("scenarios");
     let p = storage(&d);
     let (c, s) = boot(&p).await;
@@ -198,6 +209,7 @@ async fn scenarios_are_listed_edited_saved_and_started() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn roles_of_the_new_scenario_can_log_in() {
+    let _gate = gate();
     let d = dir("roles");
     let p = storage(&d);
     let (c, s) = boot(&p).await;
@@ -220,6 +232,7 @@ async fn roles_of_the_new_scenario_can_log_in() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn session_replays_into_the_scenario_it_started_from() {
+    let _gate = gate();
     let d = dir("pack-session");
     let p = storage(&d);
     let (c, s) = boot(&p).await;
@@ -241,6 +254,7 @@ async fn session_replays_into_the_scenario_it_started_from() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_the_session_restarts_from_the_running_scenario() {
+    let _gate = gate();
     let d = dir("deletes");
     let p = storage(&d);
     let (c, s) = boot(&p).await;
@@ -262,6 +276,7 @@ async fn deleting_the_session_restarts_from_the_running_scenario() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn narrative_approval_and_outcome_survive_restart_without_physical_execution() {
+    let _gate = gate();
     let d=dir("narrative");let p=storage(&d);let(c,s)=boot(&p).await;
     assert_eq!(post(&c,&s,"/api/master/start",json!({})).await.0,Status::Ok);
     assert_eq!(post(&c,&s,"/api/player/mayor/language",json!({"language":"en"})).await.0,Status::Ok);

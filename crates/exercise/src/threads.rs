@@ -51,7 +51,12 @@ impl Exercise {
             && (m.from == role || m.to == role)
             && m.from != MASTER
             && m.to != MASTER;
-        if !received_inject && !peer_chat {
+        // The inject delivery a conversation of this role is linked to can be
+        // answered from that conversation (see [`crate::conversations`]).
+        let via_conversation = m.kind == MsgKind::Inject
+            && m.inject_id.is_some()
+            && self.conversation_for_delivery(role, id).is_some();
+        if !received_inject && !peer_chat && !via_conversation {
             bail!("reply_to must reference a peer chat or inject delivered to your role");
         }
         Ok(m)
@@ -85,6 +90,13 @@ impl Exercise {
                     chain.push(ThreadMessage::from(inject));
                 }
             }
+        }
+        // A participant of a linked conversation reads the inject through it.
+        if selected.kind == MsgKind::Inject
+            && selected.to != role
+            && !chain.iter().any(|m| m.id == selected.id)
+        {
+            chain.push(ThreadMessage::from(selected));
         }
         // Include replies already exchanged in the selected branch. A peer
         // parent stays within that pair; an inject can connect several peers.
@@ -169,6 +181,9 @@ pub struct ThreadEntry {
     pub text_en: String,
     /// The stored message this entry is.
     pub message: u64,
+    /// Who EXCON spoke as (players see this resolved name instead of "EXCON").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
     /// The proposal the message belongs to.
     pub proposal: Option<u64>,
     pub turn: u32,
@@ -222,7 +237,12 @@ impl Exercise {
             .filter(|t| t.role == role)
             .map(|t| {
                 let mut v = json!(t);
+                let language = self.language_of(role);
                 for e in v["entries"].as_array_mut().into_iter().flatten() {
+                    if e["author"] == "excon" {
+                        let name = self.persona_name(e["persona"].as_str(), &language);
+                        e["persona"] = name.into();
+                    }
                     e.as_object_mut().map(|o| o.remove("text_en"));
                 }
                 v
@@ -275,6 +295,7 @@ impl Exercise {
                 text,
                 text_en,
                 message: m.id,
+                persona: m.persona.clone(),
                 proposal: Some(pid),
                 turn: m.turn,
                 t_s: m.t_s,

@@ -114,6 +114,10 @@ pub struct MapProps {
     /// Zones already known to the role EXCON is looking at (dashed teal).
     #[prop_or_default]
     pub marked_zones: Vec<String>,
+    /// Centre and zoom on `(x, y)` metres whenever this changes (the third
+    /// value only makes the same point trigger again).
+    #[prop_or_default]
+    pub focus: Option<(f64, f64, u32)>,
 }
 #[function_component(SituationMap)]
 pub fn situation_map(props: &MapProps) -> Html {
@@ -133,6 +137,23 @@ pub fn situation_map(props: &MapProps) -> Html {
     let pan_zoom = props.pan_zoom;
     let pz_ref = use_mut_ref(|| pan_zoom);
     *pz_ref.borrow_mut() = pan_zoom;
+    {
+        let view = view.clone();
+        let redraw = tick.dispatcher();
+        let stat = props.stat.clone();
+        use_effect_with(props.focus, move |focus| {
+            if let (Some((x, y, _)), Some((_, h, k, bh))) = (*focus, geom(&stat)) {
+                let mut v = view.borrow_mut();
+                v.z = 3.;
+                v.ox = x * k - SIZE / (2. * v.z);
+                v.oy = (h - y) * k - bh / (2. * v.z);
+                v.clamp(bh);
+                drop(v);
+                redraw.dispatch(());
+            }
+            || ()
+        });
+    }
     {
         let canvas = canvas.clone();
         use_effect_with(

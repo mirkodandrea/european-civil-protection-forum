@@ -88,6 +88,7 @@ impl PropagatorConfig {
 }
 
 /// Stochastic cellular wildfire spread simulator (see spec §1).
+#[derive(Clone)]
 pub struct Propagator {
     veg: Grid2<i32>,
     dem: Grid2<f64>,

@@ -92,7 +92,7 @@ fn actions_or_drafts_cannot_answer_a_question_and_a_closed_question_takes_no_ans
     ex.request_clarification(p1, "Which zone?").unwrap();
     let q = ex.deliver_clarification(p1, "Quale zona?", "Which zone?").unwrap();
     let err = ex.player_actions("mayor", "warn F4", warn(), Some(q)).unwrap_err().to_string();
-    assert!(err.contains("open EXCON question"), "{err}");
+    assert!(err.contains("open question"), "{err}");
     assert!(ex.player_reply("mayor", "F4", q, ev()).is_err());
     assert!(ex.begin_player_draft("mayor", MASTER, "F4", None, Some(q)).is_err());
     assert!(ex.answer_clarification("fire_commander", "x", q, "x", false).is_err(), "someone else's question");

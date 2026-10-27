@@ -18,6 +18,15 @@ La bozza è indipendente dall’esercitazione. I salvataggi sono territori JSON
 nella libreria nativa oppure territori in localStorage nel browser, disponibili
 anche all’editor pack e all’avvio dell’esercitazione. Vedi [uso e limiti](scenari.md#editor-scenario-3d).
 
+## Situazione EXCON: impatto, anteprima di fine turno, suggerimenti
+
+La scheda **Situazione** (solo EXCON, solo desktop) mostra a EXCON l'effetto dell'incendio e cosa accadrà entro la fine del turno, così può scrivere gli inject in anticipo. **Gli inject restano manuali**: nulla viene inviato o pianificato da solo.
+
+- **Impatto ora** (`GET /api/master/impact`, `sim::impact`): righe per strutture, rifugi, edifici toccati dal fuoco e strade non integre (le abitazioni semplici sono solo contate per settore finché il fuoco non le raggiunge); totali e aggregati per settore con variazione rispetto all'inizio del turno (snapshot di rollback): edifici minacciati/danneggiati/distrutti, persone presenti, in evacuazione, arrivate, a rischio, strade tagliate, riempimento dei rifugi.
+- **Anteprima deterministica** (`GET /api/master/situation/preview[?have=<key>]`, `exercise::situation`): una copia del mondo (`World` è `Clone`, comprese le sequenze casuali dell'ensemble) viene portata alla fine pianificata del turno **fuori dal mutex**, con le stesse regole di una risoluzione reale (`begin_resolution` + `step_resolution`): proposte approvate, azioni pianificate attive (rispettando disattivazioni e inject saltati), passi da 1 s. Con lo stesso seme e senza altre decisioni il risultato coincide con l'avanzamento reale (test `preview_equals_the_real_resolution`). Restituisce, per elemento, il primo istante di minaccia/danno/distruzione/taglio/svuotamento, l'impatto e la mappa del fuoco a fine turno. Si ricalcola in background (un solo lavoro, debounce 600 ms, risultato scartato se la chiave non coincide più) mentre la scheda è aperta; in pausa durante la risoluzione. Nel browser (standalone) il calcolo gira sul thread principale: circa 0,2 s su Valverde e 1 s su Selvariva senza fuoco esteso, alcuni secondi con un incendio ampio. Non è la previsione ai giocatori (`fire::forecast`).
+- **Suggerimenti** (`GET /api/master/situation/suggestions`, `exercise::suggestions`): regole `building_reached` (struttura con persone raggiunta prima del termine dell'evacuazione, priorità scuole/ospedali), `houses_reached` (abitazioni per settore), `place_without_exit` (abitato senza uscita stradale), `evac_route_cut` (evacuati in viaggio su una strada che verrà tagliata), `shelter_front` / `shelter_over` (rifugio vicino al fronte o oltre capienza), `task_route_cut` (percorso dei mezzi dispiegati). Ogni bozza ha id stabile `regola:oggetto`, gravità, momento (ora / entro HH:MM), destinatari derivati dalle azioni consentite ai ruoli, titolo e testo it/en ed evidenza. EXCON la apre, la modifica, può chiedere all'AI di riscriverla con la voce di un mittente (`POST /api/master/situation/rewrite`, senza AI il testo resta invariato), poi la **invia ora** (`POST /api/master/inject`), la **pianifica** in timeline (`POST /api/master/situation/plan`: aggiunge un inject MSEL all'ora scelta, da inviare a mano) o la **scarta** (`POST /api/master/situation/mark`). Le coppie scartate/inviate/pianificate non vengono riproposte; il rollback dimentica quelle successive.
+- La Timeline mostra solo un chip «N suggerimenti» che porta alla scheda.
+
 ## Scopo e ruoli
 
 Il simulatore è pensato per esercitazioni da tavolo su emergenze. Lo scenario
@@ -58,7 +67,7 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    evento), con i destinatari come pill (verdi se già serviti). Cliccando un
    inject si scelgono i ruoli con i checkbox; un ruolo già servito è saltato e
    gli altri si possono servire più tardi. “Inject personalizzato” invia un inject
-   libero. Le viste interne a EXCON sono Timeline, Risposte, Controllo e
+   libero. Le viste interne a EXCON sono Timeline, Situazione, Risposte, Controllo e
    Cronologia. La Cronologia raccoglie tutti gli eventi operativi
    salvati, con ricerca, dettagli ed esportazione JSON per la valutazione.
 2. I partecipanti comunicano in chat solo con gli altri ruoli. Conversazioni
@@ -81,17 +90,18 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    conversazione azzera soltanto il suo conteggio. I riepiloghi usano solo le evidenze visibili
    al ruolo (azioni proprie e messaggi ricevuti/inviati), senza contesto privato
    di altri ruoli o EXCON; se l’AI manca, la scheda lo indica. Il rollback elimina
-   i riepiloghi dei turni annullati. Nella scheda “Injects” leggono gli inject
-   e propongono azioni
-   tramite un modale quasi a schermo intero con mappa e modulo affiancati.
-   Il click seleziona zone, coordinate, strade o edifici secondo l’azione; le
-   linee tagliafuoco hanno due estremi selezionabili separatamente. Ogni inject
-   può ricevere più risposte. Il testo libero passa da una verifica AI privata:
-   senza comandi codificati nel simulatore la richiesta è bloccata con un
-   messaggio esplicito. Solo una bozza valida e confermata arriva a EXCON;
-   l’AI può chiedere chiarimenti prima della conferma.
-3. Il partecipante rivede e conferma la bozza AI oppure invia una proposta
-   strutturata senza AI. EXCON vede inject inviati e risposte nella tab Risposte (stato per
+   i riepiloghi dei turni annullati. Nella scheda **Risposte** (en “Response”) la
+   mappa tattica sta a sinistra e l’elenco degli inject a destra. Un click su un
+   inject apre al posto dell’elenco il dettaglio (indietro all’elenco, come nelle
+   Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
+   conversazioni collegate e due azioni: **Rispondi** e **Nuova conversazione**.
+   Rispondi apre un modale quasi a schermo intero con mappa e modulo: una risposta
+   è una **narrazione facoltativa** più **zero o più azioni** (almeno una delle due).
+   Le azioni si aggiungono dal modulo strutturato oppure descrivendole all’assistente
+   AI, che propone una bozza da rivedere (nessuna azione codificata: la bozza non è
+   aggiungibile); il pulsante **Rispondi** invia tutto in una sola volta. Ogni
+   inject può ricevere più risposte.
+3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
    destinatario, badge delle approvazioni), ne controlla la fattibilità e decide:
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta con i suoi comandi; la
    risposta del player e un semplice messaggio a EXCON, tradotto ma mai
@@ -111,34 +121,86 @@ La simulazione applica solo comandi autorizzati e approvati. EXCON può annullar
 un ramo dell'esercitazione con il rollback. Può inoltre calcolare previsioni del
 fuoco, revisionarle e pubblicarle ai ruoli scelti.
 
-### Iniziative narrative dei partecipanti
+### Risposte con narrazione e azioni
 
-Dal modulo di risposta a un inject ricevuto, il player può scegliere **Iniziativa
-narrativa** e inviare un testo senza comandi simulati e senza verifica AI. Il testo
-originale è conservato; l'eventuale AI serve solo alla traduzione. Se la traduzione
-non riesce, il testo viene comunque consegnato con l'indicazione del problema.
-Una bozza operativa non supportata può essere ripresa esplicitamente come iniziativa
-narrativa, da rivedere e inviare: non viene convertita automaticamente.
+Una risposta è una sola proposta (`Proposal`) con testo narrativo opzionale e comandi
+opzionali. `narrative = true` indica che c’è una narrazione; `carries_actions = true`
+che porta anche comandi (una narrazione senza comandi è “pura” e non è mai eseguita).
+La narrazione richiede un inject a cui rispondere; il testo originale è conservato e
+l’AI serve solo alla traduzione (se fallisce, il testo è consegnato con
+l’indicazione del problema). I comandi seguono le regole ordinarie: ruolo autorizzato,
+verifica di fattibilità, approvazione di EXCON, esecuzione. La narrazione non esegue
+comandi, non assegna risorse e non altera le grandezze fisiche.
 
-EXCON riceve l'iniziativa in Risposte e può approvarla, rifiutarla con una nota o
-chiedere chiarimenti. La risposta a un chiarimento è un messaggio solo tradotto e
-mantiene la stessa iniziativa. Dopo l'approvazione, EXCON registra un **esito
-narrativo**, che può aggiornare con registrazioni successive. L'approvazione resta
-separata dall'esito: non indica una missione completata. Le iniziative narrative
-non eseguono comandi, non assegnano risorse e non alterano le grandezze fisiche.
-Le eventuali conseguenze fisiche richiedono gli interventi o le proposte operative
-ordinari, con i rispettivi controlli.
+EXCON riceve la risposta in Risposte e può approvarla, rifiutarla con una nota o
+chiedere chiarimenti (la risposta del player resta un messaggio solo tradotto). Dopo
+l’approvazione (anche dopo l’esecuzione dei comandi) EXCON può registrare un **esito**,
+aggiornabile, fatto di una narrazione e/o di una o più **azioni EXCON**
+(`POST /api/master/proposals/<id>/narrative-outcome {text?, language, persona?,
+commands?}`; almeno una delle due). Le azioni sono interventi EXCON ordinari
+(`Exercise::direct_command_logged`, stessa validazione e applicazione immediata dei
+comandi di Controllo, voce `master_command` nel log con `origin: narrative_outcome`):
+vengono verificate tutte su una copia del mondo e applicate solo se tutte valide. L’esito
+conserva i `log_seq` degli interventi (`interventions`); il player vede la narrazione
+con il personaggio e gli effetti (`effects`). L’interfaccia (Risposte) riusa le
+finestre degli strumenti di Controllo con selezione sulla mappa
+(`staged_commands.rs`, più un campo JSON per comandi come `CloseRoad`). Registro,
+valutatore e debrief distinguono gli interventi EXCON dalle esecuzioni dei player;
+l’approvazione non indica una missione completata. Il salvataggio della sessione
+(journal) li ripristina; il rollback ripristina il mondo e annulla esiti e interventi
+dei turni annullati.
 
-Il player vede gli esiti EXCON nel thread dell'inject; registro, valutatore e debrief
-li distinguono dalle esecuzioni fisiche. Il salvataggio della sessione li ripristina;
-il rollback annulla gli esiti registrati nei turni annullati, conservando quelli
-precedenti. Gli altri ruoli non ricevono le iniziative o gli esiti privati.
+### Personaggi: i player non vedono mai «EXCON»
 
-API: `POST /api/player/<role>/narrative {text, reply_to}` (riferimento a un inject
-ricevuto); decisioni e chiarimenti usano le rotte ordinarie delle proposte;
-`POST /api/master/proposals/<id>/narrative-outcome {text, language?}` registra l'esito di
-un'iniziativa narrativa approvata. Nessuna azione operativa con comandi vuoti diventa
-approvabile implicitamente.
+Tutto ciò che EXCON scrive a un player (domande di chiarimento, note di
+approvazione/rifiuto, esiti narrativi, inject, informazioni e previsioni) è detto da un
+**personaggio** (`exercise::persona`): un ruolo dello scenario (anche non giocato), un
+ruolo interpretato dall’EXCON (`excon_roles`), un mittente di inject o un testo libero
+(`persona` nei corpi di `clarify`, `decide`, `narrative-outcome`; la «fonte» per
+informazioni e previsioni; il mittente dell’inject personalizzato). Predefinito: il
+mittente dell’inject a cui si risponde, altrimenti `default_persona` dello scenario
+(campo del pack, modificabile nelle Impostazioni; vuoto = «Sala operativa» /
+«Operations room»). Il personaggio è salvato su `Message.persona`, sulle decisioni e sugli
+esiti; `GET /api/player/<role>` lo risolve (`persona`, `default_persona`) e sostituisce
+ogni «EXCON» residuo nelle stringhe. Le chiavi tradotte con «EXCON» sono state
+riscritte; cinque stringhe (`clock_note`, `sit_report`, `awaiting_start`,
+`inject_info`, `map_legend`) non sono più nel catalogo delle altre lingue (ripiego
+sull’inglese). La console EXCON continua a dire EXCON.
+
+### Conversazioni collegate a un inject
+
+Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
+(`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
+invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
+testo originale e inglese, citazioni; `message_count`), mostrata espandibile in Risposte
+sotto l’inject. Il testo compare anche nel log (`conversation_message`), nel debrief e
+nelle evidenze del valutatore (`linked_conversations`). Ogni messaggio può citare un messaggio precedente della
+conversazione o l’inject. Regola di visibilità dell’inject: chi entra in una
+conversazione su un inject che non ha ricevuto lo legge citato in testa alla
+conversazione (titolo, mittente, ora, testo); il testo è la copia del partecipante se ne
+ha una, altrimenti la copia di chi ha creato la conversazione se la lingua coincide,
+altrimenti la versione inglese di lavoro (nessuna traduzione aggiuntiva). Non
+vede altri inject né altre conversazioni.
+
+Dalla conversazione si può rispondere all’inject (stesso modale). Un partecipante che
+non ha ricevuto l’inject può rispondere con `reply_to` = consegna a cui la conversazione
+è collegata e `conversation` = id: il server verifica che sia partecipante e che la
+conversazione sia collegata a quell’inject; la proposta registra `via_conversation`.
+In Risposte di EXCON la risposta compare sotto l’inject con il ruolo che risponde e il
+riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell’inject
+è rifiutato.
+
+API: `POST /api/player/<role>/actions {narrative?, commands?, text?, reply_to?,
+conversation?}` (unica rotta di risposta; ricorda che serve almeno narrazione o un
+comando); `POST /api/player/<role>/narrative {text, reply_to}` resta per compatibilità
+(solo narrazione); `POST /api/player/<role>/conversations {delivery, participants,
+text}` e `POST /api/player/<role>/conversations/<id>/messages {text, reply_to?}`;
+`GET /api/player/<role>` espone `linked_conversations` (con `quote`, messaggi nella
+lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`
+(riferimenti) e, nelle righe di `inject_responses`, `conversations`, `role` e
+`conversation` delle proposte. `POST /api/master/proposals/<id>/narrative-outcome
+{text, language?}` registra l’esito. Limite noto: i partecipanti si fissano alla
+creazione.
 
 ## Capacità modellate
 

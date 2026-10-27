@@ -319,7 +319,7 @@ pub fn generate(seed: u64) -> Scenario {
     // (they are threatened by exposure instead, see `sim::buildings`).
     let mut scn = Scenario {
         tactical_policy: Default::default(),
-        operations: Default::default(), communication_sites: vec![], fuel_definitions: vec![],
+        operations: Default::default(), fuel_definitions: vec![],
         id: "synthetic_valley".into(),
         name: "Valverde valley (synthetic)".into(),
         description: "Synthetic 4 x 4 km wildland-urban-interface valley: forested ridge, the village of Pineta on the forest edge with its primary school and fuel station, the town of Valverde with hospital and sports centre, farmland and a river. A wildfire is burning on Pine Hill under a north-easterly wind.".into(),
@@ -338,6 +338,7 @@ pub fn generate(seed: u64) -> Scenario {
         resource_types: resource_types(),
         roles: roles(),
         excon_roles: vec![],
+        default_persona: String::new(),
         reinforcements: reinforcements(),
         msel: msel(),
         timeline: vec![],

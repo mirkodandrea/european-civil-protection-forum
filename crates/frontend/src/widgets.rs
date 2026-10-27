@@ -1,5 +1,6 @@
 use crate::{
     api::{self, list, pretty, text},
+    controllo::CommonProps,
     Action,
 };
 use serde_json::{json, Value};
@@ -196,12 +197,56 @@ pub struct ProposalProps {
     pub busy: bool,
     #[prop_or_default]
     pub roles: Vec<Value>,
+    /// Console state: personas to speak as and the Controllo tool forms for outcome actions.
+    #[prop_or_default]
+    pub common: Option<CommonProps>,
+}
+
+/// Choice of the persona EXCON speaks as. `""` = the default (the inject's
+/// sender, then the scenario's default persona); players never see "EXCON".
+#[derive(Properties, PartialEq)]
+pub struct PersonaProps {
+    pub stat: Value,
+    pub value: String,
+    pub onchange: Callback<String>,
+    #[prop_or_default]
+    pub disabled: bool,
+}
+#[function_component(PersonaPicker)]
+pub fn persona_picker(p: &PersonaProps) -> Html {
+    let personas = &p.stat["personas"];
+    let roles = list(&personas["roles"]).to_vec();
+    let senders = list(&personas["senders"]).iter().map(|s| text(s).to_string()).collect::<Vec<_>>();
+    let known = p.value.is_empty() || roles.iter().any(|r| text(&r["name"]) == p.value) || senders.contains(&p.value);
+    let free = use_state(|| !known);
+    let default_name = if crate::i18n_excon::is_en() { text(&personas["default_en"]) } else { text(&personas["default"]) };
+    let onselect = {
+        let (free, cb) = (free.clone(), p.onchange.clone());
+        Callback::from(move |e: Event| {
+            let v = api::select(e);
+            free.set(v == "__free__");
+            cb.emit(if v == "__free__" { String::new() } else { v });
+        })
+    };
+    html! {<label class="persona-picker"><span>{crate::i18n::ex("Parla come")}</span>
+        <select data-persona="" aria-label={crate::i18n::ex("Parla come")} disabled={p.disabled} onchange={onselect}>
+            <option value="" selected={!*free&&p.value.is_empty()}>{crate::exfmt!("Predefinito (mittente dell’inject, altrimenti {})","Default (inject sender, otherwise {})",default_name)}</option>
+            <optgroup label={crate::i18n::ex("Ruoli")}>{for roles.iter().map(|r|html!{<option value={text(&r["name"]).to_string()} selected={!*free&&text(&r["name"])==p.value}>{text(&r["name"])}</option>})}</optgroup>
+            if !senders.is_empty(){<optgroup label={crate::i18n::ex("Mittenti simulati")}>{for senders.iter().map(|s|html!{<option value={s.clone()} selected={!*free&&*s==p.value}>{s.clone()}</option>})}</optgroup>}
+            <option value="__free__" selected={*free}>{crate::i18n::ex("Testo libero…")}</option>
+        </select>
+        if *free {<input data-persona-free="" maxlength="80" aria-label={crate::i18n::ex("Nome del personaggio")} placeholder={crate::i18n::ex("Nome del personaggio")} value={p.value.clone()} disabled={p.disabled} oninput={{let cb=p.onchange.clone();Callback::from(move|e|cb.emit(api::input(e)))}}/>}
+    </label>}
 }
 #[function_component(Proposal)]
 pub fn proposal(props: &ProposalProps) -> Html {
     let p = &props.proposal;
-    let narrative = p["narrative"] == true;
+    // A pure narrative initiative has no actions; a response may carry both.
+    let has_narrative = p["narrative"] == true;
+    let narrative = has_narrative && p["carries_actions"] != true;
     let outcome_text = use_state(String::new);
+    let persona = use_state(String::new);
+    let staged = use_state(Vec::<Value>::new);
     let commands = use_state(|| list(&p["commands"]).to_vec());
     // Last commands known from the server; local edits that differ from it are never overwritten.
     let synced = use_mut_ref(|| p["commands"].clone());
@@ -259,11 +304,12 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let clarify = {
         let action = props.action.clone();
         let note = note.clone();
+        let persona = persona.clone();
         Callback::from(move |_| {
             save_note(id, "");
             action.emit(Action::post(
                 format!("/api/master/proposals/{id}/clarify"),
-                json!({"note": note.trim()}),
+                json!({"note": note.trim(), "persona": (!persona.trim().is_empty()).then(|| persona.trim().to_string())}),
             ));
             // The question is sent: an empty note keeps a second click from resending it.
             note.set(String::new());
@@ -279,8 +325,12 @@ pub fn proposal(props: &ProposalProps) -> Html {
         let injects = injects.clone();
         let limits = limits.clone();
         let generation = props.generation.clone();
+        let persona = persona.clone();
         Callback::from(move |_| {
             let mut body = json!({"approve":approve,"commands":*commands,"note":*note});
+            if !persona.trim().is_empty() {
+                body["persona"] = json!(persona.trim());
+            }
             if approve {
                 if needs_preview {
                     body["preview_generation"] = generation.clone();
@@ -318,19 +368,30 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let no_actions=editable&&!narrative&&commands.is_empty()&&list(&p["inject_drafts"]).is_empty()&&list(&p["communication_drafts"]).is_empty()&&p["resource_limit_draft"].is_null();
     let blocked=no_actions||editable&&!all_ok(&verdicts,commands.len());
     html! {<section class={classes!("proposal-inline",(p["status"]=="superseded").then_some("superseded"))} data-proposal={id.to_string()}>
-        <div class="proposal-head"><b>{if narrative{crate::i18n::ex("Iniziativa narrativa")}else{crate::i18n::ex("Azioni proposte")}}</b><span class="pill pending">{if p["status"]=="superseded"{crate::i18n::ex("sostituita")}else if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else if narrative&&p["status"]=="approved"{crate::i18n::ex(if list(&p["narrative_outcomes"]).is_empty(){"Approvata · esito EXCON in attesa"}else{"Esito narrativo registrato"})}else{api::status(text(&p["status"]))}}</span></div>
+        <div class="proposal-head"><b>{if narrative{crate::i18n::ex("Iniziativa narrativa")}else if has_narrative{crate::i18n::ex("Risposta: narrazione e azioni")}else{crate::i18n::ex("Azioni proposte")}}</b><span class="pill pending">{if p["status"]=="superseded"{crate::i18n::ex("sostituita")}else if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else if narrative&&p["status"]=="approved"{crate::i18n::ex(if list(&p["narrative_outcomes"]).is_empty(){"Approvata · esito EXCON in attesa"}else{"Esito narrativo registrato"})}else{api::status(text(&p["status"]))}}</span></div>
         if p["status"]=="superseded"{<p class="muted proposal-superseded" data-superseded="">{if p["superseded_by"].is_number(){crate::exfmt!("Sostituita dalla proposta #{}","Superseded by proposal #{}",p["superseded_by"])}else{crate::i18n::ex("sostituita").to_string()}}</p>}
         if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){<p class="proposal-clarification" data-clarification-request="">{format!("{}: {}",crate::i18n::ex("Domanda inviata al player"),text(&p["clarification_request"]))}</p>}
         <p class="proposal-request">{text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]})}</p>if text(&p["summary"])!=text(if text(&p["translation_en"]).is_empty(){&p["original"]}else{&p["translation_en"]}){<p class="proposal-summary">{text(&p["summary"])}</p>}
         if !list(&p["thread"]).is_empty() {<details class="proposal-thread"><summary>{format!("{} · {}",crate::i18n::ex("Thread collegato"),crate::i18n_excon::count_messages(list(&p["thread"]).len()))}</summary><ol>{for list(&p["thread"]).iter().map(|m|html!{<li data-thread-message={m["id"].to_string()} key={m["id"].to_string()}><small>{format!("{} · {} → {} · {} {}",text(&m["clock"]),crate::render::role_label(&props.roles,text(&m["from"])),crate::render::role_label(&props.roles,text(&m["to"])),crate::i18n::ex("Turno"),m["turn"])}</small>if !text(&m["title"]).is_empty(){<b>{text(&m["title"])}</b>}<p>{text(&m["text"])}</p>if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta al messaggio #{}", "In reply to message #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
         if p["clarification"].is_string(){<p class="proposal-clarification">{text(&p["clarification"])}</p>}
-        if narrative {
-            <p class="muted" data-narrative-proposal="">{crate::i18n::ex("Iniziativa narrativa: approvazione ed esito sono decisi da EXCON. Non modifica la simulazione.")}</p>
-            {for list(&p["narrative_outcomes"]).iter().map(|o|html!{<p class="narrative-outcome"><b>{crate::i18n::ex("Esito narrativo EXCON")}</b>{": "}{text(&o["text"])}</p>})}
-            if p["status"]=="approved" {
-                <label for={format!("narrative-outcome-{id}")}>{crate::i18n::ex("Esito narrativo EXCON")}</label>
+        if has_narrative {
+            <p class="muted" data-narrative-proposal="">{if narrative{crate::i18n::ex("Iniziativa narrativa: approvazione ed esito sono decisi da EXCON. Non modifica la simulazione.")}else{crate::i18n::ex("Risposta con narrazione e azioni: le azioni seguono approvazione ed esecuzione; l’esito narrativo non modifica la simulazione.")}}</p>
+            {for list(&p["narrative_outcomes"]).iter().map(|o|html!{<div class="narrative-outcome"><p><b>{crate::i18n::ex("Esito narrativo EXCON")}</b>{" · "}<span class="muted">{if o["persona"].is_string(){text(&o["persona"]).to_string()}else{crate::i18n::ex("persona predefinita").to_string()}}</span>{": "}{text(&o["text"])}</p>
+                if !list(&o["interventions"]).is_empty(){<ul class="outcome-interventions">{for list(&o["interventions"]).iter().map(|x|html!{<li data-outcome-intervention={x["log_seq"].to_string()}>{crate::exfmt!("Intervento EXCON #{}: {}","EXCON intervention #{}: {}",x["log_seq"],text(&x["description"]))}</li>})}</ul>}</div>})}
+            if p["status"]=="approved"||(!narrative&&(p["status"]=="applied"||p["status"]=="failed")) {
+                <label for={format!("narrative-outcome-{id}")}>{crate::i18n::ex("Esito narrativo EXCON (facoltativo se aggiungi azioni)")}</label>
                 <textarea id={format!("narrative-outcome-{id}")} data-narrative-outcome="" maxlength="8000" value={(*outcome_text).clone()} oninput={{let v=outcome_text.clone();Callback::from(move|e|v.set(api::input(e)))}}/>
-                <button data-record-narrative-outcome="" disabled={props.busy||outcome_text.trim().is_empty()} onclick={{let cb=props.action.clone();let v=outcome_text.clone();Callback::from(move |_|{cb.emit(Action::post(format!("/api/master/proposals/{id}/narrative-outcome"),json!({"text":v.trim(),"language":if crate::i18n_excon::is_en(){"en"}else{"it"}})));})}}>{crate::i18n::ex("Registra esito narrativo")}</button>
+                if let Some(common)=&props.common {
+                    <PersonaPicker stat={common.stat.clone()} value={(*persona).clone()} onchange={{let persona=persona.clone();Callback::from(move|v|persona.set(v))}} disabled={props.busy}/>
+                    <crate::staged_commands::StagedCommands commands={(*staged).clone()} onchange={{let staged=staged.clone();Callback::from(move|v|staged.set(v))}} common={common.clone()} disabled={props.busy}/>
+                }
+                <button data-record-narrative-outcome="" disabled={props.busy||(outcome_text.trim().is_empty()&&staged.is_empty())} onclick={{let cb=props.action.clone();let v=outcome_text.clone();let persona=persona.clone();let staged=staged.clone();Callback::from(move |_|{
+                    let mut body=json!({"text":v.trim(),"language":if crate::i18n_excon::is_en(){"en"}else{"it"},"commands":*staged});
+                    if !persona.trim().is_empty(){body["persona"]=json!(persona.trim());}
+                    cb.emit(Action::post(format!("/api/master/proposals/{id}/narrative-outcome"),body));
+                    // Sent once: the interventions must not be applied twice.
+                    v.set(String::new());staged.set(Vec::new());
+                })}}>{crate::i18n::ex("Registra esito narrativo")}</button>
             }
         }
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
@@ -354,6 +415,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
         if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
         if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
+        if (!narrative||editable)&&props.common.is_some() {<PersonaPicker stat={props.common.as_ref().map(|c|c.stat.clone()).unwrap_or_default()} value={(*persona).clone()} onchange={{let persona=persona.clone();Callback::from(move|v|persona.set(v))}} disabled={props.busy||!editable}/>}
         if !narrative||editable {<label class="proposal-note"><span>{crate::i18n::ex("Nota EXCON (facoltativa; richiesta per rifiuto o chiarimento)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
         <p class="error">{&*error}</p>
         }

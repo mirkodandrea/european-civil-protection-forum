@@ -651,6 +651,8 @@ struct TurnPanelProps {
     busy: bool,
     action: Callback<Action>,
     onadvance: Callback<(Value, i64)>,
+    #[prop_or_default]
+    onview: Callback<String>,
 }
 
 /// Position of `t` on a track from `start` to `end`, in percent.
@@ -817,6 +819,7 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
         <div class="tp-controls">
             if due_inj>0{<button class="tp-attention" id="tp-attention" title={crate::i18n::ex("Mostra gli inject nella lista: invia o non inviare")} onclick={{let t=due_targets.clone();Callback::from(move |_|reveal_rows(&t))}}><b>{crate::i18n::ex("Da gestire ora")}</b>{format!(": {} inject",due_inj)}</button>}
             else{<span class="tp-attention none muted" id="tp-attention">{crate::i18n::ex("Nulla da gestire ora")}</span>}
+            <crate::situation::SuggestionBadge generation={props.state["generation"].as_u64().unwrap_or(0)} onopen={{let v=props.onview.clone();Callback::from(move |_|v.emit("situazione".into()))}}/>
             {if resolving{Html::default()}else{last_advance_summary(&props.state,&props.actions,&props.report,origin)}}
             <div class="grow"/>
             <button class="primary" id="advance-next" disabled={ctl_off||to_next.is_none()} title={primary.as_ref().map(|(t,_,closes)|if *closes{crate::exfmt!("Porta il tempo alle {} e chiude il turno {}: si apre il turno {}","Moves time to {} and closes turn {}: turn {} opens",hhmm(origin,*t),a["turn"],a["turn"].as_u64().unwrap_or(1)+1)}else{crate::exfmt!("Porta il tempo a {} e lascia il turno aperto: l’EXCON decide poi se inviare l’inject","Moves time to {} and keeps the turn open: you then decide whether to send the inject",clock_at(origin,*t))})} onclick={go(to_next)}>{advance_label(a)}</button>
@@ -866,6 +869,9 @@ pub struct ExconTimelineProps {
     /// Inject sends in flight (slots, see `send_slot`).
     pub pending: BTreeSet<String>,
     pub oninject: Callback<String>,
+    /// Switch the console to another view (by id).
+    #[prop_or_default]
+    pub onview: Callback<String>,
     /// Advance to the given simulated second with this resolve body.
     pub onadvance: Callback<(Value, i64)>,
 }
@@ -973,7 +979,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             {subs(&post)}</li>}
     };
     let panel = (!agenda.is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving")).then(|| {
-        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()}/>}
+        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()}/>}
     });
     // The selected inject in full, in the side column on wide screens (inline below it otherwise).
     let detail = current_key.as_ref().and_then(|k| all_items.iter().find(|i| item_key(i) == *k)).map(|i| {

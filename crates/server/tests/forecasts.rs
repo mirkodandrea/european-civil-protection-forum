@@ -24,7 +24,6 @@ async fn app() -> TestApp {
     scn.sectors.clear();
     scn.places.clear();
     scn.msel.clear();
-    scn.communication_sites.clear();
     scn.zones.cols = 1;
     scn.zones.rows = 1;
     scn.zones.size_m = 320.0;

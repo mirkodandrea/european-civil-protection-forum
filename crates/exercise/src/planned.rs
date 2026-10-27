@@ -81,16 +81,26 @@ impl Exercise {
             .filter(|m| m.kind == MsgKind::Inject && m.inject_id.is_some())
             .map(|m| {
                 let delivery = m.inject_id.unwrap();
+                // A response a conversation participant (who may not have
+                // received the inject) gave through a linked conversation.
+                let via = |proposal: Option<u64>| {
+                    proposal
+                        .and_then(|pid| self.proposal(pid))
+                        .is_some_and(|p| p.via_conversation.is_some() && p.reply_to == Some(m.id))
+                };
                 let replies: Vec<Value> = self
                     .messages
                     .iter()
                     .filter(|r| {
-                        r.kind == MsgKind::Reply && r.inject_id == Some(delivery) && r.from == m.to
+                        r.kind == MsgKind::Reply
+                            && r.inject_id == Some(delivery)
+                            && (r.from == m.to || via(r.proposal))
                     })
                     .map(|r| {
                         json!({"id": r.id, "reply_to": r.reply_to, "clock": r.clock,
                         "t_s": r.t_s, "text": r.text_en, "original": r.original,
-                        "proposal": r.proposal})
+                        "proposal": r.proposal, "from": r.from,
+                        "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation)})
                     })
                     .collect();
                 let pending: Vec<Value> = self
@@ -98,7 +108,7 @@ impl Exercise {
                     .iter()
                     .filter(|p| {
                         p.inject_id == Some(delivery)
-                            && p.source.label() == m.to
+                            && (p.source.label() == m.to || via(Some(p.id)))
                             && matches!(
                                 p.status,
                                 ProposalStatus::Parsing
@@ -109,6 +119,8 @@ impl Exercise {
                     .map(|p| {
                         json!({"id": p.id, "status": p.status, "summary": p.summary,
                         "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
+                        "role": p.source.label(), "conversation": p.via_conversation,
+                        "narrative": p.narrative, "carries_actions": p.carries_actions,
                         "awaiting_clarification": p.status == ProposalStatus::NeedsClarification
                             && p.clarification_request.is_some(),
                         "clarification_request": p.clarification_request})
@@ -122,7 +134,7 @@ impl Exercise {
                     .iter()
                     .filter(|t| {
                         t.inject_id == Some(delivery)
-                            && (t.from == m.to || t.to == m.to)
+                            && (t.from == m.to || t.to == m.to || via(t.proposal))
                             // Peer chats between players stay private to them.
                             && (t.kind != MsgKind::Chat || t.from == MASTER || t.to == MASTER)
                             && matches!(
@@ -154,6 +166,8 @@ impl Exercise {
                     .collect();
                 json!({
                     "thread": thread,
+                    "conversations": self.master_linked_conversations().into_iter()
+                        .filter(|c| c["delivery"] == m.id).collect::<Vec<_>>(),
                     "clarification_threads": threads,
                     "inject_message_id": m.id, "delivery_id": delivery,
                     "id_inject": self.delivery_msel.get(&delivery),

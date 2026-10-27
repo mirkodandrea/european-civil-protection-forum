@@ -22,7 +22,7 @@ pub fn last_question(thread: &Value) -> Option<u64> {
 /// Body of the answer request.
 pub fn answer_body(text: &str, reply_to: u64) -> Value {
     json!({"text": text.trim(), "reply_to": reply_to,
-        "evidence": {"basis": {"kind": "operational_judgment", "reference": "Answer to EXCON clarification"}}})
+        "evidence": {"basis": {"kind": "operational_judgment", "reference": "Answer to clarification"}}})
 }
 
 impl App {

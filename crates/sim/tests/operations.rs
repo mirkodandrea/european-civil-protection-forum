@@ -340,37 +340,6 @@ fn unreachable_or_full_shelters_do_not_magically_evacuate() {
     assert!(w.d.traffic.vehicles.iter().all(|v| v.waiting));
 }
 #[test]
-fn communication_outage_delays_warning_and_has_no_baseline_effect() {
-    let mut s = scene();
-    s.communication_sites = vec![scenario::CommunicationSite {
-        id: "mast".into(),
-        pos: [100.0, 100.0],
-        radius_m: 500.0,
-    }];
-    let mut w = world(s);
-    assert!(!w.d.hazard.warning_lost([100.0, 100.0]));
-    w.apply(
-        &Command::Ignite {
-            at: Loc::Point { x: 100.0, y: 100.0 },
-            radius_m: Some(40.0),
-        },
-        &Actor::Master,
-    )
-    .unwrap();
-    w.advance(10).unwrap();
-    assert!(w.d.hazard.sites[0].down_at_s.is_some());
-    let zone = w.scn.zone_of([100.0, 100.0]).unwrap();
-    w.apply(
-        &Command::IssueWarning { zone: zone.clone() },
-        &Actor::Master,
-    )
-    .unwrap();
-    assert!(!w.d.warned.contains(&zone));
-    assert_eq!(w.d.hazard.pending_warnings.len(), 1);
-    w.advance(1200).unwrap();
-    assert!(w.d.warned.contains(&zone));
-}
-#[test]
 fn engine_deployment_consumes_inventory_and_withdraws_from_fire() {
     let mut w = world(scene());
     stage(&mut w, "engines", [100.0, 100.0]);

@@ -153,10 +153,9 @@ def generate(template, seed=33):
         render_terrain=dict(rows=601,cols=601,posting_m=10,world_size_m=[WORLD,WORLD],elev=np.round(fine,3).ravel().tolist()),
         roads=net,buildings=buildings,sectors=[dict(id='basin',name='Conca delle Due Valli',bounds=[0,0,WORLD,WORLD])],
         zones=dict(cols=8,rows=8,size_m=750),timeline=[],msel=[],
-        communication_sites=[dict(id='Ripetitore Montebruno',pos=[2150,4100],radius_m=2000),dict(id='Ripetitore Pianalto',pos=[4700,2400],radius_m=2400)],
         start_clock_s=14*3600,turn_minutes=60,weather=dict(wind_dir_deg=315,wind_speed_kmh=32,moisture_pct=8),
         staging_base='Centro operativo di Pianalto',operational_grants=[],operations={k:k!='spotting' for k in [
-            'road_routing','progressive_suppression','traffic','intensity_exposure','communications','spotting',
+            'road_routing','progressive_suppression','traffic','intensity_exposure','spotting',
             'segment_fire_closures','terrain_travel','emergency_congestion','local_autonomy']})
     s['places']=[dict(name=b['name'],pos=b['pos'],aliases=[]) for b in facilities]+[
         dict(name='Montebruno',pos=[2200,4100],aliases=['colle','bosco alto']),

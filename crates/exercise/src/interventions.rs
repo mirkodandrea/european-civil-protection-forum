@@ -32,6 +32,7 @@ impl Exercise {
         let i=self.intervention.take().unwrap();
         let before=self.world.stats();
         self.world.restore(&i.snapshot)?;
+        self.restore_epoch += 1;
         self.clock_control.revision+=1;
         self.record("physical_intervention_corrected",MASTER,json!({"intervention_log_seq":i.log_seq,"command":i.command,"reason":reason,"approved_by":MASTER,"before":before,"after":self.world.stats(),"restore_reseeds_future_spread":true}));
         Ok(())

@@ -841,3 +841,39 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 .scenario-editor .settings-card .settings-fields{display:grid;grid-template-columns:1fr;gap:8px}
 .scenario-editor .settings-card .settings-fields button{justify-self:start}
 @media(max-width:1000px){.scenario-editor .settings-split{grid-template-columns:1fr}}
+
+/* Response tab: inline drill-down, linked conversations, merged response form */
+.inj-detail{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.inj-detail .inj-detail-head{padding:8px 4px;gap:10px}.inj-detail .inj-detail-head h3{margin:0}
+.inj-back{flex:none;font-size:12px;padding:5px 9px}
+.inj-via{color:#8a4b00}
+.inj-actions{margin:4px 0 0;padding-left:18px;font-size:13px}
+.inj-convs{flex:none;max-height:32%;overflow:auto;padding:8px 12px;border-top:1px solid var(--line);background:#f8faf7}.inj-convs h4{margin:0 0 6px;font-size:13px}.inj-convs ul{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.conv-row{display:flex;width:100%;align-items:center;gap:10px;text-align:left;padding:6px 10px}.conv-row small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inj-chat.conv-thread,.inj-chat.conv-new{flex-direction:column;padding:8px 12px;gap:8px}
+.conv-head{display:flex;align-items:center;gap:10px;flex:none}.conv-head span{display:grid}
+.conv-quote{margin:0;padding:8px 10px;border-left:4px solid #c18a3a;background:#fffcf5;border-radius:6px;display:grid;gap:2px}.conv-quote p{margin:0;white-space:pre-wrap;font-size:13px}.conv-quote small{font-size:12px;color:#4d625f}
+.conv-quote-cite{position:relative}.conv-cite{border:0;background:transparent;color:var(--accent);font-size:12px;padding:2px 4px}.conv-quote-cite>.conv-cite{position:absolute;right:4px;top:4px}
+.conv-people{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px 16px}.conv-people legend{font-size:12px;color:var(--muted)}
+.conv-composer textarea{min-height:56px}.conv-composer .row{margin-top:6px;flex-wrap:nowrap}
+.staged-actions{list-style:none;margin:6px 0;padding:0;display:grid;gap:5px}.staged-actions li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:#f3f8f5}.staged-actions li button{padding:0 8px;line-height:1.4}
+.work-section{margin:12px 0 0;font-size:13px}
+.work-submit-bar{position:sticky;bottom:0;background:#fff;padding:8px 0;margin-top:8px;border-top:1px solid var(--line);z-index:1}.work-submit-bar button.primary{width:100%}
+.work-modal #player-work details{margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px}.work-modal #player-work summary{cursor:pointer;font-weight:600}
+.work-modal #player-work details>button{margin-top:10px}
+/* EXCON Situation tab */
+.sit-page{max-width:none;padding:18px 22px}.sit-head{padding:14px 18px;margin-bottom:14px}.sit-head h2{margin:0}
+.sit-toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.sit-toggle button{border:0;border-radius:0;background:#fff;padding:6px 14px}.sit-toggle button.active{background:var(--ink);color:#fff}
+.sit-tiles{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}.sit-tile{min-width:108px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:#f9fbf9;display:flex;flex-direction:column}.sit-tile b{font-size:19px}.sit-tile span{font-size:12px;color:var(--muted)}.sit-tile.amber{border-color:#e0a800;background:#fff8e1}.sit-tile.warn{border-color:#e08a00;background:#fff1de}.sit-tile.bad{border-color:#c4554e;background:#fbeceb}
+.sit-delta{color:var(--muted);font-weight:400;font-size:12px}.sit-delta.up{color:#a3312c;font-weight:600}
+.sit-grid{display:grid;grid-template-columns:minmax(340px,1fr) minmax(480px,1.5fr) minmax(340px,1fr);gap:14px;align-items:start}.sit-grid .card{margin:0;padding:14px;min-width:0}.sit-grid h3{margin-bottom:8px}
+.sit-map canvas{width:100%;height:auto;border-radius:8px}
+.sit-scroll{max-height:calc(100dvh - 330px);overflow:auto}.sit-table table{border-collapse:collapse;width:100%;font-size:13px}.sit-table th,.sit-table td{text-align:left;vertical-align:top;padding:5px 7px;border-bottom:1px solid var(--line)}.sit-table thead th{position:sticky;top:0;background:#edf3ef;z-index:1}.sit-table td.num{white-space:nowrap}
+.sit-group th{background:#f1f5f2;font-weight:400}.sit-group b{margin-right:4px}.sit-row{cursor:pointer}.sit-row:hover,.sit-row.sel{background:#e9f2ec}
+.sit-state.bad{background:#f6d8d5;color:#8a2520}.sit-state.warn{background:#ffe3c2;color:#7a4300}.sit-state.amber{background:#fff0c2;color:#6b4e00}.pill.ok{background:#dcebe2;color:#1d5a42}.pill.amber{background:#fff0c2;color:#6b4e00}.sit-risk{color:#a3312c}
+.sit-sugg{max-height:calc(100dvh - 190px);overflow:auto}.sit-card{border:1px solid var(--line);border-left:4px solid #b8cbc0;border-radius:8px;padding:10px;margin:10px 0;display:flex;flex-direction:column;gap:6px;background:#fff}.sit-card.high{border-left-color:#c4554e}.sit-card.medium{border-left-color:#e0a800}.sit-card.open{background:#fbfdfb;box-shadow:0 1px 6px rgba(0,0,0,.08)}
+.pill.sev.high{background:#f6d8d5;color:#8a2520}.pill.sev.medium{background:#fff0c2;color:#6b4e00}.sit-title{font-size:14px}.sit-evidence{font-size:13px;color:var(--muted)}button.small{padding:3px 9px;font-size:13px}
+.sit-editor{display:flex;flex-direction:column;gap:8px;margin-top:6px;border-top:1px dashed var(--line);padding-top:8px}.sit-editor label{display:flex;flex-direction:column;gap:3px;font-size:13px}.sit-editor label.inline-check{flex-direction:row;align-items:center;gap:5px}.sit-editor textarea{min-height:90px}
+.sit-rcpt{border:1px solid var(--line);border-radius:6px;padding:4px 8px;display:flex;flex-wrap:wrap;gap:4px 14px}.sit-rcpt legend{font-size:12px;color:var(--muted)}.sit-voice{align-items:end}.sit-voice input{flex:1;min-width:140px}.sit-time{width:64px}
+.tp-suggest{display:inline-flex;align-items:baseline;gap:4px;padding:5px 12px;border:1px solid #c4554e;border-radius:8px;background:#fbeceb;color:#8a2520}.turn-panel .tp-suggest{padding:4px 10px;font-size:13px;white-space:nowrap}
+@media(max-width:1500px){.sit-grid{grid-template-columns:minmax(320px,1fr) minmax(420px,1.3fr)}.sit-sugg{grid-column:1/-1;max-height:none}}

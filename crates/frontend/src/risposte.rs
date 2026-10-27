@@ -120,6 +120,20 @@ pub fn risposte(props: &RisposteProps) -> Html {
     </section>}
 }
 
+fn common(props: &RisposteProps) -> crate::controllo::CommonProps {
+    crate::controllo::CommonProps {
+        stat: props.stat.clone(),
+        state: props.state.clone(),
+        master: props.master.clone(),
+        responses: props.responses.clone(),
+        busy: props.busy,
+        error: "".into(),
+        done: 0,
+        action: props.action.clone(),
+        onclose: Callback::noop(),
+    }
+}
+
 fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<()>) -> Html {
     let st = reply_state(r);
     let on_key = {
@@ -130,19 +144,33 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
         <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
         <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
         {thread_view(props,r,roles)}
-        {for list(&props.master["proposals"]).iter().filter(|p|p["narrative"]==true&&p["status"]=="approved"&&p["inject_id"]==r["delivery_id"]&&p["source"]["role"]==r["role"]).map(|p|html!{
-            <Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={Value::Null} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()}/>
-        })}
+        {for list(&props.master["proposals"]).iter().filter(|p|p["narrative"]==true&&["approved","applied","failed"].contains(&text(&p["status"]))&&p["inject_id"]==r["delivery_id"]&&(p["source"]["role"]==r["role"]||(p["via_conversation"].is_number()&&p["reply_to"]==r["inject_message_id"]))).map(|p|html!{<>
+            {via_conversation(r,p,roles)}
+            <Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={Value::Null} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/>
+        </>})}
         if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
         {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
             let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
             match full{
                 Some(p)=>{let key=format!("proposal:{}",p["id"]);
-                    html!{<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={props.responses.get(&key).cloned().unwrap_or_default()} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()}/>}}
+                    html!{<>{via_conversation(r,&p,roles)}<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={props.responses.get(&key).cloned().unwrap_or_default()} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/></>}}
                 None=>html!{<p class="muted">{text(&pp["summary"])}</p>},
             }
         })}
     </section></crate::inject_panel::ModalShell>}
+}
+
+/// Who answered through which player conversation, when it is not the inject's recipient.
+fn via_conversation(r: &Value, p: &Value, roles: &[Value]) -> Html {
+    let Some(cid) = p["via_conversation"].as_u64() else { return html! {} };
+    let conv = list(&r["conversations"]).iter().find(|c| c["id"] == cid);
+    let people = conv.map(|c| list(&c["participants"]).iter().map(|x| role_name(roles, text(x))).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+    let en = crate::i18n_excon::is_en();
+    html! {<div class="response-via-block"><p class="muted response-via" data-via-conversation={cid.to_string()}>{crate::exfmt!("Risposta di {} tramite la conversazione #{} ({}).","Response by {} through conversation #{} ({}).",role_name(roles,text(&p["source"]["role"])),cid,people)}</p>
+        <details class="conversation-transcript" data-conversation-transcript={cid.to_string()}><summary>{crate::exfmt!("Trascrizione ({} messaggi)","Transcript ({} messages)",list(&conv.map(|c|c["messages"].clone()).unwrap_or_default()).len())}</summary>
+        <ol>{for list(&conv.map(|c|c["messages"].clone()).unwrap_or_default()).iter().map(|m|html!{<li key={m["id"].to_string()} data-conv-message={m["id"].to_string()}><small>{format!("{} · {}",text(&m["clock"]),role_name(roles,text(&m["from"])))}</small>
+            <p>{if en||text(&m["original"]).is_empty(){text(&m["text_en"])}else{text(&m["original"])}}</p>
+            if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta a #{}","In reply to #{}",m["reply_to"])}</small>}</li>})}</ol></details></div>}
 }
 
 /// Visual kind of a thread message: who speaks decides the side and the colour.

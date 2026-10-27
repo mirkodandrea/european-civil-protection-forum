@@ -42,6 +42,8 @@ pub struct ScenarioEdits {
     pub roles: Option<Vec<Role>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excon_roles: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_persona: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reinforcements: Option<Vec<ReinforcementOffer>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,7 +76,7 @@ pub struct RunOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cutoff: Option<f32>,
     /// Starts with the operational model on (road routes, progressive
-    /// suppression, traffic, communications).
+    /// suppression, traffic).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operational_model: Option<bool>,
 }
@@ -164,6 +166,9 @@ impl Scenario {
                 }
             }
         }
+        if let Some(v) = &e.default_persona {
+            self.default_persona = v.trim().chars().take(80).collect();
+        }
         if let Some(v) = &e.reinforcements {
             self.reinforcements = v.clone();
         }
@@ -201,6 +206,7 @@ impl Scenario {
             resource_types: Some(self.resource_types.clone()),
             roles: Some(self.roles.clone()),
             excon_roles: Some(self.excon_roles.clone()),
+            default_persona: Some(self.default_persona.clone()),
             reinforcements: Some(self.reinforcements.clone()),
             msel: Some(self.msel.clone()),
             timeline: None,
@@ -381,7 +387,6 @@ impl Scenario {
         Scenario {
             tactical_policy: self.tactical_policy.clone(),
             operations: self.operations.clone(),
-            communication_sites: vec![],
             fuel_definitions: vec![],
             id: self.id.clone(),
             name: self.name.clone(),
@@ -401,6 +406,7 @@ impl Scenario {
             resource_types: vec![],
             roles: vec![],
             excon_roles: vec![],
+            default_persona: String::new(),
             reinforcements: vec![],
             msel: vec![],
             timeline: vec![],

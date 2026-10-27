@@ -35,7 +35,7 @@ def scenario(template, case):
                fuel=[4] * (n * n), dem=[0.0] * (n * n),
                weather={'wind_dir_deg': 0.0, 'wind_speed_kmh': 12.0, 'moisture_pct': 6.0},
                zones={'rows': 2, 'cols': 2, 'size_m': 320.0},
-               sectors=[{'id':'lab','name':'Laboratory sector','bounds':[0.0,0.0,640.0,640.0]}], communication_sites=[], fuel_definitions=[], msel=[],
+               sectors=[{'id':'lab','name':'Laboratory sector','bounds':[0.0,0.0,640.0,640.0]}], fuel_definitions=[], msel=[],
                places=[{'name': 'Staging', 'aliases': [], 'pos': [60.0, 480.0]},
                        {'name': 'Approved sector', 'aliases': [], 'pos': [300.0, 400.0]}])
     # Common vertices every 20 m make local road closures and available access explicit.

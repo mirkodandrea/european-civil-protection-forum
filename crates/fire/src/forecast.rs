@@ -191,7 +191,7 @@ impl ForecastJob {
             }
         }
         Ok(Forecast{issued_s,grid:self.scn.grid,spec:self.spec,realizations_per_member:self.options.realizations,
-            assumptions:"Authoritative present checkpoint, current weather and explicit EXCON bulletin only. Existing fuel breaks and water retained; no future crew work or orders. Weather-perturbed ensembles; probabilities describe this training model, not an operational prediction.".into(),horizons})
+            assumptions:"Authoritative present checkpoint, current weather and explicit reviewed bulletin only. Existing fuel breaks and water retained; no future crew work or orders. Weather-perturbed ensembles; probabilities describe this training model, not an operational prediction.".into(),horizons})
     }
 }
 fn mix(mut x: u64) -> u64 {

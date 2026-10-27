@@ -82,12 +82,12 @@ impl Exercise {
     ) -> Result<PlayerDraft> {
         self.validate_chat(role, to, text, true)?;
         if to != MASTER {
-            bail!("operational decisions must be addressed to EXCON");
+            bail!("operational decisions must be sent as a response");
         }
         if let Some(parent) = reply_to {
             self.validate_action_reference(role, parent)?;
             if self.clarification_target(role, parent).is_some() {
-                bail!("this answers an open EXCON question: send it as a text answer, or create a new action without replying to the question");
+                bail!("this answers an open question: send it as a text answer, or create a new action without replying to the question");
             }
         }
         let mut draft = if let Some((id, revision)) = previous {
@@ -267,7 +267,7 @@ impl Exercise {
     ) -> Result<(u64, Option<u64>)> {
         let draft = self.private_draft(role, id, revision)?;
         if draft.status != DraftStatus::Ready || draft.actions.is_empty() {
-            bail!("No simulator action is ready; clarify the decision before sending it to EXCON");
+            bail!("No simulator action is ready; clarify the decision before sending it");
         }
         let interpreted = true;
         let result = if let Some(parent) = draft.reply_to {

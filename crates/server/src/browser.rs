@@ -126,6 +126,7 @@ pub fn new(ex: Exercise, scenarios: Option<Arc<library::Scenarios>>) -> AppState
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+        situation: Default::default(),
         presence: Default::default(),
         scenarios,
     };
@@ -358,6 +359,8 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         }
         ("POST", "/api/player/<role>/narrative") => narrative::submit(principal.clone(), s.clone(), captures["role"].into(), decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/master/proposals/<id>/narrative-outcome") => narrative::outcome(principal.clone(), s.clone(), captures["id"].parse().map_err(|_| bad("invalid proposal id"))?, decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
+        ("POST", "/api/player/<role>/conversations") => conversations::start(principal.clone(), s.clone(), captures["role"].into(), decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
+        ("POST", "/api/player/<role>/conversations/<id>/messages") => conversations::post_message(principal.clone(), s.clone(), captures["role"].into(), captures["id"].parse().map_err(|_| bad("invalid conversation id"))?, decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/player/<role>/actions") => {
             post_player_actions(
                 principal.clone(),
@@ -619,6 +622,41 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("GET", "/api/master/impact") => situation::get_impact(principal.clone(), s.clone()).await,
+        ("GET", "/api/master/situation/preview") => {
+            let have = serde_urlencoded::from_str::<BTreeMap<String, String>>(query)
+                .map_err(|e| bad(e.to_string()))?
+                .remove("have")
+                .and_then(|h| h.parse().ok());
+            situation::get_preview(principal.clone(), s.clone(), have).await
+        }
+        ("GET", "/api/master/situation/suggestions") => {
+            situation::get_suggestions(principal.clone(), s.clone()).await
+        }
+        ("POST", "/api/master/situation/mark") => {
+            situation::post_mark(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/situation/plan") => {
+            situation::post_plan(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/situation/rewrite") => {
+            situation::post_rewrite(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("GET", "/api/evaluator/assessment") => {
             assessment::get(
                 principal.clone(),
@@ -656,6 +694,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/player/<role>/reply"),
     ("POST", "/api/player/<role>/actions"),
     ("POST", "/api/player/<role>/narrative"),
+    ("POST", "/api/player/<role>/conversations"),
+    ("POST", "/api/player/<role>/conversations/<id>/messages"),
     ("POST", "/api/master/proposals/<id>/narrative-outcome"),
     ("POST", "/api/player/<role>/language"),
     ("POST", "/api/master/resource-limits"),
@@ -690,5 +730,11 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/player/<role>/draft/submit"),
     ("POST", "/api/master/forecast"),
     ("POST", "/api/master/forecast/publish"),
+    ("GET", "/api/master/impact"),
+    ("GET", "/api/master/situation/preview"),
+    ("GET", "/api/master/situation/suggestions"),
+    ("POST", "/api/master/situation/mark"),
+    ("POST", "/api/master/situation/plan"),
+    ("POST", "/api/master/situation/rewrite"),
     ("GET", "/api/evaluator/assessment"),
 ];

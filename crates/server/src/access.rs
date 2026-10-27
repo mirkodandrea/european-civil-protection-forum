@@ -180,6 +180,11 @@ impl Principal {
                     ]
                     .iter()
                     .any(|suffix| path == format!("{own}/{suffix}"))
+                    || path == format!("{own}/conversations")
+                    || path
+                        .strip_prefix(&format!("{own}/conversations/"))
+                        .and_then(|rest| rest.strip_suffix("/messages"))
+                        .is_some_and(|id| id.parse::<u64>().is_ok())
             }
         }
     }

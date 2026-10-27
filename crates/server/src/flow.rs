@@ -264,7 +264,13 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
 }
 
 /// Feedback to a player after a EXCON decision (translated, or English).
-pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: String) {
+pub async fn send_feedback(
+    state: AppState,
+    role: String,
+    pid: u64,
+    facts_en: String,
+    persona: Option<String>,
+) {
     let lang = state.lock().language_of(&role);
     let text = if state.llm.is_available() {
         state
@@ -275,7 +281,8 @@ pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: St
     } else {
         facts_en.clone()
     };
-    state.lock().add_message(
+    let mut ex = state.lock();
+    let mid = ex.add_message(
         MASTER,
         &role,
         MsgKind::Feedback,
@@ -284,10 +291,17 @@ pub async fn send_feedback(state: AppState, role: String, pid: u64, facts_en: St
         &facts_en,
         Some(pid),
     );
+    ex.set_message_persona(mid, persona);
 }
 
 /// Translate and deliver the EXCON's clarification question to the player.
-pub async fn send_clarification(state: AppState, role: String, pid: u64, text_en: String) {
+pub async fn send_clarification(
+    state: AppState,
+    role: String,
+    pid: u64,
+    text_en: String,
+    persona: Option<String>,
+) {
     let lang = state.lock().language_of(&role);
     let text = if state.llm.is_available() {
         state
@@ -298,7 +312,9 @@ pub async fn send_clarification(state: AppState, role: String, pid: u64, text_en
     } else {
         text_en.clone()
     };
-    let _ = state.lock().deliver_clarification(pid, &text, &text_en);
+    let _ = state
+        .lock()
+        .deliver_clarification_as(pid, &text, &text_en, persona.as_deref());
 }
 
 /// Claim and deliver communications once, only after the reviewed proposal executes.
@@ -381,7 +397,8 @@ pub async fn send_drafts(state: &AppState, pid: u64) {
 pub async fn situation_updates(state: AppState, _events_en: Vec<String>) {
     let per_role = {
         let ex = state.lock();
-        ex.players.values().map(|p| (p.role.clone(), p.language.clone(), format!("{} — Turn resolved. Your resource ledger and reviewed orders are updated. Map reports retain their observation time; await new information from EXCON.", ex.world.clock()))).collect::<Vec<_>>()
+        let persona = ex.persona_name(None, "en");
+        ex.players.values().map(|p| (p.role.clone(), p.language.clone(), format!("{} — Turn resolved. Your resource ledger and reviewed orders are updated. Map reports retain their observation time; await new information from {persona}.", ex.world.clock()))).collect::<Vec<_>>()
     };
     for (role, lang, facts) in per_role {
         let text = if state.llm.is_available() {

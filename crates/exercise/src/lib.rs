@@ -30,12 +30,20 @@ pub mod drafts;
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
+pub mod conversations;
 pub mod narrative;
+pub mod persona;
+pub mod response;
 pub mod summaries;
 pub mod threads;
 pub mod planned;
 pub mod agenda;
 pub mod actions;
+pub mod situation;
+pub mod suggestions;
+
+/// Minutes an evacuation takes (see `sim::EVAC_MIN`); the lead time of warnings.
+pub const EVAC_LEAD_MIN: i64 = sim::EVAC_MIN;
 pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
 use std::collections::BTreeMap;
@@ -109,6 +117,9 @@ pub struct Message {
     /// In English (working language).
     pub text_en: String,
     pub proposal: Option<u64>,
+    /// Who exercise control spoke as, when EXCON wrote this (see [`persona`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -183,6 +194,8 @@ pub struct ApprovalRecord {
     pub t_s: i64,
     pub wall_ms: u128,
     pub note: Option<String>,
+    /// Persona the decision note and feedback are written as.
+    pub persona: Option<String>,
     pub edited: bool,
     pub proposed_commands: Vec<Command>,
     pub effective_commands: Vec<Command>,
@@ -277,10 +290,23 @@ pub struct CommunicationDraft {
     pub text_en: String,
 }
 
+impl Proposal {
+    /// A narrative initiative with no simulator actions: never executed.
+    pub fn pure_narrative(&self) -> bool {
+        self.narrative && !self.carries_actions
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Proposal {
     /// Explicit EXCON-adjudicated initiative with no simulated commands.
     pub narrative: bool,
+    /// The response also declared simulator actions (`narrative` + `commands`).
+    /// A narrative without this flag is a pure narrative initiative.
+    pub carries_actions: bool,
+    /// Linked conversation (see [`conversations`]) the response came out of.
+    /// It is the only way a player who never received the inject can answer it.
+    pub via_conversation: Option<u64>,
     pub narrative_outcomes: Vec<narrative::NarrativeOutcome>,
     pub resource_limit_draft: Option<Value>,
     pub evidence: Option<DecisionEvidence>,
@@ -347,6 +373,8 @@ pub struct Decision {
     /// Replaces the proposal's commands (the EXCON's edit).
     pub commands: Option<Vec<Command>>,
     pub note: Option<String>,
+    /// Who EXCON speaks as in the note and the feedback (see [`persona`]).
+    pub persona: Option<String>,
 }
 
 /// A clarification the EXCON asked of a player, to be delivered.
@@ -363,6 +391,8 @@ pub struct DecisionOutcome {
     pub proposal: u64,
     /// Player to inform (`None` for EXCON proposals).
     pub notify: Option<String>,
+    /// Persona the feedback is delivered as.
+    pub persona: Option<String>,
     pub facts_en: String,
 }
 
@@ -439,6 +469,8 @@ pub struct TurnWindow {
 pub struct Exercise {
     pub(crate) turn_summaries: Vec<summaries::TurnSummary>,
     player_drafts: BTreeMap<u64, drafts::PlayerDraft>,
+    /// Player conversations about an inject (see [`conversations`]).
+    pub linked_conversations: Vec<conversations::LinkedConversation>,
     pub training_design: design::TrainingDesign,
     pub current_path: Option<String>,
     pub path_history: Vec<Value>,
@@ -455,6 +487,10 @@ pub struct Exercise {
     pub skipped_injects: BTreeMap<String, i64>,
     /// Pre-actions EXCON switched off before they ran (`inject:action` → time).
     pub disabled_actions: BTreeMap<String, i64>,
+    /// Situation suggestions the EXCON dismissed, sent or planned (id -> mark).
+    pub suggestion_marks: BTreeMap<String, suggestions::SuggestionMark>,
+    /// Bumped whenever the world is restored (the fire is reseeded), so a preview made before is not reused.
+    pub(crate) restore_epoch: u32,
     pub world: World,
     pub turn: u32,
     pub phase: Phase,
@@ -516,6 +552,7 @@ impl Exercise {
         let mut ex = Exercise {
             turn_summaries: Vec::new(),
             player_drafts: BTreeMap::new(),
+            linked_conversations: Vec::new(),
             training_design: Default::default(),
             current_path: None,
             path_history: Vec::new(),
@@ -534,6 +571,8 @@ impl Exercise {
             action_runs: BTreeMap::new(),
             skipped_injects: BTreeMap::new(),
             disabled_actions: BTreeMap::new(),
+            suggestion_marks: BTreeMap::new(),
+            restore_epoch: 0,
             world,
             turn: 0,
             phase: Phase::Briefing,
@@ -740,7 +779,7 @@ impl Exercise {
         let approved: Vec<u64> = self
             .proposals
             .iter()
-            .filter(|p| p.status == ProposalStatus::Approved && !p.narrative)
+            .filter(|p| p.status == ProposalStatus::Approved && !p.pure_narrative())
             .map(|p| p.id)
             .collect();
         for pid in approved {
@@ -875,6 +914,7 @@ impl Exercise {
         self.player_drafts.clear();
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
+        self.restore_epoch += 1;
         self.forget_actions_since_restore();
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self
@@ -903,7 +943,7 @@ impl Exercise {
         self.record("rollback", MASTER, json!({"to_turn": turn}));
         for r in self.role_ids() {
             let text = format!(
-                "EXCON: the exercise has been rolled back to the start of turn {turn} ({}).",
+                "The exercise has been rolled back to the start of turn {turn} ({}).",
                 self.world.clock()
             );
             self.add_message(MASTER, &r, MsgKind::System, None, &text, &text, None);
@@ -1004,6 +1044,7 @@ impl Exercise {
             text: text.into(),
             text_en: text_en.into(),
             proposal,
+            persona: None,
         };
         self.record("message", from, json!(&m));
         // What a player receives becomes context of their conversation with the AI.
@@ -1012,7 +1053,7 @@ impl Exercise {
         {
             let what = match kind {
                 MsgKind::Inject => "INJECT",
-                MsgKind::Feedback => "EXCON FEEDBACK",
+                MsgKind::Feedback => "FEEDBACK",
                 MsgKind::Situation => "SITUATION UPDATE",
                 MsgKind::RoleMessage => "MESSAGE",
                 _ => "NOTICE",
@@ -1153,7 +1194,7 @@ impl Exercise {
         let inject_id = parent.inject_id;
         let thread = self.thread_evidence(role, reply_to)?;
         if self.clarification_target(role, reply_to).is_some() {
-            bail!("this answers an open EXCON question: send it as a text answer, or create a new action without replying to the question");
+            bail!("this answers an open question: send it as a text answer, or create a new action without replying to the question");
         }
         let pid = self.open_chat_proposal(role, text, inject_id, Some(reply_to), Some(evidence))?;
         self.proposal_mut(pid)?.thread = thread;
@@ -1183,40 +1224,15 @@ impl Exercise {
         if commands.is_empty() || commands.len() > 32 {
             bail!("provide 1–32 commands");
         }
-        let allowed = &self.world.scn.role(role).unwrap().allowed_actions;
-        if commands
-            .iter()
-            .any(|c| !allowed.iter().any(|kind| kind == c.kind()))
-        {
-            bail!("action outside this role's authority");
-        }
-        let pid = if let Some(parent) = reply_to {
-            self.player_reply(
-                role,
-                text,
-                parent,
-                DecisionEvidence::judgment("Structured operational decision"),
-            )?
-        } else {
-            self.open_chat_proposal(role, text, None, None, None)?
-        };
-        self.attach_parse(
-            pid,
-            ParsedInput {
-                resource_limit_draft: None,
-                communication_drafts: Vec::new(),
-                language: self.language_of(role),
-                translation_en: text.into(),
-                actions: commands
-                    .iter()
-                    .map(|c| serde_json::to_value(c).expect("command serialization"))
-                    .collect(),
-                clarification: None,
-                summary: text.into(),
-                inject_drafts: Vec::new(),
+        self.player_response(
+            role,
+            response::PlayerResponse {
+                text: text.into(),
+                commands,
+                reply_to,
+                ..Default::default()
             },
-        )?;
-        Ok(pid)
+        )
     }
 
     /// The EXCON-questioned proposal of `role` that a reply to message `parent`
@@ -1261,7 +1277,7 @@ impl Exercise {
         let parent = self.validate_action_reference(role, reply_to)?;
         let inject_id = parent.inject_id;
         let Some(pid) = self.clarification_target(role, reply_to) else {
-            bail!("there is no open EXCON question to answer");
+            bail!("there is no open question to answer");
         };
         let language = self.language_of(role);
         let id = self.add_message_in_thread(
@@ -1295,7 +1311,7 @@ impl Exercise {
         self.converse(
             role,
             "user",
-            format!("[{}] PLAYER ANSWER to the EXCON clarification:\n{text_en}", self.world.clock()),
+            format!("[{}] PLAYER ANSWER to the clarification:\n{text_en}", self.world.clock()),
         );
         Ok((id, pid))
     }
@@ -1312,6 +1328,8 @@ impl Exercise {
         let lang = self.language_of(role);
         self.proposals.push(Proposal {
             narrative: false,
+            carries_actions: false,
+            via_conversation: None,
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence,
@@ -1479,6 +1497,8 @@ impl Exercise {
         let pid = self.id();
         self.proposals.push(Proposal {
             narrative: false,
+            carries_actions: false,
+            via_conversation: None,
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence: None,
@@ -1583,7 +1603,7 @@ impl Exercise {
             .proposal(pid)
             .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?
             .clone();
-        if p.narrative {
+        if p.pure_narrative() {
             bail!("narrative initiatives require an EXCON narrative outcome, not physical execution");
         }
         if p.status != ProposalStatus::Approved
@@ -1721,7 +1741,7 @@ impl Exercise {
     }
 
     fn set_commands(&mut self, pid: u64, commands: Vec<Command>) -> Result<()> {
-        if self.proposal(pid).is_some_and(|p| p.narrative) && !commands.is_empty() {
+        if self.proposal(pid).is_some_and(|p| p.pure_narrative()) && !commands.is_empty() {
             bail!("narrative initiatives cannot contain simulated commands; submit a separate operational proposal");
         }
         let actor = self
@@ -1989,6 +2009,17 @@ impl Exercise {
 
     /// Put the EXCON's question into the player's thread.
     pub fn deliver_clarification(&mut self, pid: u64, text: &str, text_en: &str) -> Result<u64> {
+        self.deliver_clarification_as(pid, text, text_en, None)
+    }
+
+    /// Same, spoken as `persona` (default: the inject's sender, then the scenario default).
+    pub fn deliver_clarification_as(
+        &mut self,
+        pid: u64,
+        text: &str,
+        text_en: &str,
+        persona: Option<&str>,
+    ) -> Result<u64> {
         let p = self
             .proposal(pid)
             .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
@@ -2007,11 +2038,15 @@ impl Exercise {
             text_en,
             Some(pid),
         );
-        // The AI conversation must know what the EXCON asked.
+        let inject = self.proposal(pid).and_then(|p| p.inject_id);
+        let persona = self.persona_for(persona, inject);
+        let who = self.persona_name(persona.as_deref(), "en");
+        self.set_message_persona(id, persona);
+        // The AI conversation must know what was asked.
         self.converse(
             &role,
             "user",
-            format!("[{}] EXCON CLARIFICATION REQUEST:\n{text_en}", self.world.clock()),
+            format!("[{}] CLARIFICATION REQUEST from {who}:\n{text_en}", self.world.clock()),
         );
         Ok(id)
     }
@@ -2067,6 +2102,8 @@ impl Exercise {
             Source::Master => None,
         };
         let note = d.note.clone().filter(|n| !n.trim().is_empty());
+        let persona = self.persona_for(d.persona.as_deref(), p.inject_id);
+        let who = self.persona_name(persona.as_deref(), "en");
         if d.approve
             && matches!(p.source, Source::Master)
             && p.summary.contains("UNPLANNED DIVERGENCE")
@@ -2116,6 +2153,7 @@ impl Exercise {
             t_s: self.world.time_s(),
             wall_ms: wall_ms(),
             note: note.clone(),
+            persona: persona.clone(),
             edited: d.commands.is_some() && p.commands != proposed_commands,
             proposed_commands,
             effective_commands: p.commands.clone(),
@@ -2129,7 +2167,7 @@ impl Exercise {
                 note.as_deref().unwrap_or("Rejected by EXCON"),
             )?;
             facts.push(format!(
-                "Your orders were NOT approved by EXCON: {}",
+                "Your orders were NOT approved by {who}: {}",
                 if p.descriptions.is_empty() {
                     p.summary.clone()
                 } else {
@@ -2143,8 +2181,8 @@ impl Exercise {
                 MASTER,
                 note.as_deref().unwrap_or("Approved by EXCON"),
             )?;
-            if p.narrative {
-                facts.push("Narrative initiative approved by EXCON. Its outcome is pending EXCON adjudication; no simulated action was executed.".into());
+            if p.pure_narrative() {
+                facts.push(format!("Narrative initiative approved by {who}. Its outcome is pending; no simulated action was executed."));
             } else if matches!(p.source, Source::Master) || p.commands.is_empty() {
                 self.execute_proposal(pid)?;
                 facts.extend(self.proposal(pid).unwrap().results.clone());
@@ -2152,7 +2190,7 @@ impl Exercise {
                     && (!p.communication_drafts.is_empty() || !p.inject_drafts.is_empty())
                 {
                     facts.push(
-                        "APPROVED: the reviewed communication will be delivered by EXCON.".into(),
+                        format!("APPROVED: the reviewed communication will be delivered by {who}."),
                     );
                 }
             } else {
@@ -2162,7 +2200,7 @@ impl Exercise {
                         _ => String::new(),
                     };
                     facts.push(format!(
-                        "APPROVED: {desc}{}. It awaits EXCON execution or turn resolution.",
+                        "APPROVED: {desc}{}. It awaits execution or turn resolution.",
                         if notes.is_empty() {
                             String::new()
                         } else {
@@ -2172,8 +2210,11 @@ impl Exercise {
                 }
             }
         }
+        if d.approve && p.narrative && p.carries_actions {
+            facts.push("The narrative part of your response was approved; its outcome is pending and is not simulated.".into());
+        }
         if let Some(n) = &note {
-            facts.push(format!("Note from EXCON: {n}"));
+            facts.push(format!("Note from {who}: {n}"));
         }
         self.proposal_mut(pid)?.master_note = note;
         let facts_en = facts.join("\n");
@@ -2181,12 +2222,25 @@ impl Exercise {
         Ok(DecisionOutcome {
             proposal: pid,
             notify,
+            persona,
             facts_en,
         })
     }
 
     /// A command from the EXCON GUI or a script: validated as EXCON and applied now.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
+        self.direct_command_logged(cmd, json!({"origin": "direct_excon_intervention"}))
+            .map(|(notes, _)| notes)
+    }
+
+    /// Same, with `origin` merged into the log entry (e.g. the narrative
+    /// outcome the intervention belongs to). Returns the notes and the `seq`
+    /// of the `master_command` log entry.
+    pub fn direct_command_logged(
+        &mut self,
+        cmd: &Command,
+        origin: Value,
+    ) -> Result<(Vec<String>, u64)> {
         let before = if interventions::physical(cmd) {
             Some(self.world.snapshot())
         } else {
@@ -2206,7 +2260,12 @@ impl Exercise {
         if r.is_ok() && matches!(cmd, Command::AdvanceTime { .. }) {
             self.clock_control.revision += 1;
         }
-        self.record("master_command", MASTER, json!({"origin": "direct_excon_intervention", "command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }}));
+        let mut entry = json!({"command": cmd, "result": match &r { Ok(n) => json!({"ok": n}), Err(e) => json!({"error": e}) }});
+        if let (Some(map), Some(extra)) = (entry.as_object_mut(), origin.as_object()) {
+            map.extend(extra.clone());
+        }
+        self.record("master_command", MASTER, entry);
+        let seq = self.log.last().unwrap().seq;
         if r.is_ok() {
             if let Some(snapshot) = before {
                 self.intervention = Some(interventions::Intervention {
@@ -2217,7 +2276,7 @@ impl Exercise {
                 });
             }
         }
-        r.map_err(|e| anyhow::anyhow!(e))
+        r.map(|notes| (notes, seq)).map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Separate unmet declarations, approved reservations and actual deployments.
@@ -2316,6 +2375,7 @@ impl Exercise {
             "proposals": self.proposals,
             "messages": self.messages,
             "clarification_threads": self.clarification_threads(),
+            "linked_conversations": self.master_linked_conversations(),
             "log": self.log,
         })
     }

@@ -56,7 +56,7 @@ fn full_turn_inject_reply_approve_resolve() {
         Command::IssueWarning { zone: "F4".into() },
         Command::EvacuateZone { zone: "F4".into(), destination: None },
     ];
-    let out = ex.decide(pid, Decision { approve: true, commands: Some(edited), note: Some("good call".into()) }).unwrap();
+    let out = ex.decide(pid, Decision { approve: true, commands: Some(edited), note: Some("good call".into()), ..Default::default() }).unwrap();
     assert_eq!(out.notify.as_deref(), Some("mayor"));
     assert!(out.facts_en.contains("APPROVED: Evacuate zone F4"), "{}", out.facts_en);
     assert!(out.facts_en.contains("good call"));
@@ -68,7 +68,7 @@ fn full_turn_inject_reply_approve_resolve() {
     let p2 = reply(&mut ex, "fire_commander", "another drop on F3").unwrap();
     ex.attach_parse(p2, parsed(json!([{"type":"WaterDrop","at":"F3"}]))).unwrap();
     assert!(!ex.proposal(p2).unwrap().verdicts[0].is_ok(), "approved drop must hold the air tanker");
-    ex.decide(p2, Decision { approve: false, commands: None, note: None }).unwrap();
+    ex.decide(p2, Decision { approve: false, commands: None, note: None, ..Default::default() }).unwrap();
 
     let t0 = ex.world.time_s();
     let report = ex.resolve_turn(Some(30)).unwrap();
@@ -129,7 +129,7 @@ fn llm_failure_leaves_proposal_for_manual_entry() {
     ex.parse_failed(pid, "timeout").unwrap();
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Pending);
     let cmds = vec![Command::CutFireLine { from: None, to: None, along: Some("G3:S".into()), width_m: None }];
-    ex.decide(pid, Decision { approve: true, commands: Some(cmds), note: None }).unwrap();
+    ex.decide(pid, Decision { approve: true, commands: Some(cmds), note: None, ..Default::default() }).unwrap();
     let r = ex.resolve_turn(None).unwrap();
     assert!(r.applied[0].ok);
     assert!(ex.world.stats().line_km>0.4);
@@ -710,7 +710,7 @@ fn edited_flag_is_true_only_when_actions_actually_change() {
         ex.attach_parse(pid, parsed(acts.clone())).unwrap();
         let same = ex.proposal(pid).unwrap().commands.clone();
         let commands = if resubmit { Some(same) } else { None };
-        ex.decide(pid, Decision { approve: true, commands, note: Some("ok".into()) }).unwrap();
+        ex.decide(pid, Decision { approve: true, commands, note: Some("ok".into()), ..Default::default() }).unwrap();
         assert!(!ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
     }
     // Real change: edited.
@@ -719,7 +719,7 @@ fn edited_flag_is_true_only_when_actions_actually_change() {
     let pid = reply(&mut ex, "mayor", "warn F4").unwrap();
     ex.attach_parse(pid, parsed(acts)).unwrap();
     let other: Vec<Command> = serde_json::from_value(json!([{"type":"IssueWarning","zone":"G4"}])).unwrap();
-    ex.decide(pid, Decision { approve: true, commands: Some(other), note: None }).unwrap();
+    ex.decide(pid, Decision { approve: true, commands: Some(other), note: None, ..Default::default() }).unwrap();
     assert!(ex.proposal(pid).unwrap().decision.as_ref().unwrap().edited);
 }
 

@@ -219,7 +219,7 @@ impl Exercise {
                 .map(|h| format!("+{} min", h.after_s / 60))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("EXCON-reviewed projection received from {source}. Issued at t={} s; horizons {horizons}. {}",product.issued_s,product.assumptions)
+            format!("Reviewed projection received from {source}. Issued at t={} s; horizons {horizons}. {}",product.issued_s,product.assumptions)
         } else {
             Self::map_information_text(source)
         };
@@ -232,6 +232,9 @@ impl Exercise {
             &text,
             None,
         );
+        // The information source is who the player hears it from.
+        let persona = self.persona_for(Some(source), None);
+        self.set_message_persona(mid, persona);
         self.attach_map_observation(mid, observation, KnowledgeSource::Acquired)?;
         Ok(mid)
     }

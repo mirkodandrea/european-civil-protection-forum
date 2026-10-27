@@ -99,9 +99,21 @@ pub fn activate(id: &str) -> Result<(), String> {
 /// Complete authored territories, shared by the 3D editor and exercise library.
 const TERRITORIES_KEY: &str = "ttx.standalone.territories";
 pub fn authored_territories() -> BTreeMap<String, scenario::Scenario> {
-    get(TERRITORIES_KEY)
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    let Some(raw) = get(TERRITORIES_KEY) else {
+        return BTreeMap::new();
+    };
+    let all: BTreeMap<String, scenario::Scenario> =
+        serde_json::from_str(&raw).unwrap_or_default();
+    // Retired keys are ignored on load; rewrite once so the stored copy drops them.
+    if !all.is_empty() && retired_keys(&raw) {
+        if let Ok(clean) = serde_json::to_string(&all) {
+            let _ = set(TERRITORIES_KEY, &clean);
+        }
+    }
+    all
+}
+fn retired_keys(raw: &str) -> bool {
+    raw.contains("\"communication_sites\"") || raw.contains("\"communications\"")
 }
 pub fn authoring_base(id: &str) -> Result<scenario::Scenario, String> {
     if let Some(s) = authored_territories().remove(id) {

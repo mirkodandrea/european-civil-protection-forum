@@ -163,7 +163,7 @@ pub(crate) async fn submit(
     let Json(body) = body;
     if body.manual {
         return Err(bad(
-            "An operational decision needs a coded simulator action before EXCON review",
+            "An operational decision needs a coded simulator action before review",
         ));
     }
     let target_language = {
@@ -171,7 +171,7 @@ pub(crate) async fn submit(
         let draft = ex.private_draft(&role, body.draft, body.revision)?;
         if draft.status != exercise::drafts::DraftStatus::Ready || draft.actions.is_empty() {
             return Err(bad(draft.failure.as_deref().unwrap_or(
-                "No simulator action is ready; clarify the decision before sending it to EXCON",
+                "No simulator action is ready; clarify the decision before sending it",
             )));
         }
         let target = ex.language_of(&draft.to);

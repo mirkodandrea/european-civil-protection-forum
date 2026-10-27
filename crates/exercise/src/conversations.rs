@@ -1,0 +1,361 @@
+//! Player conversations linked to an inject.
+//!
+//! A player who received an inject can open a conversation with one or more
+//! other players about it. The conversation is private to its participants
+//! (like peer chat, EXCON sees who took part, not the text) and is *evidence only*: nothing said in it
+//! changes the world. Its purpose is to let the group prepare a response.
+//!
+//! Rules (all enforced here, never in the UI):
+//! * only the recipient of an inject delivery can start a conversation on it;
+//! * participants are other known players (1..=[`MAX_PARTICIPANTS`] besides the creator);
+//! * every participant can read the inject quoted at the top of the conversation
+//!   even if EXCON never sent it to them: the quote is the participant's own
+//!   copy when they have one, otherwise the creator's copy when the languages
+//!   match, otherwise its English working copy (no extra translation);
+//! * a message may cite a previous message of the conversation or the inject;
+//! * a participant may answer the inject itself from the conversation
+//!   (`Exercise::player_response` with `conversation`), even without having
+//!   received it. The provenance is stored on the response.
+use crate::{chat_policy, Exercise, Message, MsgKind, Phase, MASTER};
+use anyhow::{bail, Result};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+
+/// Players that can be invited next to the creator.
+pub const MAX_PARTICIPANTS: usize = 8;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConvMessage {
+    pub id: u64,
+    pub from: String,
+    pub turn: u32,
+    pub t_s: i64,
+    pub clock: String,
+    /// What the sender wrote.
+    pub original: String,
+    /// English working copy.
+    pub text_en: String,
+    /// Role -> text in that role's language.
+    pub texts: BTreeMap<String, String>,
+    /// A previous message of the conversation, or the inject delivery.
+    pub reply_to: Option<u64>,
+    pub translation_failed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkedConversation {
+    pub id: u64,
+    /// Message id of the creator's copy of the inject: the citation target.
+    pub delivery: u64,
+    /// Delivery event shared by every recipient of the inject (`Message::inject_id`).
+    pub inject_id: u64,
+    pub created_by: String,
+    /// Creator first.
+    pub participants: Vec<String>,
+    pub turn: u32,
+    pub t_s: i64,
+    pub messages: Vec<ConvMessage>,
+}
+
+impl LinkedConversation {
+    pub fn has(&self, role: &str) -> bool {
+        self.participants.iter().any(|p| p == role)
+    }
+}
+
+fn check_text(ex: &Exercise, from: &str, text: &str) -> Result<()> {
+    if ex.phase == Phase::Debrief {
+        bail!("the exercise has ended");
+    }
+    if text.trim().is_empty() || text.chars().count() > 8000 {
+        bail!("message must contain 1–8000 characters");
+    }
+    chat_policy::validate_player_chat(text, &ex.language_of(from))
+}
+
+impl Exercise {
+    pub fn linked_conversation(&self, id: u64) -> Option<&LinkedConversation> {
+        self.linked_conversations.iter().find(|c| c.id == id)
+    }
+
+    /// The conversation `role` takes part in that is linked to inject copy `delivery`.
+    pub fn conversation_for_delivery(
+        &self,
+        role: &str,
+        delivery: u64,
+    ) -> Option<&LinkedConversation> {
+        self.linked_conversations
+            .iter()
+            .rev()
+            .find(|c| c.delivery == delivery && c.has(role))
+    }
+
+    /// Participants with their language, to prepare the translations.
+    pub fn conversation_languages(&self, id: u64) -> Vec<(String, String)> {
+        self.linked_conversation(id)
+            .map(|c| {
+                c.participants
+                    .iter()
+                    .map(|p| (p.clone(), self.language_of(p)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn validate_conversation_start(
+        &self,
+        creator: &str,
+        delivery: u64,
+        others: &[String],
+        text: &str,
+    ) -> Result<()> {
+        check_text(self, creator, text)?;
+        let inject = self.messages.iter().find(|m| m.id == delivery);
+        if !inject
+            .is_some_and(|m| m.kind == MsgKind::Inject && m.to == creator && m.inject_id.is_some())
+        {
+            bail!("a conversation can only be linked to an inject delivered to your role");
+        }
+        if others.is_empty() || others.len() > MAX_PARTICIPANTS {
+            bail!("invite between 1 and {MAX_PARTICIPANTS} other players");
+        }
+        for (i, other) in others.iter().enumerate() {
+            if other == creator || other == MASTER || !self.players.contains_key(other) {
+                bail!("invalid conversation participant");
+            }
+            if others[..i].contains(other) {
+                bail!("duplicate conversation participant");
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_linked_conversation(
+        &mut self,
+        creator: &str,
+        delivery: u64,
+        others: &[String],
+        text: &str,
+        text_en: &str,
+        texts: &BTreeMap<String, String>,
+        translation_failed: bool,
+    ) -> Result<(u64, u64)> {
+        self.validate_conversation_start(creator, delivery, others, text)?;
+        let inject_id = self
+            .messages
+            .iter()
+            .find(|m| m.id == delivery)
+            .and_then(|m| m.inject_id)
+            .expect("validated delivery");
+        let id = self.id();
+        let mut participants = vec![creator.to_string()];
+        participants.extend(others.iter().cloned());
+        self.linked_conversations.push(LinkedConversation {
+            id,
+            delivery,
+            inject_id,
+            created_by: creator.into(),
+            participants,
+            turn: self.turn,
+            t_s: self.world.time_s(),
+            messages: Vec::new(),
+        });
+        self.record(
+            "conversation_started",
+            creator,
+            json!({"conversation": id, "delivery": delivery, "inject_id": inject_id, "participants": self.linked_conversation(id).map(|c| c.participants.clone())}),
+        );
+        let mid = self.push_conversation_message(
+            id,
+            creator,
+            text,
+            text_en,
+            texts,
+            Some(delivery),
+            translation_failed,
+        );
+        Ok((id, mid))
+    }
+
+    pub fn validate_conversation_message(
+        &self,
+        role: &str,
+        id: u64,
+        text: &str,
+        reply_to: Option<u64>,
+    ) -> Result<()> {
+        check_text(self, role, text)?;
+        let c = self
+            .linked_conversation(id)
+            .filter(|c| c.has(role))
+            .ok_or_else(|| anyhow::anyhow!("unknown conversation"))?;
+        if let Some(r) = reply_to {
+            if r != c.delivery && !c.messages.iter().any(|m| m.id == r) {
+                bail!("reply_to must cite the inject or a message of this conversation");
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_conversation_message(
+        &mut self,
+        role: &str,
+        id: u64,
+        text: &str,
+        reply_to: Option<u64>,
+        text_en: &str,
+        texts: &BTreeMap<String, String>,
+        translation_failed: bool,
+    ) -> Result<u64> {
+        self.validate_conversation_message(role, id, text, reply_to)?;
+        Ok(self.push_conversation_message(
+            id,
+            role,
+            text,
+            text_en,
+            texts,
+            reply_to,
+            translation_failed,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_conversation_message(
+        &mut self,
+        id: u64,
+        from: &str,
+        text: &str,
+        text_en: &str,
+        texts: &BTreeMap<String, String>,
+        reply_to: Option<u64>,
+        translation_failed: bool,
+    ) -> u64 {
+        let mid = self.id();
+        let (participants, delivery) = {
+            let c = self.linked_conversation(id).expect("conversation");
+            (c.participants.clone(), c.delivery)
+        };
+        let mut by_role = BTreeMap::new();
+        for p in &participants {
+            by_role.insert(
+                p.clone(),
+                if p == from {
+                    text.to_string()
+                } else {
+                    texts.get(p).cloned().unwrap_or_else(|| text_en.to_string())
+                },
+            );
+        }
+        let message = ConvMessage {
+            id: mid,
+            from: from.into(),
+            turn: self.turn,
+            t_s: self.world.time_s(),
+            clock: self.world.clock(),
+            original: text.into(),
+            text_en: text_en.into(),
+            texts: by_role,
+            reply_to,
+            translation_failed,
+        };
+        // EXCON reads the text like every other message, so the log carries it too.
+        self.record(
+            "conversation_message",
+            from,
+            json!({"conversation": id, "message": mid, "reply_to": reply_to, "chars": text.chars().count(), "original": text, "text_en": text_en}),
+        );
+        let title = self
+            .messages
+            .iter()
+            .find(|m| m.id == delivery)
+            .and_then(|m| m.title.clone())
+            .unwrap_or_default();
+        let clock = message.clock.clone();
+        for p in &participants {
+            let line = if p == from {
+                format!("[{clock}] CONVERSATION about inject \"{title}\" — you wrote: {text_en}")
+            } else {
+                format!("[{clock}] CONVERSATION about inject \"{title}\" — {from} wrote: {text_en}")
+            };
+            self.converse(p, "user", line);
+        }
+        self.linked_conversations
+            .iter_mut()
+            .find(|c| c.id == id)
+            .expect("conversation")
+            .messages
+            .push(message);
+        mid
+    }
+
+    /// The inject as `role` reads it inside a conversation (see module rules).
+    fn quoted_inject_text(&self, role: &str, delivery: &Message) -> String {
+        if let Some(own) = self.messages.iter().find(|m| {
+            m.kind == MsgKind::Inject && m.inject_id == delivery.inject_id && m.to == role
+        }) {
+            return own.text.clone();
+        }
+        if self.language_of(role) == self.language_of(&delivery.to) {
+            delivery.text.clone()
+        } else {
+            delivery.text_en.clone()
+        }
+    }
+
+    fn quote(&self, role: &str, c: &LinkedConversation) -> Value {
+        let Some(m) = self.messages.iter().find(|m| m.id == c.delivery) else {
+            return Value::Null;
+        };
+        json!({"id": m.id, "kind": "inject", "inject_id": m.inject_id, "title": m.title,
+            "from": m.from, "to": m.to, "clock": m.clock, "turn": m.turn, "t_s": m.t_s,
+            "text": self.quoted_inject_text(role, m)})
+    }
+
+    /// Conversations of one role as that player sees them.
+    pub fn player_linked_conversations(&self, role: &str) -> Vec<Value> {
+        self.linked_conversations
+            .iter()
+            .filter(|c| c.has(role))
+            .map(|c| {
+                json!({"id": c.id, "delivery": c.delivery, "inject_id": c.inject_id,
+                    "created_by": c.created_by, "participants": c.participants,
+                    "turn": c.turn, "t_s": c.t_s, "quote": self.quote(role, c),
+                    // Responses given through this conversation, visible to all its participants.
+                    "responses": self.proposals.iter()
+                        .filter(|p| p.via_conversation == Some(c.id))
+                        .map(|p| json!({"id": p.id, "by": p.source.label(), "status": p.status,
+                            "narrative": p.narrative, "actions": p.commands.len(),
+                            "turn": p.turn, "t_s": p.t_s}))
+                        .collect::<Vec<_>>(),
+                    "messages": c.messages.iter().map(|m| {
+                        json!({"id": m.id, "from": m.from, "turn": m.turn, "clock": m.clock,
+                            "text": m.texts.get(role).unwrap_or(&m.text_en),
+                            "original": (m.from == role).then_some(&m.original),
+                            "reply_to": m.reply_to, "translation_failed": m.translation_failed})
+                    }).collect::<Vec<_>>()})
+            })
+            .collect()
+    }
+
+    /// Every conversation for EXCON, transcript included (EXCON is omnipotent;
+    /// other players still cannot read it).
+    pub fn master_linked_conversations(&self) -> Vec<Value> {
+        self.linked_conversations
+            .iter()
+            .map(|c| {
+                json!({"id": c.id, "delivery": c.delivery, "inject_id": c.inject_id,
+                    "created_by": c.created_by, "participants": c.participants,
+                    "turn": c.turn, "t_s": c.t_s, "message_count": c.messages.len(),
+                    "messages": c.messages.iter().map(|m| json!({"id": m.id, "from": m.from, "turn": m.turn,
+                        "t_s": m.t_s, "clock": m.clock, "original": m.original, "text_en": m.text_en,
+                        "reply_to": m.reply_to, "translation_failed": m.translation_failed})).collect::<Vec<_>>(),
+                    "responses": self.proposals.iter()
+                        .filter(|p| p.via_conversation == Some(c.id))
+                        .map(|p| p.id).collect::<Vec<_>>()})
+            })
+            .collect()
+    }
+}

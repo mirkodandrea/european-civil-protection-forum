@@ -179,6 +179,7 @@ pub async fn reset(state: &AppState, pack: &ScenarioPack) -> Result<(), String> 
     state.access.set_roles(state.lock().role_ids());
     state.assessments.lock().await.clear();
     state.forecasts.lock().await.clear();
+    situation::clear(state);
     scenarios.set_running(pack);
     if let Some(persist) = &state.persist {
         persist.tape.clear();

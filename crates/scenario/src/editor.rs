@@ -615,7 +615,6 @@ pub fn blank(id: &str, cells: usize, cellsize: f32) -> Result<Scenario> {
     s.excon_roles.clear();
     s.reinforcements.clear();
     s.operational_grants.clear();
-    s.communication_sites.clear();
     // The twelve EU12 classes (grass, broadleaves, shrubs, conifers at three
     // susceptibilities) plus the non-vegetated ones, not the legacy seven.
     s.fuel_definitions = eu12_fuels();

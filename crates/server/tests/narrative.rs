@@ -107,14 +107,14 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
         &c,
         "master",
         &format!("/api/master/proposals/{id}/narrative-outcome"),
-        Some(json!({"text":"Support team assigned by EXCON"})),
+        Some(json!({"text":"Support team assigned by Sala operativa"})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
     let (_, mine) = call(&c, "mayor", "/api/player/mayor", None).await;
     assert_eq!(
         mine["proposals"][0]["narrative_outcomes"][0]["text"],
-        "Support team assigned by EXCON"
+        "Support team assigned by Sala operativa"
     );
     assert_eq!(mine["proposals"][0]["status"], "approved");
     assert_eq!(s.lock().world.view(), before);

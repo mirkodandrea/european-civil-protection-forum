@@ -3,9 +3,38 @@ use crate::{Exercise, MsgKind, Phase, ProposalStatus, MASTER};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::json;
+use sim::Command;
+
+/// A world change EXCON made together with a narrative outcome: an ordinary
+/// EXCON intervention (`Exercise::direct_command_logged`) linked by log entry.
+#[derive(Debug, Clone, Serialize)]
+pub struct OutcomeIntervention {
+    /// `seq` of the `master_command` entry in the exercise log.
+    pub log_seq: u64,
+    pub description: String,
+    pub command: Command,
+}
+
+/// What EXCON records on an approved response.
+#[derive(Debug, Clone, Default)]
+pub struct OutcomeInput {
+    /// Original text (may be empty when only `commands` are given).
+    pub text: String,
+    pub text_en: String,
+    pub player_text: String,
+    pub translation_failed: bool,
+    /// Who the outcome is spoken as (default: the inject's sender, then the scenario default).
+    pub persona: Option<String>,
+    /// Applied now as EXCON interventions, in order.
+    pub commands: Vec<Command>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NarrativeOutcome {
+    /// Persona the outcome is spoken as; `None` is the scenario default.
+    pub persona: Option<String>,
+    /// Interventions applied together with the outcome.
+    pub interventions: Vec<OutcomeIntervention>,
     /// EXCON's account, not an observed or simulated physical result.
     pub text: String,
     pub text_en: String,
@@ -35,58 +64,45 @@ impl Exercise {
         translation_failed: bool,
     ) -> Result<u64> {
         self.validate_narrative(role, text, reply_to)?;
-        let parent = self.validate_action_reference(role, reply_to)?;
-        let inject_id = parent.inject_id;
-        let thread = self.thread_evidence(role, reply_to)?;
-        if text_en.trim().is_empty() || text_en.chars().count() > 16000 {
-            bail!("narrative translation must contain 1–16000 characters");
-        }
-        let pid = self.open_chat_proposal(role, text, inject_id, Some(reply_to), None)?;
-        let p = self.proposal_mut(pid)?;
-        p.narrative = true;
-        p.thread = thread;
-        p.translation_en = text_en.into();
-        p.summary = text_en.into();
-        self.transition(
-            pid,
-            ProposalStatus::Pending,
+        self.player_response(
             role,
-            "Narrative initiative submitted for EXCON review",
-        )?;
-        let mid = self.add_message_in_thread(
-            role,
-            MASTER,
-            MsgKind::Reply,
-            None,
-            text,
-            text_en,
-            Some(pid),
-            inject_id.map(|root| (root, Some(reply_to), vec![MASTER.into()])),
-            Some(reply_to),
-        );
-        if let Some(m) = self.messages.iter_mut().find(|m| m.id == mid) {
-            m.original = Some(text.into());
-            m.language_src = Some(self.players[role].language.clone());
-            m.translation_failed = translation_failed;
-        }
-        self.converse(role, "user", text);
-        self.record("narrative_submitted", role, json!({"proposal":pid,"message":mid,"inject_id":inject_id,"translation_failed":translation_failed}));
-        Ok(pid)
+            crate::response::PlayerResponse {
+                narrative: Some(text.into()),
+                narrative_en: text_en.into(),
+                translation_failed,
+                reply_to: Some(reply_to),
+                ..Default::default()
+            },
+        )
     }
 
     pub fn validate_narrative_outcome(&self, pid: u64, text: &str) -> Result<String> {
+        self.validate_outcome(pid, text, 0)
+    }
+
+    /// The narrative and the actions are each optional, but not both missing.
+    pub fn validate_outcome(&self, pid: u64, text: &str, actions: usize) -> Result<String> {
         if self.phase != Phase::Orders {
             bail!("narrative outcomes require an open turn");
         }
-        if text.trim().is_empty() || text.chars().count() > 8000 {
-            bail!("narrative outcome requires 1–8000 characters");
+        if text.chars().count() > 8000 {
+            bail!("narrative outcome requires at most 8000 characters");
+        }
+        if text.trim().is_empty() && actions == 0 {
+            bail!("an outcome needs a narrative or at least one action");
+        }
+        if actions > 20 {
+            bail!("provide at most 20 actions");
         }
         let p = self
             .proposal(pid)
             .ok_or_else(|| anyhow::anyhow!("unknown proposal {pid}"))?;
-        if !p.narrative
-            || p.status != ProposalStatus::Approved
-            || !p.decision.as_ref().is_some_and(|d| d.approve)
+        // A response that also carried actions moves on to Applied/Failed once
+        // they run; its narrative part can still be answered.
+        let decided = p.status == ProposalStatus::Approved
+            || (p.carries_actions
+                && matches!(p.status, ProposalStatus::Applied | ProposalStatus::Failed));
+        if !p.narrative || !decided || !p.decision.as_ref().is_some_and(|d| d.approve)
         {
             bail!("only an approved narrative initiative can receive an outcome");
         }
@@ -101,14 +117,67 @@ impl Exercise {
         player_text: &str,
         translation_failed: bool,
     ) -> Result<u64> {
-        let role = self.validate_narrative_outcome(pid, text)?;
-        if player_text.trim().is_empty()
-            || player_text.chars().count() > 16000
-            || text_en.trim().is_empty()
-            || text_en.chars().count() > 16000
+        self.record_outcome(
+            pid,
+            OutcomeInput {
+                text: text.into(),
+                text_en: text_en.into(),
+                player_text: player_text.into(),
+                translation_failed,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Record EXCON's outcome of an approved response: an optional narrative
+    /// (spoken as a persona) and optional interventions, all or nothing.
+    pub fn record_outcome(&mut self, pid: u64, i: OutcomeInput) -> Result<u64> {
+        let role = self.validate_outcome(pid, &i.text, i.commands.len())?;
+        let narrative = !i.text.trim().is_empty();
+        if narrative
+            && (i.player_text.trim().is_empty()
+                || i.player_text.chars().count() > 16000
+                || i.text_en.trim().is_empty()
+                || i.text_en.chars().count() > 16000)
         {
             bail!("invalid translated narrative outcome");
         }
+        // Same checks as the Controllo tools, on a copy, so a refused action
+        // leaves the world untouched.
+        if !i.commands.is_empty() {
+            let preview = self.preview_commands(&i.commands)?;
+            for r in preview["results"].as_array().into_iter().flatten() {
+                if let Some(reason) = r["result"].get("Err") {
+                    bail!("action refused: {} ({reason})", r["command"]["type"]);
+                }
+            }
+        }
+        let persona = self.persona_for(
+            i.persona.as_deref(),
+            self.proposal(pid).and_then(|p| p.inject_id),
+        );
+        let mut interventions = Vec::new();
+        for cmd in &i.commands {
+            let (_, log_seq) = self.direct_command_logged(
+                cmd,
+                json!({"origin":"narrative_outcome","proposal":pid,"role":role}),
+            )?;
+            interventions.push(OutcomeIntervention {
+                log_seq,
+                description: cmd.describe(),
+                command: cmd.clone(),
+            });
+        }
+        let effects = interventions
+            .iter()
+            .map(|x| x.description.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let (text, text_en, player_text) = if narrative {
+            (i.text.trim().to_string(), i.text_en.clone(), i.player_text.clone())
+        } else {
+            (effects.clone(), effects.clone(), effects)
+        };
         let p = self.proposal(pid).unwrap();
         let thread = p
             .inject_id
@@ -118,20 +187,23 @@ impl Exercise {
             MASTER,
             &role,
             MsgKind::Feedback,
-            Some("EXCON narrative outcome".into()),
-            player_text,
-            text_en,
+            Some("Narrative outcome".into()),
+            &player_text,
+            &text_en,
             Some(pid),
             thread,
             reply_to,
         );
         if let Some(m) = self.messages.iter_mut().find(|m| m.id == mid) {
-            m.translation_failed = translation_failed;
+            m.translation_failed = i.translation_failed;
+            m.persona = persona.clone();
         }
         let outcome = NarrativeOutcome {
-            text: text.trim().into(),
-            text_en: text_en.into(),
-            player_text: player_text.into(),
+            persona,
+            interventions,
+            text,
+            text_en,
+            player_text,
             turn: self.turn,
             t_s: self.world.time_s(),
             message: mid,
@@ -143,7 +215,7 @@ impl Exercise {
         self.record(
             "narrative_outcome",
             MASTER,
-            json!({"proposal":pid,"role":role,"outcome":outcome,"simulated":false}),
+            json!({"proposal":pid,"role":role,"outcome":outcome,"simulated":false,"interventions":outcome.interventions.iter().map(|x|x.log_seq).collect::<Vec<_>>()}),
         );
         Ok(mid)
     }

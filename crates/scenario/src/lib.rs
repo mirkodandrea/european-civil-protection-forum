@@ -66,7 +66,6 @@ pub struct Operations {
     pub progressive_suppression: bool,
     pub traffic: bool,
     pub intensity_exposure: bool,
-    pub communications: bool,
     pub spotting: bool,
     pub segment_fire_closures: bool,
     pub terrain_travel: bool,
@@ -80,7 +79,6 @@ impl Operations {
             progressive_suppression: true,
             traffic: true,
             intensity_exposure: true,
-            communications: true,
             spotting: false,
             segment_fire_closures: true,
             terrain_travel: true,
@@ -121,12 +119,6 @@ impl Default for TacticalPolicy {
             regroup_s: 60,
         }
     }
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommunicationSite {
-    pub id: String,
-    pub pos: Pos,
-    pub radius_m: f32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuelDefinition {
@@ -563,8 +555,6 @@ pub struct Scenario {
     #[serde(default)]
     pub operations: Operations,
     #[serde(default)]
-    pub communication_sites: Vec<CommunicationSite>,
-    #[serde(default)]
     pub fuel_definitions: Vec<FuelDefinition>,
     pub id: String,
     pub name: String,
@@ -593,6 +583,10 @@ pub struct Scenario {
     /// Parts the EXCON plays (e.g. «Centrale 112»), the senders of injects. Separate from `roles`.
     #[serde(default)]
     pub excon_roles: Vec<String>,
+    /// Name under which the exercise control speaks to players when no other
+    /// persona applies. Empty: a built-in neutral name ("Operations room").
+    #[serde(default)]
+    pub default_persona: String,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
     /// Legacy standalone actions: read for old files, emptied by
@@ -609,6 +603,19 @@ pub struct Scenario {
 }
 
 impl Scenario {
+    /// The persona exercise control speaks as by default, in `language`.
+    pub fn default_persona_name(&self, language: &str) -> String {
+        let name = self.default_persona.trim();
+        if !name.is_empty() {
+            return name.into();
+        }
+        match language {
+            "it" => "Sala operativa",
+            _ => "Operations room",
+        }
+        .into()
+    }
+
     /// Enable the enhanced training model, adding engine capability to the
     /// synthetic Fire Commander when loading an older scenario package.
     pub fn enable_operational_model(&mut self) {
@@ -694,15 +701,6 @@ impl Scenario {
         }
         let n = self.grid.len();
         anyhow::ensure!(self.dem.iter().all(|x| x.is_finite()), "non-finite terrain");
-        for site in &self.communication_sites {
-            anyhow::ensure!(
-                self.cell_of(site.pos).is_some()
-                    && site.radius_m.is_finite()
-                    && site.radius_m > 0.0,
-                "invalid communication site {}",
-                site.id
-            );
-        }
         for road in &self.roads {
             anyhow::ensure!(
                 road.points.len() >= 2
@@ -948,6 +946,21 @@ pub fn format_clock(clock_s: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retired_communication_keys_are_ignored_by_old_scenarios() {
+        let s = synthetic::generate(synthetic::DEFAULT_SEED);
+        let mut v = serde_json::to_value(&s).unwrap();
+        v["communication_sites"] =
+            serde_json::json!([{"id": "mast", "pos": [100.0, 100.0], "radius_m": 500.0}]);
+        v["operations"]["communications"] = serde_json::json!(true);
+        let old: Scenario = serde_json::from_value(v).expect("retired keys must still load");
+        assert_eq!(
+            serde_json::to_value(&old.operations).unwrap(),
+            serde_json::to_value(&s.operations).unwrap()
+        );
+        assert!(old.check().is_ok());
+    }
+
     #[test]
     fn visual_category_is_optional_and_does_not_replace_operational_kind() {
         let legacy = serde_json::json!({"id":1,"kind":"sports_centre","name":"Assembly",

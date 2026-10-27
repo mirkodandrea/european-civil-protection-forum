@@ -640,8 +640,8 @@ impl App {
             let detail = match phase {
                 "orders" => tr(
                     lang,
-                    "Puoi proporre azioni a EXCON",
-                    "You can propose actions to EXCON",
+                    "Puoi rispondere e proporre azioni",
+                    "You can respond and propose actions",
                 ),
                 "resolving" => tr(
                     lang,

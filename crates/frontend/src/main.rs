@@ -19,6 +19,8 @@ mod maptest;
 mod notifications;
 mod render;
 mod risposte;
+mod situation;
+mod staged_commands;
 mod scenario_editor;
 mod server_settings;
 mod settings;
@@ -42,6 +44,10 @@ use yew::prelude::*;
 pub enum ActionKind {
     Ordinary,
     WorkSubmit,
+    /// A new linked conversation: open it once the server created it.
+    ConvStart,
+    /// A message in a linked conversation: clear the composer.
+    ConvSend,
     Store(String),
     Send(String, String),
     Prepare(String),
@@ -206,7 +212,14 @@ pub enum Msg {
     DismissToast(String),
     ExconLang(String),
     OpenInject(String),
+    /// Open the drill-down of a response row (empty: back to the list).
+    OpenInjectDetail(String),
     OpenWork(Option<String>),
+    /// Answer the inject delivery `.0` from the linked conversation `.1`.
+    OpenWorkConv(String, String),
+    /// Add commands to the response being composed.
+    StageActions(Vec<Value>),
+    Unstage(usize),
     NarrativeFromDraft(String),
     CloseInject,
     View(String),
@@ -232,6 +245,20 @@ impl App {
             _ if self.is_master() => self.excon_lang.clone(),
             l if !l.is_empty() => l.to_string(),
             _ => "it".into(),
+        }
+    }
+    /// Actions collected so far for the response being composed.
+    fn staged(&self) -> Vec<Value> {
+        self.fields
+            .get("work:staged")
+            .and_then(|v| serde_json::from_str(v).ok())
+            .unwrap_or_default()
+    }
+    fn set_staged(&mut self, staged: Vec<Value>) {
+        if staged.is_empty() {
+            self.fields.remove("work:staged");
+        } else {
+            self.fields.insert("work:staged".into(), Value::Array(staged).to_string());
         }
     }
     fn field(&self, key: &str, default: &str) -> String {
@@ -265,7 +292,12 @@ impl App {
     }
     fn name(&self, id: &str) -> String {
         if id == "master" {
-            "EXCON".into()
+            // Players never read "EXCON": exercise control speaks as a persona.
+            if self.is_master() || self.is_evaluator() || text(&self.state["default_persona"]).is_empty() {
+                "EXCON".into()
+            } else {
+                text(&self.state["default_persona"]).into()
+            }
         } else {
             self.roles()
                 .iter()
@@ -747,7 +779,7 @@ impl Component for App {
                                 } else if value["proposal"].is_null() {
                                     crate::i18n::ex("Messaggio tradotto inviato").into()
                                 } else {
-                                    crate::i18n::ex("Decisione inviata per revisione EXCON").into()
+                                    crate::i18n::ex("Decisione inviata per la revisione").into()
                                 };
                                 if let Some(d) = self.drafts.remove(&to) {
                                     if let Some(id) = d.private["id"].as_u64() {
@@ -762,10 +794,29 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative"] {
+                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:free_text", "work:reply"] {
                                     self.fields.remove(key);
                                 }
-                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Proposta inviata a EXCON per revisione")}.into();
+                                if let Some(draft) = self.drafts.remove("master") {
+                                    if let Some(id) = draft.private["id"].as_u64() {
+                                        self.dismissed.insert(id);
+                                    }
+                                }
+                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
+                            }
+                            ActionKind::ConvStart => {
+                                for key in ["inj:newconv", "inj:conv_text", "inj:conv_people", "inj:conv_reply"] {
+                                    self.fields.remove(key);
+                                }
+                                if let Some(id) = value["conversation"].as_u64() {
+                                    self.fields.insert("inj:conv".into(), id.to_string());
+                                }
+                                self.notice = crate::i18n::ex("Inviato").into();
+                            }
+                            ActionKind::ConvSend => {
+                                self.fields.remove("inj:conv_text");
+                                self.fields.remove("inj:conv_reply");
+                                self.notice = crate::i18n::ex("Inviato").into();
                             }
                             ActionKind::ClearField(key) => {
                                 self.fields.remove(&key);
@@ -778,14 +829,47 @@ impl Component for App {
             }
             Msg::NarrativeFromDraft(text) => {
                 self.fields.insert("work:narrative".into(), text);
-                self.fields.insert("work:mode".into(), "narrative".into());
+                if let Some(draft) = self.drafts.remove("master") {
+                    if let Some(id) = draft.private["id"].as_u64() {
+                        self.dismissed.insert(id);
+                    }
+                }
+            }
+            Msg::StageActions(commands) => {
+                let mut staged = self.staged();
+                staged.extend(commands);
+                staged.truncate(32);
+                self.set_staged(staged);
+                // The form (or the AI draft) has been turned into a staged action.
+                for key in ["work:location", "work:destination", "work:free_text", "work:reply"] {
+                    self.fields.remove(key);
+                }
+                if let Some(draft) = self.drafts.remove("master") {
+                    if let Some(id) = draft.private["id"].as_u64() {
+                        self.dismissed.insert(id);
+                    }
+                }
+            }
+            Msg::Unstage(index) => {
+                let mut staged = self.staged();
+                if index < staged.len() {
+                    staged.remove(index);
+                }
+                self.set_staged(staged);
+            }
+            Msg::OpenWorkConv(parent, conversation) => {
+                Component::update(self, ctx, Msg::OpenWork(Some(parent)));
+                self.fields.insert("work:conversation".into(), conversation);
             }
             Msg::OpenWork(parent) => {
                 self.fields.remove("work:clarify");
                 let parent = parent
                     .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
                     .unwrap_or_default();
+                self.fields.remove("work:conversation");
                 if self.field("work:reply_to", "") != parent {
+                    self.fields.remove("work:staged");
+                    self.fields.remove("work:narrative");
                     if let Some(draft) = self.drafts.remove("master") {
                         if let Some(id) = draft.private["id"].as_u64() {
                             self.dismissed.insert(id);
@@ -793,14 +877,19 @@ impl Component for App {
                     }
                     self.fields.remove("work:free_text");
                     self.fields.remove("work:reply");
-                    self.fields.insert("work:mode".into(), "action".into());
                     self.fields.remove("work:location");
                     self.fields.remove("work:destination");
                 }
                 self.fields.insert("work:reply_to".into(), parent);
                 self.fields.insert("work:open".into(), "true".into());
                 self.error.clear();
-                focus_when_rendered(".work-modal [role=tab][aria-selected=true]", 10);
+                focus_when_rendered("#response-narrative", 10);
+            }
+            Msg::OpenInjectDetail(key) => {
+                for k in ["inj:conv", "inj:newconv", "inj:conv_text", "inj:conv_reply", "inj:conv_people"] {
+                    self.fields.remove(k);
+                }
+                self.fields.insert("inj:open".into(), key);
             }
             Msg::OpenInject(id) => {
                 self.selected = id;
@@ -923,7 +1012,9 @@ impl Component for App {
                         }
                         "draft:mode" => d.mode = value,
                         "draft:title" => d.title = value,
-                        "draft:sender" => d.sender = value,
+                        "draft:sender" => {
+                            d.sender = if value.trim().is_empty() { "EXCON".into() } else { value }
+                        }
                         "draft:scope" => d.scope = value,
                         "draft:recipients" => d.recipients = value,
                         "draft:actions" => d.actions = serde_json::from_str(&value).unwrap_or_default(),
@@ -1029,7 +1120,7 @@ impl Component for App {
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
-            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
+            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("situazione",crate::i18n::ex("Situazione"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
             <div class="grow"/>
             if self.page=="chat"&&self.is_master(){<div class="mgmt-tabs" role="group" aria-label="Management"><span class="mgmt-label">{"Management"}</span>{nav("history",i18n::t(l,"nav_history"))}{nav("scenario",crate::i18n::ex("Impostazioni"))}</div>}
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
@@ -1042,8 +1133,9 @@ impl Component for App {
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()} roles={self.roles()}/> }
             else if self.page=="advanced"&&self.is_master(){<controllo::Controllo stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} error={self.error.clone()} done={self.done} action={self.action(ctx)}/>}
             else if self.page=="lobby"{<main class="page"><section class="card"><h2>{text(&self.stat["name"])}</h2><p>{text(&self.stat["description"])}</p><p><a href={href("master.html")}>{crate::i18n::ex("Apri la console conversazionale")}</a></p>{widgets::participant_links(&self.links,&self.roles())}</section></main>}
-            else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy||gated} pending={self.pending.clone()} oninject={ctx.link().callback(Msg::OpenInject)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
+            else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy||gated} pending={self.pending.clone()} oninject={ctx.link().callback(Msg::OpenInject)} onview={ctx.link().callback(Msg::View)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
+            else if self.is_master()&&self.active=="situazione"{<situation::Situation stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()}/>}
             else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
             else{{self.view_chat(ctx)}}
             if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} pending={self.pending.clone()} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}

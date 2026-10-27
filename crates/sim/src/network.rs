@@ -56,7 +56,7 @@ impl Route {
             .collect()
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Edge {
     a: usize,
     b: usize,
@@ -76,7 +76,7 @@ pub struct RoadSegment {
     pub from: Pos,
     pub to: Pos,
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Network {
     nodes: Vec<Pos>,
     edges: Vec<Edge>,

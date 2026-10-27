@@ -45,11 +45,13 @@ use browser_runtime as tokio;
 pub mod access;
 mod assessment;
 mod narrative;
+mod conversations;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod persist;
 mod decision_drafts;
 pub mod flow;
 mod forecast;
+mod situation;
 pub mod library;
 pub mod view;
 
@@ -66,6 +68,8 @@ pub struct AppState {
     assessments: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
     forecasts: Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, forecast::Draft>>>,
     forecast_slot: Arc<tokio::sync::Semaphore>,
+    /// Background turn preview of the EXCON situation view.
+    situation: situation::SlotRef,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
     /// Saved session; `None` keeps everything in memory.
     #[cfg(not(target_arch = "wasm32"))]
@@ -166,6 +170,7 @@ fn router_inner(
         assessments: Default::default(),
         forecasts: Default::default(),
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+        situation: Default::default(),
         presence: Default::default(),
         persist,
         scenarios,
@@ -204,6 +209,12 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_knowledge,
                 forecast::compute,
                 forecast::publish,
+                situation::get_impact,
+                situation::get_preview,
+                situation::get_suggestions,
+                situation::post_mark,
+                situation::post_plan,
+                situation::post_rewrite,
                 post_references,
                 post_resource_limits,
                 post_clock,
@@ -227,6 +238,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_player_actions,
                 narrative::submit,
                 narrative::outcome,
+                conversations::start,
+                conversations::post_message,
                 post_language,
                 post_start,
                 post_inject,
@@ -433,6 +446,8 @@ async fn get_static(s: AppState, principal: Principal) -> ApiResult {
     let mut v = ex.world.static_view();
     v["msel"] = json!(ex.world.scn.msel);
     v["excon_roles"] = json!(ex.world.scn.excon_roles);
+    v["default_persona"] = json!(ex.world.scn.default_persona);
+    v["personas"] = ex.personas();
     Ok(Json(v))
 }
 
@@ -594,6 +609,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "inject_actions": ex.inject_action_runs(),
         "agenda": ex.turn_agenda(),
         "inject_responses": ex.inject_responses(),
+        "linked_conversations": ex.master_linked_conversations(),
         "clarification_threads": ex.clarification_threads(),
         "sent_injects": ex.sent_injects,
         "messages": messages,
@@ -628,21 +644,33 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
                 } else { message.text.clone() };
                 Some(visible)
             }).collect::<Vec<_>>();
-            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s})), "executions": p.executions, "evidence": p.evidence})
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
         })
         .collect();
-    Ok(Json(json!({
+    let inbox = ex
+        .inbox(&role)
+        .into_iter()
+        .map(|m| {
+            let mut v = json!(m);
+            if let Some(name) = ex.message_persona(m, &player.language) {
+                v["persona"] = name.into();
+            }
+            v
+        })
+        .collect::<Vec<_>>();
+    let mut view = json!({
         "map": ex.player_map(&role)?,
         "knowledge_events": ex.knowledge_events.iter().filter(|e| e.role == role).collect::<Vec<_>>(),
         "exercise_phase":ex.exercise_phase,
         "clock_control":ex.clock_control,
         "player": player,
+        "default_persona": ex.persona_name(None, &player.language),
         "role": ex.world.scn.role(&role),
         "turn": ex.turn,
         "phase": ex.phase,
         "clock": ex.world.clock(),
         "time_s":ex.world.time_s(),
-        "inbox": ex.inbox(&role),
+        "inbox": inbox,
         "drafts": ex.player_drafts(&role),
         "turn_summaries": ex.player_turn_summaries(&role),
         "resources": ex.world.d.pools.get(&role),
@@ -651,7 +679,33 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
         "clarification_threads": ex.player_clarification_threads(&role),
-    })))
+        "linked_conversations": ex.player_linked_conversations(&role),
+    });
+    // Players never read "EXCON": any leftover wording of the model becomes the
+    // default persona. What participants wrote themselves stays as typed.
+    scrub_excon(&ex, &mut view, &player.language, &role);
+    Ok(Json(view))
+}
+
+/// Replace "EXCON" in the strings of a player view (see [`Exercise::scrub_for_player`]).
+fn scrub_excon(ex: &Exercise, v: &mut Value, language: &str, role: &str) {
+    match v {
+        Value::String(s) => {
+            if s.contains("EXCON") {
+                *s = ex.scrub_for_player(s, language);
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|x| scrub_excon(ex, x, language, role)),
+        Value::Object(o) => {
+            if o.get("from").and_then(Value::as_str) == Some(role) {
+                return;
+            }
+            o.iter_mut()
+                .filter(|(k, _)| !matches!(k.as_str(), "original"))
+                .for_each(|(_, x)| scrub_excon(ex, x, language, role));
+        }
+        _ => {}
+    }
 }
 
 #[derive(Deserialize)]
@@ -870,7 +924,7 @@ async fn post_player_chat(
 ) -> ApiResult {
     let Json(b) = b;
     if b.to == exercise::MASTER {
-        return Err(bad("player chat is only available between players; submit an operational decision for EXCON review"));
+        return Err(bad("player chat is only available between players; submit an operational decision for review"));
     }
     if b.interpret {
         return Err(bad(
@@ -891,7 +945,7 @@ async fn post_player_chat(
 async fn post_master_chat(_principal: Principal, _s: AppState, b: Json<ChatBody>) -> ApiResult {
     let _ = b;
     Err(bad(
-        "EXCON communicates through injects; chat is only available between players",
+        "exercise control communicates through injects; chat is only available between players",
     ))
 }
 
@@ -961,12 +1015,6 @@ async fn post_reply(
     Ok(Json(json!({"proposal": pid})))
 }
 
-#[derive(Deserialize)]
-struct PlayerActionsBody {
-    text: String,
-    commands: Vec<Command>,
-    reply_to: Option<u64>,
-}
 #[cfg_attr(
     not(target_arch = "wasm32"),
     rocket::post("/api/player/<role>/actions", data = "<b>")
@@ -975,13 +1023,10 @@ async fn post_player_actions(
     _principal: Principal,
     s: AppState,
     role: String,
-    b: Json<PlayerActionsBody>,
+    b: Json<narrative::ResponseBody>,
 ) -> ApiResult {
     let Json(b) = b;
-    let pid = s
-        .lock()
-        .player_actions(&role, &b.text, b.commands, b.reply_to)?;
-    Ok(Json(json!({"proposal":pid})))
+    narrative::respond(s, role, b).await
 }
 
 #[derive(Deserialize)]
@@ -1277,6 +1322,9 @@ struct DecideBody {
     commands: Option<Vec<Value>>,
     #[serde(default)]
     note: Option<String>,
+    /// Persona EXCON speaks as in the note and the feedback.
+    #[serde(default)]
+    persona: Option<String>,
 }
 
 #[cfg_attr(
@@ -1316,6 +1364,7 @@ async fn post_decide(
                 approve: b.approve,
                 commands,
                 note: b.note,
+                persona: b.persona,
             },
         )?;
         let p = ex.proposal(id).unwrap();
@@ -1328,6 +1377,7 @@ async fn post_decide(
             role,
             id,
             outcome.facts_en.clone(),
+            outcome.persona.clone(),
         ));
     }
     if drafts {
@@ -1340,6 +1390,9 @@ async fn post_decide(
 #[derive(Deserialize)]
 struct ClarifyBody {
     note: String,
+    /// Persona the question is asked as.
+    #[serde(default)]
+    persona: Option<String>,
 }
 
 #[cfg_attr(
@@ -1359,6 +1412,7 @@ async fn post_clarify(
         req.role.clone(),
         id,
         req.text_en.clone(),
+        b.persona,
     ));
     Ok(Json(json!(req)))
 }

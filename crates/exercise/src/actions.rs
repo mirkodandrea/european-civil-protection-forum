@@ -358,5 +358,6 @@ impl Exercise {
         self.action_runs.retain(|_, r| r.decided_s < t);
         self.skipped_injects.retain(|_, s| *s < t);
         self.disabled_actions.retain(|_, s| *s < t);
+        self.suggestion_marks.retain(|_, m| m.at_s < t);
     }
 }

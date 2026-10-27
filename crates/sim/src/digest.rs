@@ -20,7 +20,7 @@ pub mod cell_code {
     pub const POSSIBLE: u8 = 5;
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BuildingView {
     pub id: u32,
     /// 0 intact, 1 damaged, 2 destroyed
@@ -144,10 +144,9 @@ impl World {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
-    /// Dynamic state for the web UIs.
-    pub fn view(&self) -> Value {
-        let buildings: Vec<BuildingView> = self
-            .d
+    /// Per-building state as the web maps draw it.
+    pub fn building_views(&self) -> Vec<BuildingView> {
+        self.d
             .buildings
             .iter()
             .map(|b| BuildingView {
@@ -162,13 +161,16 @@ impl World {
                 evacuating: b.evac_done_at.is_some(),
                 evacuated: b.evacuated,
             })
-            .collect();
+            .collect()
+    }
+
+    /// Dynamic state for the web UIs.
+    pub fn view(&self) -> Value {
+        let buildings = self.building_views();
         json!({
             "operations":self.scn.operations,
             "tactical_policy":self.scn.tactical_policy,
             "traffic":self.traffic_view(),
-            "communication_sites":self.d.hazard.sites,
-            "pending_warnings":self.d.hazard.pending_warnings,
             "deployments":self.deployment_view(),
             "travel_settings":self.d.travel_settings,
             "stats": self.stats(),

@@ -108,6 +108,7 @@ pub struct FireSnapshot {
     added_moisture: Vec<f32>,
 }
 
+#[derive(Clone)]
 pub struct FireSim {
     core: Propagator,
     grid: GridSpec,

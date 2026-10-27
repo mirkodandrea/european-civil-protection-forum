@@ -22,6 +22,7 @@ use serde::Serialize;
 pub mod command;
 pub mod digest;
 pub mod hazard;
+pub mod impact;
 pub mod network;
 pub mod traffic;
 pub mod travel;
@@ -209,12 +210,14 @@ impl WorldSnapshot {
 }
 
 /// Precomputed geometry: which fire cells matter to each building and road.
+#[derive(Clone)]
 struct Cache {
     /// Per building: (cell index, weight) within 70 m.
     near: Vec<Vec<(usize, f32)>>,
     roads: Vec<(String, Vec<usize>)>,
 }
 
+#[derive(Clone)]
 pub struct World {
     pub scn: Arc<Scenario>,
     pub seed: u64,
@@ -328,7 +331,6 @@ impl World {
             network,
             next_allocation_id: 1,
         };
-        world.d.hazard.sites = world.operational_sites();
         world.d.hazard.updated_s = -10;
         world.refresh_hazard();
         Ok(world)
@@ -1271,30 +1273,7 @@ impl World {
             }
             Command::IssueWarning { zone } => {
                 let code = self.zone_code(zone).unwrap();
-                if self.scn.operations.communications
-                    && self
-                        .scn
-                        .buildings
-                        .iter()
-                        .filter(|b| self.scn.zone_of(b.pos).as_deref() == Some(&code))
-                        .any(|b| self.d.hazard.warning_lost(b.pos))
-                {
-                    if !self
-                        .d
-                        .hazard
-                        .pending_warnings
-                        .iter()
-                        .any(|(z, _)| z == &code)
-                    {
-                        self.d
-                            .hazard
-                            .pending_warnings
-                            .push((code.clone(), t + 1200));
-                    }
-                    out.push("Warning delayed 20 simulated minutes: communication outage; fallback delivery".into());
-                } else {
-                    self.d.warned.insert(code.clone());
-                }
+                self.d.warned.insert(code.clone());
                 self.event(
                     "warning",
                     format!("{by} issued a warning to zone {code}"),

@@ -367,7 +367,7 @@ fn roles_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel) ->
 }
 
 /// The parts the EXCON plays: one row per name, reorderable.
-fn excon_roles_list(names: Vec<String>, open: &UseStateHandle<Option<Open>>) -> Html {
+fn excon_roles_list(names: Vec<String>, default_persona: String, open: &UseStateHandle<Option<Open>>) -> Html {
     let n = names.len();
     fn edit_fn(open: &UseStateHandle<Option<Open>>, f: impl Fn(&mut Vec<String>) + 'static) -> Callback<MouseEvent> {
         upd(open, move |p, _: MouseEvent| f(p.edits.excon_roles.get_or_insert_with(Vec::new)))
@@ -376,6 +376,8 @@ fn excon_roles_list(names: Vec<String>, open: &UseStateHandle<Option<Open>>) -> 
     html! {<section class="excon-roles" aria-label={ex("Ruoli interpretati dall’EXCON")}>
         <h4>{ex("Ruoli interpretati dall’EXCON")}</h4>
         <p class="muted">{ex("Le parti che l’EXCON recita negli inject (ad esempio «Centrale 112», «Sindaco»). Non sono ruoli player: compaiono come mittenti quando si costruisce un inject.")}</p>
+        <label class="wide default-persona" title={ex("Il nome con cui l’EXCON si rivolge ai player quando non sceglie un altro personaggio e l’inject non ha un mittente.")}>{ex("Personaggio predefinito dell’EXCON")}
+            <input maxlength="80" placeholder={ex("Sala operativa")} value={default_persona} oninput={upd(open, move |p, e: InputEvent| p.edits.default_persona = Some(api::input(e)))}/></label>
         <ul class="excon-role-list">
         {for names.iter().enumerate().map(|(i, name)| {
             let dup = !name.trim().is_empty() && names.iter().filter(|x| x.trim() == name.trim()).count() > 1;
@@ -649,7 +651,7 @@ fn team_view(props: &ListProps) -> Html {
     html! {<div class="rr-tab">
         <p class="muted">{ex("Ruoli (pagine player), tipi di risorsa e rinforzi in un unico elenco. Azioni e risorse decidono cosa ogni ruolo può proporre; l’EXCON approva comunque ogni azione.")}</p>
         {master_detail(items, tools, detail)}
-        {excon_roles_list(o.pack.edits.excon_roles.clone().unwrap_or_default(), open)}
+        {excon_roles_list(o.pack.edits.excon_roles.clone().unwrap_or_default(), o.pack.edits.default_persona.clone().unwrap_or_default(), open)}
     </div>}
 }
 
@@ -1105,12 +1107,11 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     let ops = e.operations.clone().unwrap_or_default();
     let policy = e.tactical_policy.clone().unwrap_or_default();
     type Flag = (&'static str, &'static str, fn(&scenario::Operations) -> bool, fn(&mut scenario::Operations, bool));
-    let flags: [Flag; 10] = [
+    let flags: [Flag; 9] = [
         ("Percorsi stradali", "I mezzi seguono la rete stradale reale. Senza un percorso possibile restano in attesa o falliscono: non c’è mai una linea retta di ripiego.", |o| o.road_routing, |o, v| o.road_routing = v),
         ("Soppressione progressiva", "Il lavoro di squadre e mezzi si accumula nel tempo (linee che si completano a poco a poco) invece di avere effetto istantaneo.", |o| o.progressive_suppression, |o, v| o.progressive_suppression = v),
         ("Traffico aggregato", "Simula il traffico dei veicoli civili come flusso complessivo: può rallentare le strade e gli spostamenti, senza modellare ogni singola auto.", |o| o.traffic, |o, v| o.traffic = v),
         ("Esposizione all’intensità", "Squadre e veicoli vicini al fronte accumulano esposizione in base all’intensità del fuoco; oltre certe soglie devono ritirarsi.", |o| o.intensity_exposure, |o, v| o.intensity_exposure = v),
-        ("Comunicazioni", "Gli avvisi e gli ordini dipendono dalla copertura radio/telefonica: dove i siti di comunicazione cadono o mancano, i messaggi arrivano in ritardo o non arrivano.", |o| o.communications, |o, v| o.communications = v),
         ("Spotting (brace a distanza)", "Il vento trasporta braci che accendono nuovi focolai davanti al fronte. Rende il fuoco più imprevedibile: da attivare solo se lo scenario lo richiede.", |o| o.spotting, |o, v| o.spotting = v),
         ("Chiusure di tratto per fuoco", "Un tratto di strada raggiunto o minacciato dal fuoco viene chiuso e i percorsi vengono ricalcolati.", |o| o.segment_fire_closures, |o, v| o.segment_fire_closures = v),
         ("Spostamenti fuori strada", "Alcuni mezzi e squadre possono attraversare il terreno aperto, più lentamente, quando la strada non basta.", |o| o.terrain_travel, |o, v| o.terrain_travel = v),
@@ -1126,11 +1127,11 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
         upd(open, move |p, v: String| if let Some(n) = num(&v) { f(p.edits.tactical_policy.get_or_insert_with(Default::default), n) })
     };
     html! {<>
-        {gen_section("Modello operativo", "Quanto realistica è la logistica: strade, tempi, comunicazioni. Ogni opzione è indipendente; tutte spente = regole semplificate originali.", html! {<>
+        {gen_section("Modello operativo", "Quanto realistica è la logistica: strade, tempi, comando sul posto. Ogni opzione è indipendente; tutte spente = regole semplificate originali.", html! {<>
             <div class="gen-group wide">{gen_flag("Avvia con il modello operativo attivo", "Parte con le opzioni sotto attive. Se spento, ci si affida alle regole semplificate o all’opzione --operational-model della riga di comando.", run.operational_model == Some(true), upd(open, |p, on: bool| p.run.operational_model = on.then_some(true)))}</div>
-            <div class="gen-group wide"><h5>{ex("Strade e spostamenti")}</h5>{for [0, 6, 7, 8, 2].map(flag)}</div>
-            <div class="gen-group wide"><h5>{ex("Fuoco e rischio")}</h5>{for [1, 3, 5].map(flag)}</div>
-            <div class="gen-group wide"><h5>{ex("Comando e comunicazioni")}</h5>{for [4, 9].map(flag)}</div>
+            <div class="gen-group wide"><h5>{ex("Strade e spostamenti")}</h5>{for [0, 5, 6, 7, 2].map(flag)}</div>
+            <div class="gen-group wide"><h5>{ex("Fuoco e rischio")}</h5>{for [1, 3, 4].map(flag)}</div>
+            <div class="gen-group wide"><h5>{ex("Comando sul posto")}</h5>{for [8].map(flag)}</div>
         </>})}
         {gen_section("Politica tattica", "Regole con cui le squadre agiscono sul posto. Distanze in metri, tempi in secondi simulati. Sono ipotesi di addestramento, non indicazioni di sicurezza operativa.", html! {<>
             {gen_number("Raggio del settore (m)", "Distanza entro cui una squadra considera suo il settore attorno al punto di missione. Tipico: 200–500 m.", "0", None, "any", "", policy.sector_radius_m.to_string(), pol(|p, n| p.sector_radius_m = n as f32))}

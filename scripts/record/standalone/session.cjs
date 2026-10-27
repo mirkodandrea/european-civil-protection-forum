@@ -205,12 +205,12 @@ const POINTER = `
       await click(P('mayor').locator('#new-player-action'));
       await W.waitFor();
       if (captionId) await caption(captionId);
-      await click(W.getByRole('tab', { name: /Assistente AI/ }));
+      await click(W.locator('.work-ai summary'));
       await type(W.locator('#work-free-text'), 'Evacuare la scuola primaria di Pineta verso il centro sportivo di Valverde e avvisare la popolazione di Pineta.');
       let ai = false;
       if (key) {
         await click(W.getByRole('button', { name: /Prepara bozza AI/ }));
-        const confirm = W.getByRole('button', { name: /Conferma e invia/ });
+        const confirm = W.locator('[data-stage-draft]');
         let quiet = null;
         for (let i = 0; i < 90 && !ai; i++) {
           await sleep(500); ai = await confirm.isEnabled().catch(() => false);
@@ -219,15 +219,15 @@ const POINTER = `
         // The wait for the model after the voice has finished is shown sped up (compose.py).
         if (!DRY && quiet !== null && Date.now() - t0 - quiet > 2500) speedups.push({ from: quiet + 600, to: Date.now() - t0 - 400, factor: 8 });
         log('AI draft usable:', ai);
-        if (ai) { waitEnd = Date.now(); if (followUp) await caption(followUp); await beat(1500); await shot('ai_draft'); await click(confirm, { pause: 900 }); }
+        if (ai) { waitEnd = Date.now(); if (followUp) await caption(followUp); await beat(1500); await shot('ai_draft'); await click(confirm, { pause: 900 }); await click(W.locator('[data-respond]'), { pause: 900 }); }
       }
       if (!ai) {
         // Fallback: the structured form (same command the AI would have produced).
-        await click(W.getByRole('tab', { name: /Azione operativa/ }));
         await W.locator('#work-action').selectOption('EvacuateBuilding');
         await W.locator('#work-location').selectOption({ label: 'Pineta Primary School' });
         if (followUp) await caption(followUp);
-        await click(W.locator('#player-work button.primary').first(), { pause: 900 });
+        await click(W.locator('[data-add-action]'), { pause: 500 });
+        await click(W.locator('[data-respond]'), { pause: 900 });
       }
       await W.waitFor({ state: 'hidden' });
     };
@@ -248,13 +248,15 @@ const POINTER = `
     await click(F.getByRole('button', { name: /Secondo punto|Second point/ }), { pause: 200 });
     await mapClick(fmap, 0.80, 0.40);
     await beat(800);
-    await click(F.locator('#player-work button.primary').first(), { pause: 900 });
+    await click(F.locator('[data-add-action]'), { pause: 500 });
+    await click(F.locator('[data-respond]'), { pause: 900 });
     await F.waitFor({ state: 'hidden' });
     await click(P('fire_commander').locator('#new-player-action'));
     await F.waitFor();
     await F.locator('#work-action').selectOption('WaterDrop');
     await mapClick(F.locator('canvas#work-map'), 0.80, 0.31);
-    await click(F.locator('#player-work button.primary').first(), { pause: 900 });
+    await click(F.locator('[data-add-action]'), { pause: 500 });
+    await click(F.locator('[data-respond]'), { pause: 900 });
     await F.waitFor({ state: 'hidden' });
 
     // ------------------------------------------------------------ chat
@@ -281,7 +283,8 @@ const POINTER = `
     await R.locator('#work-resource').selectOption('buses');
     await R.locator('#work-qty').fill('1');
     await beat(1200);
-    await click(R.locator('#player-work button.primary').first(), { pause: 900 });
+    await click(R.locator('[data-add-action]'), { pause: 500 });
+    await click(R.locator('[data-respond]'), { pause: 900 });
     await R.waitFor({ state: 'hidden' });
 
     // ------------------------------------------------------------ EXCON review
@@ -355,7 +358,8 @@ const POINTER = `
     await R.locator('#work-resource').selectOption('ground_crews');
     await R.locator('#work-qty').fill('2');
     await beat(1200);
-    await click(R.locator('#player-work button.primary').first(), { pause: 900 });
+    await click(R.locator('[data-add-action]'), { pause: 500 });
+    await click(R.locator('[data-respond]'), { pause: 900 });
     await R.waitFor({ state: 'hidden' });
     await click(tab('master'));
     await click(M.locator('[data-view="risposte"]'));

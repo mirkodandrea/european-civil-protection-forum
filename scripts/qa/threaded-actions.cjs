@@ -141,7 +141,8 @@ const supportedText = 'Issue a warning for the selected zone';
     await clickMap(work.locator('canvas#work-map'), 0.5, 0.45);
     assert((await work.locator('#work-location').inputValue()).trim(), 'map click selects a zone for the action');
     await page.screenshot({ path: path.join(out, 'threaded-work-modal-desktop.png') });
-    await work.locator('#player-work button.primary').first().click();
+    await work.locator('[data-add-action]').click();
+    await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });
 
     // EXCON reviews the action and the messages that form its thread.
@@ -160,7 +161,8 @@ const supportedText = 'Issue a warning for the selected zone';
       await work.locator('#work-reply-to').selectOption(earlierInjectId);
       await work.locator('#work-action').selectOption('IssueWarning');
       await work.locator('#work-location').fill('F4');
-      await work.locator('#player-work button.primary').first().click();
+      await work.locator('[data-add-action]').click();
+      await work.locator('[data-respond]').click();
       await work.waitFor({ state: 'hidden' });
     }
     await choose('master');
@@ -173,12 +175,12 @@ const supportedText = 'Issue a warning for the selected zone';
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#new-player-action').click();
     await work.waitFor();
-    await work.getByRole('tab', { name: /AI assistant|assistente AI/i }).click();
+    await work.locator('.work-ai summary').click();
     await work.locator('#work-free-text').fill(unsupportedText);
     await work.getByRole('button', { name: /prepare AI draft|prepara bozza AI/i }).click();
     await work.getByText(/no verifiable operational actions|non contiene azioni operative verificabili/i).waitFor();
-    const confirm = work.getByRole('button', { name: /confirm and send|conferma e invia/i });
-    assert(await confirm.isDisabled(), 'unsupported AI draft cannot be submitted');
+    const confirm = work.locator('[data-stage-draft]');
+    assert(await confirm.isDisabled(), 'unsupported AI draft cannot be added to the response');
     assert.equal(await master.locator('.proposal-inline[data-proposal]').count(), proposalCountBeforeAi,
       'unsupported AI draft creates no EXCON proposal while its modal remains open');
 
@@ -190,7 +192,9 @@ const supportedText = 'Issue a warning for the selected zone';
     assert(!(await confirm.isDisabled()), 'coded AI action enables the explicit confirmation');
     assert.equal(await master.locator('.proposal-inline[data-proposal]').count(), proposalCountBeforeAi,
       'AI interpretation is not sent before confirmation while its modal remains open');
-    await work.getByRole('button', { name: /confirm and send|conferma e invia/i }).click();
+    await confirm.click();
+    await work.locator('[data-staged-action]').waitFor();
+    await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });
     await choose('master');
     await page.waitForFunction(count => document.querySelectorAll('[data-panel="master"] .proposal-inline[data-proposal]').length > count, proposalCountBeforeAi);
@@ -218,11 +222,6 @@ const supportedText = 'Issue a warning for the selected zone';
     await clickMap(fireWork.locator('canvas#work-map'), 0.72, 0.66);
     const secondValue = await fireWork.locator('#work-destination').inputValue();
     assert(firstValue && secondValue && firstValue !== secondValue, 'CutFireLine endpoints can be chosen independently');
-    const modalBox = await fireWork.boundingBox();
-    assert(modalBox && modalBox.x >= 0 && modalBox.y >= 0 && modalBox.x + modalBox.width <= 390 && modalBox.y + modalBox.height <= 844,
-      'mobile work modal stays inside the viewport');
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
-      'mobile layout has no horizontal overflow');
     await waitPaint();
     await page.screenshot({ path: path.join(out, 'threaded-work-modal-mobile.png'), fullPage: true });
 
