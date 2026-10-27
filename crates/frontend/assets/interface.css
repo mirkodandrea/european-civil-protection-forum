@@ -273,14 +273,18 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .notification-item{display:grid;gap:3px;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;padding:10px;font-size:13px;overflow-wrap:anywhere}
 .notification-item strong{font-size:13px}.notification-item small{font-size:11px}
 .notification-item.unread-event{background:#eef6f1;border-left:3px solid var(--accent)}
-.notification-toasts{position:absolute;right:14px;top:160px;z-index:75;display:grid;gap:8px;width:min(360px,calc(100% - 28px));pointer-events:none}
+.notification-toasts{position:fixed;right:14px;bottom:14px;z-index:75;display:grid;gap:8px;width:min(360px,calc(100% - 28px));pointer-events:none}
 .role-panel{position:relative}
 .notification-toast{pointer-events:auto;display:flex;align-items:start;gap:6px;background:#f5fbf6;border:1px solid #aecbbb;border-left:4px solid var(--accent);border-radius:24px;box-shadow:0 5px 16px #203c3d22;padding:8px 10px}
 .notification-toast>button:first-child{overflow:hidden;overflow-wrap:anywhere;display:grid;gap:2px;flex:1;min-width:0;text-align:left;background:none;border:0;padding:3px 6px;font-size:13px}
 .notification-toast>button:first-child span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
 .notification-toast .dismiss-toast{flex:none;border:0;background:none;font-size:18px;padding:2px 7px}
-@media(max-width:760px){.notification-panel{max-height:56dvh}.notification-toasts{top:190px;right:10px;width:calc(100% - 20px)}.notification-panel>header{flex-wrap:wrap}}
+@media(max-width:760px){.notification-panel{max-height:56dvh}.notification-toasts{right:10px;width:calc(100% - 20px)}.notification-panel>header{flex-wrap:wrap}}
 
+.notification-toast.needs-action{background:#fff5e8;border-color:#e3b887;border-left-color:#c2410c}
+.notification-item.needs-action{border-left:3px solid #c2410c}.notification-item.needs-action.unread-event{background:#fff5e8}
+.notification-item.needs-action small{color:#9a3412;font-weight:600}
+.notification-bell .unread.urgent{background:#c2410c}
 .notification-backdrop{position:fixed;inset:0;z-index:79;border:0;background:transparent!important;border-radius:0;cursor:default}
 
 .chat-inject-reference{display:flex;align-items:center;gap:8px;margin-bottom:9px;min-width:0}.chat-inject-reference label{font-size:12px;flex:none}.chat-inject-reference select{flex:1;min-width:0;max-width:100%;font-size:13px}.chat-inject-context{display:block;font-size:11px;color:var(--muted);margin:0 0 6px}.message-response-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:8px}.message-response-actions button{font-size:12px;padding:5px 8px;min-height:32px}.message-response-actions .message-reply-button{margin:0}.proposal-thread{margin:12px 0;max-height:340px;overflow:auto;background:#f3f7f4;border:1px solid var(--line);border-radius:8px;padding:9px}.proposal-thread summary{font-size:13px;font-weight:600}.proposal-thread ol{list-style:none;padding:0;margin:8px 0 0}.proposal-thread li{padding:8px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}.proposal-thread li b{display:block;font-size:13px}.proposal-thread li p{white-space:pre-wrap;font-size:13px;margin:4px 0}.proposal-thread small{font-size:11px}
