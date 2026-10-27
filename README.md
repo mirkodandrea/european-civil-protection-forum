@@ -48,9 +48,6 @@ uses `openai/gpt-oss-120b` for both tasks, and accepts a port argument or
 rustup target add wasm32-unknown-unknown
 cargo install trunk --locked
 
-# Build the browser app before starting the server
-./scripts/build_frontend.sh
-
 # Development: frontend rebuild + browser live reload
 ./scripts/dev_frontend.sh
 
@@ -58,7 +55,7 @@ cargo install trunk --locked
 OPENROUTER_API_KEY=sk-or-...
 # OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   (default)
 
-cargo run --release -p app            # simulator window + web server on :8080
+cargo run --release -p app            # builds the browser UI if needed, then starts window + web server on :8080
 cargo run --release -p app -- --headless   # native server only (no window)
 ```
 
@@ -92,7 +89,7 @@ devtunnel host -p 8080            # private: only your account can open the URL
 
 Keep the tunnel private (the default). With `--allow-anonymous`, anyone with the URL could run the EXCON console and spend your OpenRouter credit.
 
-The frontend build writes `web/dist/` (ignored by git), including compatible `.html` entry points. Rebuild it after changing `crates/frontend/`; the server defaults to `--web web/dist`. No Node build step or CDN is required.
+The `app` crate builds the browser UI into `web/dist/` when its frontend inputs change, before starting the server. A standalone `./scripts/build_frontend.sh` is still available; the server defaults to `--web web/dist`. No Node build step or CDN is required.
 
 Other options: `--scenario FILE`, `--seed N`, `--port N`, `--web DIR`, `--realizations N` (Monte Carlo runs, default 32), `--cutoff P` (fraction of runs that must reach a cell for it to count as burned, default 0.5; 0.25 gives a pessimistic, planning fire). The default landscape is the Factory-generated Valverde valley. Regenerate it with `python3 scripts/scenario_factory.py landscape` (requires NumPy). The historical calibrated scenario remains available with `--scenario data/scenarios/synthetic_valley.json`; `cargo run -p scenario --bin gen-scenario` regenerates that historical template.
 
@@ -122,8 +119,8 @@ An HTML/WebGL viewer only has to implement the same two calls.
 
 `cargo run --release -p app -- --operational-model` enables road routing,
 progressive fire-line construction, engines with finite tanks and refills,
-finite aircraft drops, evacuation queues, intensity-based exposure and
-communication outages. Existing scenarios keep their calibrated rules unless
+finite aircraft drops, evacuation queues and intensity-based exposure.
+Existing scenarios keep their calibrated rules unless
 this mode is enabled. Scenario configuration and command behavior are defined in
 the scenario and simulation crates.
 
