@@ -25,15 +25,11 @@ async fn app() -> TestApp {
     scn.places.clear();
     scn.msel.clear();
     scn.communication_sites.clear();
-    scn.initial_ignitions = vec![scenario::IgnitionSpec {
-        at: [160.0, 160.0],
-        radius_m: 25.0,
-    }];
     scn.zones.cols = 1;
     scn.zones.rows = 1;
     scn.zones.size_m = 320.0;
     scn.check().unwrap();
-    let world = sim::World::with_options(
+    let mut world = sim::World::with_options(
         Arc::new(scn),
         3,
         sim::FireOptions {
@@ -42,6 +38,12 @@ async fn app() -> TestApp {
         },
     )
     .unwrap();
+    world
+        .apply(
+            &sim::Command::Ignite { at: sim::Loc::Point { x: 160.0, y: 160.0 }, radius_m: Some(25.0) },
+            &sim::Actor::Master,
+        )
+        .unwrap();
     let exercise = Arc::new(Mutex::new(exercise::Exercise::new(world)));
     let llm = llm::Llm::mock(|task, _, _| anyhow::bail!("unexpected LLM task {task}"));
     let access = server::access::Access::with_keys("forecast-master".into(), BTreeMap::from([

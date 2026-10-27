@@ -5,7 +5,11 @@ use sim::{Actor, Area, Command, Damage, Loc, Verdict, World};
 
 fn world() -> World {
     let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
-    World::new(scn, 1).unwrap()
+    let mut w = World::new(scn, 1).unwrap();
+    let (x, y) = (scenario::synthetic::IGNITION[0], scenario::synthetic::IGNITION[1]);
+    let fire = Command::Ignite { at: Loc::Point { x, y }, radius_m: Some(scenario::synthetic::IGNITION_RADIUS_M) };
+    w.apply(&fire, &Actor::Master).unwrap();
+    w
 }
 
 fn role(r: &str) -> Actor {

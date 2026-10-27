@@ -8,7 +8,6 @@ pub enum Selection {
     Building(usize),
     Road(usize),
     Place(usize),
-    Ignition(usize),
 }
 
 pub struct Document {
@@ -292,11 +291,6 @@ impl Document {
                     });
                     Selection::Road(s.roads.len() - 1)
                 }
-                "ignition" => {
-                    ensure!(!underwater(s, at), "Punto sott'acqua");
-                    s.initial_ignitions.push(IgnitionSpec { at, radius_m: 40. });
-                    Selection::Ignition(s.initial_ignitions.len() - 1)
-                }
                 _ => {
                     let mut n = s.places.len() + 1;
                     while s.places.iter().any(|p| p.name == format!("Luogo {n}")) {
@@ -345,9 +339,6 @@ impl Document {
                     if s.staging_base.as_ref() == Some(&p.name) {
                         s.staging_base = None;
                     }
-                }
-                Selection::Ignition(i) if i < s.initial_ignitions.len() => {
-                    s.initial_ignitions.remove(i);
                 }
                 _ => anyhow::bail!("Selezione non valida"),
             };
@@ -459,12 +450,6 @@ pub fn validate(s: &Scenario) -> Result<()> {
             p.name
         );
     }
-    for i in &s.initial_ignitions {
-        ensure!(
-            inside(s, i.at) && i.radius_m.is_finite() && i.radius_m >= 40.,
-            "Innesco: raggio minimo 40 m e centro sulla mappa"
-        );
-    }
     ensure!(
         s.dem.iter().all(|v| v.abs() <= 10000.),
         "Quota fuori intervallo ±10000 m"
@@ -492,7 +477,6 @@ pub fn blank(id: &str, cells: usize, cellsize: f32) -> Result<Scenario> {
     s.buildings.clear();
     s.roads.clear();
     s.places.clear();
-    s.initial_ignitions.clear();
     s.msel.clear();
     s.timeline.clear();
     s.roles.clear();

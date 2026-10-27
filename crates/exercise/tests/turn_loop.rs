@@ -1058,7 +1058,6 @@ fn default_scenario_ignition_is_an_action_of_the_first_inject() {
         "../../../data/scenarios/valverde_factory.json"
     ))
     .unwrap();
-    assert!(scn.initial_ignitions.is_empty());
     assert_eq!(scn.msel.iter().find(|i| i.id == "I-01").unwrap().actions[0].id, "A-01");
     let world = World::with_options(
         Arc::new(scn),

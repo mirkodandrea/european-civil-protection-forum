@@ -15,7 +15,6 @@ fn scene() -> scenario::Scenario {
     s.buildings.clear();
     s.places.clear();
     s.msel.clear();
-    s.initial_ignitions.clear();
     s.roads = vec![Road {
         id: "main".into(),
         name: "Main".into(),

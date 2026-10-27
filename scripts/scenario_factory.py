@@ -55,7 +55,6 @@ def nature(args):
         picks.append(good[np.argmax(d)])
         d = np.minimum(d, ((good-picks[-1])**2).sum(axis=1))
     ignitions = [list(grid.to_xy(int(r),int(c))) for r,c in picks]
-    scn['initial_ignitions'] = [{'at': ignitions[0], 'radius_m': 60}]
     write(args.output / 'scenario.json', scn)
     write(args.output / 'ignitions.json', ignitions)
     print(f'Generated {candidate.name}: {args.output}')
@@ -63,9 +62,9 @@ def nature(args):
 
 def sweep(args):
     scn = read(args.scenario)
-    starts = read(args.ignitions) if args.ignitions else [i['at'] for i in scn['initial_ignitions']]
-    if not starts:
-        raise ValueError('Author initial_ignitions or pass --ignitions')
+    if not args.ignitions:
+        raise ValueError('Pass --ignitions (the ignitions.json written by the landscape step)')
+    starts = read(args.ignitions)
     jobs = [{'name': f'I{i+1}_w{wind}_s{seed}', 'seed': seed, 'at': at,
         'radius_m': 60, 'wind_from_deg': wind, 'wind_kmh': args.wind_kmh,
         'moisture_pct': args.moisture, 'minutes': args.minutes,

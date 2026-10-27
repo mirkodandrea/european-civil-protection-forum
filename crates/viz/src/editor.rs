@@ -132,7 +132,6 @@ fn selected_json(s: &Scenario, selection: Selection) -> Option<serde_json::Value
         Selection::Building(i) => serde_json::to_value(s.buildings.get(i)?).ok(),
         Selection::Road(i) => serde_json::to_value(s.roads.get(i)?).ok(),
         Selection::Place(i) => serde_json::to_value(s.places.get(i)?).ok(),
-        Selection::Ignition(i) => serde_json::to_value(s.initial_ignitions.get(i)?).ok(),
     }
 }
 fn set_selection(e: &mut Editor, d: &Document, selection: Option<Selection>) {
@@ -251,7 +250,6 @@ pub(crate) fn draw(
                     ("building", "Aggiungi edificio"),
                     ("road", "Strada (polilinea)"),
                     ("place", "Aggiungi luogo"),
-                    ("ignition", "Aggiungi innesco"),
                 ] {
                     if ui
                         .selectable_value(&mut e.tool, id.to_string(), label)
@@ -346,15 +344,6 @@ pub(crate) fn draw(
                         set_selection(e, &d, Some(sel));
                     }
                 }
-                for (i, _) in s.initial_ignitions.iter().enumerate() {
-                    let sel = Selection::Ignition(i);
-                    if ui
-                        .selectable_label(e.selected == Some(sel), format!("Innesco {}", i + 1))
-                        .clicked()
-                    {
-                        set_selection(e, &d, Some(sel));
-                    }
-                }
             });
         });
     if let Some(selection) = e.selected {
@@ -400,9 +389,6 @@ pub(crate) fn draw(
                                 }
                                 Selection::Place(i) => {
                                     s.places[i] = serde_json::from_str(&e.properties)?
-                                }
-                                Selection::Ignition(i) => {
-                                    s.initial_ignitions[i] = serde_json::from_str(&e.properties)?
                                 }
                             };
                             Ok(())
@@ -869,20 +855,6 @@ pub(crate) fn interact(
             }
         }
     }
-    // Markers are authored objects, never simulated fire.
-    for (i, p) in s.initial_ignitions.iter().enumerate() {
-        let at = crate::frame::to_bevy(s, p.at, 8.);
-        gizmos.circle(
-            at,
-            Dir3::Y,
-            p.radius_m,
-            if e.selected == Some(Selection::Ignition(i)) {
-                Color::srgb(1., 1., 0.)
-            } else {
-                Color::srgb(1., 0.3, 0.)
-            },
-        );
-    }
     for (i, p) in s.places.iter().enumerate() {
         let at = crate::frame::to_bevy(s, p.pos, 8.);
         gizmos.line(at, at + Vec3::Y * 70., Color::srgb(0.1, 0.8, 1.));
@@ -1077,10 +1049,6 @@ pub(crate) fn interact(
                     }
                     for (i, p) in s.places.iter().enumerate() {
                         objects.push((scenario::editor::distance(at, p.pos), Selection::Place(i)));
-                    }
-                    for (i, p) in s.initial_ignitions.iter().enumerate() {
-                        objects
-                            .push((scenario::editor::distance(at, p.at), Selection::Ignition(i)));
                     }
                     let selection = objects
                         .into_iter()

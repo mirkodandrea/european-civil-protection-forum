@@ -5,7 +5,7 @@ Uno scenario è un **pack** (piccolo, modificabile) sopra un **territorio** (gra
 - **Territorio**: `data/scenarios/<id>.json`. Griglia, combustibili, edifici, strade, settori. Non si modifica dalla UI.
 - **Pack**: `data/scenarios/<id>.pack.json`. Dice quale territorio usa (`base`) e cosa cambia: nome, ora di inizio, meteo, inneschi, luoghi, tipi di risorsa, ruoli, rinforzi, inject (MSEL, ciascuno con le sue azioni), politica tattica, modello operativo, base di partenza delle risorse. Un campo assente in `edits` resta quello del territorio. `run` fissa seme, realizzazioni, soglia e modello operativo; le opzioni da riga di comando hanno la precedenza.
 
-Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Generale, Ruoli, Risorse, Inneschi con mappa, Rinforzi, Luoghi, Inject, Avanzate), controlla, salva, avvia. «Avvia» costruisce una nuova esercitazione dal pack e scarta la sessione in corso. Salvare non tocca l'esercitazione in corso. Un pack salvato dall’editor contiene tutti i campi operativi; continua a richiedere il territorio indicato da `base`.
+Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Generale, Ruoli e risorse con rinforzi, Timeline con inject e azioni — inneschi inclusi —, Avanzate; i luoghi sono definiti nel territorio), controlla, salva, avvia. «Avvia» costruisce una nuova esercitazione dal pack e scarta la sessione in corso. Salvare non tocca l'esercitazione in corso. Un pack salvato dall’editor contiene tutti i campi operativi; continua a richiedere il territorio indicato da `base`.
 
 ## Dove vivono i pack
 
@@ -65,7 +65,7 @@ Le azioni non sono eventi separati: appartengono a un inject. Ogni inject del pa
 
 Formato precedente: un pack può ancora avere `edits.timeline` (e un territorio `timeline`) con azioni autonome `{id, title, at_s, command, after?, note}`. Al caricamento vengono convertite e il campo non è più scritto: con `after` l'azione passa a quell'inject; senza `after` passa all'ultimo inject pianificato a `at_s` o prima di esso, altrimenti al primo inject; `offset_s = at_s − ora prevista dell'inject` (negativo se l'azione cadeva prima: diventa un'azione anticipata). L'errore è esplicito se non esiste alcun inject cui agganciarla.
 
-Gli scenari forniti (`valverde_factory` e il pack `valverde_night_wind`) non hanno `initial_ignitions`: l'innesco è l'azione `A-01` (e `N-A1` nel pack notturno) dell'inject `I-01` (`N-01`), con `offset_s` 0: il fuoco parte quando EXCON invia l'inject che lo annuncia; prima mappa e vista 3D non mostrano fuoco. Chi guida l'esercitazione da script invia l'inject (`POST /api/master/msel/I-01/send`) prima di avanzare (vedi `scripts/demo_session.sh`).
+Gli scenari non hanno inneschi iniziali (il concetto `initial_ignitions` non esiste più; i pack salvati che lo contengono si caricano e il campo viene ignorato). Negli scenari forniti l'innesco è un'azione `Ignite` di un inject: l'azione `A-01` (e `N-A1` nel pack notturno) dell'inject `I-01` (`N-01`), con `offset_s` 0: il fuoco parte quando EXCON invia l'inject che lo annuncia; prima mappa e vista 3D non mostrano fuoco. Chi guida l'esercitazione da script invia l'inject (`POST /api/master/msel/I-01/send`) prima di avanzare (vedi `scripts/demo_session.sh`).
 
 API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_end"}` (`next_event` è un alias di `next_inject`); `POST /api/master/resolve/stop` (ferma l'avanzamento in corso, il turno resta aperto); `GET /api/master` espone `planned_injects` (con `actions`, `skipped`) e `inject_actions` (ogni esecuzione con il suo stato).
 
@@ -102,7 +102,7 @@ Strumenti:
 - **Acqua:** il terreno sotto 0 m s'allaga da solo: nel 3D compare una
   superficie d'acqua a quota 0 e le celle diventano non combustibili (il
   combustibile non bruciabile dello scenario), quindi senza vegetazione né
-  fuoco. Dipingere vegetazione sul fondo non ha effetto; edifici e inneschi
+  fuoco. Dipingere vegetazione sul fondo non ha effetto; gli edifici
   non si possono posizionare sott'acqua. Per fare un lago basta abbassare la
   quota sotto zero (o «Livella» a un valore negativo), per un'isola rialzare
   il fondo sopra zero al centro. Le celle riportate sopra lo zero restano
@@ -122,8 +122,8 @@ Strumenti:
   Le associazioni sono dati di authoring e rendering: il gazetteer della
   simulazione continua a risolvere il centro del luogo. Eliminando un edificio
   o una strada il riferimento sparisce dai luoghi.
-- **Strade** come polilinee, **luoghi** e **inneschi** (raggio minimo 40 m)
-  con un clic. Gli oggetti si scelgono dalla lista o sulla mappa; le proprietà
+- **Strade** come polilinee e **luoghi** con un clic. Gli inneschi non si
+  disegnano qui: sono azioni `Ignite` degli inject (vedi sopra). Gli oggetti si scelgono dalla lista o sulla mappa; le proprietà
   permettono di cambiare coordinate e attributi, oppure eliminarli.
 
 «Scenario e meteo» modifica nome, descrizione, orario iniziale, durata dei turni e meteo. Importazione/esportazione JSON (download nel browser, copia negli appunti nel desktop) trasferisce l’intero scenario e permette di modificare anche ruoli, risorse, inject e politiche avanzate. Il formato è quello dei territori `.json`, non quello dei pack `.pack.json`. Nel browser è possibile usare poi l’editor pack ordinario sul nuovo territorio per i moduli di ruoli, risorse e timeline.

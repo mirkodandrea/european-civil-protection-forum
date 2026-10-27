@@ -20,7 +20,6 @@ fn scene() -> scenario::Scenario {
     };
     s.fuel = vec![scenario::fuel::GRASSLAND; 400];
     s.dem = vec![0.0; 400];
-    s.initial_ignitions.clear();
     s.places.clear();
     s.msel.clear();
     s.sectors = vec![Sector {

@@ -12,7 +12,7 @@ Disponibili Valverde (4 × 4 km) e Selvariva (6 × 6 km), con catalogo delle bas
 
 Editor dedicato condiviso tra standalone web (`?editor=1`) e app Bevy
 (`scenario-editor`): territorio vuoto, apertura e clonazione degli scenari,
-pennelli di quota e combustibile, edifici, strade, luoghi e inneschi,
+pennelli di quota e combustibile, edifici, strade e luoghi,
 proprietà, meteo, annulla/ripristina e import/export JSON completo.
 La bozza è indipendente dall’esercitazione. I salvataggi sono territori JSON
 nella libreria nativa oppure territori in localStorage nel browser, disponibili

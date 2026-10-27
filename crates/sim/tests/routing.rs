@@ -20,7 +20,6 @@ fn scene() -> scenario::Scenario {
     let mut s = scenario::synthetic::generate(7);
     s.operations = Operations::enhanced();
     s.dem.fill(0.0);
-    s.initial_ignitions.clear();
     s.roads = vec![
         road(
             "main",

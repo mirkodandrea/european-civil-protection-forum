@@ -121,7 +121,6 @@ fn ground_below_sea_level_floods_and_cannot_be_repainted_or_built_on() {
     d.brush([40., 40.], 20., None, Some(5)).unwrap();
     assert!(d.scene.is_burnable(d.scene.cell_of([40., 40.]).unwrap()));
     assert!(d.add_building(at, BuildingSpec::default()).is_err());
-    assert!(d.add("ignition", at, None).is_err());
     // Raising the bed above sea level makes an island that can be planted again.
     d.brush(at, 60., Some(5.), None).unwrap();
     d.brush(at, 60., None, Some(5)).unwrap();

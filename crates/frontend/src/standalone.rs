@@ -230,14 +230,8 @@ pub fn standalone() -> Html {
     for role in &roles {
         panels.push((role.id.clone(), role.name.clone(), "chat"));
     }
-    html! {
-      <div class="standalone">
-        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{format!("{clock} · {phase} · 32 realizzazioni")}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span>
-          <label><input type="checkbox" checked={*show_map} onchange={{let show=show_map.clone();Callback::from(move |_|show.set(!*show))}}/>{" Simulazione"}</label>
-          <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{" Tutti i player"}</label>
-          <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
-        </header>
-        <details class="standalone-settings"><summary>{"Impostazioni · OpenRouter · "}{&*ai_notice}</summary>
+    let settings_html = html! {<>
+        <p class="muted">{"AI · "}{&*ai_notice}</p>
           <p>{"La chiave viene salvata nel browser su questo dispositivo e riutilizzata alle prossime aperture. “Rimuovi chiave” elimina la chiave salvata. La sessione viene salvata nel browser e ripresa al ricaricamento della pagina. Il debrief è esportabile dagli strumenti EXCON."}</p>
           <div class="settings-fields"><label>{"Chiave API"}<input id="openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
           <label>{"Modello interpretazione"}<input id="openrouter-model" value={(*model).clone()} oninput={{let model=model.clone();Callback::from(move |e|model.set(api::input(e)))}}/></label>
@@ -245,7 +239,15 @@ pub fn standalone() -> Html {
           <button id="configure-ai" onclick={onconfigure}>{"Applica"}</button><button id="clear-ai" onclick={onclear}>{"Rimuovi chiave"}</button></div>
           <p>{"L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente."}</p>
           <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={crate::store::save_error()} reset_note="Elimina sessione, scenari salvati e chiave API di questo browser." backend={(*backend).clone()} revision={*revision}/>
-        </details>
+    </>};
+    html! {
+      <ContextProvider<crate::scenario_editor::SettingsSlot> context={crate::scenario_editor::SettingsSlot(settings_html)}>
+      <div class="standalone">
+        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{format!("{clock} · {phase} · 32 realizzazioni")}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span>
+          <label><input type="checkbox" checked={*show_map} onchange={{let show=show_map.clone();Callback::from(move |_|show.set(!*show))}}/>{" Simulazione"}</label>
+          <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{" Tutti i player"}</label>
+          <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
+        </header>
         if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
         if *restoring {<p class="standalone-notice" role="status" id="restoring">{"Ripristino della sessione salvata…"}</p>} else {
         <div class={classes!("standalone-content",(!*show_map).then_some("without-sim"))} style={format!("--sim-width:{}%",*split)}>
@@ -260,5 +262,6 @@ pub fn standalone() -> Html {
         </div>
         }
       </div>
+      </ContextProvider<crate::scenario_editor::SettingsSlot>>
     }
 }

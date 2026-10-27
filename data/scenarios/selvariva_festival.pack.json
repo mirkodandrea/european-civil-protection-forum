@@ -167,7 +167,7 @@
         "actions": []
       }
     ],
-    "initial_ignitions": [],
+    
     "turn_minutes": 60
   },
   "run": {

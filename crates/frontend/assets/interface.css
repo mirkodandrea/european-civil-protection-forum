@@ -789,3 +789,55 @@ button.warn:hover:not(:disabled){background:#ffe7a8}
 
 /* Keep long narrative outcome badges from squeezing the inject title on phones. */
 @media(max-width:600px){.inj-detail-head{flex-wrap:wrap}.inj-detail-head>div{flex-basis:100%}.inj-detail-head>.inj-badge{max-width:calc(100% - 85px);white-space:normal}.inj-detail-head>button{margin-left:auto}}
+
+/* Scenario editor: tabs as a left rail, the editor uses the full width. */
+.scenario-editor{max-width:none}
+.scenario-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:20px;align-items:start;margin-top:10px}
+.scenario-layout>.scenario-tabs{position:sticky;top:8px;display:flex;flex-direction:column;flex-wrap:nowrap;gap:2px;margin:0;border:0;border-right:1px solid var(--line);padding-right:12px;overflow:visible}
+.scenario-layout>.scenario-tabs button{width:100%;text-align:left;border:0;border-radius:8px;background:transparent;padding:9px 12px;font-weight:600;color:var(--ink)}
+.scenario-layout>.scenario-tabs button:hover{background:#e6efe8}
+.scenario-layout>.scenario-tabs button.active{background:var(--ink);color:#fff}
+.scenario-layout>.scenario-tab{min-width:0;margin:0}
+.scenario-editor .md{grid-template-columns:minmax(260px,320px) minmax(0,1fr)}
+.scenario-editor .md-items{max-height:calc(100dvh - 260px)}
+.scenario-editor .md-group{margin:12px 0 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:2px}
+.scenario-editor .md-group:first-child{margin-top:0}
+.scenario-editor .md-tools{position:sticky;bottom:0;background:#fff;padding-top:6px}
+.scenario-editor .md-detail .settings-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px 16px}
+.scenario-editor .rr-actions{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 14px}
+.scenario-editor .rr-qty{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 14px}
+.scenario-editor .gen-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))}
+@media(max-width:900px){.scenario-layout{grid-template-columns:1fr}.scenario-layout>.scenario-tabs{position:static;flex-direction:row;border:0;padding:0;overflow-x:auto}.scenario-layout>.scenario-tabs button{width:auto}}
+.scenario-editor .md-items{grid-auto-rows:max-content;align-content:start}
+.scenario-editor .md-item{flex-shrink:0}
+.scenario-editor #scenario-form>.settings-fields{max-width:420px}
+.scenario-editor #scenario-form>.settings-fields small.hint{display:block}
+.scenario-editor #scenario-form{padding-top:10px}
+.scenario-editor .scenario-head{flex-wrap:wrap;margin-bottom:0}
+.scenario-editor .scenario-head h2{font-size:18px}
+.scenario-editor .scenario-id{display:inline-flex;align-items:center;gap:6px;font-size:12px}.scenario-editor .scenario-id input{width:220px}
+.scenario-layout{margin-top:6px;gap:16px}
+.scenario-layout>.scenario-tab>.rr-tab>p.muted:first-child,.scenario-layout>.scenario-tab>p.muted:first-child{margin:0 0 4px}
+.scenario-editor .md-detail{padding:8px 12px 12px}
+/* Scenario editor: the page never scrolls, each section scrolls on its own. */
+main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.scenario-editor>.card{margin:0 0 10px;min-height:0}
+.scenario-editor #scenario-form{display:flex;flex-direction:column;flex:1 1 auto;overflow:hidden}
+.scenario-editor #scenario-form>*{flex:none}
+.scenario-editor #scenario-form>.scenario-layout{flex:1 1 0;min-height:0;grid-template-rows:minmax(0,1fr)}
+.scenario-editor #scenario-form>.scenario-problems,.scenario-editor #scenario-form>#scenario-message{max-height:20dvh;overflow:auto}
+.scenario-editor .scenario-layout>.scenario-tabs{position:static;height:100%;overflow:auto}
+.scenario-editor .scenario-layout>.scenario-tab{height:100%;overflow:auto;padding-right:4px}
+.scenario-editor .scenario-tab>.rr-tab{height:100%;grid-template-rows:auto minmax(0,1fr) auto;align-content:start}
+.scenario-editor .scenario-tab .md{height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}
+.scenario-editor .scenario-tab .md-list{position:static;height:100%;min-height:0;grid-template-rows:minmax(0,1fr) auto}
+.scenario-editor .scenario-tab .md-items{max-height:none;min-height:0;overflow:auto}
+.scenario-editor .scenario-tab .md-detail{height:100%;min-height:0;overflow:auto}
+.scenario-editor .scenario-actions{position:static;flex:none;margin-top:6px;max-height:40dvh;overflow:auto}
+.scenario-editor .scenario-tab .excon-roles{max-height:22dvh;overflow:auto}
+/* Settings page: general settings on the left, the scenario library on the right. */
+.scenario-editor .settings-split{display:grid;grid-template-columns:minmax(320px,2fr) minmax(0,3fr);gap:12px;align-items:start}
+.scenario-editor .settings-split>.card{margin:0;min-width:0}
+.scenario-editor .settings-card .settings-fields{display:grid;grid-template-columns:1fr;gap:8px}
+.scenario-editor .settings-card .settings-fields button{justify-self:start}
+@media(max-width:1000px){.scenario-editor .settings-split{grid-template-columns:1fr}}

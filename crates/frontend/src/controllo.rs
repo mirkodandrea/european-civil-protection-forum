@@ -849,7 +849,6 @@ pub fn controllo(p: &ControlloProps) -> Html {
                 oninput={{let query=query.clone();Callback::from(move|e|query.set(api::input(e)))}} onkeydown={on_enter}/>
             if visible.is_empty() {<p class="muted">{ex("Nessuna azione corrisponde alla ricerca.")}</p>}
             {for GROUPS.iter().filter(|g| visible.iter().any(|t| t.group == **g)).map(|g| html!{<section class="ctl-group" key={*g}><h3>{ex(*g)}</h3><ul>{tool_buttons(g)}</ul></section>})}
-            if !cfg!(feature = "standalone") {<crate::server_settings::ServerSettings revision={p.state["generation"].as_u64().unwrap_or(0)}/>}
         </aside>
         {modal}
     </main>}

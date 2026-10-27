@@ -33,7 +33,6 @@ def scenario(template, case):
                description='Declared 640 m algorithm fixture. Not a real territory or validated operational calibration.',
                grid={'rows': n, 'cols': n, 'cellsize': cellsize},
                fuel=[4] * (n * n), dem=[0.0] * (n * n),
-               initial_ignitions=[{'at': [360.0, 340.0], 'radius_m': 35.0}],
                weather={'wind_dir_deg': 0.0, 'wind_speed_kmh': 12.0, 'moisture_pct': 6.0},
                zones={'rows': 2, 'cols': 2, 'size_m': 320.0},
                sectors=[{'id':'lab','name':'Laboratory sector','bounds':[0.0,0.0,640.0,640.0]}], communication_sites=[], fuel_definitions=[], msel=[],
@@ -97,7 +96,7 @@ def main():
              'sample_s': 30, 'realizations': args.realizations, 'cutoff': 0.5,
              'variants': [{'name': 'fixed_post', 'operational': True, 'parameters': {'/operations/local_autonomy': False}},
                           {'name': 'local_policy', 'operational': True, 'parameters': {'/operations/local_autonomy': True}}],
-             'strategies': [{'name': 'paired_engines', 'orders': engines}], 'injects': [setup]}
+             'strategies': [{'name': 'paired_engines', 'orders': engines}], 'injects': [order(0, 'master', 'Ignite', at={'x': 360.0, 'y': 340.0}, radius_m=35.0), setup]}
     save(args.output / 'suite.json', suite)
     # Isolate the resume switch under one deliberately conservative safety threshold.
     # The fixed-post model hardcodes 0.35; comparing its threshold to 0.2 would confound

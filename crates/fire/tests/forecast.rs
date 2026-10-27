@@ -13,7 +13,6 @@ fn scene() -> Arc<scenario::Scenario> {
     };
     s.dem = vec![0.0; 400];
     s.fuel = vec![scenario::fuel::GRASSLAND; 400];
-    s.initial_ignitions.clear();
     Arc::new(s)
 }
 fn fire(s: &scenario::Scenario) -> FireSim {

@@ -10,6 +10,6 @@ fn main() -> Result<()> {
         std::path::Path::new(&args[1]),
     )?;
     scn.save(&args[2]).context("saving TTX scenario")?;
-    println!("Imported {}: {} buildings, {} roads, {} occupants; author initial_ignitions and msel before exercise",scn.name,scn.buildings.len(),scn.roads.len(),scn.buildings.iter().map(|b|b.occupants as u64).sum::<u64>());
+    println!("Imported {}: {} buildings, {} roads, {} occupants; author the msel (ignitions are Ignite actions of its injects) before exercise",scn.name,scn.buildings.len(),scn.roads.len(),scn.buildings.iter().map(|b|b.occupants as u64).sum::<u64>());
     Ok(())
 }

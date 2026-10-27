@@ -236,10 +236,7 @@ impl World {
         seed: u64,
         options: fire::FireOptions,
     ) -> Result<World> {
-        let mut fire = FireSim::with_options(&scn, seed, options)?;
-        for ign in &scn.initial_ignitions {
-            fire.ignite(ign.at, ign.radius_m)?;
-        }
+        let fire = FireSim::with_options(&scn, seed, options)?;
         let buildings = scn
             .buildings
             .iter()
