@@ -30,8 +30,10 @@ const VALVERDE_R: f32 = 380.0;
 const PINETA: Pos = [2800.0, 2250.0];
 const PINETA_R: f32 = 170.0;
 const PINE_HILL: Pos = [3350.0, 3000.0];
-/// The opening fire, on the lower south-west flank of Pine Hill.
-const IGNITION: Pos = [3150.0, 2720.0];
+/// The opening fire, on the lower south-west flank of Pine Hill: the `Ignite`
+/// action of inject I-01.
+pub const IGNITION: Pos = [3150.0, 2720.0];
+pub const IGNITION_RADIUS_M: f32 = 120.0;
 
 /// Smooth value noise in [0, 1], `octaves` layers from a `base` wavelength.
 struct Noise {
@@ -327,7 +329,6 @@ pub fn generate(seed: u64) -> Scenario {
         start_clock_s: 13 * 3600,
         turn_minutes: crate::DEFAULT_TURN_MINUTES,
         weather: WeatherSpec { wind_dir_deg: 45.0, wind_speed_kmh: 45.0, moisture_pct: 4.0 },
-        initial_ignitions: vec![IgnitionSpec { at: IGNITION, radius_m: 120.0 }],
         buildings,
         roads: roads(),
         sectors,
@@ -588,7 +589,7 @@ fn msel() -> Vec<InjectTemplate> {
                 actions: vec![],
             }
         };
-    vec![
+    let mut msel = vec![
         inj("I-01", 1, "Fire reported on Pine Hill", "112 Dispatch", &["all"],
             "13:00 – Multiple calls report a wildfire on Pine Hill, in the North Forest about 600 m north-east of Pineta. Wind from the north-east at 45 km/h, very dry vegetation. The fire is estimated at 5 hectares and spreading south-west.",
             "Initial situational awareness and information sharing"),
@@ -613,7 +614,15 @@ fn msel() -> Vec<InjectTemplate> {
         inj("I-08", 4, "Local capacity exhausted", "Fire operations room", &["regional_cp", "fire_commander"],
             "All local ground crews are committed and exhausted. A second fire front is developing on the western forest edge. Local capacity is no longer sufficient.",
             "Escalation decision under capacity stress"),
-    ]
+    ];
+    msel[0].actions.push(InjectAction {
+        id: "A-01".into(),
+        title: "Innesco Pine Hill".into(),
+        command: serde_json::json!({"type": "Ignite", "at": {"x": IGNITION[0], "y": IGNITION[1]}, "radius_m": IGNITION_RADIUS_M}),
+        offset_s: 0,
+        note: "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01.".into(),
+    });
+    msel
 }
 
 #[cfg(test)]
@@ -654,7 +663,7 @@ mod tests {
     #[test]
     fn ignition_is_in_the_forest() {
         let s = generate(DEFAULT_SEED);
-        let c = s.cell_of(s.initial_ignitions[0].at).unwrap();
+        let c = s.cell_of(IGNITION).unwrap();
         assert!(s.is_burnable(c));
     }
 

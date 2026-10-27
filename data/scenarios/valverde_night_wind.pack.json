@@ -6,7 +6,7 @@
   "edits": {
     "start_clock_s": 9000,
     "weather": { "wind_dir_deg": 270.0, "wind_speed_kmh": 55.0, "moisture_pct": 3.0 },
-    "initial_ignitions": [],
+    
     "msel": [
       {
         "id": "N-01",

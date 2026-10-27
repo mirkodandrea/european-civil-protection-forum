@@ -152,7 +152,7 @@ def generate(template, seed=33):
         fuel_definitions=json.loads((Path(__file__).parent/'fuels_eu12.json').read_text()),
         render_terrain=dict(rows=601,cols=601,posting_m=10,world_size_m=[WORLD,WORLD],elev=np.round(fine,3).ravel().tolist()),
         roads=net,buildings=buildings,sectors=[dict(id='basin',name='Conca delle Due Valli',bounds=[0,0,WORLD,WORLD])],
-        zones=dict(cols=8,rows=8,size_m=750),initial_ignitions=[],timeline=[],msel=[],
+        zones=dict(cols=8,rows=8,size_m=750),timeline=[],msel=[],
         communication_sites=[dict(id='Ripetitore Montebruno',pos=[2150,4100],radius_m=2000),dict(id='Ripetitore Pianalto',pos=[4700,2400],radius_m=2400)],
         start_clock_s=14*3600,turn_minutes=60,weather=dict(wind_dir_deg=315,wind_speed_kmh=32,moisture_pct=8),
         staging_base='Centro operativo di Pianalto',operational_grants=[],operations={k:k!='spotting' for k in [
@@ -230,7 +230,7 @@ def exercise_pack():
           for m,id,title,sender,to,text,obj,acts in rows]
     return dict(id='selvariva_festival',name='Selvariva — il festival e i due abitati',base=ID,
         description='Demo interattiva di circa 1 ora reale su tre ore simulate: incendio vicino al festival, evacuazione della scolaresca e del borgo, cambiamento del vento e coordinamento dell’assistenza. Tutti i nomi e i luoghi sono di fantasia.',
-        edits=dict(name='Selvariva — il festival e i due abitati',msel=msel,initial_ignitions=[],turn_minutes=60),
+        edits=dict(name='Selvariva — il festival e i due abitati',msel=msel,turn_minutes=60),
         run=dict(seed=1,realizations=32,cutoff=.5,operational_model=True))
 
 

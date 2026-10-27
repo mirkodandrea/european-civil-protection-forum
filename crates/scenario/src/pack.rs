@@ -6,7 +6,7 @@
 //! [`ScenarioPack`] that names its base. Several packs can share one base, and
 //! a pack is a plain JSON file that can be copied, edited and versioned.
 use crate::{
-    IgnitionSpec, InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
+    InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
     ResourceType, Role, Scenario, TacticalPolicy, WeatherSpec,
 };
 use anyhow::Result;
@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Shortest ignition radius that does not fizzle (single-cell ignitions die out).
-pub const MIN_IGNITION_RADIUS_M: f32 = 40.0;
 
 /// Overrides of a base scenario. A field that is `None` keeps the base value.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -31,8 +30,10 @@ pub struct ScenarioEdits {
     pub turn_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weather: Option<WeatherSpec>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub initial_ignitions: Option<Vec<IgnitionSpec>>,
+    /// Packs saved before ignitions became timeline actions carry this key;
+    /// it is read and dropped so they still load.
+    #[serde(default, rename = "initial_ignitions", skip_serializing)]
+    pub legacy_ignitions: Option<serde::de::IgnoredAny>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub places: Option<Vec<Place>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,9 +147,6 @@ impl Scenario {
         if let Some(v) = e.weather {
             self.weather = v;
         }
-        if let Some(v) = &e.initial_ignitions {
-            self.initial_ignitions = v.clone();
-        }
         if let Some(v) = &e.places {
             self.places = v.clone();
         }
@@ -199,7 +197,6 @@ impl Scenario {
             start_clock_s: Some(self.start_clock_s),
             turn_minutes: Some(self.turn_minutes),
             weather: Some(self.weather),
-            initial_ignitions: Some(self.initial_ignitions.clone()),
             places: Some(self.places.clone()),
             resource_types: Some(self.resource_types.clone()),
             roles: Some(self.roles.clone()),
@@ -211,6 +208,7 @@ impl Scenario {
             operations: Some(self.operations.clone()),
             staging_base: Some(self.staging_base.clone().unwrap_or_default()),
             operational_grants: Some(self.operational_grants.clone()),
+            ..Default::default()
         }
     }
 
@@ -298,25 +296,6 @@ impl Scenario {
             }
             if r.max_qty == 0 {
                 out.push(format!("{at}: la quantità deve essere almeno 1"));
-            }
-        }
-
-        for (n, p) in e
-            .initial_ignitions
-            .as_deref()
-            .unwrap_or(&self.initial_ignitions)
-            .iter()
-            .enumerate()
-        {
-            let at = format!("Innesco {}", n + 1);
-            if self.cell_of(p.at).is_none() {
-                out.push(format!("{at}: posizione fuori dalla mappa"));
-            }
-            if !(MIN_IGNITION_RADIUS_M..=2000.0).contains(&p.radius_m) {
-                out.push(format!(
-                    "{at}: raggio {}–2000 m (sotto {} m l’innesco si spegne da solo)",
-                    MIN_IGNITION_RADIUS_M, MIN_IGNITION_RADIUS_M
-                ));
             }
         }
 
@@ -414,7 +393,6 @@ impl Scenario {
             start_clock_s: self.start_clock_s,
             turn_minutes: self.turn_minutes,
             weather: self.weather,
-            initial_ignitions: vec![],
             buildings: vec![],
             roads: vec![],
             sectors: self.sectors.clone(),
@@ -520,14 +498,19 @@ mod tests {
         roles[1].allowed_actions.push("Ignite".into());
         roles[1].resources.insert("ghosts".into(), 3);
         e.roles = Some(roles);
-        e.initial_ignitions = Some(vec![IgnitionSpec { at: [-5.0, 10.0], radius_m: 5.0 }]);
         let problems = s.edit_problems(&e, &vocab());
         let all = problems.join("\n");
         assert!(all.contains("Bad Id"), "{all}");
         assert!(all.contains("Ignite"), "{all}");
         assert!(all.contains("ghosts"), "{all}");
-        assert!(all.contains("fuori dalla mappa"), "{all}");
-        assert!(all.contains("raggio"), "{all}");
+    }
+
+    #[test]
+    fn packs_saved_with_initial_ignitions_still_load() {
+        let e: ScenarioEdits =
+            serde_json::from_str(r#"{"initial_ignitions":[{"at":[1,2],"radius_m":60}],"turn_minutes":15}"#).unwrap();
+        assert_eq!(e.turn_minutes, Some(15));
+        assert!(!serde_json::to_string(&e).unwrap().contains("ignitions"));
     }
 
     #[test]

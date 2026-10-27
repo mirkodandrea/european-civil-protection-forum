@@ -1702,6 +1702,7 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         Status::Ok
     );
     call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":{"x":3150,"y":2720},"radius_m":120}))).await;
     assert_eq!(
         call(&app, "POST", "/api/master/design", Some(design.clone()))
             .await

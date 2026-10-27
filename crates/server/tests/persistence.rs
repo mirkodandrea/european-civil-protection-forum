@@ -159,7 +159,7 @@ async fn scenarios_are_listed_edited_saved_and_started() {
     // Every problem comes back at once, and nothing is stored.
     let mut broken = designed(&c, &s).await;
     broken["edits"]["roles"][1]["id"] = json!("Not Valid");
-    broken["edits"]["initial_ignitions"][0]["radius_m"] = json!(3.0);
+    broken["edits"]["roles"][0]["id"] = json!("Also Bad");
     let (_, v) = post(&c, &s, "/api/master/scenarios/validate", json!({"pack": broken})).await;
     assert!(v["problems"].as_array().unwrap().len() >= 2, "{v}");
     let (status, _) = post(&c, &s, "/api/master/scenarios/save", json!({"pack": broken})).await;

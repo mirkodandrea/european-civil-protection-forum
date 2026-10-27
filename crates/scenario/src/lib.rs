@@ -185,12 +185,6 @@ pub struct WeatherSpec {
     pub moisture_pct: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IgnitionSpec {
-    pub at: Pos,
-    pub radius_m: f32,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildingKind {
@@ -554,7 +548,6 @@ pub struct Scenario {
     #[serde(default = "default_turn_minutes")]
     pub turn_minutes: u32,
     pub weather: WeatherSpec,
-    pub initial_ignitions: Vec<IgnitionSpec>,
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
     pub sectors: Vec<Sector>,
@@ -998,7 +991,7 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("timeline").is_none());
         let again: Scenario = serde_json::from_value(v).unwrap();
-        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 3);
+        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 4);
     }
 
     #[test]

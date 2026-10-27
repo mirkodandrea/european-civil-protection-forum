@@ -16,7 +16,6 @@ fn distinct_map_has_connected_facilities_exits_and_clear_footprints() {
     let s = territory();
     assert_eq!(s.grid.len(), 90_000);
     assert_eq!(s.buildings.iter().map(|b| b.occupants).sum::<u32>(), 1102);
-    assert!(s.initial_ignitions.is_empty());
     let graph = Network::build(&s);
     let states = s
         .roads

@@ -123,7 +123,7 @@ def generate(template, seed=11):
                dem=z.ravel().tolist(),fuel=fuel.ravel().tolist(),
                render_terrain=dict(rows=801,cols=801,posting_m=5,world_size_m=[4000,4000],elev=fine.ravel().tolist()))
     # Same incident location and weather; do not force an impact by editing fuel.
-    at=scn['initial_ignitions'][0]['at']; r=int((4000-at[1])/20); c=int(at[0]/20)
+    ign=next(a['command']['at'] for i in scn['msel'] for a in i.get('actions',[]) if a['command']['type']=='Ignite'); r=int((4000-ign['y'])/20); c=int(ign['x']/20)
     if fuel[r,c]==3: raise ValueError('Opening ignition is on non-burnable ground')
     grades=[abs(elevation(a)-elevation(b))/np.linalg.norm(np.array(a)-b)
             for r in network if r['drivable'] for a,b in zip(r['points'],r['points'][1:]) if np.linalg.norm(np.array(a)-b)>1]

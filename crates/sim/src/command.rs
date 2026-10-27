@@ -399,11 +399,7 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
             .filter(|b| kind.is_none_or(|k| b.kind == k))
             .find_map(|b| b.name.clone())
     };
-    let zone = scn
-        .initial_ignitions
-        .first()
-        .and_then(|i| scn.zone_of(i.at))
-        .or_else(|| scn.zones.names().into_iter().next());
+    let zone = scn.zones.names().into_iter().next();
     let place = scn.places.first().map(|p| p.name.clone());
     let staging = scn
         .staging_base

@@ -72,7 +72,6 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
     scn.fuel = fuel;
     scn.operations = Operations::enhanced();
     scn.msel.clear();
-    scn.initial_ignitions.clear();
     scn.places.clear();
     let w = scn.grid.width_m();
     let h = scn.grid.height_m();
