@@ -3491,3 +3491,39 @@ async fn stop_ends_a_running_resolution_and_keeps_the_turn_open() {
     assert_eq!(state["turn_window"]["now_s"], at);
     assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
 }
+
+/// EXCON asks for a clarification; the player's text answer (to the question
+/// message) carries the requested action. EXCON must see it as a pending,
+/// approvable proposal inside the inject's responses.
+#[tokio::test]
+async fn clarification_answer_with_action_reaches_excon_and_can_be_approved() {
+    let llm = llm::Llm::mock(|task, _s, user| {
+        Ok(match task {
+            "translate" => format!("[it] {user}"),
+            "parse_reply" => r#"{"detected_language":"it","translation_en":"Warn F4 north side","actions":[{"type":"IssueWarning","zone":"F4"}],"messages":[],"clarification":null,"summary":"Warn F4"}"#.into(),
+            "feedback" => format!("[feedback] {user}"),
+            other => anyhow::bail!("unexpected task {other}"),
+        })
+    });
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    let app = build(Arc::new(Mutex::new(ex)), llm, None, access()).await.0;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/msel/I-01/send", None).await;
+    let parent = reply_parent(&app, "mayor").await;
+    let (_, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "warn people", "reply_to": parent}))).await;
+    let p1 = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p1 && p["status"] == "pending")).await;
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p1}/clarify"), Some(json!({"note": "Which side?"}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
+    let player = eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
+    let q = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
+    let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "the north side", "reply_to": q}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    let p2 = r["proposal"].as_u64().unwrap();
+    let m = eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == p2 && p["status"] == "pending")).await;
+    let row = m["inject_responses"].as_array().unwrap().iter().find(|r| r["role"] == "mayor" && r["pending_proposals"].as_array().unwrap().iter().any(|p| p["id"] == p2)).expect("answer visible in the inject row").clone();
+    assert!(row["replies"].as_array().unwrap().iter().any(|x| x["proposal"] == p2));
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p2}/decide"), Some(json!({"approve": true}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
+}

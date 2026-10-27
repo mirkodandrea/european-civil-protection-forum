@@ -53,6 +53,13 @@ fn outcome(l: &str, it: &Item) -> Outcome {
     }
 }
 
+/// Message a revised action answers: EXCON's last question of the thread, so the
+/// server links it to the clarified proposal even when that had no inject or parent
+/// (an unlinked answer would leave the question open and the answer out of the thread).
+fn revise_parent(thread: &Value, current: Option<&Value>) -> Option<u64> {
+    crate::clarify::last_question(thread).or_else(|| current.and_then(|p| p["reply_to"].as_u64()))
+}
+
 /// What kind of event a chat line is.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
@@ -237,7 +244,8 @@ impl App {
         let composer = if let Some(t) = awaiting {
             // "Rivedi l'azione" re-opens the structured proposal behind the question.
             let pid = t["current_proposal"].to_string();
-            let parent = all_proposals.iter().find(|p| p["id"] == t["current_proposal"]).and_then(|p| p["reply_to"].as_u64()).map(|n| n.to_string()).unwrap_or_default();
+            let current = all_proposals.iter().find(|p| p["id"] == t["current_proposal"]).copied();
+            let parent = revise_parent(t, current).map(|n| n.to_string()).unwrap_or_default();
             let revise = {
                 let link = ctx.link().clone();
                 Callback::from(move |_| {
@@ -282,6 +290,15 @@ mod tests {
     use serde_json::json;
     fn item<'a>(proposals: Vec<&'a Value>, threads: Vec<&'a Value>) -> Item<'a> {
         Item { key: "1".into(), msg: None, proposals, threads }
+    }
+    #[test]
+    fn revising_answers_the_last_excon_question() {
+        let thread = json!({"entries":[{"author":"player","message":3},{"author":"excon","message":4}]});
+        let p = json!({"reply_to": 2});
+        assert_eq!(revise_parent(&thread, Some(&p)), Some(4));
+        let bare = json!({"entries":[]});
+        assert_eq!(revise_parent(&bare, Some(&p)), Some(2));
+        assert_eq!(revise_parent(&bare, Some(&json!({"reply_to": null}))), None);
     }
     #[test]
     fn outcome_flags_what_needs_the_player() {
