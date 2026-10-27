@@ -3,7 +3,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use scenario::{
-    editor::{BuildingSpec, Document, Selection, VISUAL_KINDS},
+    editor::{BuildingSpec, Document, Selection, FACILITY_PRESETS, VISUAL_KINDS},
     Scenario,
 };
 use std::sync::{Arc, Mutex};
@@ -43,11 +43,19 @@ pub struct Editor {
     road_start: Option<scenario::Pos>,
     road_open: Option<usize>,
     press: Option<Vec2>,
+    /// Handle being dragged with the select tool, and where the cursor last was.
+    drag: Option<Drag>,
+    drag_at: Option<scenario::Pos>,
     message: String,
     new_id: String,
     cells: usize,
     spacing: f32,
     pending: Option<Scenario>,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum Drag {
+    Object(Selection),
+    Vertex(usize, usize),
 }
 struct DraftSource(Arc<Mutex<Document>>);
 impl ViewSource for DraftSource {
@@ -80,7 +88,11 @@ impl Editor {
     /// Hold-to-paint tools take the left button and the wheel from the camera.
     /// A brush is working or has only just stopped.
     pub(crate) fn busy(&self, now: f64) -> bool {
-        self.stroking || now < self.busy_until
+        self.stroking || self.drag.is_some() || now < self.busy_until
+    }
+    /// The left button belongs to the tool, not to camera panning.
+    pub fn captures_pointer(&self) -> bool {
+        self.brush_tool() || self.drag.is_some()
     }
     pub fn brush_tool(&self) -> bool {
         self.tool == "height" || self.tool == "fuel"
@@ -114,6 +126,8 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         road_start: None,
         road_open: None,
         press: None,
+        drag: None,
+        drag_at: None,
         message: String::new(),
         new_id: "nuovo-scenario".into(),
         cells: 64,
@@ -300,6 +314,15 @@ pub(crate) fn draw(
                     building_spec_fields(ui, &mut e.spec);
                     ui.small("Q/E: ruota di 15° · clic: posiziona");
                 }
+                if e.tool == "select" {
+                    ui.small("Trascina l’oggetto selezionato per spostarlo. Strada selezionata: trascina i vertici · Maiusc+clic su un tratto: nuovo vertice · X sul vertice: rimuovi.");
+                    if let Some(Selection::Road(i)) = e.selected {
+                        if ui.button("Aggiungi vertici in coda").clicked() {
+                            e.tool = "road".into();
+                            e.road_open = Some(i);
+                        }
+                    }
+                }
                 if e.road_start.is_some() || e.road_open.is_some() {
                     ui.label(if e.road_open.is_some() {
                         "Clic: aggiungi vertice. «Termina strada» per chiudere."
@@ -404,7 +427,7 @@ pub(crate) fn draw(
     }
     egui::TopBottomPanel::bottom("editor-status").show(ctx,|ui| {
         ui.label(&e.message);
-        ui.small("Clic: applica strumento · pennelli: tieni premuto · trascina: sposta vista · destro: ruota · rotella: zoom (raggio con i pennelli) · R: inquadra");
+        ui.small("Seleziona: trascina per spostare oggetti e vertici · Clic: applica strumento · pennelli: tieni premuto · trascina: sposta vista · destro: ruota · rotella: zoom (raggio con i pennelli) · R: inquadra");
     });
     if e.pending.is_some() {
         let mut apply = !d.dirty();
@@ -496,13 +519,13 @@ pub(crate) fn draw(
     }
 }
 const BUILDING_KINDS: [(&str, &str); 7] = [
-    ("House", "Abitazione"),
-    ("School", "Scuola"),
-    ("Hospital", "Ospedale"),
-    ("FuelStation", "Distributore"),
-    ("SportsCentre", "Centro sportivo"),
-    ("TownHall", "Municipio"),
-    ("Industrial", "Industria"),
+    ("house", "Abitazione"),
+    ("school", "Scuola"),
+    ("hospital", "Ospedale"),
+    ("fuel_station", "Distributore"),
+    ("sports_centre", "Centro sportivo"),
+    ("town_hall", "Municipio"),
+    ("industrial", "Industria"),
 ];
 fn kind_label(kind: &scenario::BuildingKind) -> &'static str {
     let id = serde_json::to_value(kind).ok();
@@ -512,7 +535,7 @@ fn kind_label(kind: &scenario::BuildingKind) -> &'static str {
         .map_or("?", |(_, l)| l)
 }
 fn visual_label(kind: &Option<String>) -> &str {
-    kind.as_deref().unwrap_or("standard")
+    kind.as_deref().map_or("standard", scenario::editor::visual_label)
 }
 fn kind_combo(ui: &mut egui::Ui, id: &str, kind: &mut scenario::BuildingKind) {
     egui::ComboBox::from_id_source(id)
@@ -531,11 +554,23 @@ fn visual_combo(ui: &mut egui::Ui, id: &str, visual: &mut Option<String>) {
         .show_ui(ui, |ui| {
             ui.selectable_value(visual, None, "standard");
             for k in VISUAL_KINDS {
-                ui.selectable_value(visual, Some(k.to_string()), *k);
+                ui.selectable_value(visual, Some(k.to_string()), scenario::editor::visual_label(k));
             }
         });
 }
 fn building_spec_fields(ui: &mut egui::Ui, spec: &mut BuildingSpec) {
+    egui::ComboBox::from_label("Modello")
+        .selected_text("Scegli struttura…")
+        .show_ui(ui, |ui| {
+            for (label, kind, visual, size, occupants) in FACILITY_PRESETS {
+                if ui.selectable_label(false, *label).clicked() {
+                    spec.kind = *kind;
+                    spec.visual_kind = visual.map(str::to_owned);
+                    spec.size = *size;
+                    spec.occupants = *occupants;
+                }
+            }
+        });
     ui.horizontal(|ui| {
         ui.label("Tipo");
         kind_combo(ui, "spec-kind", &mut spec.kind);
@@ -730,6 +765,51 @@ fn property_fields(ui: &mut egui::Ui, v: &mut serde_json::Value, key: &str) {
     }
 }
 
+/// Height above the ground of outlines drawn on the terrain.
+const GROUND_LIFT: f32 = 0.7;
+/// Polyline that follows the terrain: long segments are split so they do not cut through hills.
+fn drape(gizmos: &mut Gizmos, s: &Scenario, points: &[scenario::Pos], closed: bool, colour: Color) {
+    let mut path: Vec<Vec3> = Vec::new();
+    let n = points.len();
+    for k in 0..if closed { n } else { n.saturating_sub(1) } {
+        let (a, b) = (points[k], points[(k + 1) % n]);
+        let steps = (scenario::editor::distance(a, b) / 4.).ceil().max(1.) as usize;
+        for j in 0..steps {
+            let f = j as f32 / steps as f32;
+            path.push(crate::frame::to_bevy(s, [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], GROUND_LIFT));
+        }
+    }
+    if let Some(last) = points.last() {
+        if !closed {
+            path.push(crate::frame::to_bevy(s, *last, GROUND_LIFT));
+        }
+    }
+    if closed {
+        if let Some(first) = path.first().copied() {
+            path.push(first);
+        }
+    }
+    gizmos.linestrip(path, colour);
+}
+fn drape_circle(gizmos: &mut Gizmos, s: &Scenario, c: scenario::Pos, r: f32, colour: Color) {
+    let n = ((r * 0.5) as usize).clamp(24, 96);
+    let ring: Vec<_> = (0..n)
+        .map(|k| {
+            let a = k as f32 / n as f32 * std::f32::consts::TAU;
+            [c[0] + r * a.cos(), c[1] + r * a.sin()]
+        })
+        .collect();
+    drape(gizmos, s, &ring, true, colour);
+}
+/// Footprint of a building (or of one about to be placed) with a front-edge tick on +x.
+fn drape_footprint(gizmos: &mut Gizmos, s: &Scenario, at: scenario::Pos, size: [f32; 2], rot_deg: f32, colour: Color) {
+    let (sin, cos) = rot_deg.to_radians().sin_cos();
+    let (hx, hy) = (size[0] * 0.5, size[1] * 0.5);
+    let corner = |x: f32, y: f32| [at[0] + x * cos - y * sin, at[1] + x * sin + y * cos];
+    drape(gizmos, s, &[corner(-hx, -hy), corner(hx, -hy), corner(hx, hy), corner(-hx, hy)], true, colour);
+    drape(gizmos, s, &[corner(0., 0.), corner(hx, 0.)], false, colour);
+}
+
 const BRUSH_TICK: f32 = 0.1;
 /// Pause after the last brush tick before the scene is rebuilt in full.
 const SETTLE_S: f64 = 1.2;
@@ -762,6 +842,24 @@ pub(crate) fn interact(
             d.end_stroke();
             e.stroking = false;
             e.last_paint = None;
+        }
+    }
+    // A drag is one undo step; its last position is applied when the button is released.
+    if e.drag.is_some() && !buttons.pressed(MouseButton::Left) {
+        let document = e.document.clone();
+        let locked = document.try_lock();
+        if let Ok(mut d) = locked {
+            let (drag, at) = (e.drag.take(), e.drag_at.take());
+            if let (Some(drag), Some(at)) = (drag, at) {
+                let result = match drag {
+                    Drag::Object(sel) => d.move_object(sel, at),
+                    Drag::Vertex(i, v) => d.move_road_vertex(i, v, at),
+                };
+                outcome(&mut e, result.map_err(|err| err.to_string()));
+            }
+            d.end_stroke();
+            let selected = e.selected;
+            set_selection(&mut e, &d, selected);
         }
     }
     // Q/E rotate the building about to be placed, or the selected one.
@@ -820,16 +918,67 @@ pub(crate) fn interact(
     }
     if let Some(Selection::Building(i)) = e.selected {
         if let Some(b) = s.buildings.get(i) {
-            let (sin, cos) = b.rotation_deg.to_radians().sin_cos();
-            let (hx, hy) = (b.size[0] * 0.5, b.size[1] * 0.5);
-            let corner = |x: f32, y: f32| {
-                crate::frame::to_bevy(s, [b.pos[0] + x * cos - y * sin, b.pos[1] + x * sin + y * cos], 6.)
-            };
-            let ring = [corner(-hx, -hy), corner(hx, -hy), corner(hx, hy), corner(-hx, hy)];
-            for k in 0..4 {
-                gizmos.line(ring[k], ring[(k + 1) % 4], Color::srgb(1., 1., 0.));
+            drape_footprint(&mut gizmos, s, b.pos, b.size, b.rotation_deg, Color::srgb(1., 1., 0.));
+        }
+    }
+    // On-map actions for the selected building or place.
+    if let Some(sel @ (Selection::Building(_) | Selection::Place(_))) = e.selected {
+        let (at, name) = match sel {
+            Selection::Building(i) => s.buildings.get(i).map(|b| (b.pos, format!("Edificio {}", b.id))),
+            Selection::Place(i) => s.places.get(i).map(|p| (p.pos, p.name.clone())),
+            _ => None,
+        }
+        .unzip();
+        let screen = at.and_then(|at| {
+            camera.world_to_viewport(transform, crate::frame::to_bevy(s, at, 30.))
+        });
+        let mut action = None;
+        if let Some(p) = screen {
+            egui::Area::new(egui::Id::new("editor-object-bar"))
+                .fixed_pos(egui::pos2(p.x + viewport_origin.x - 70., p.y + viewport_origin.y - 40.))
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(name.unwrap_or_default());
+                            if matches!(sel, Selection::Building(_)) {
+                                if ui.button("⟲").on_hover_text("Ruota −15° (Q)").clicked() {
+                                    action = Some("ccw");
+                                }
+                                if ui.button("⟳").on_hover_text("Ruota +15° (E)").clicked() {
+                                    action = Some("cw");
+                                }
+                            }
+                            if ui.button("🗑").on_hover_text("Elimina (Canc)").clicked() {
+                                action = Some("delete");
+                            }
+                        });
+                    });
+                });
+        }
+        if keys.just_pressed(KeyCode::Delete) && !ctx.wants_keyboard_input() {
+            action = Some("delete");
+        }
+        if let Some(action) = action {
+            let document = e.document.clone();
+            let locked = document.try_lock();
+            if let Ok(mut d) = locked {
+                let result = match (action, sel) {
+                    ("delete", _) => d.delete(sel),
+                    (_, Selection::Building(i)) => {
+                        let step = if action == "cw" { -15. } else { 15. };
+                        d.edit(|s| {
+                            if let Some(b) = s.buildings.get_mut(i) {
+                                b.rotation_deg = (b.rotation_deg + step).rem_euclid(360.);
+                            }
+                            Ok(())
+                        })
+                    }
+                    _ => Ok(()),
+                };
+                let gone = action == "delete" && result.is_ok();
+                outcome(&mut e, result.map_err(|err| err.to_string()));
+                set_selection(&mut e, &d, if gone { None } else { Some(sel) });
             }
-            gizmos.line(corner(0., 0.), corner(hx, 0.), Color::srgb(1., 1., 0.));
         }
     }
     let selected_position = match e.selected {
@@ -837,20 +986,19 @@ pub(crate) fn interact(
         _ => None,
     };
     if let Some((at, radius)) = selected_position {
-        gizmos.circle(
-            crate::frame::to_bevy(s, at, 6.),
-            Dir3::Y,
-            radius,
-            Color::srgb(1., 1., 0.),
-        );
+        drape_circle(&mut gizmos, s, at, radius, Color::srgb(1., 1., 0.));
     }
     if let Some(Selection::Road(i)) = e.selected {
         if let Some(road) = s.roads.get(i) {
-            for pair in road.points.windows(2) {
-                gizmos.line(
-                    crate::frame::to_bevy(s, pair[0], 8.),
-                    crate::frame::to_bevy(s, pair[1], 8.),
-                    Color::srgb(1., 1., 0.),
+            drape(&mut gizmos, s, &road.points, false, Color::srgb(1., 1., 0.));
+            for (v, p) in road.points.iter().enumerate() {
+                let end = v == 0 || v + 1 == road.points.len();
+                let hot = e.drag == Some(Drag::Vertex(i, v));
+                gizmos.sphere(
+                    crate::frame::to_bevy(s, *p, 3.),
+                    Quat::IDENTITY,
+                    if hot { 9. } else { 6. },
+                    if end { Color::srgb(1., 0.55, 0.1) } else { Color::srgb(1., 1., 0.) },
                 );
             }
         }
@@ -860,33 +1008,17 @@ pub(crate) fn interact(
         gizmos.line(at, at + Vec3::Y * 70., Color::srgb(0.1, 0.8, 1.));
         if let Some(r) = p.radius_m {
             let selected = e.selected == Some(Selection::Place(i));
-            gizmos.circle(
-                crate::frame::to_bevy(s, p.pos, 6.),
-                Dir3::Y,
-                r,
-                Color::srgb(0.1, 0.8, 1.).with_alpha(if selected { 0.9 } else { 0.35 }),
-            );
+            drape_circle(&mut gizmos, s, p.pos, r, Color::srgb(0.1, 0.8, 1.).with_alpha(if selected { 0.9 } else { 0.35 }));
         }
     }
     // Members of the selected place: buildings ringed, roads traced.
     if let Some(Selection::Place(i)) = e.selected {
         if let Some(place) = s.places.get(i) {
             for b in s.buildings.iter().filter(|b| place.buildings.contains(&b.id)) {
-                gizmos.circle(
-                    crate::frame::to_bevy(s, b.pos, 12.),
-                    Dir3::Y,
-                    b.size[0].max(b.size[1]) * 0.8,
-                    Color::srgb(0.1, 0.8, 1.),
-                );
+                drape_circle(&mut gizmos, s, b.pos, b.size[0].max(b.size[1]) * 0.8, Color::srgb(0.1, 0.8, 1.));
             }
             for r in s.roads.iter().filter(|r| place.roads.contains(&r.id)) {
-                for pair in r.points.windows(2) {
-                    gizmos.line(
-                        crate::frame::to_bevy(s, pair[0], 12.),
-                        crate::frame::to_bevy(s, pair[1], 12.),
-                        Color::srgb(0.1, 0.8, 1.),
-                    );
-                }
+                drape(&mut gizmos, s, &r.points, false, Color::srgb(0.1, 0.8, 1.));
             }
         }
     }
@@ -952,10 +1084,117 @@ pub(crate) fn interact(
     };
     for (at, radius, lowering) in &e.dabs {
         let colour = if *lowering { Color::srgb(1., 0.25, 0.2).with_alpha(0.25) } else { paint };
-        gizmos.circle(crate::frame::to_bevy(s, *at, 4.), Dir3::Y, *radius, colour);
+        drape_circle(&mut gizmos, s, *at, *radius, colour);
     }
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if let (Some(drag), Some(at)) = (e.drag, hit) {
+        e.drag_at = Some(at);
+        e.stroke_clock += time.delta_seconds().min(0.1);
+        if e.stroke_clock >= 0.05 {
+            e.stroke_clock = 0.;
+            e.busy_until = time.elapsed_seconds_f64() + SETTLE_S;
+            let document = e.document.clone();
+            let locked = document.try_lock();
+            if let Ok(mut d) = locked {
+                let result = match drag {
+                    Drag::Object(sel) => d.move_object(sel, at),
+                    Drag::Vertex(i, v) => d.move_road_vertex(i, v, at),
+                };
+                if let Err(err) = result {
+                    e.message = err.to_string();
+                }
+            }
+        }
+        return;
+    }
     if let Some(at) = hit {
+        if e.tool == "select" {
+            // Handles of the selected object: grabbing one starts a drag, otherwise a click selects.
+            let grab = (transform.translation().distance(crate::frame::to_bevy(s, at, 0.)) * 0.025)
+                .clamp(8., 80.);
+            let handle = match e.selected {
+                Some(Selection::Road(i)) => s.roads.get(i).and_then(|r| {
+                    r.points
+                        .iter()
+                        .enumerate()
+                        .map(|(v, p)| (v, scenario::editor::distance(*p, at)))
+                        .filter(|(_, dist)| *dist <= grab)
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(v, _)| (Drag::Vertex(i, v), v))
+                }),
+                _ => None,
+            };
+            if let (Some(Selection::Road(i)), Some((_, v))) = (e.selected, handle) {
+                if keys.just_pressed(KeyCode::KeyX) && !contexts.ctx_mut().wants_keyboard_input() {
+                    let document = e.document.clone();
+                    let locked = document.try_lock();
+                    if let Ok(mut d) = locked {
+                        let result = d.remove_road_vertex(i, v);
+                        outcome(&mut e, result.map_err(|err| err.to_string()));
+                        set_selection(&mut e, &d, Some(Selection::Road(i)));
+                    }
+                    return;
+                }
+            }
+            if buttons.just_pressed(MouseButton::Left) {
+                let document = e.document.clone();
+                let locked = document.try_lock();
+                if let Ok(mut d) = locked {
+                    let mut start = handle.map(|(drag, _)| drag);
+                    if start.is_none() {
+                        if let (true, Some(Selection::Road(i))) = (shift, e.selected) {
+                            let nearest = s.roads.get(i).and_then(|r| {
+                                r.points
+                                    .windows(2)
+                                    .enumerate()
+                                    .map(|(k, w)| (k, scenario::editor::nearest_on_segment(at, w[0], w[1])))
+                                    .filter(|(_, (dist, _))| *dist <= grab)
+                                    .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
+                            });
+                            if let Some((k, (_, q))) = nearest {
+                                // The stroke stays open: insert and drag are one undo step.
+                                d.begin_stroke();
+                                match d.insert_road_vertex(i, k, q) {
+                                    Ok(v) => start = Some(Drag::Vertex(i, v)),
+                                    Err(err) => {
+                                        d.end_stroke();
+                                        e.message = err.to_string();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if start.is_none() {
+                        start = match e.selected {
+                            Some(Selection::Building(i)) => s.buildings.get(i).and_then(|b| {
+                                let (sin, cos) = b.rotation_deg.to_radians().sin_cos();
+                                let (dx, dy) = (at[0] - b.pos[0], at[1] - b.pos[1]);
+                                let (lx, ly) = (dx * cos + dy * sin, -dx * sin + dy * cos);
+                                (lx.abs() <= b.size[0] * 0.5 + grab * 0.5
+                                    && ly.abs() <= b.size[1] * 0.5 + grab * 0.5)
+                                    .then_some(Drag::Object(Selection::Building(i)))
+                            }),
+                            Some(Selection::Place(i)) => s
+                                .places
+                                .get(i)
+                                .filter(|p| scenario::editor::distance(p.pos, at) <= grab.max(25.))
+                                .map(|_| Drag::Object(Selection::Place(i))),
+                            _ => None,
+                        };
+                        if start.is_some() {
+                            d.begin_stroke();
+                        }
+                    }
+                    if let Some(drag) = start {
+                        e.drag = Some(drag);
+                        e.drag_at = Some(at);
+                        e.stroke_clock = 0.;
+                        e.press = None;
+                        return;
+                    }
+                }
+            }
+        }
         if e.brush_tool() {
             let lowering = e.tool == "height" && e.sculpt_mode == "push" && shift;
             let colour = if lowering {
@@ -963,9 +1202,8 @@ pub(crate) fn interact(
             } else {
                 Color::srgb(1., 1., 0.)
             };
-            let centre = crate::frame::to_bevy(s, at, 5.);
-            gizmos.circle(centre, Dir3::Y, e.radius, colour);
-            gizmos.circle(centre, Dir3::Y, e.radius * 0.5, colour.with_alpha(0.4));
+            drape_circle(&mut gizmos, s, at, e.radius, colour);
+            drape_circle(&mut gizmos, s, at, e.radius * 0.5, colour.with_alpha(0.4));
             if buttons.pressed(MouseButton::Left) {
                 let document = e.document.clone();
                 let Ok(mut d) = document.try_lock() else {
@@ -1013,17 +1251,7 @@ pub(crate) fn interact(
             return;
         }
         if e.tool == "building" {
-            let (sin, cos) = e.spec.rotation_deg.to_radians().sin_cos();
-            let (hx, hy) = (e.spec.size[0] * 0.5, e.spec.size[1] * 0.5);
-            let corner = |x: f32, y: f32| {
-                crate::frame::to_bevy(s, [at[0] + x * cos - y * sin, at[1] + x * sin + y * cos], 3.)
-            };
-            let ring = [corner(-hx, -hy), corner(hx, -hy), corner(hx, hy), corner(-hx, hy)];
-            for i in 0..4 {
-                gizmos.line(ring[i], ring[(i + 1) % 4], Color::srgb(0.3, 1., 0.4));
-            }
-            // Front edge marks the +x axis so the rotation is legible.
-            gizmos.line(corner(0., 0.), corner(hx, 0.), Color::srgb(0.3, 1., 0.4));
+            drape_footprint(&mut gizmos, s, at, e.spec.size, e.spec.rotation_deg, Color::srgb(0.3, 1., 0.4));
         }
         if buttons.just_pressed(MouseButton::Left) {
             e.press = Some(cursor);
@@ -1042,13 +1270,29 @@ pub(crate) fn interact(
                 "select" => {
                     let mut objects: Vec<(f32, Selection)> = vec![];
                     for (i, b) in s.buildings.iter().enumerate() {
+                        // Inside the (rotated) footprint counts as a direct hit.
+                        let (sin, cos) = b.rotation_deg.to_radians().sin_cos();
+                        let (dx, dy) = (at[0] - b.pos[0], at[1] - b.pos[1]);
+                        let (lx, ly) = (dx * cos + dy * sin, -dx * sin + dy * cos);
+                        let inside = lx.abs() <= b.size[0] * 0.5 && ly.abs() <= b.size[1] * 0.5;
                         objects.push((
-                            scenario::editor::distance(at, b.pos),
+                            if inside { 0. } else { scenario::editor::distance(at, b.pos) },
                             Selection::Building(i),
                         ));
                     }
                     for (i, p) in s.places.iter().enumerate() {
                         objects.push((scenario::editor::distance(at, p.pos), Selection::Place(i)));
+                    }
+                    // A road is picked by its centreline, within a narrower reach than a point object.
+                    for (i, r) in s.roads.iter().enumerate() {
+                        let dist = r
+                            .points
+                            .windows(2)
+                            .map(|w| scenario::editor::nearest_on_segment(at, w[0], w[1]).0)
+                            .fold(f32::INFINITY, f32::min);
+                        if dist < 25. {
+                            objects.push((dist.max(0.) * 3., Selection::Road(i)));
+                        }
                     }
                     let selection = objects
                         .into_iter()

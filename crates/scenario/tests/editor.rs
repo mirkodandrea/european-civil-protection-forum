@@ -126,3 +126,27 @@ fn ground_below_sea_level_floods_and_cannot_be_repainted_or_built_on() {
     d.brush(at, 60., None, Some(5)).unwrap();
     assert!(d.scene.is_burnable(c));
 }
+
+#[test]
+fn road_vertices_can_be_inserted_moved_removed_and_objects_moved() {
+    use scenario::editor::{blank, nearest_on_segment, Selection};
+    let mut d = Document::new(blank("verts", 16, 20.).unwrap()).unwrap();
+    let Selection::Road(i) = d.add("road", [20., 20.], Some([200., 20.])).unwrap() else {
+        panic!("road expected")
+    };
+    let v = d.insert_road_vertex(i, 0, [100., 20.]).unwrap();
+    assert_eq!((v, d.scene.roads[i].points.len()), (1, 3));
+    d.move_road_vertex(i, v, [100., 120.]).unwrap();
+    assert_eq!(d.scene.roads[i].points[1], [100., 120.]);
+    assert!(d.move_road_vertex(i, v, [1e6, 0.]).is_err());
+    assert!(d.insert_road_vertex(i, 5, [50., 50.]).is_err());
+    d.remove_road_vertex(i, v).unwrap();
+    assert!(d.remove_road_vertex(i, 0).is_err(), "two vertices stay");
+    let b = d.add_building([60., 60.], Default::default()).unwrap();
+    d.move_object(b, [120., 80.]).unwrap();
+    let Selection::Building(bi) = b else { panic!() };
+    assert_eq!(d.scene.buildings[bi].pos, [120., 80.]);
+    assert!(d.move_object(Selection::Road(i), [10., 10.]).is_err());
+    let (dist, q) = nearest_on_segment([50., 30.], [0., 0.], [100., 0.]);
+    assert_eq!((dist, q), (30., [50., 0.]));
+}

@@ -444,7 +444,7 @@ pub fn control(
         &mut o,
         &mut navigation,
         over_ui,
-        editor.as_ref().is_some_and(|e| e.brush_tool()),
+        editor.as_ref().is_some_and(|e| e.captures_pointer()),
     );
     if manual {
         dir.manual_until = now + 15.0;

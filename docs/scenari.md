@@ -84,6 +84,17 @@ pack sopra un territorio; il nuovo ambiente serve anche ad authoring geometrico.
   Opzioni: `--scenarios-dir DIR` (default `data/scenarios`) e `--scenario ID`.
   La libreria comprende territori e pack, risolti sulla propria base.
 
+**Strade e oggetti.** Con lo strumento Seleziona si sceglie una strada cliccando
+la sua linea. Sulla strada selezionata: trascina un vertice per spostarlo,
+Maiusc+clic su un tratto per inserirne uno nuovo (e trascinarlo), `X` sul
+vertice per rimuoverlo (restano almeno due vertici), «Aggiungi vertici in coda»
+per prolungarla. Edifici e luoghi selezionati si spostano trascinandoli; ogni
+trascinamento è un solo passo di annullamento. Lo strumento «Aggiungi edificio»
+offre un catalogo di strutture (abitazione, scuola, ospedale, chiesa, caserma
+VVF, cascina, silo, torre idrica, piazza, area di raccolta, porto…) con tipo,
+variante grafica, dimensioni e occupanti già impostati; Q/E ruotano di 15° prima
+e dopo il posizionamento.
+
 «Crea territorio vuoto» costruisce una griglia piatta senza edifici, strade,
 ruoli o inject ereditati. Si scelgono identificativo, celle per lato e metri per
 cella. «Apri scenario esistente» carica un territorio o il contenuto completo di

@@ -47,6 +47,58 @@ pub const VISUAL_KINDS: &[&str] = &[
     "substation", "lighthouse", "plaza", "square", "pitch", "parking", "assembly", "lido",
     "campsite", "harbour", "cemetery",
 ];
+/// Italian names for `VISUAL_KINDS`, same order.
+pub const VISUAL_LABELS: &[&str] = &[
+    "Chiesa", "Cappella", "Caserma vigili del fuoco", "Cascina", "Fienile", "Silo", "Mulino",
+    "Torre idrica", "Cabina elettrica", "Faro", "Piazza", "Piazza (quadrata)", "Campo sportivo",
+    "Parcheggio", "Area di raccolta", "Lido", "Campeggio", "Porto", "Cimitero",
+];
+/// Ready-made facilities for the building tool: label, kind, visual variant, footprint (m), occupants.
+pub const FACILITY_PRESETS: &[(&str, BuildingKind, Option<&str>, [f32; 2], u32)] = &[
+    ("Abitazione", BuildingKind::House, None, [14., 10.], 4),
+    ("Scuola", BuildingKind::School, None, [40., 20.], 150),
+    ("Ospedale", BuildingKind::Hospital, None, [50., 30.], 120),
+    ("Distributore di carburante", BuildingKind::FuelStation, None, [25., 15.], 3),
+    ("Centro sportivo", BuildingKind::SportsCentre, None, [45., 30.], 40),
+    ("Municipio", BuildingKind::TownHall, None, [35., 20.], 30),
+    ("Zona industriale", BuildingKind::Industrial, None, [50., 35.], 25),
+    ("Chiesa", BuildingKind::House, Some("church"), [30., 14.], 0),
+    ("Cappella", BuildingKind::House, Some("chapel"), [10., 7.], 0),
+    ("Caserma vigili del fuoco", BuildingKind::Industrial, Some("fire_station"), [35., 20.], 12),
+    ("Cascina", BuildingKind::House, Some("farm"), [30., 20.], 6),
+    ("Fienile", BuildingKind::House, Some("barn"), [24., 12.], 0),
+    ("Silo", BuildingKind::Industrial, Some("silo"), [10., 10.], 0),
+    ("Mulino", BuildingKind::Industrial, Some("mill"), [16., 12.], 2),
+    ("Torre idrica", BuildingKind::Industrial, Some("water_tower"), [8., 8.], 0),
+    ("Cabina elettrica", BuildingKind::Industrial, Some("substation"), [12., 10.], 0),
+    ("Faro", BuildingKind::House, Some("lighthouse"), [8., 8.], 0),
+    ("Piazza", BuildingKind::House, Some("plaza"), [50., 50.], 0),
+    ("Campo sportivo", BuildingKind::SportsCentre, Some("pitch"), [60., 35.], 0),
+    ("Parcheggio", BuildingKind::House, Some("parking"), [40., 25.], 0),
+    ("Area di raccolta", BuildingKind::House, Some("assembly"), [50., 40.], 0),
+    ("Lido", BuildingKind::House, Some("lido"), [60., 25.], 0),
+    ("Campeggio", BuildingKind::House, Some("campsite"), [70., 50.], 40),
+    ("Porto", BuildingKind::Industrial, Some("harbour"), [60., 30.], 5),
+    ("Cimitero", BuildingKind::House, Some("cemetery"), [40., 30.], 0),
+];
+pub fn visual_label(kind: &str) -> &str {
+    VISUAL_KINDS
+        .iter()
+        .position(|k| *k == kind)
+        .map_or(kind, |i| VISUAL_LABELS[i])
+}
+/// Distance from `p` to segment `a`–`b`, and the closest point on it.
+pub fn nearest_on_segment(p: Pos, a: Pos, b: Pos) -> (f32, Pos) {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let len2 = d[0] * d[0] + d[1] * d[1];
+    let t = if len2 > 0. {
+        (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0., 1.)
+    } else {
+        0.
+    };
+    let q = [a[0] + d[0] * t, a[1] + d[1] * t];
+    (distance(p, q), q)
+}
 impl Document {
     pub fn new(scene: Scenario) -> Result<Self> {
         validate(&scene)?;
@@ -320,6 +372,76 @@ impl Document {
             let last = *road.points.last().expect("roads have points");
             ensure!(distance(last, at) >= 1., "Vertice coincidente con il precedente");
             road.points.push(at);
+            Ok(())
+        })
+    }
+    /// Inserts a vertex into segment `segment` (between points `segment` and `segment + 1`).
+    /// Returns the index of the new vertex.
+    pub fn insert_road_vertex(&mut self, index: usize, segment: usize, at: Pos) -> Result<usize> {
+        self.edit(|s| {
+            ensure!(inside(s, at), "Punto fuori mappa");
+            let road = s
+                .roads
+                .get_mut(index)
+                .ok_or_else(|| anyhow::anyhow!("Strada inesistente"))?;
+            ensure!(segment + 1 < road.points.len(), "Segmento inesistente");
+            road.points.insert(segment + 1, at);
+            Ok(())
+        })?;
+        Ok(segment + 1)
+    }
+    pub fn move_road_vertex(&mut self, index: usize, vertex: usize, at: Pos) -> Result<()> {
+        self.edit(|s| {
+            ensure!(inside(s, at), "Punto fuori mappa");
+            let p = s
+                .roads
+                .get_mut(index)
+                .and_then(|r| r.points.get_mut(vertex))
+                .ok_or_else(|| anyhow::anyhow!("Vertice inesistente"))?;
+            *p = at;
+            Ok(())
+        })
+    }
+    /// Removes a vertex; a road keeps at least two.
+    pub fn remove_road_vertex(&mut self, index: usize, vertex: usize) -> Result<()> {
+        self.edit(|s| {
+            let road = s
+                .roads
+                .get_mut(index)
+                .ok_or_else(|| anyhow::anyhow!("Strada inesistente"))?;
+            ensure!(road.points.len() > 2, "Una strada ha almeno due vertici");
+            ensure!(vertex < road.points.len(), "Vertice inesistente");
+            road.points.remove(vertex);
+            Ok(())
+        })
+    }
+    /// Moves a building or a place; a building follows the sector it lands in.
+    pub fn move_object(&mut self, selection: Selection, at: Pos) -> Result<()> {
+        self.edit(|s| {
+            ensure!(inside(s, at), "Punto fuori mappa");
+            match selection {
+                Selection::Building(i) => {
+                    ensure!(!underwater(s, at), "Punto sott'acqua");
+                    let sector = s
+                        .sector_at(at)
+                        .ok_or_else(|| anyhow::anyhow!("Nessun settore in questo punto"))?
+                        .id
+                        .clone();
+                    let b = s
+                        .buildings
+                        .get_mut(i)
+                        .ok_or_else(|| anyhow::anyhow!("Edificio inesistente"))?;
+                    b.pos = at;
+                    b.sector = sector;
+                }
+                Selection::Place(i) => {
+                    s.places
+                        .get_mut(i)
+                        .ok_or_else(|| anyhow::anyhow!("Luogo inesistente"))?
+                        .pos = at;
+                }
+                Selection::Road(_) => anyhow::bail!("Sposta i vertici della strada"),
+            }
             Ok(())
         })
     }
