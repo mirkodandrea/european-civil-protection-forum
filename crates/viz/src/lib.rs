@@ -242,37 +242,50 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
 #[derive(Resource)]
 pub struct Source(Mutex<Box<dyn ViewSource>>);
 
-/// When the scene was last rebuilt and what it cost, to pace rebuilds while the
-/// editor is painting (each one reconstructs terrain, textures and vegetation).
+/// The newest edited scenario that has been shown only through the light
+/// refresh (terrain mesh), waiting for a full rebuild once the brush rests.
 #[derive(Resource, Default)]
 struct SceneBuild {
-    at: Option<bevy::utils::Instant>,
-    cost: std::time::Duration,
+    pending: Option<Arc<scenario::Scenario>>,
 }
 
 /// Rebuild only presentation entities. The source owns the exercise and all physics.
 fn replace_scene(world: &mut World) {
-    // During a brush stroke the draft changes every tick; rebuilding at that
-    // rate stalls the frame. Preview at most every ~4x the last rebuild cost
-    // (the stroke's end always rebuilds, since stroking is then false).
-    if world.get_resource::<editor::Editor>().is_some_and(|e| e.stroking()) {
-        let build = world.get_resource_or_insert_with(SceneBuild::default);
-        let wait = (build.cost * 4).max(std::time::Duration::from_millis(400));
-        if build.at.is_some_and(|at| at.elapsed() < wait) {
-            return;
-        }
-    }
-    let started = bevy::utils::Instant::now();
     let current = world.resource::<Scn>().0.clone();
-    let next = world
+    let polled = world
         .resource::<Source>()
         .0
         .lock()
         .ok()
         .and_then(|mut source| source.poll_scene(&current));
-    let Some(next) = next else {
+    // A full rebuild reconstructs terrain textures and vegetation (seconds on a
+    // large territory), so while the editor brush is working only the terrain
+    // mesh follows; the rebuild happens once the brush has rested.
+    let now = world.resource::<Time>().elapsed_seconds_f64();
+    if world.get_resource::<editor::Editor>().is_some_and(|e| e.busy(now)) {
+        if let Some(next) = polled {
+            let same_grid = current.grid.rows == next.grid.rows
+                && current.grid.cols == next.grid.cols
+                && current.grid.cellsize == next.grid.cellsize;
+            if same_grid {
+                terrain::reshape(world, &next);
+                world.insert_resource(Scn(next.clone()));
+                world.get_resource_or_insert_with(SceneBuild::default).pending = Some(next);
+                return;
+            }
+            world.get_resource_or_insert_with(SceneBuild::default).pending = None;
+            return replace_with(world, current, next);
+        }
+        return;
+    }
+    let pending = world.get_resource_or_insert_with(SceneBuild::default).pending.take();
+    let Some(next) = polled.or(pending) else {
         return;
     };
+    replace_with(world, current, next);
+}
+
+fn replace_with(world: &mut World, current: Arc<scenario::Scenario>, next: Arc<scenario::Scenario>) {
     let preserve_orbit = world.contains_resource::<editor::Editor>()
         && current.grid.rows == next.grid.rows
         && current.grid.cols == next.grid.cols
@@ -306,9 +319,6 @@ fn replace_scene(world: &mut World) {
     if let Some(orbit) = orbit {
         world.insert_resource(orbit);
     }
-    let mut build = world.get_resource_or_insert_with(SceneBuild::default);
-    build.at = Some(bevy::utils::Instant::now());
-    build.cost = started.elapsed();
 }
 
 /// Copy the newest view into the [`Snapshot`] whenever the model has changed

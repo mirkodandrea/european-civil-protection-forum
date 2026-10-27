@@ -20,6 +20,7 @@ const CHUNK: usize = 25;
 
 #[derive(Resource)]
 pub struct TerrainHandles {
+    mesh: Handle<Mesh>,
     material: Handle<TerrainMaterial>,
     pub(crate) state: Handle<Image>,
     pub road_mask: Handle<Image>,
@@ -34,6 +35,68 @@ pub struct VegChunk {
     centre: Vec3,
 }
 
+/// Terrain mesh nodes: sampled rows, columns and positions. Visual DEM nodes
+/// may be finer than the model raster; fire state is sampled separately from
+/// the authoritative cell texture in the shader.
+fn terrain_grid(s: &Scenario, quality: &str) -> (Vec<usize>, Vec<usize>, Vec<[f32; 3]>) {
+    let stride = if quality == "low" {
+        4
+    } else if quality == "projector" {
+        2
+    } else {
+        1
+    };
+    let g = s.grid;
+    let (rows, cols) = s
+        .render_terrain
+        .as_ref()
+        .map(|t| (t.rows, t.cols))
+        .unwrap_or((g.rows, g.cols));
+    let sample = |n: usize| {
+        let mut v: Vec<usize> = (0..n)
+            .step_by(if s.render_terrain.is_some() { stride } else { 1 })
+            .collect();
+        if v.last() != Some(&(n - 1)) {
+            v.push(n - 1);
+        }
+        v
+    };
+    let rr = sample(rows);
+    let cc = sample(cols);
+    let mut pos = Vec::new();
+    for &row in &rr {
+        for &col in &cc {
+            let at = if let Some(t) = &s.render_terrain {
+                [
+                    col as f32 * t.posting_m,
+                    t.world_size_m[1] - row as f32 * t.posting_m,
+                ]
+            } else {
+                s.cell_centre(Cell { row, col })
+            };
+            pos.push(to_bevy(s, at, 0.0).to_array());
+        }
+    }
+    (rr, cc, pos)
+}
+
+/// Re-shape the existing terrain mesh for an edited elevation model, in place.
+/// Entities standing on the ground (vegetation, buildings) are not moved: the
+/// editor follows up with a full rebuild once the brush rests.
+pub(crate) fn reshape(world: &mut World, s: &Scenario) {
+    let Some(mesh) = world.get_resource::<TerrainHandles>().map(|h| h.mesh.clone()) else {
+        return;
+    };
+    let quality = world.resource::<crate::quality::Quality>().name;
+    let (_, _, pos) = terrain_grid(s, quality);
+    if let Some(m) = world.resource_mut::<Assets<Mesh>>().get_mut(&mesh) {
+        if m.count_vertices() == pos.len() {
+            m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+            m.compute_smooth_normals();
+        }
+    }
+}
+
 pub fn setup(
     mut commands: Commands,
     scn: Res<Scn>,
@@ -46,57 +109,8 @@ pub fn setup(
 ) {
     let s = &scn.0;
     let g = s.grid;
-    // Visual DEM nodes may be finer than the model raster. Fire state is
-    // sampled separately from the authoritative cell texture in the shader.
-    let stride = if quality.name == "low" {
-        4
-    } else if quality.name == "projector" {
-        2
-    } else {
-        1
-    };
-    let (rows, cols) = s
-        .render_terrain
-        .as_ref()
-        .map(|t| (t.rows, t.cols))
-        .unwrap_or((g.rows, g.cols));
-    let sample = |n: usize| {
-        let mut v: Vec<usize> = (0..n)
-            .step_by(if s.render_terrain.is_some() {
-                stride
-            } else {
-                1
-            })
-            .collect();
-        if v.last() != Some(&(n - 1)) {
-            v.push(n - 1);
-        }
-        v
-    };
-    let rr = sample(rows);
-    let cc = sample(cols);
-    let (mut pos, mut base) = (Vec::<[f32; 3]>::new(), Vec::<[f32; 4]>::new());
-    for &row in &rr {
-        for &col in &cc {
-            let at = if let Some(t) = &s.render_terrain {
-                [
-                    col as f32 * t.posting_m,
-                    t.world_size_m[1] - row as f32 * t.posting_m,
-                ]
-            } else {
-                s.cell_centre(Cell { row, col })
-            };
-            let cell = s
-                .cell_of([
-                    at[0].clamp(0.0, g.width_m() - 0.01),
-                    at[1].clamp(0.0, g.height_m() - 0.01),
-                ])
-                .unwrap();
-            pos.push(to_bevy(s, at, 0.0).to_array());
-            let _ = cell;
-            base.push([1., 1., 1., 1.]);
-        }
-    }
+    let (rr, cc, pos) = terrain_grid(s, quality.name);
+    let base = vec![[1., 1., 1., 1.]; pos.len()];
     let mut idx = Vec::new();
     for row in 0..rr.len() - 1 {
         for col in 0..cc.len() - 1 {
@@ -115,6 +129,7 @@ pub fn setup(
     mesh.insert_indices(Indices::U32(idx));
     mesh.compute_smooth_normals();
     let terrain = meshes.add(mesh);
+    let terrain_mesh = terrain.clone();
     let (road_mask, grass_map, ground_colour, ground_normal) = ground_images(s, &mut images);
     let state = images.add(state_image(g.cols as u32, g.rows as u32));
     let material = mats.add(TerrainMaterial::new(
@@ -294,6 +309,7 @@ pub fn setup(
     }
 
     commands.insert_resource(TerrainHandles {
+        mesh: terrain_mesh,
         material,
         state,
         road_mask,

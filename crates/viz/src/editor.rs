@@ -35,6 +35,7 @@ pub struct Editor {
     stroking: bool,
     stroke_clock: f32,
     last_paint: Option<scenario::Pos>,
+    busy_until: f64,
     /// Dabs of the stroke in progress, drawn as a cheap preview until the scene catches up.
     dabs: Vec<(scenario::Pos, f32, bool)>,
     fuel: i32,
@@ -77,8 +78,9 @@ impl ViewSource for DraftSource {
 }
 impl Editor {
     /// Hold-to-paint tools take the left button and the wheel from the camera.
-    pub(crate) fn stroking(&self) -> bool {
-        self.stroking
+    /// A brush is working or has only just stopped.
+    pub(crate) fn busy(&self, now: f64) -> bool {
+        self.stroking || now < self.busy_until
     }
     pub fn brush_tool(&self) -> bool {
         self.tool == "height" || self.tool == "fuel"
@@ -105,6 +107,7 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         stroking: false,
         stroke_clock: 0.,
         last_paint: None,
+        busy_until: 0.,
         dabs: Vec::new(),
         fuel: 4,
         spec: BuildingSpec::default(),
@@ -742,6 +745,8 @@ fn property_fields(ui: &mut egui::Ui, v: &mut serde_json::Value, key: &str) {
 }
 
 const BRUSH_TICK: f32 = 0.1;
+/// Pause after the last brush tick before the scene is rebuilt in full.
+const SETTLE_S: f64 = 1.2;
 
 pub(crate) fn interact(
     mut contexts: EguiContexts,
@@ -961,7 +966,7 @@ pub(crate) fn interact(
         previous = t;
     }
     // The rebuilt scene already shows the dabs; until then draw them directly.
-    if !e.stroking && !e.dabs.is_empty() {
+    if !e.busy(time.elapsed_seconds_f64()) && !e.dabs.is_empty() {
         let document = e.document.clone();
         let locked = document.try_lock();
         if locked.is_ok_and(|d| Arc::ptr_eq(s, &d.scene)) {
@@ -1001,6 +1006,7 @@ pub(crate) fn interact(
                 }
                 e.stroke_clock += time.delta_seconds().min(0.1);
                 if e.stroke_clock >= BRUSH_TICK {
+                    e.busy_until = time.elapsed_seconds_f64() + SETTLE_S;
                     let elapsed = e.stroke_clock.min(0.25);
                     e.stroke_clock = 0.;
                     let result = match (e.tool.as_str(), e.sculpt_mode.as_str()) {
