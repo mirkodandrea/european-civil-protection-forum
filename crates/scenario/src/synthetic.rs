@@ -582,6 +582,7 @@ fn msel() -> Vec<InjectTemplate> {
                     _ => "Capacity and international assistance",
                 }
                 .into(),
+                at_s: None,
             }
         };
     vec![

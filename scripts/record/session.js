@@ -270,7 +270,8 @@ const noneParsing = async () => !(await getJSON('/api/master')).proposals.some(p
   }
 
   await caption('resolve2', 300);
-  await F('EXCON').locator('#minutes').fill('60');
+  await fetch(BASE + '/api/master/settings', {method: 'POST', headers: {Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json'}, body: JSON.stringify({turn_minutes: 60})});
+  await sleep(1500);
   await F('EXCON').locator('#resolve').scrollIntoViewIfNeeded();
   await F('EXCON').locator('#resolve').click();
   await sleep(2000);

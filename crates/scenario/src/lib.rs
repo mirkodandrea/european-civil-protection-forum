@@ -451,6 +451,10 @@ pub struct InjectTemplate {
     /// Incident/event name used only to group injects in the EXCON view.
     #[serde(default)]
     pub event: String,
+    /// Planned instant, simulated seconds from the start of the exercise.
+    /// Without it the inject is planned at the start of its suggested `turn`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_s: Option<i64>,
 }
 
 /// A scripted world change on the MSEL timeline, independent of any message.

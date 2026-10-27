@@ -540,7 +540,8 @@ async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
         "phase": ex.phase,
         "turn_minutes": ex.turn_minutes,
         "speed": ex.speed,
-        "resolving": ex.resolving.as_ref().map(|r| json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "minutes": r.minutes})),
+        "resolving": ex.resolving.as_ref().map(|r| json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "minutes": r.minutes, "partial": r.partial})),
+        "turn_window": {"start_s": ex.turn_start_s, "planned_end_s": ex.planned_end_s(), "now_s": ex.world.time_s(), "substeps": ex.substeps},
         "generation": ex.generation,
         "last_turn": ex.last_turn,
         "players": ex.players,
@@ -584,6 +585,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "proposals": ex.proposals,
         "planned_injects": ex.planned_injects(),
         "timeline_actions": ex.timeline_actions(),
+        "agenda": ex.turn_agenda(),
         "inject_responses": ex.inject_responses(),
         "clarification_threads": ex.clarification_threads(),
         "sent_injects": ex.sent_injects,
@@ -1455,6 +1457,13 @@ struct ResolveBody {
     /// Decision for each scripted timeline action due in the turn.
     #[serde(default)]
     actions: std::collections::BTreeMap<String, exercise::actions::ActionChoice>,
+    /// Intermediate advance: run for `minutes` (or `until`) and keep the turn open.
+    #[serde(default)]
+    substep: bool,
+    /// Run up to `"next_event"` (the next pending inject or action of the
+    /// turn) or `"turn_end"` (the planned end) instead of for `minutes`.
+    #[serde(default)]
+    until: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -1462,17 +1471,28 @@ struct ResolveBody {
 pub(crate) struct DueQuery {
     #[serde(default)]
     minutes: Option<u32>,
+    #[serde(default)]
+    to_s: Option<i64>,
 }
 
 /// Scripted timeline actions that fall inside the next turn: EXCON decides
 /// on each of them when starting the turn.
 #[cfg_attr(
     not(target_arch = "wasm32"),
-    rocket::get("/api/master/due-actions?<minutes>")
+    rocket::get("/api/master/due-actions?<minutes>&<to_s>")
 )]
-async fn get_due_actions(_principal: Principal, s: AppState, minutes: Option<u32>) -> ApiResult {
+async fn get_due_actions(
+    _principal: Principal,
+    s: AppState,
+    minutes: Option<u32>,
+    to_s: Option<i64>,
+) -> ApiResult {
     let ex = s.lock();
-    Ok(Json(json!({"turn": ex.turn, "due": ex.due_actions(minutes)})))
+    let due = match to_s {
+        Some(t) => ex.due_actions_until(t),
+        None => ex.due_actions(minutes),
+    };
+    Ok(Json(json!({"turn": ex.turn, "due": due})))
 }
 
 #[cfg_attr(
@@ -1486,7 +1506,22 @@ async fn post_resolve(
 ) -> ApiResult {
     let body = body.map(|b| b.0).unwrap_or_default();
     let minutes = body.minutes;
-    s.lock().begin_resolution_with(minutes, &body.actions)?;
+    {
+        let mut ex = s.lock();
+        if body.substep || body.until.is_some() {
+            let to_s = match body.until.as_deref() {
+                Some("next_event") => ex.turn_agenda()["next_event_s"]
+                    .as_i64()
+                    .ok_or_else(|| bad("no further event in this turn"))?,
+                Some("turn_end") => ex.planned_end_s(),
+                Some(other) => return Err(bad(format!("unknown target {other}"))),
+                None => ex.world.time_s() + minutes.unwrap_or(1).clamp(1, 24 * 60) as i64 * 60,
+            };
+            ex.begin_resolution_until(to_s, body.substep, &body.actions)?;
+        } else {
+            ex.begin_resolution_with(minutes, &body.actions)?;
+        }
+    }
     // Spawned, so the turn completes even if the client goes away; the
     // response still waits for the report.
     let report = tokio::spawn(flow::run_resolution(s.clone()))

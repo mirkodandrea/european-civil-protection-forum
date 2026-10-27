@@ -885,6 +885,70 @@ fn skipped_and_deferred_actions_do_not_fire() {
     assert!(ex.due_actions(Some(60)).is_empty());
 }
 
+#[test]
+fn substep_advances_inside_the_turn_without_closing_it() {
+    use exercise::actions::ActionChoice;
+    use std::collections::BTreeMap;
+    let mut ex = with_timeline();
+    ex.start().unwrap();
+    ex.turn_minutes = 30;
+    let agenda = ex.turn_agenda();
+    assert_eq!(agenda["turn_start_s"], 0);
+    assert_eq!(agenda["planned_end_s"], 1800);
+    assert_eq!(agenda["next_event_s"], 300);
+    assert!(agenda["items"].as_array().unwrap().iter().any(|i| i["id"] == "wind_shift"));
+
+    // Stop exactly at the next event: the turn stays open, the action is decided.
+    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Run)]);
+    ex.begin_resolution_until(300, true, &choices).unwrap();
+    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
+    let report = ex.finish_resolution().unwrap();
+    assert_eq!((report.from_s, report.to_s), (0, 300));
+    assert_eq!(ex.turn, 1);
+    assert_eq!(ex.phase, Phase::Orders);
+    assert_eq!(ex.world.time_s(), 300);
+    assert_eq!(ex.turn_start_s, 0);
+    assert_eq!(ex.substeps.len(), 1);
+
+    // Closing the turn runs to the planned end, not another full turn.
+    let agenda = ex.turn_agenda();
+    let wind = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == "wind_shift").unwrap();
+    assert_eq!(wind["due"], true, "the event reached is now due");
+    ex.resolve_turn_with(None, &choices).unwrap();
+    assert_eq!(ex.world.time_s(), 1800);
+    assert_eq!(ex.turn, 2);
+    assert_eq!(ex.turn_start_s, 1800);
+    assert!(ex.substeps.is_empty());
+
+    // Rollback to turn 1 forgets the sub-steps and the turn window.
+    ex.rollback(1).unwrap();
+    assert_eq!((ex.turn_start_s, ex.world.time_s()), (0, 0));
+    assert!(ex.substeps.is_empty());
+}
+
+#[test]
+fn inject_at_s_places_it_in_the_agenda() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.msel[0].at_s = Some(600);
+    let id = scn.msel[0].id.clone();
+    scn.check().unwrap();
+    let mut ex = Exercise::new(World::new(Arc::new(scn), 1).unwrap());
+    ex.start().unwrap();
+    ex.turn_minutes = 30;
+    let agenda = ex.turn_agenda();
+    let item = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap();
+    assert_eq!(item["at_s"], 600);
+    assert_eq!(item["due"], false);
+    // Advancing to it makes it due: proposed to EXCON, never sent automatically.
+    ex.begin_resolution_until(600, true, &BTreeMap::new()).unwrap();
+    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
+    ex.finish_resolution().unwrap();
+    let agenda = ex.turn_agenda();
+    let item = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap();
+    assert_eq!(item["due"], true);
+    assert!(ex.sent_injects.is_empty());
+}
+
 /// The default scenario no longer starts burning: the ignition is the
 /// timeline action A-01, which EXCON approves when the first turn starts.
 #[test]

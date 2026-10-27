@@ -15,6 +15,8 @@ pub struct ExconTimelineProps {
     pub action: Callback<Action>,
     pub busy: bool,
     pub oninject: Callback<String>,
+    /// Advance to the given simulated second with this resolve body.
+    pub onadvance: Callback<(Value, i64)>,
 }
 
 /// `+HH:MM:SS` from a real-time offset in seconds.
@@ -150,7 +152,8 @@ fn send_dialog(props: &SendDialogProps) -> Html {
 
 #[derive(Properties, PartialEq)]
 pub struct DueActionsProps {
-    pub minutes: u32,
+    /// Resolve body of the advance being started; the choices are added to it.
+    pub body: Value,
     pub due: Vec<Value>,
     pub busy: bool,
     pub action: Callback<Action>,
@@ -159,8 +162,10 @@ pub struct DueActionsProps {
 
 /// Asked when a turn starts: what to do with each scripted action planned
 /// inside the turn's window (default: apply it at its planned instant).
-pub fn actions_body(minutes: u32, choices: &BTreeMap<String, String>) -> Value {
-    json!({"minutes": minutes, "actions": choices})
+pub fn actions_body(base: &Value, choices: &BTreeMap<String, String>) -> Value {
+    let mut body = base.clone();
+    body["actions"] = json!(choices);
+    body
 }
 
 #[function_component(DueActionsDialog)]
@@ -174,10 +179,10 @@ pub fn due_actions_dialog(props: &DueActionsProps) -> Html {
         })
     };
     let confirm = {
-        let (choices, action, onclose, minutes) =
-            (choices.clone(), props.action.clone(), props.onclose.clone(), props.minutes);
+        let (choices, action, onclose, base) =
+            (choices.clone(), props.action.clone(), props.onclose.clone(), props.body.clone());
         Callback::from(move |_| {
-            action.emit(Action::post("/api/master/resolve", actions_body(minutes, &choices)));
+            action.emit(Action::post("/api/master/resolve", actions_body(&base, &choices)));
             onclose.emit(());
         })
     };
@@ -195,7 +200,7 @@ pub fn due_actions_dialog(props: &DueActionsProps) -> Html {
     };
     html! {<div class="modal-backdrop"><section class="inject-modal send-dialog" role="dialog" aria-modal="true" aria-labelledby="due-dialog-title">
         <div class="row"><h2 id="due-dialog-title">{crate::i18n::ex("Azioni pianificate in questo turno")}</h2><div class="grow"/><button onclick={{let c=props.onclose.clone();Callback::from(move |_|c.emit(()))}}>{crate::i18n::ex("Annulla")}</button></div>
-        <p class="muted">{crate::exfmt!("Il turno dura {} min. Decidi cosa fare di ciascuna azione prima di avviarlo.","The turn lasts {} min. Decide what to do with each action before starting it.",props.minutes)}</p>
+        <p class="muted">{crate::i18n::ex("Decidi cosa fare di ciascuna azione prima di far avanzare il tempo.")}</p>
         <ul class="planned-list">{for props.due.iter().map(|a|{
             let id=text(&a["id"]).to_string();
             let overdue=a["overdue"]==true;
@@ -206,8 +211,130 @@ pub fn due_actions_dialog(props: &DueActionsProps) -> Html {
                     if !text(&a["note"]).is_empty(){<small class="planned-objective">{text(&a["note"])}</small>}
                     <span class="row">{if overdue{option(&id,"run","Esegui subito")}else{option(&id,"run","Esegui all’istante previsto")}}{option(&id,"skip","Salta")}{option(&id,"defer","Rinvia")}</span></span></li>}
         })}</ul>
-        <div class="row send-actions"><div class="grow"/><button class="primary" data-due-confirm="" disabled={props.busy} onclick={confirm}>{crate::i18n::ex("Avvia il turno")}</button></div>
+        <div class="row send-actions"><div class="grow"/><button class="primary" data-due-confirm="" disabled={props.busy} onclick={confirm}>{crate::i18n::ex("Avanza")}</button></div>
     </section></div>}
+}
+
+
+#[derive(Properties, PartialEq)]
+struct TurnPanelProps {
+    agenda: Value,
+    state: Value,
+    busy: bool,
+    action: Callback<Action>,
+    onadvance: Callback<(Value, i64)>,
+}
+
+/// Position of `t` on a track from `start` to `end`, in percent.
+pub fn track_pct(t: i64, start: i64, end: i64) -> f64 {
+    ((t - start) as f64 / (end - start).max(1) as f64 * 100.0).clamp(0.0, 100.0)
+}
+
+/// Intermediate advances of the open turn: `[to the next event, by step_min]`
+/// as `(target second, resolve body)`; the turn stays open.
+pub fn advance_targets(now: i64, next: Option<i64>, step_min: u32) -> [Option<(i64, Value)>; 2] {
+    [
+        next.map(|t| (t, json!({"substep": true, "until": "next_event"}))),
+        Some((now + step_min.max(1) as i64 * 60, json!({"substep": true, "minutes": step_min.max(1)}))),
+    ]
+}
+
+/// Closing the open turn: run to its planned end, or one minute once that has
+/// been passed by intermediate advances.
+pub fn close_target(now: i64, end: i64) -> (i64, Value) {
+    if end > now {
+        (end, json!({"until": "turn_end"}))
+    } else {
+        (now + 60, json!({"minutes": 1}))
+    }
+}
+
+/// Scroll the timeline row of an agenda item into view and flash it.
+fn reveal_row(kind: &str, id: &str) {
+    let attr = if kind == "inject" { "data-inject" } else { "data-action" };
+    let Some(row) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.query_selector(&format!("[{attr}=\"{id}\"]")).ok().flatten())
+    else {
+        return;
+    };
+    row.scroll_into_view();
+    let _ = row.remove_attribute("data-flash");
+    let _ = row.set_attribute("data-flash", "");
+    gloo_timers::callback::Timeout::new(1600, move || {
+        let _ = row.remove_attribute("data-flash");
+    })
+    .forget();
+}
+
+/// The single place where EXCON moves time: the open turn as a window on the
+/// scenario timeline (where "now" is, the events inside it) and every advance,
+/// from the next event to closing the turn. Markers only point to list rows.
+#[function_component(TurnPanel)]
+fn turn_panel(props: &TurnPanelProps) -> Html {
+    let step = use_state(|| "5".to_string());
+    let length = use_state(String::new);
+    let a = &props.agenda;
+    let w = &props.state["turn_window"];
+    let start = a["turn_start_s"].as_i64().unwrap_or(0);
+    let end = a["planned_end_s"].as_i64().unwrap_or(start + 1800);
+    let resolving = !props.state["resolving"].is_null();
+    let orders = text(&props.state["phase"]) == "orders";
+    // The polled state is the freshest while a turn runs.
+    let now = w["now_s"].as_i64().or(a["now_s"].as_i64()).unwrap_or(start);
+    let target = props.state["resolving"]["to_s"].as_i64();
+    let items = list(&a["items"]);
+    let next = a["next_event_s"].as_i64();
+    let step_min = step.parse::<u32>().unwrap_or(5);
+    let [to_next, to_step] = advance_targets(now, next, step_min);
+    let go = |t: Option<(i64, Value)>| {
+        let onadvance = props.onadvance.clone();
+        Callback::from(move |_| {
+            if let Some((to, body)) = t.clone() {
+                onadvance.emit((body, to));
+            }
+        })
+    };
+    let ctl_off = props.busy || !orders || resolving;
+    let set_length = {
+        let (action, length) = (props.action.clone(), length.clone());
+        Callback::from(move |_| {
+            if let Ok(m) = length.parse::<u32>() {
+                action.emit(Action::post("/api/master/settings", json!({"turn_minutes": m})));
+            }
+        })
+    };
+    html! {<section class={classes!("card","turn-panel",resolving.then_some("running"))} id="turn-bar" data-now={now.to_string()}>
+        <div class="tp-head">
+            <h2>{crate::exfmt!("Turno {}","Turn {}",a["turn"])}</h2>
+            <span class="muted">{format!("{} → {}",text(&a["start_clock"]),text(&a["end_clock"]))}</span>
+            <div class="grow"/>
+            <label class="tp-length">{crate::i18n::ex("Durata")}<input aria-label={crate::i18n::ex("Durata turno (min)")} id="turn-length" type="number" min="1" max="1440" placeholder={((end-start)/60).to_string()} value={(*length).clone()} oninput={{let l=length.clone();Callback::from(move |e|l.set(crate::api::input(e)))}}/>{"min"}</label>
+            if length.parse::<u32>().is_ok(){<button id="turn-length-set" class="tp-small" disabled={ctl_off} onclick={set_length}>{crate::i18n::ex("Imposta")}</button>}
+        </div>
+        <div class="tb-track" role="img" aria-label={crate::exfmt!("Avanzamento del turno: ora {}","Turn progress: now {}",text(&a["now_clock"]))}>
+            <div class="tb-fill" style={format!("width:{:.2}%",track_pct(now,start,end))}/>
+            if let Some(t)=target.filter(|_|resolving){<div class="tb-run" style={format!("left:{:.2}%;width:{:.2}%",track_pct(now,start,end),(track_pct(t,start,end)-track_pct(now,start,end)).max(0.0))}/>}
+            {for list(&a["substeps"]).iter().map(|s|html!{<i class="tb-tick" style={format!("left:{:.2}%",track_pct(s["to_s"].as_i64().unwrap_or(0),start,end))}/>})}
+            {for items.iter().map(|i|{
+                let at=i["at_s"].as_i64().unwrap_or(0);
+                let kind=text(&i["kind"]).to_string();
+                let state=if i["due"]==true{"due"}else if i["pending"]==true{"pending"}else{"done"};
+                let title=format!("{} · {}",text(&i["clock"]),text(&i["title"]));
+                let onclick={let id=text(&i["id"]).to_string();let kind=kind.clone();Callback::from(move |_|reveal_row(&kind,&id))};
+                html!{<button class={classes!("tb-marker",kind.clone(),state,(at<start).then_some("overdue"))} key={format!("{}:{}",kind,text(&i["id"]))} style={format!("left:{:.2}%",track_pct(at,start,end))} title={title.clone()} aria-label={title} {onclick}/>}
+            })}
+            <div class="tb-now" style={format!("left:{:.2}%",track_pct(now,start,end))}><span>{text(&a["now_clock"])}</span></div>
+        </div>
+        <div class="tp-controls">
+            <span class="tp-label">{crate::i18n::ex("Avanza il tempo")}</span>
+            <button id="advance-next" disabled={ctl_off||to_next.is_none()} onclick={go(to_next)}>{match next{Some(_)=>crate::exfmt!("▶ al prossimo evento ({})","▶ to the next event ({})",text(&a["next_event_clock"])),None=>crate::i18n::ex("nessun altro evento nel turno").to_string()}}</button>
+            <span class="tp-step"><button id="advance-step-go" disabled={ctl_off} onclick={go(to_step)}>{"▶ +"}</button><input aria-label={crate::i18n::ex("Minuti di avanzamento")} id="advance-step" type="number" min="1" max="1440" value={(*step).clone()} oninput={{let s=step.clone();Callback::from(move |e|s.set(crate::api::input(e)))}}/>{"min"}</span>
+            <div class="grow"/>
+            <button class="primary" id="resolve" disabled={ctl_off} onclick={{let (to,body)=close_target(now,end);let onadvance=props.onadvance.clone();Callback::from(move |_|onadvance.emit((body.clone(),to)))}}>{crate::exfmt!("Chiudi turno {} ▶▶","Close turn {} ▶▶",a["turn"])}</button>
+        </div>
+        <p class="tp-legend muted"><span class="lg inject"/>{crate::i18n::ex("inject")}<span class="lg action"/>{crate::i18n::ex("azione")}{" · "}{crate::i18n::ex("i primi due comandi lasciano il turno aperto; «Chiudi turno» arriva alla fine prevista e apre il successivo")}</p>
+    </section>}
 }
 
 fn action_status_label(a: &Value) -> &'static str {
@@ -223,11 +350,9 @@ fn action_status_label(a: &Value) -> &'static str {
 
 #[function_component(ExconTimeline)]
 pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
-    let ratio = use_state(|| "60".to_string());
     let grouped = use_state(|| true);
     let collapsed = use_state(BTreeSet::<String>::new);
     let opened = use_state(|| Option::<String>::None);
-    let running = props.state["clock_control"]["running"] == true;
     let roles = list(&props.stat["roles"])
         .iter()
         .filter(|r| text(&r["id"]) != "master")
@@ -236,6 +361,11 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let injects = list(&props.master["planned_injects"]).to_vec();
     let actions = list(&props.master["timeline_actions"]).to_vec();
     let groups = group_by_event(&merge_items(&injects, &actions), *grouped);
+    let due_ids: BTreeSet<String> = list(&props.master["agenda"]["items"])
+        .iter()
+        .filter(|i| i["due"] == true)
+        .map(|i| text(&i["id"]).to_string())
+        .collect();
     let sent_count = injects.iter().filter(|i| i["sent"] == true).count();
     let open_inject = opened
         .as_ref()
@@ -243,10 +373,13 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let row = |i: &Value| {
         if i["item"] == "action" {
             let id = text(&i["id"]).to_string();
-            return html! {<li class="planned-inject planned-action" data-action={id.clone()} key={format!("a:{id}")}>
+            let fired = matches!(text(&i["status"]), "done" | "failed");
+            let due = due_ids.contains(&id);
+            return html! {<li class={classes!("planned-inject","planned-action",fired.then_some("fired"),due.then_some("is-due"))} data-action={id.clone()} key={format!("a:{id}")}>
                 <span class="planned-times"><b>{text(&i["clock"])}</b></span>
                 <span class="planned-body"><span class="pill kind action" title={crate::i18n::ex("Azione pianificata")}>{crate::i18n::ex("Azione")}</span> <b class="planned-title">{text(&i["title"])}</b>
                     <span class="pill rcpt">{action_status_label(i)}</span>
+                    if due{<span class="pill due-now">{crate::i18n::ex("raggiunta: decidi all’avanzamento")}</span>}
                     <span class="planned-text">{text(&i["summary"])}</span>
                     if let Some(r)=i["run"]["result"].as_str(){<small class="planned-objective">{r}</small>}</span></li>};
         }
@@ -258,21 +391,24 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             let id = id.clone();
             Callback::from(move |_| opened.set(Some(id.clone())))
         };
-        html! {<li class={classes!("planned-inject",sent.then_some("is-sent"),complete.then_some("is-complete"))} data-inject={id.clone()} key={format!("i:{id}")}>
+        html! {<li class={classes!("planned-inject",sent.then_some("is-sent"),complete.then_some("is-complete"),sent.then_some("fired"),due_ids.contains(&id).then_some("is-due"))} data-inject={id.clone()} key={format!("i:{id}")}>
             <button class="planned-open" {onclick} disabled={props.busy} aria-label={crate::exfmt!("Apri l’invio dell’inject {}","Open sending for inject {}",text(&i["title"]))}>
                 <span class="planned-times"><b>{format_offset(i["real_time_offset"].as_i64().unwrap_or(0))}</b><small>{text(&i["scenario_time"])}</small>
                     <small>{crate::exfmt!("turno {}","turn {}",i["turn"])}</small></span>
                 <span class="planned-body"><span class="pill kind inject" title={crate::i18n::ex("Inject pianificato")}>{crate::i18n::ex("Inject")}</span> <b class="planned-title">{text(&i["title"])}</b>
+                    if due_ids.contains(&id){<span class="pill due-now">{crate::i18n::ex("raggiunto: da inviare")}</span>}
                     if sent{<span class="pill rcpt sent">{if complete{crate::i18n::ex("Inviato")}else{crate::i18n::ex("Inviato in parte")}}</span>}
                     <span class="planned-text">{text(&i["text"])}</span>
                     if !text(&i["objective"]).is_empty(){<small class="planned-objective">{crate::exfmt!("Obiettivo: {}","Objective: {}",text(&i["objective"]))}</small>}
                     {pills(i,&roles)}</span>
             </button></li>}
     };
-    html! {<section class="card" id="excon-timeline"><div class="row"><h2>{crate::i18n::ex("Timeline EXCON")}</h2><div class="grow"/>
+    let panel = (!props.master["agenda"].is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving"))
+        .then(|| html! {<TurnPanel agenda={props.master["agenda"].clone()} state={props.state.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()}/>});
+    html! {<div class="timeline-layout">{panel.unwrap_or_default()}<section class="card" id="excon-timeline"><div class="row tl-head"><h2>{crate::i18n::ex("Timeline EXCON")}</h2>
+        <small class="muted">{crate::exfmt!("{} inject · {} inviati","{} injects · {} sent",injects.len(),sent_count)}</small><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="group-by-event" checked={*grouped} onchange={{let g=grouped.clone();Callback::from(move |e:Event|{use yew::TargetCast;g.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("raggruppa per evento")}</label>
         <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject personalizzato")}</button></div>
-        <div class="row timeline-clock"><span>{format!("{} · clock {}",text(&props.state["world"]["stats"]["clock"]),if running{crate::i18n::ex("in esecuzione")}else{crate::i18n::ex("fermo")})}</span><label>{crate::i18n::ex("Velocità clock × ")}<input aria-label={crate::i18n::ex("Velocità clock")} type="number" min="0.1" step="1" value={(*ratio).clone()} oninput={{let ratio=ratio.clone();Callback::from(move |e|ratio.set(crate::api::input(e)))}}/></label><button id="timeline-clock-toggle" disabled={props.busy||props.state["phase"]=="resolving"||props.state["phase"]=="debrief"||ratio.parse::<f64>().map_or(true,|r|!r.is_finite()||r<=0.)} onclick={{let cb=props.action.clone();let ratio=ratio.parse::<f64>().unwrap_or(60.);Callback::from(move |_|cb.emit(Action::post("/api/master/clock",json!({"running":!running,"ratio":ratio,"reason":crate::i18n::ex("Controllo clock dalla timeline EXCON")}))))}}>{if running{crate::i18n::ex("Ferma clock")}else{crate::i18n::ex("Avvia clock")}}</button></div>
         if injects.is_empty()&&actions.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject pianificato")}</p>}
         {for groups.iter().map(|(event,items)|{
             let is_closed=!event.is_empty()&&collapsed.contains(event);
@@ -282,9 +418,8 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
                 html!{<section class="event-group" data-event={event.clone()}><button class="event-head" aria-expanded={(!is_closed).to_string()} onclick={toggle}><span>{if is_closed{"▸"}else{"▾"}}</span><b>{event.clone()}</b><small>{items.len()}</small></button>if !is_closed{{list_html}}</section>}
             }
         })}
-        <p class="muted">{crate::exfmt!("{} inject pianificati · {} già inviati · turno {} · {}","{} planned injects · {} already sent · turn {} · {}",injects.len(),sent_count,props.state["turn"],text(&props.state["phase"]))}</p>
         if let Some(inject)=open_inject{<SendDialog key={text(&inject["id_inject"]).to_string()} inject={inject.clone()} roles={roles.clone()} busy={props.busy} action={props.action.clone()} onclose={{let o=opened.clone();Callback::from(move |_|o.set(None))}}/>}
-    </section>}
+    </section></div>}
 }
 
 #[cfg(test)]
@@ -310,6 +445,21 @@ mod tests {
         let kinds = m.iter().map(|v| v["item"].as_str().unwrap()).collect::<Vec<_>>();
         assert_eq!(kinds, ["inject", "action", "inject", "action"]);
         assert_eq!(m[1]["id"], "a1");
+    }
+    #[test]
+    fn track_positions_clamp_to_the_window() {
+        assert_eq!(track_pct(450, 0, 1800), 25.0);
+        assert_eq!(track_pct(-60, 0, 1800), 0.0);
+        assert_eq!(track_pct(5000, 0, 1800), 100.0);
+    }
+    #[test]
+    fn advance_targets_follow_the_agenda() {
+        let [next, step] = advance_targets(300, Some(600), 5);
+        assert_eq!(next.unwrap().0, 600);
+        assert_eq!(step.unwrap().0, 600);
+        assert!(advance_targets(1800, None, 5)[0].is_none());
+        assert_eq!(close_target(300, 1800).1["until"], "turn_end");
+        assert_eq!(close_target(1800, 1800).0, 1860);
     }
     #[test]
     fn grouping() {

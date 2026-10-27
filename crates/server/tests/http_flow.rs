@@ -3409,3 +3409,45 @@ async fn scripted_timeline_action_is_decided_when_the_turn_starts() {
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["timeline_actions"][0]["status"], "done");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn substep_stops_at_the_next_event_and_keeps_the_turn_open() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.timeline = vec![scenario::TimelineAction {
+        id: "gust".into(),
+        title: "Gust front".into(),
+        at_s: 600,
+        command: json!({"type": "SetWeather", "wind_speed_kmh": 55.0}),
+        after: None,
+        note: String::new(),
+    }];
+    let mut ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    ex.turn_minutes = 30;
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["agenda"]["planned_end_s"], 1800);
+    assert_eq!(master["agenda"]["next_event_s"], 600);
+
+    // Up to the next event: nothing is due before it, so no decision is asked.
+    let body = json!({"substep": true, "until": "next_event"});
+    let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    assert_eq!(rep["to_s"], 600);
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(state["turn"], 1);
+    assert_eq!(state["phase"], "orders");
+    assert_eq!(state["turn_window"]["now_s"], 600);
+    assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
+
+    // Closing the turn runs to the planned end only; the event needs its decision.
+    let (st, _) = call(&app, "POST", "/api/master/resolve", Some(json!({}))).await;
+    assert_ne!(st, Status::Ok);
+    let body = json!({"actions": {"gust": "run"}});
+    let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    assert_eq!(rep["to_s"], 1800);
+    let (_, state) = call(&app, "GET", "/api/state", None).await;
+    assert_eq!(state["turn"], 2);
+}

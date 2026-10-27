@@ -411,6 +411,24 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Chiarimento EXCON" => "EXCON clarification",
         "Risposta" => "Reply",
         // END risposte thread
+        // BEGIN notifications
+        "Suggerimento AI da rivedere" => "AI suggestion to review",
+        // END notifications
+        // BEGIN turn bar
+        "Durata turno (min)" => "Turn length (min)",
+        "Durata" => "Length",
+        "Avanza il tempo" => "Advance time",
+        "Imposta" => "Set",
+        "Minuti di avanzamento" => "Minutes to advance",
+        "nessun altro evento nel turno" => "no further event in this turn",
+        "inject" => "inject",
+        "azione" => "action",
+        "i primi due comandi lasciano il turno aperto; «Chiudi turno» arriva alla fine prevista e apre il successivo" => "the first two keep the turn open; “Close turn” runs to the planned end and opens the next one",
+        "raggiunto: da inviare" => "reached: to send",
+        "raggiunta: decidi all’avanzamento" => "reached: decide when advancing",
+        "Decidi cosa fare di ciascuna azione prima di far avanzare il tempo." => "Decide what to do with each action before time advances.",
+        "Avanza" => "Advance",
+        // END turn bar
         // BEGIN timeline.rs / risposte.rs
         "Inviato" => "Sent",
         "Non ancora inviato" => "Not yet sent",
@@ -445,6 +463,7 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Inject programmato completato" => "Scheduled inject completed",
         "Turno aperto" => "Turn opened",
         "Risoluzione del turno" => "Turn resolving",
+        "Avanzamento intermedio" => "Intermediate advance",
         "Esercitazione creata" => "Exercise created",
         "Esercitazione terminata" => "Exercise ended",
         "Fase dell’esercitazione cambiata" => "Exercise phase changed",

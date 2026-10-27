@@ -78,7 +78,11 @@ impl Exercise {
     /// starts now (overdue ones included), chronological.
     pub fn due_actions(&self, minutes: Option<u32>) -> Vec<Value> {
         let minutes = minutes.unwrap_or(self.turn_minutes).clamp(1, 24 * 60);
-        let to_s = self.world.time_s() + minutes as i64 * 60;
+        self.due_actions_until(self.world.time_s() + minutes as i64 * 60)
+    }
+
+    /// Pending actions planned before the simulated instant `to_s`.
+    pub fn due_actions_until(&self, to_s: i64) -> Vec<Value> {
         self.timeline_actions()
             .into_iter()
             .filter(|a| a["pending"] == true && a["at_s"].as_i64().is_some_and(|t| t < to_s))
@@ -89,10 +93,10 @@ impl Exercise {
     /// resolved. Fails, changing nothing, while any due action is undecided.
     pub(crate) fn decide_actions(
         &mut self,
-        minutes: u32,
+        to_s: i64,
         choices: &BTreeMap<String, ActionChoice>,
     ) -> Result<()> {
-        let due = self.due_actions(Some(minutes));
+        let due = self.due_actions_until(to_s);
         let ids: Vec<String> = due
             .iter()
             .filter_map(|a| a["id"].as_str().map(String::from))

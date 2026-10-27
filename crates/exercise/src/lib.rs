@@ -33,6 +33,7 @@ pub mod knowledge;
 pub mod summaries;
 pub mod threads;
 pub mod planned;
+pub mod agenda;
 pub mod actions;
 pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
 
@@ -397,6 +398,8 @@ pub struct LogEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct Resolution {
     pub turn: u32,
+    /// An intermediate advance: the turn stays open when it ends.
+    pub partial: bool,
     pub minutes: u32,
     pub from_s: i64,
     pub to_s: i64,
@@ -410,6 +413,16 @@ pub struct Resolution {
 pub struct ChatTurn {
     pub role: String,
     pub content: String,
+}
+
+/// An intermediate advance inside an open turn (the turn is not closed).
+#[derive(Debug, Clone, Serialize)]
+pub struct SubStep {
+    pub from_s: i64,
+    pub to_s: i64,
+    pub applied: usize,
+    pub events: usize,
+    pub wall_ms: u128,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -437,6 +450,10 @@ pub struct Exercise {
     pub turn: u32,
     pub phase: Phase,
     pub turn_minutes: u32,
+    /// Simulated time at which the open turn started.
+    pub turn_start_s: i64,
+    /// Intermediate advances made inside the open turn.
+    pub substeps: Vec<SubStep>,
     pub players: BTreeMap<String, Player>,
     pub messages: Vec<Message>,
     pub proposals: Vec<Proposal>,
@@ -509,6 +526,8 @@ impl Exercise {
             turn: 0,
             phase: Phase::Briefing,
             turn_minutes: DEFAULT_TURN_MINUTES,
+            turn_start_s: 0,
+            substeps: Vec::new(),
             players,
             messages: Vec::new(),
             proposals: Vec::new(),
@@ -656,6 +675,8 @@ impl Exercise {
         }
         self.turn = 1;
         self.phase = Phase::Orders;
+        self.turn_start_s = self.world.time_s();
+        self.substeps.clear();
         self.world.new_turn();
         self.snapshots.push((1, self.world.snapshot()));
         self.record("turn_opened", MASTER, json!({"turn": 1}));
@@ -688,19 +709,41 @@ impl Exercise {
     }
 
     /// As [`Self::begin_resolution`], with EXCON's decisions on the scripted
-    /// timeline actions that fall inside the turn.
+    /// timeline actions that fall inside the turn. `minutes` counts from now;
+    /// without it the turn runs to its planned end (after any intermediate
+    /// advances), or one minute if that has already been passed.
     pub fn begin_resolution_with(
         &mut self,
         minutes: Option<u32>,
         choices: &BTreeMap<String, actions::ActionChoice>,
     ) -> Result<()> {
+        let now = self.world.time_s();
+        let to_s = match minutes {
+            Some(m) => now + m.clamp(1, 24 * 60) as i64 * 60,
+            None => self.planned_end_s().max(now + 60),
+        };
+        self.begin_resolution_until(to_s, false, choices)
+    }
+
+    /// Resolve up to the simulated instant `to_s`. With `partial` the turn
+    /// stays open afterwards (an intermediate advance); otherwise it is closed.
+    pub fn begin_resolution_until(
+        &mut self,
+        to_s: i64,
+        partial: bool,
+        choices: &BTreeMap<String, actions::ActionChoice>,
+    ) -> Result<()> {
         if self.phase != Phase::Orders {
             bail!("no turn is open");
         }
-        let minutes = minutes.unwrap_or(self.turn_minutes).clamp(1, 24 * 60);
-        self.decide_actions(minutes, choices)?;
-        self.stop_clock("Turn resolution uses its own duration and playback speed");
         let from_s = self.world.time_s();
+        if to_s <= from_s {
+            bail!("the target time must be after the current time");
+        }
+        let to_s = to_s.min(from_s + 24 * 3600);
+        let minutes = ((to_s - from_s + 59) / 60) as u32;
+        self.decide_actions(to_s, choices)?;
+        self.stop_clock("Turn resolution uses its own duration and playback speed");
         let mut applied = Vec::new();
         let approved: Vec<u64> = self
             .proposals
@@ -711,9 +754,9 @@ impl Exercise {
         for pid in approved {
             applied.extend(self.execute_proposal(pid)?);
         }
-        let to_s = from_s + minutes as i64 * 60;
         self.resolving = Some(Resolution {
             turn: self.turn,
+            partial,
             minutes,
             from_s,
             to_s,
@@ -724,7 +767,7 @@ impl Exercise {
         self.record(
             "turn_resolving",
             MASTER,
-            json!({"turn": self.turn, "minutes": minutes, "to_s": to_s}),
+            json!({"turn": self.turn, "minutes": minutes, "to_s": to_s, "partial": partial}),
         );
         Ok(())
     }
@@ -775,6 +818,23 @@ impl Exercise {
             applied: r.applied,
             events: r.events,
         };
+        if r.partial {
+            self.substeps.push(SubStep {
+                from_s: r.from_s,
+                to_s: r.to_s,
+                applied: report.applied.len(),
+                events: report.events.len(),
+                wall_ms: wall_ms(),
+            });
+            self.record("turn_substep", MASTER, json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "applied": report.applied, "events": report.events, "stats": self.world.stats()}));
+            self.last_turn = Some(TurnWindow {
+                turn: r.turn,
+                from_s: r.from_s,
+                to_s: r.to_s,
+            });
+            self.phase = Phase::Orders;
+            return Ok(report);
+        }
         self.record("turn_resolved", MASTER, json!({"turn": r.turn, "minutes": r.minutes, "applied": report.applied, "events": report.events, "stats": self.world.stats()}));
         self.last_turn = Some(TurnWindow {
             turn: r.turn,
@@ -784,6 +844,8 @@ impl Exercise {
         self.prepare_turn_summaries(r.turn);
         self.turn += 1;
         self.phase = Phase::Orders;
+        self.turn_start_s = self.world.time_s();
+        self.substeps.clear();
         self.world.new_turn();
         self.snapshots.push((self.turn, self.world.snapshot()));
         self.record("turn_opened", MASTER, json!({"turn": self.turn}));
@@ -826,6 +888,8 @@ impl Exercise {
         }
         self.turn = turn;
         self.phase = Phase::Orders;
+        self.turn_start_s = self.world.time_s();
+        self.substeps.clear();
         self.last_turn = None;
         self.record("rollback", MASTER, json!({"to_turn": turn}));
         for r in self.role_ids() {

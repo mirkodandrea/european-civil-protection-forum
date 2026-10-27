@@ -27,6 +27,7 @@ pub fn event_label(kind: &str) -> String {
         "turn_opened" => crate::i18n::ex("Turno aperto"),
         "turn_resolving" => crate::i18n::ex("Risoluzione del turno"),
         "turn_resolved" => crate::i18n::ex("Turno risolto"),
+        "turn_substep" => crate::i18n::ex("Avanzamento intermedio"),
         "exercise_created" => crate::i18n::ex("Esercitazione creata"),
         "exercise_ended" => crate::i18n::ex("Esercitazione terminata"),
         "exercise_phase_changed" => crate::i18n::ex("Fase dell’esercitazione cambiata"),

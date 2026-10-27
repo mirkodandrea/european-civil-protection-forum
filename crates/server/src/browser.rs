@@ -274,7 +274,7 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         ("GET", "/api/master/due-actions") => {
             let q: crate::DueQuery =
                 serde_urlencoded::from_str(query).map_err(|e| bad(e.to_string()))?;
-            get_due_actions(principal.clone(), s.clone(), q.minutes).await
+            get_due_actions(principal.clone(), s.clone(), q.minutes, q.to_s).await
         }
         ("GET", "/api/player/<role>") => {
             get_player(principal.clone(), s.clone(), captures["role"].to_string()).await

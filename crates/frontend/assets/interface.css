@@ -494,7 +494,8 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .summary-card .pill{margin-left:4px}.summary-card.summary-ready .pill{background:#dcebe2;color:#1d5a42}.summary-card.summary-unavailable .pill{background:#f6dede;color:#8a2b27}.summary-card.summary-pending .pill,.summary-card.summary-generating .pill{background:#fff0d2;color:#7a5314}
 .summary-body{padding:12px 16px 14px;line-height:1.55;max-width:70ch}.summary-body p{margin:0 0 8px}.summary-body ul{margin:0 0 8px;padding-left:20px}.summary-body li{margin:2px 0}.summary-body>:last-child{margin-bottom:0}
 .pill.kind{font-size:.72em;text-transform:uppercase;letter-spacing:.04em}.pill.kind.action{background:#fff3e0;color:#8a4b00}.pill.kind.inject{background:#e8f0fe;color:#1a4a9a}
-.planned-inject.planned-action{border-left:4px solid #e08a00;padding-left:.5rem}
+.planned-inject.planned-action{border-left:4px solid #e08a00;display:grid;grid-template-columns:110px minmax(0,1fr);gap:14px;padding:12px 14px;align-items:start}
+.planned-body>.pill{justify-self:start}
 
 /* EXCON side: clarification status bar inside the response dialog */
 .clarification-bar{display:flex;gap:8px;align-items:center;margin:6px 0}.thread-msg.in-clarification{border-left-style:dashed}
@@ -526,3 +527,57 @@ main.page,.page{flex:1 1 auto;min-height:0;overflow:auto}
 .navigation .mgmt-tabs{display:flex;align-items:center;gap:6px;padding:3px 3px 3px 10px;border:1px dashed #9db5a9;border-radius:10px;background:#eef3ef}
 .navigation .mgmt-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:var(--muted)}
 .navigation .mgmt-tabs button{border-color:#c4d4ca}
+
+/* Timeline page: the turn panel (the one place that moves time) on top, the list scrolling below it */
+main.page.timeline-page{display:flex;flex-direction:column;overflow:hidden;width:100%}
+.timeline-layout{display:flex;flex-direction:column;gap:14px;flex:1;min-height:0}
+.timeline-layout>.card{margin:0}
+#excon-timeline{flex:1;min-height:0;overflow:auto;padding-top:0}
+#excon-timeline .tl-head{position:sticky;top:0;z-index:2;background:#fff;padding:16px 0 10px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+#excon-timeline .tl-head h2{margin:0}
+.turn-panel{flex:none;padding:14px 18px 10px;border-color:#b9d0c3;background:#f7fbf8}
+.tp-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.tp-head h2{margin:0;font-size:18px}
+.tp-length{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}.tp-length input,.tp-step input{width:60px;padding:4px 6px}
+.tp-small{padding:4px 10px;font-size:12px}
+.tp-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
+.tp-label{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.tp-step{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.turn-panel .tb-track{position:relative;height:34px;margin:18px 8px 6px}
+.turn-panel .tb-track::before{content:"";position:absolute;left:0;right:0;top:13px;height:5px;border-radius:3px;background:#dde6e1}
+.tb-fill,.tb-run{position:absolute;top:13px;height:5px;border-radius:3px}
+.tb-fill{left:0;background:linear-gradient(90deg,var(--accent,#1f7a54),#46a37a);transition:width .45s linear}
+.tb-run{background:repeating-linear-gradient(45deg,#7fc4a3 0 6px,#cfeadc 6px 12px);background-size:17px 17px;opacity:.85;transition:left .45s linear,width .45s linear}
+.tb-tick{position:absolute;top:9px;width:2px;height:13px;margin-left:-1px;background:#5b6b64;opacity:.6}
+.tb-now{position:absolute;top:5px;width:2px;height:21px;margin-left:-1px;background:#0b5d3b;transition:left .45s linear;z-index:3}
+.tb-now::after{content:"";position:absolute;top:5px;left:-5px;width:12px;height:12px;border-radius:50%;background:#0b5d3b;box-shadow:0 0 0 0 rgba(11,93,59,.5)}
+.tb-now span{position:absolute;top:-17px;left:50%;transform:translateX(-50%);padding:1px 7px;border-radius:9px;background:#0b5d3b;color:#fff;font:600 11px system-ui;white-space:nowrap;font-variant-numeric:tabular-nums}
+.tb-marker{position:absolute;top:9px;width:13px;height:13px;min-width:0;min-height:0;line-height:0;margin-left:-6px;padding:0;border:2px solid;background:#fff;cursor:pointer;z-index:2;transition:transform .15s,background .3s}
+.tb-marker:hover{transform:scale(1.35)}
+.tb-marker.inject{border-color:#2d6cdf;border-radius:50%}
+.tb-marker.action{border-color:#e08a00;border-radius:3px;transform:rotate(45deg)}
+.tb-marker.action:hover{transform:rotate(45deg) scale(1.35)}
+.tb-marker.done{background:currentColor}
+.tb-marker.inject.done{background:#2d6cdf;animation:tb-pop .7s ease-out}
+.tb-marker.action.done{background:#e08a00;animation:tb-pop-r .7s ease-out}
+.tb-marker.due{background:#fff3cd;animation:tb-due 1.1s ease-in-out infinite}
+.tb-marker.overdue{outline:2px dotted #b3261e;outline-offset:2px}
+.tp-legend{margin:6px 0 0;font-size:11px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.tp-legend .lg{display:inline-block;width:9px;height:9px;border:2px solid}.tp-legend .lg.inject{border-color:#2d6cdf;border-radius:50%}.tp-legend .lg.action{border-color:#e08a00;transform:rotate(45deg);margin-left:6px}
+.pill.due-now{background:#ffe7a8;color:#6b4a00;font-weight:600}
+.planned-inject{scroll-margin-top:70px}
+.planned-inject[data-flash]{animation:tl-locate 1.6s ease-out}
+.planned-inject.is-due>.planned-open,.planned-inject.is-due.planned-action{box-shadow:inset 4px 0 0 #e0a800;background:#fffaf0}
+.planned-inject.fired{animation:tl-flash 1.6s ease-out}
+@keyframes tb-stripes{to{background-position:17px 0}}
+@keyframes tb-pop{0%{transform:scale(.4)}60%{transform:scale(1.7)}100%{transform:scale(1)}}
+@keyframes tb-pop-r{0%{transform:rotate(45deg) scale(.4)}60%{transform:rotate(45deg) scale(1.7)}100%{transform:rotate(45deg) scale(1)}}
+@keyframes tb-due{0%,100%{box-shadow:0 0 0 0 rgba(224,168,0,.7)}50%{box-shadow:0 0 0 8px rgba(224,168,0,0)}}
+@keyframes tb-pulse{0%{box-shadow:0 0 0 0 rgba(11,93,59,.55)}100%{box-shadow:0 0 0 12px rgba(11,93,59,0)}}
+@keyframes tl-locate{0%,30%{box-shadow:0 0 0 3px #2d6cdf}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes tl-flash{0%{background:#d6f0e0}100%{background:transparent}}
+@media (prefers-reduced-motion:no-preference){
+  .turn-panel.running .tb-run{animation:tb-stripes .7s linear infinite}
+  .turn-panel.running .tb-now::after{animation:tb-pulse 1s ease-out infinite}
+  .turn-panel.running .tb-fill{box-shadow:0 0 10px rgba(70,163,122,.6)}
+}
+@media (prefers-reduced-motion:reduce){.tb-fill,.tb-run,.tb-now{transition:none}.planned-inject.fired,.tb-marker.done,.tb-marker.due{animation:none}}

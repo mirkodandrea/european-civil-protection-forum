@@ -1035,7 +1035,7 @@ fn add_inject_button(open: &UseStateHandle<Option<Open>>, selected: &UseStateHan
         while l.iter().any(|m| m.id == format!("I-{k:02}")) { k += 1; }
         l.push(InjectTemplate {
             id: format!("I-{k:02}"), turn, title: String::new(), sender: String::new(),
-            recipients: vec!["all".into()], text: String::new(), objective: String::new(), event: String::new(),
+            recipients: vec!["all".into()], text: String::new(), objective: String::new(), event: String::new(), at_s: None,
         });
     });
     html! {<button class="primary" title={ex("Aggiunge un inject in fondo all’elenco, con il turno dell’ultimo e destinatari «tutti».")} onclick={Callback::from(move |e| { selected.set(n); add.emit(e) })}>{ex("Aggiungi inject")}</button>}

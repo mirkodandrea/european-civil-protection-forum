@@ -33,6 +33,10 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 Base di partenza delle risorse (`staging_base`), velocità per risorsa (`speed_mps`), risorse e azioni che il modello operativo aggiunge a un ruolo (`operational_grants`), esempi del catalogo comandi per l'AI (derivati dallo scenario).
 Gli scenari senza questi campi si comportano come prima.
 
+## Istante degli inject (`at_s`)
+
+Un inject può avere `at_s` (secondi simulati dall'inizio dell'esercitazione). Senza `at_s` è pianificato all'inizio del suo `turn` suggerito. Quando il tempo lo raggiunge, la console lo propone a EXCON, che lo invia a mano. Il campo non è ancora modificabile nell'editor di scenario (solo nel JSON del pack).
+
 ## Azioni pianificate (`timeline`)
 
 Accanto agli inject, un pack può avere `edits.timeline`: cambiamenti del mondo non legati a un messaggio. Ogni voce ha `id`, `title`, `at_s` (secondi simulati dall'inizio dell'esercizio, non dall'ora del giorno: con `start_clock_s` 01:00, `at_s` 600 cade alle 01:10), `command` (un comando EXCON di `sim::Command`, ad esempio `{"type":"SetWeather","wind_dir_deg":270}`), `after` (inject a cui è collegata, facoltativo) e `note`.
