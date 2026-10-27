@@ -441,9 +441,12 @@ pub(crate) fn draw(
         let scale = window.scale_factor();
         // egui's rect can be ahead of the render target for a frame after a
         // resize; wgpu rejects a viewport outside the target.
+        // The camera's cached target size can lag the window by a frame too,
+        // so the smaller of the two bounds the viewport.
+        let surface = UVec2::new(window.physical_width(), window.physical_height());
         let target = camera
             .physical_target_size()
-            .unwrap_or_else(|| UVec2::new(window.physical_width(), window.physical_height()))
+            .map_or(surface, |t| t.min(surface))
             .max(UVec2::splat(2));
         let position = UVec2::new((rect.min.x * scale) as u32, (rect.min.y * scale) as u32)
             .min(target - UVec2::ONE);
