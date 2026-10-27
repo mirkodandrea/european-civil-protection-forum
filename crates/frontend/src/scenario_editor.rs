@@ -12,7 +12,9 @@ use crate::{
 use scenario::{
     IgnitionSpec, InjectTemplate, Place, ReinforcementOffer, ResourceType, Role, ScenarioPack,
 };
+use crate::timeline_plan as plan;
 use serde_json::{json, Value};
+use std::rc::Rc;
 use yew::prelude::*;
 
 fn token() -> String {
@@ -118,6 +120,7 @@ fn parse_clock(day: i64, hhmm: &str) -> Option<i64> {
 fn general(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
     let e = &o.pack.edits;
     let start = e.start_clock_s.unwrap_or(0);
+    let tm = e.turn_minutes.unwrap_or(plan::DEFAULT_TURN_MINUTES);
     let weather = e.weather.unwrap_or(scenario::WeatherSpec {
         wind_dir_deg: 0.0,
         wind_speed_kmh: 0.0,
@@ -156,7 +159,7 @@ fn general(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
             <label title={ex("Territorio su cui si basa lo scenario (mappa, edifici, strade). Non si modifica qui.")}>{ex("Territorio")}<input value={o.pack.base.clone()} disabled=true/>{hint("Territorio su cui si basa lo scenario (mappa, edifici, strade). Non si modifica qui.")}</label>
             {area("Descrizione", "Breve sintesi dell’evento e degli obiettivi di addestramento. Compare nell’elenco degli scenari.", o.pack.description.clone(), "3", upd(open, |p, v: String| p.description = v))}
         </>})}
-        {gen_section("Orario", "Quando comincia l’esercitazione, nell’ora simulata dello scenario.", html! {<>
+        {gen_section("Orario", "Quando comincia l’esercitazione, nell’ora simulata dello scenario, e quanto dura un turno.", html! {<>
             {gen_number("Giorno di inizio", "Giorno simulato in cui parte l’esercitazione: 1 è il primo giorno. Serve per scenari che durano più di una notte.", "1", None, "1", "", (start / 86_400 + 1).to_string(), day_cb)}
             <label title={ex("Ora del giorno (24 ore) in cui parte la simulazione. Gli inject sono datati rispetto a questo istante.")}>{ex("Ora di inizio (HH:MM)")}
                 <input type="time" required=true value={clock_text(start)} oninput={upd(open, |p, v: String| {
@@ -164,8 +167,9 @@ fn general(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
                     if let Some(t) = parse_clock(day, &v) { p.edits.start_clock_s = Some(t); }
                 }).reform(api::input)}/>
                 {hint("Ora del giorno (24 ore) in cui parte la simulazione. Gli inject sono datati rispetto a questo istante.")}</label>
+            {gen_number("Durata del turno (min)", "Lunghezza di un turno in minuti (1–1440). Divide la timeline in fasce e fissa l’orario degli inject che non ne hanno uno proprio (inizio del loro turno). Durante l’esercitazione l’EXCON può cambiarla senza spostare gli inject pianificati.", "1", Some("1440"), "1", "", tm.to_string(), upd(open, |p, v: String| if let Some(x) = num::<u32>(&v) { plan::set_turn_minutes(&mut p.edits, x) }))}
         </>})}
-        {gen_section("Meteo", "Condizioni iniziali che guidano la propagazione del fuoco. Restano costanti durante l’esercitazione.", html! {<>
+        {gen_section("Meteo", "Condizioni iniziali che guidano la propagazione del fuoco. Possono cambiare durante l’esercitazione con le azioni pianificate (scheda Timeline).", html! {<>
             <div class="gen-wind">
                 {gen_number("Vento: direzione di provenienza (gradi)", "Direzione DA CUI soffia il vento, in gradi dal nord in senso orario: 0 = da nord, 90 = da est, 180 = da sud, 270 = da ovest. Il fuoco avanza nella direzione opposta. Valori da 0 a 360.", "0", Some("360"), "1", "", fmt(weather.wind_dir_deg), weather_edit(|w, x| w.wind_dir_deg = x))}
                 <small class="hint live">{format!("{} {} ({}°)", ex("Vento da"), ex(wind_name), fmt(weather.wind_dir_deg))}</small>
@@ -820,6 +824,7 @@ fn injects_tab(o: &Open, open: &UseStateHandle<Option<Open>>, json: &UseStateHan
 
 #[function_component(InjectsTab)]
 fn injects_view(props: &InjectsProps) -> Html {
+    use plan::{Key, Kind, Target};
     let (o, open, json, message) = (&props.o, &props.open, &props.json, &props.message);
     let selected = use_state(|| 0usize);
     // `Some(i)`: the i-th scripted action is selected instead of an inject.
@@ -827,72 +832,248 @@ fn injects_view(props: &InjectsProps) -> Html {
     let cmd_edit = use_state(|| (usize::MAX, String::new()));
     // The EXCON control tool (see `controllo`) currently building an action's command.
     let tool = use_state(|| Option::<&'static str>::None);
-    let msel = o.pack.edits.msel.clone().unwrap_or_default();
-    let actions = o.pack.edits.timeline.clone().unwrap_or_default();
-    let na = actions.len();
-    let roles: Vec<(String, String)> = o.pack.edits.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
-    let n = msel.len();
+    // Band whose header was clicked: where "Aggiungi" puts new items.
+    let band_sel = use_state(|| Option::<usize>::None);
+    // Row being dragged (kept outside the render so a drop always sees it) and the drop target under the pointer.
+    let drag_src = use_mut_ref(|| Option::<Key>::None);
+    let dragging = use_state_eq(|| Option::<Key>::None);
+    let hover = use_state_eq(|| Option::<Target>::None);
+    let e = &o.pack.edits;
+    let msel = e.msel.clone().unwrap_or_default();
+    let actions = e.timeline.clone().unwrap_or_default();
+    let (n, na) = (msel.len(), actions.len());
+    let tm = e.turn_minutes.unwrap_or(plan::DEFAULT_TURN_MINUTES).clamp(1, 1440);
+    let start_s = e.start_clock_s.unwrap_or(0);
+    let roles: Vec<(String, String)> = e.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
     let sel = (*selected).min(n.saturating_sub(1));
+    let entries = Rc::new(plan::sorted_entries(&msel, &actions, tm));
+    let bands = Rc::new(plan::bands(&entries, tm));
+    let warns = plan::action_warnings(&msel, &actions, tm);
+    let implicit = entries.iter().filter(|x| !x.explicit).count();
+    let current: Option<Key> = match *act {
+        Some(i) if i < na => Some(Key { kind: Kind::Action, idx: i }),
+        _ if n > 0 => Some(Key { kind: Kind::Inject, idx: sel }),
+        _ => None,
+    };
+    let select = {
+        let (selected, act, band_sel) = (selected.clone(), act.clone(), band_sel.clone());
+        Callback::from(move |k: Key| {
+            band_sel.set(None);
+            match k.kind {
+                Kind::Inject => {
+                    act.set(None);
+                    selected.set(k.idx)
+                }
+                Kind::Action => act.set(Some(k.idx)),
+            }
+        })
+    };
+    // The resulting time of the drop under the pointer, shown while dragging.
+    let hint = match (*dragging, *hover) {
+        (Some(k), Some(t)) => plan::resolve_drop(&entries, &bands, k, t, tm)
+            .map(|d| format!("→ {} · {} {}", scenario::format_clock(start_s + d.at_s), ex("turno"), plan::turn_of(d.at_s, tm))),
+        _ => None,
+    };
+    let do_drop = {
+        let (open, drag_src, dragging, hover, selected, act, entries, bands) =
+            (open.clone(), drag_src.clone(), dragging.clone(), hover.clone(), selected.clone(), act.clone(), entries.clone(), bands.clone());
+        Callback::from(move |target: Target| {
+            let key = drag_src.borrow_mut().take();
+            dragging.set(None);
+            hover.set(None);
+            let (Some(key), Some(cur)) = (key, &*open) else { return };
+            let Some(d) = plan::resolve_drop(&entries, &bands, key, target, tm) else { return };
+            if d.anchor.is_none() && entries.iter().any(|x| x.key == key && x.at_s == d.at_s) {
+                return;
+            }
+            let mut next = cur.clone();
+            let idx = plan::apply_drop(&mut next.pack.edits, key, &d);
+            next.dirty = true;
+            open.set(Some(next));
+            match key.kind {
+                Kind::Inject => {
+                    act.set(None);
+                    selected.set(idx)
+                }
+                Kind::Action => act.set(Some(idx)),
+            }
+        })
+    };
+    let nudge = |key: Key, at_s: i64, minutes: i64| upd(open, move |p, _: ()| plan::set_time(&mut p.edits, key, at_s + minutes * 60));
+    let band_title = |b: &plan::Band| {
+        if b.first_turn == b.last_turn {
+            format!("{} {}", ex("Turno"), b.first_turn)
+        } else {
+            format!("{} {}–{}", ex("Turni"), b.first_turn, b.last_turn)
+        }
+    };
     let items = html! {<>
-        {for msel.iter().enumerate().map(|(i, m)| {
-            let new_turn = i == 0 || msel[i - 1].turn != m.turn;
-            let title = if m.title.trim().is_empty() { ex("(senza titolo)").to_string() } else { m.title.clone() };
+        {for bands.iter().enumerate().map(|(b, band)| {
+            let (ni, nact) = band.items.iter().fold((0, 0), |(i, a), &p| if entries[p].key.kind == Kind::Inject { (i + 1, a) } else { (i, a + 1) });
+            let counts = if band.items.is_empty() {
+                ex("vuoto").to_string()
+            } else {
+                crate::exfmt!("{} inject · {} azioni", "{} injects · {} actions", ni, nact)
+            };
+            let on = *hover == Some(Target::Band(b));
+            let over = {
+                let (hover, drag_src) = (hover.clone(), drag_src.clone());
+                Callback::from(move |ev: DragEvent| {
+                    if drag_src.borrow().is_none() { return; }
+                    ev.prevent_default();
+                    hover.set(Some(Target::Band(b)));
+                })
+            };
+            let drop = { let do_drop = do_drop.clone(); Callback::from(move |ev: DragEvent| { ev.prevent_default(); do_drop.emit(Target::Band(b)) }) };
+            let header_click = { let band_sel = band_sel.clone(); Callback::from(move |_| band_sel.set(if *band_sel == Some(b) { None } else { Some(b) })) };
             html!{<>
-                {if new_turn { html!{<h4 class="md-group inject-turn">{format!("{} {}", ex("Turno"), m.turn)}</h4>} } else { Html::default() }}
-                {md_item(i == sel && act.is_none(), { let (selected, act) = (selected.clone(), act.clone()); Callback::from(move |_| { act.set(None); selected.set(i) }) }, html!{<>
-                    <span class="md-id">{m.id.clone()}</span>
-                    <span class="md-name">{title}</span>
-                    {if m.event.trim().is_empty() { Html::default() } else { html!{<small class="md-sub">{m.event.clone()}</small>} }}
-                </>})}
+                <div class={classes!("tl-band", (*band_sel == Some(b)).then_some("active"), on.then_some("drop-on"))}
+                    data-drop={on.then(|| hint.clone()).flatten()} title={ex("Clic: i nuovi elementi partono da questo turno. Trascina qui una riga per portarla all’inizio del turno.")}
+                    onclick={header_click} ondragover={over.clone()} ondrop={drop.clone()}>
+                    <b>{band_title(band)}</b>
+                    <span class="tl-range">{plan::band_range(start_s, band)}</span>
+                    <span class={classes!("tl-count", band.items.is_empty().then_some("none"))}>{counts}</span>
+                </div>
+                {if band.items.is_empty() { html!{<div class="tl-empty" ondragover={over} ondrop={drop}>{ex("nessun elemento")}</div>} } else { Html::default() }}
+                {for band.items.iter().map(|&pos| {
+                    let en = &entries[pos];
+                    let key = en.key;
+                    let nr = NodeRef::default();
+                    let abs = start_s + en.at_s;
+                    let (id, title, sub, glyph, tip) = match key.kind {
+                        Kind::Inject => {
+                            let m = &msel[key.idx];
+                            (m.id.clone(), m.title.clone(), m.event.clone(), "●", ex("Inject: messaggio ai giocatori"))
+                        }
+                        Kind::Action => {
+                            let a = &actions[key.idx];
+                            (a.id.clone(), a.title.clone(), a.command["type"].as_str().unwrap_or("?").to_string(), "◆", ex("Azione pianificata: cambia il mondo"))
+                        }
+                    };
+                    let title = if title.trim().is_empty() { ex("(senza titolo)").to_string() } else { title };
+                    let warn = if key.kind == Kind::Action { warns.get(key.idx).cloned().flatten() } else { None };
+                    let after = if key.kind == Kind::Action { actions[key.idx].after.clone() } else { None };
+                    let link = match (&after, &warn) {
+                        (_, Some(plan::Warn::BeforeInject(i, t))) => Some(format!("⚠ {} {i} ({})", ex("prima dell’inject"), plan::hhmm(start_s + t))),
+                        (_, Some(plan::Warn::UnknownInject(i))) => Some(format!("⚠ {} {i}", ex("inject sconosciuto"))),
+                        (Some(i), None) => Some(format!("↳ {} {i}", ex("segue"))),
+                        _ => None,
+                    };
+                    let target_for = {
+                        let nr = nr.clone();
+                        move |ev: &DragEvent| {
+                            let upper = nr.cast::<web_sys::Element>().is_none_or(|el| {
+                                let r = el.get_bounding_client_rect();
+                                (ev.client_y() as f64) < r.top() + r.height() / 2.0
+                            });
+                            if upper { Target::Before(pos) } else { Target::After(pos) }
+                        }
+                    };
+                    let over_row = {
+                        let (hover, drag_src, target_for) = (hover.clone(), drag_src.clone(), target_for.clone());
+                        Callback::from(move |ev: DragEvent| {
+                            if drag_src.borrow().is_none() { return; }
+                            ev.prevent_default();
+                            hover.set(Some(target_for(&ev)));
+                        })
+                    };
+                    let drop_row = { let do_drop = do_drop.clone(); Callback::from(move |ev: DragEvent| { ev.prevent_default(); ev.stop_propagation(); do_drop.emit(target_for(&ev)) }) };
+                    let start = {
+                        let (drag_src, dragging, id) = (drag_src.clone(), dragging.clone(), id.clone());
+                        Callback::from(move |ev: DragEvent| {
+                            if let Some(dt) = ev.data_transfer() {
+                                let _ = dt.set_data("text/plain", &id);
+                                dt.set_effect_allowed("move");
+                            }
+                            *drag_src.borrow_mut() = Some(key);
+                            dragging.set(Some(key));
+                        })
+                    };
+                    let end = { let (drag_src, dragging, hover) = (drag_src.clone(), dragging.clone(), hover.clone()); Callback::from(move |_: DragEvent| { *drag_src.borrow_mut() = None; dragging.set(None); hover.set(None); }) };
+                    let keys = {
+                        let (select, nudge_up, nudge_down) = (select.clone(), nudge(key, en.at_s, -5), nudge(key, en.at_s, 5));
+                        Callback::from(move |ev: KeyboardEvent| match (ev.key().as_str(), ev.alt_key()) {
+                            ("ArrowUp", true) => { ev.prevent_default(); nudge_up.emit(()) }
+                            ("ArrowDown", true) => { ev.prevent_default(); nudge_down.emit(()) }
+                            ("Enter" | " ", false) => { ev.prevent_default(); select.emit(key) }
+                            _ => {}
+                        })
+                    };
+                    let (is_before, is_after) = (*hover == Some(Target::Before(pos)), *hover == Some(Target::After(pos)));
+                    let shows = (is_before || is_after) && *dragging != Some(key);
+                    let elapsed = en.at_s / 60;
+                    html!{<div ref={nr} role="button" tabindex="0" draggable="true" data-key={format!("{}:{}", if key.kind == Kind::Inject { "inject" } else { "action" }, key.idx)}
+                        class={classes!("tl-row", if key.kind == Kind::Inject { "inject" } else { "action" }, (current == Some(key)).then_some("active"),
+                            (*dragging == Some(key)).then_some("dragging"), (shows && is_before).then_some("drop-before"), (shows && is_after).then_some("drop-after"),
+                            warn.is_some().then_some("warn"))}
+                        data-drop={shows.then(|| hint.clone()).flatten()}
+                        title={ex("Trascina per cambiare l’orario (metà superiore: dopo la riga precedente; metà inferiore: stesso orario di questa riga). Alt+↑/↓ sposta di 5 minuti.")}
+                        onclick={{ let select = select.clone(); Callback::from(move |_| select.emit(key)) }}
+                        onkeydown={keys} ondragstart={start} ondragend={end} ondragover={over_row} ondrop={drop_row}>
+                        <span class="tl-kind" title={tip}>{glyph}</span>
+                        <span class={classes!("tl-time", (!en.explicit).then_some("implied"))}
+                            title={if en.explicit { scenario::format_clock(abs) } else { format!("{} · {}", scenario::format_clock(abs), ex("implicito: calcolato dal turno suggerito")) }}>
+                            {format!("{}{}", if en.explicit { "" } else { "~" }, scenario::format_clock(abs))}
+                            <small>{format!(" +{elapsed}m")}</small>
+                        </span>
+                        <span class="md-id">{id}</span>
+                        <span class="md-name">{title}</span>
+                        {if sub.trim().is_empty() { Html::default() } else { html!{<small class="md-sub">{sub}</small>} }}
+                        {if let Some(l) = link { html!{<small class={classes!("tl-link", warn.is_some().then_some("bad"))}>{l}</small>} } else { Html::default() }}
+                    </div>}
+                })}
             </>}
         })}
-        {if n == 0 { html!{<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>} } else { Html::default() }}
-        {if na == 0 { Html::default() } else { html!{<h4 class="md-group inject-turn">{ex("Azioni pianificate")}</h4>} }}
-        {for actions.iter().enumerate().map(|(i, a)| {
-            let title = if a.title.trim().is_empty() { ex("(senza titolo)").to_string() } else { a.title.clone() };
-            let when = clock_text(o.pack.edits.start_clock_s.unwrap_or(0) + a.at_s);
-            md_item(*act == Some(i), { let act = act.clone(); Callback::from(move |_| act.set(Some(i))) }, html!{<>
-                <span class="md-id">{when}</span>
-                <span class="md-name">{title}</span>
-                <small class="md-sub">{a.command["type"].as_str().unwrap_or("?").to_string()}</small>
-            </>})
-        })}
+        {if n + na == 0 { html!{<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>} } else { Html::default() }}
     </>};
+    let new_time = plan::new_item_time(&entries, &bands, *band_sel);
     let tools = html! {<>
         <span class="muted">{format!("{n} inject · {na} {}", ex("azioni"))}</span>
-        {add_inject_button(open, &selected, n)}
-        <button class="primary" title={ex("Aggiunge un’azione pianificata: un cambiamento del mondo (es. vento, ignizione) che l’EXCON approva all’avvio del turno in cui cade.")} onclick={{
-            let (act, add) = (act.clone(), upd(open, |p, _: MouseEvent| {
+        {add_inject_button(open, &selected, &act, &band_sel, n, new_time, tm)}
+        <button class="primary" title={ex("Aggiunge un’azione pianificata: un cambiamento del mondo (es. vento, ignizione) che l’EXCON decide quando il tempo avanza oltre il suo orario.")} onclick={{
+            let (act, band_sel, add) = (act.clone(), band_sel.clone(), upd(open, move |p, _: MouseEvent| {
                 let l = p.edits.timeline.get_or_insert_with(Vec::new);
                 let mut k = l.len() + 1;
                 while l.iter().any(|a| a.id == format!("A-{k:02}")) { k += 1; }
                 l.push(scenario::TimelineAction {
-                    id: format!("A-{k:02}"), title: String::new(), at_s: 0,
+                    id: format!("A-{k:02}"), title: String::new(), at_s: new_time,
                     command: serde_json::json!({"type": "SetWeather", "wind_speed_kmh": 30.0}),
                     after: None, note: String::new(),
                 });
             }));
-            Callback::from(move |e| { act.set(Some(na)); add.emit(e) })
+            Callback::from(move |e| { band_sel.set(None); act.set(Some(na)); add.emit(e) })
         }}>{ex("Aggiungi azione")}</button>
-        <button title={ex("Riordina l’elenco per turno, mantenendo l’ordine attuale a parità di turno.")} onclick={{
-            // The selection follows the inject it points at.
-            let mut sorted = msel.clone();
-            sorted.sort_by_key(|m| m.turn);
-            let target = msel.get(sel).and_then(|cur| sorted.iter().position(|m| m.id == cur.id && m.title == cur.title && m.text == cur.text));
-            let (selected, sort) = (selected.clone(), upd(open, |p, _: MouseEvent| {
-                if let Some(l) = p.edits.msel.as_mut() { l.sort_by_key(|m| m.turn); }
-            }));
-            Callback::from(move |e| { if let Some(k) = target { selected.set(k); } sort.emit(e) })
-        }}>{ex("Ordina per turno")}</button>
+        <button title={ex("Riordina i due elenchi per orario (inject e azioni), mantenendo l’ordine attuale a parità di orario.")} onclick={{
+            let (selected, act, open2) = (selected.clone(), act.clone(), open.clone());
+            let (cur_sel, cur_act) = (sel, *act);
+            let sort = upd(open, move |p, _: MouseEvent| { plan::sort_by_time(&mut p.edits); });
+            Callback::from(move |e| {
+                // The selection follows the item it points at.
+                if let Some(cur) = &*open2 {
+                    let mut probe = cur.pack.edits.clone();
+                    let (im, am) = plan::sort_by_time(&mut probe);
+                    if let Some(&k) = im.get(cur_sel) { selected.set(k); }
+                    if let Some(k) = cur_act.and_then(|i| am.get(i).copied()) { act.set(Some(k)); }
+                }
+                sort.emit(e)
+            })
+        }}>{ex("Ordina per orario")}</button>
+        <button disabled={implicit == 0} title={ex("Scrive l’orario che il turno implica in ogni inject che non ne ha uno proprio: da quel momento non dipendono più dalla durata del turno.")} onclick={upd(open, |p, _: MouseEvent| { plan::make_explicit(&mut p.edits); })}>{crate::exfmt!("Rendi espliciti i tempi ({})", "Make times explicit ({})", implicit)}</button>
     </>};
     let detail = match (act.and_then(|i| actions.get(i).map(|a| (i, a))), msel.get(sel)) {
-        (Some((i, a)), _) => action_detail(i, a, &msel, o, open, &act, &cmd_edit, &tool),
-        (None, Some(m)) => inject_detail(sel, n, m, &roles, open, &selected),
+        (Some((i, a)), _) => action_detail(i, a, &msel, warns.get(i).cloned().flatten(), tm, o, open, &act, &cmd_edit, &tool),
+        (None, Some(m)) => inject_detail(sel, n, m, tm, start_s, &roles, open, &selected),
         (None, None) => html! {<p class="muted">{ex("Nessun inject: aggiungine uno per iniziare.")}</p>},
     };
     html! {<div class="inject-tab">
-        <p class="muted">{ex("Inject preparati (MSEL): l’EXCON decide quando inviarli; il turno è solo un suggerimento. Le azioni pianificate cambiano il mondo a un istante preciso: all’avvio del turno in cui cadono l’EXCON sceglie se eseguirle, saltarle o rinviarle.")}</p>
-        {master_detail(items, tools, detail)}
+        <p class="muted">{ex("Una sola timeline in ordine di tempo, divisa in turni. Gli inject (●) sono messaggi preparati: l’EXCON decide quando inviarli e, quando il tempo li raggiunge, li trova proposti. Le azioni pianificate (◆) cambiano il mondo a un istante preciso: a ogni avanzamento del tempo che le attraversa l’EXCON sceglie se eseguirle, saltarle o rinviarle. Trascina le righe per cambiarne l’orario.")}</p>
+        <div class="md tl-md">
+            <div class="md-list tl-list">
+                <div class="md-tools tl-tools">{tools}</div>
+                <div class="md-items tl-items" ondragleave={{ let hover = hover.clone(); Callback::from(move |ev: DragEvent| if ev.related_target().is_none() { hover.set(None) }) }}>{items}</div>
+            </div>
+            <div class="md-detail">{detail}</div>
+        </div>
         <details class="inject-json">
             <summary title={ex("Copia o sostituisci l’intera lista degli inject come testo JSON.")}>{ex("Avanzate: JSON (solo inject)")}</summary>
             <p class="hint">{ex("Riguarda solo la lista degli inject, non l’intero scenario (per quello usa «Avanzate: JSON» in fondo all’editor). Esporta mostra gli inject qui sotto per copiarli. Importa sostituisce l’intera lista nell’editor: non viene salvato nulla finché non premi Salva.")}</p>
@@ -917,12 +1098,65 @@ fn injects_view(props: &InjectsProps) -> Html {
     </div>}
 }
 
+/// Time controls shared by the inject and action editors: HH:MM, minutes from
+/// the start, ±5 min and the start of the turn. The turn is derived.
+fn time_block(key: plan::Key, at_s: i64, explicit: bool, tm: u32, start_s: i64, open: &UseStateHandle<Option<Open>>) -> Html {
+    let abs = start_s + at_s;
+    let set = upd(open, move |p, t: i64| plan::set_time(&mut p.edits, key, t));
+    let clock_cb = {
+        let set = set.clone();
+        Callback::from(move |v: String| {
+            if let Some(t) = parse_clock(abs.div_euclid(86_400) + 1, &v).map(|t| t - start_s).filter(|t| *t >= 0) {
+                set.emit(t)
+            }
+        })
+    };
+    let min_cb = {
+        let set = set.clone();
+        Callback::from(move |v: String| {
+            if let Some(m) = num::<f64>(&v).filter(|m| *m >= 0.0) {
+                set.emit((m * 60.0).round() as i64)
+            }
+        })
+    };
+    let step = |d: i64| {
+        let set = set.clone();
+        Callback::from(move |_: MouseEvent| set.emit((at_s + d * 60).max(0)))
+    };
+    let to_turn = {
+        let set = set.clone();
+        Callback::from(move |_: MouseEvent| set.emit(plan::turn_start(at_s, tm)))
+    };
+    let turn = plan::turn_of(at_s, tm);
+    let day = abs.div_euclid(86_400) + 1;
+    let help = ex("Istante pianificato, nell’ora simulata dello scenario. L’EXCON decide cosa farne quando il tempo avanza oltre questo istante.");
+    html! {<div class="tl-time-block">
+        <div class="tl-time-fields">
+            <label title={help}>{ex("Ora (HH:MM)")}<input type="time" required=true value={clock_text(abs)} oninput={clock_cb.reform(api::input)}/></label>
+            <span class="tl-day">{format!("{} {day}", ex("Giorno"))}</span>
+            <label title={ex("Minuti trascorsi dall’inizio dell’esercitazione.")}>{ex("Minuti dall’inizio")}<input type="number" min="0" step="5" value={fmt(at_s as f64 / 60.0)} oninput={min_cb.reform(api::input)}/></label>
+            <div class="tl-nudge">
+                <button type="button" title={ex("Anticipa di 5 minuti")} disabled={at_s < 300} onclick={step(-5)}>{"−5"}</button>
+                <button type="button" title={ex("Posticipa di 5 minuti")} onclick={step(5)}>{"+5"}</button>
+                <button type="button" title={ex("Porta l’elemento all’inizio del suo turno.")} disabled={at_s == plan::turn_start(at_s, tm)} onclick={to_turn}>{ex("Inizio turno")}</button>
+            </div>
+        </div>
+        <small class="hint">{crate::exfmt!("Turno {turn}, derivato dall’orario (turni da {tm} min, durata nella scheda Generale).", "Turn {turn}, derived from the time (turns of {tm} min, set in the General tab).")}</small>
+        {if explicit { Html::default() } else {
+            html!{<small class="hint tl-implied">{ex("Orario implicito: calcolato dal turno suggerito e quindi legato alla durata del turno. Diventa esplicito appena lo modifichi.")}
+                {" "}<button type="button" class="tl-link-btn" onclick={{ let set = set.clone(); Callback::from(move |_: MouseEvent| set.emit(at_s)) }}>{ex("Rendi esplicito")}</button></small>}
+        }}
+    </div>}
+}
+
 /// The editor of the selected scripted action. The command is raw JSON of an
 /// EXCON command; it is stored only while it parses as a JSON object.
 fn action_detail(
     i: usize,
     a: &scenario::TimelineAction,
     msel: &[InjectTemplate],
+    warn: Option<plan::Warn>,
+    tm: u32,
     o: &Open,
     open: &UseStateHandle<Option<Open>>,
     act: &UseStateHandle<Option<usize>>,
@@ -931,14 +1165,6 @@ fn action_detail(
 ) -> Html {
     let start_s = o.pack.edits.start_clock_s.unwrap_or(0);
     let set = |f: fn(&mut scenario::TimelineAction, String)| upd(open, move |p, v: String| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { f(x, v) });
-    let abs = start_s + a.at_s;
-    let clock_cb = upd(open, move |p, v: String| {
-        if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) {
-            if let Some(t) = parse_clock(abs.div_euclid(86_400) + 1, &v).map(|t| t - start_s).filter(|t| *t >= 0) {
-                x.at_s = t;
-            }
-        }
-    });
     let shown = if cmd_edit.0 == i { cmd_edit.1.clone() } else { serde_json::to_string_pretty(&a.command).unwrap_or_default() };
     let valid = serde_json::from_str::<Value>(&shown).is_ok_and(|v| v.is_object());
     let on_cmd = {
@@ -996,12 +1222,17 @@ fn action_detail(
         .chain(msel.iter().map(|m| (m.id.clone(), format!("{} · {}", m.id, m.title))))
         .collect();
     html! {<div class="inject-body" key={format!("action-{i}")}>
+        {time_block(plan::Key { kind: plan::Kind::Action, idx: i }, a.at_s, true, tm, start_s, open)}
+        {match &warn {
+            Some(plan::Warn::BeforeInject(id, t)) => html!{<p class="tl-warn">{crate::exfmt!("⚠ L’azione scatta alle {} ma segue l’inject {id}, previsto alle {}: l’inject ne è l’annuncio e dovrebbe venire prima.", "⚠ The action fires at {} but follows inject {id}, due at {}: the inject announces it and should come first.", plan::hhmm(start_s + a.at_s), plan::hhmm(start_s + t))}</p>},
+            Some(plan::Warn::UnknownInject(id)) => html!{<p class="tl-warn">{crate::exfmt!("⚠ L’inject «{id}» collegato non esiste.", "⚠ The linked inject «{id}» does not exist.")}</p>},
+            None => Html::default(),
+        }}
         <div class="settings-fields">
             {field("Identificativo", "Chiave stabile dell’azione, usata dai report: non riutilizzarla.", a.id.clone(), set(|x, v| x.id = v))}
-            {field("Ora (HH:MM)", "Istante in cui l’azione va eseguita, nell’ora simulata dello scenario. L’EXCON la decide all’avvio del turno che lo contiene.", clock_text(abs), clock_cb)}
-            {choice("Segue l’inject", "Collegamento informativo a un inject: non cambia quando l’azione scatta.", a.after.as_deref().unwrap_or(""), &links, upd(open, move |p, v: String| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { x.after = Some(v).filter(|v| !v.is_empty()) }))}
+            {choice("Segue l’inject", "Collegamento informativo a un inject che annuncia l’azione: non cambia quando scatta, ma l’editor segnala se l’azione cade prima dell’inject.", a.after.as_deref().unwrap_or(""), &links, upd(open, move |p, v: String| if let Some(x) = p.edits.timeline.as_mut().and_then(|l| l.get_mut(i)) { x.after = Some(v).filter(|v| !v.is_empty()) }))}
         </div>
-        {field("Titolo", "Nome breve mostrato nell’elenco e nel modale di avvio del turno.", a.title.clone(), set(|x, v| x.title = v))}
+        {field("Titolo", "Nome breve mostrato nell’elenco e nella revisione prima di far avanzare il tempo.", a.title.clone(), set(|x, v| x.title = v))}
         <div class="inject-recipients" title={ex("Gli stessi strumenti del Controllo EXCON: costruiscono il comando dell’azione.")}>
             <span class="label">{ex("Imposta con lo strumento")}</span>
             <div class="chips">{for crate::controllo::TOOLS.iter().filter(|t| TOOL_IDS.contains(&t.id)).map(|t| {
@@ -1015,7 +1246,7 @@ fn action_detail(
             <textarea rows="7" value={shown} oninput={on_cmd}/>
             <small class="hint">{if valid { ex("JSON valido: i campi sono controllati all’esecuzione. Esempio: {\"type\":\"SetWeather\",\"wind_dir_deg\":270}") } else { ex("JSON non valido: l’ultima versione valida resta salvata.") }}</small>
         </label>
-        {area("Nota", "Appunto per l’EXCON, mostrato nel modale di avvio del turno.", a.note.clone(), "2", set(|x, v| x.note = v))}
+        {area("Nota", "Appunto per l’EXCON, mostrato quando l’azione è da decidere (revisione prima di far avanzare il tempo).", a.note.clone(), "2", set(|x, v| x.note = v))}
         <div class="inject-actions">
             <ConfirmDelete label="Elimina azione" onconfirm={{
                 let act = act.clone();
@@ -1026,23 +1257,30 @@ fn action_detail(
     </div>}
 }
 
-fn add_inject_button(open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>, n: usize) -> Html {
-    let selected = selected.clone();
-    let add = upd(open, |p, _: MouseEvent| {
+fn add_inject_button(
+    open: &UseStateHandle<Option<Open>>,
+    selected: &UseStateHandle<usize>,
+    act: &UseStateHandle<Option<usize>>,
+    band_sel: &UseStateHandle<Option<usize>>,
+    n: usize,
+    at_s: i64,
+    tm: u32,
+) -> Html {
+    let (selected, act, band_sel) = (selected.clone(), act.clone(), band_sel.clone());
+    let add = upd(open, move |p, _: MouseEvent| {
         let l = p.edits.msel.get_or_insert_with(Vec::new);
-        let turn = l.iter().map(|m| m.turn).max().unwrap_or(1);
         let mut k = l.len() + 1;
         while l.iter().any(|m| m.id == format!("I-{k:02}")) { k += 1; }
         l.push(InjectTemplate {
-            id: format!("I-{k:02}"), turn, title: String::new(), sender: String::new(),
-            recipients: vec!["all".into()], text: String::new(), objective: String::new(), event: String::new(), at_s: None,
+            id: format!("I-{k:02}"), turn: plan::turn_of(at_s, tm), title: String::new(), sender: String::new(),
+            recipients: vec!["all".into()], text: String::new(), objective: String::new(), event: String::new(), at_s: Some(at_s),
         });
     });
-    html! {<button class="primary" title={ex("Aggiunge un inject in fondo all’elenco, con il turno dell’ultimo e destinatari «tutti».")} onclick={Callback::from(move |e| { selected.set(n); add.emit(e) })}>{ex("Aggiungi inject")}</button>}
+    html! {<button class="primary" title={ex("Aggiunge un inject con orario esplicito: all’inizio del turno scelto (clic sull’intestazione) oppure in coda alla timeline. Destinatari «tutti».")} onclick={Callback::from(move |e| { band_sel.set(None); act.set(None); selected.set(n); add.emit(e) })}>{ex("Aggiungi inject")}</button>}
 }
 
 /// The editor of the selected inject.
-fn inject_detail(i: usize, n: usize, m: &InjectTemplate, roles: &[(String, String)], open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>) -> Html {
+fn inject_detail(i: usize, n: usize, m: &InjectTemplate, tm: u32, start_s: i64, roles: &[(String, String)], open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>) -> Html {
     let set = |f: fn(&mut InjectTemplate, String)| upd(open, move |p, v: String| if let Some(x) = p.edits.msel.as_mut().and_then(|l| l.get_mut(i)) { f(x, v) });
     let all = m.recipients.is_empty() || m.recipients.iter().any(|r| r == "all");
     let text_len = m.text.chars().count();
@@ -1070,9 +1308,9 @@ fn inject_detail(i: usize, n: usize, m: &InjectTemplate, roles: &[(String, Strin
         Callback::from(move |e| { selected.set(i + 1); cb.emit(e) })
     };
     html!{<div class="inject-body" key={i}>
+        {time_block(plan::Key { kind: plan::Kind::Inject, idx: i }, plan::inject_s(m, tm), m.at_s.is_some(), tm, start_s, open)}
         <div class="settings-fields">
             {field("Identificativo", "Chiave stabile dell’inject, usata da pianificazioni e report: non riutilizzarla.", m.id.clone(), set(|x, v| x.id = v))}
-            {number("Turno", "Solo un suggerimento: è l’EXCON a decidere quando inviare l’inject.", m.turn.to_string(), upd(open, move |p, v: String| if let (Some(t), Some(x)) = (num(&v), p.edits.msel.as_mut().and_then(|l| l.get_mut(i))) { x.turn = t }))}
             {field("Mittente", "Chi appare come mittente per i giocatori, ad esempio «Centrale 112».", m.sender.clone(), set(|x, v| x.sender = v))}
             {field("Evento (raggruppa nella timeline)", "Gli inject con lo stesso evento sono raggruppati nella timeline dell’EXCON.", m.event.clone(), set(|x, v| x.event = v))}
         </div>
@@ -1097,8 +1335,8 @@ fn inject_detail(i: usize, n: usize, m: &InjectTemplate, roles: &[(String, Strin
         <small class="hint char-count">{format!("{text_len} {}", ex("caratteri"))}{if text_len > 600 { format!(" · {}", ex("testo lungo: valuta di accorciarlo")) } else { String::new() }}</small>
         {field("Obiettivo formativo", "Che cosa il formatore vuole mettere alla prova con questo inject; guida il debriefing.", m.objective.clone(), set(|x, v| x.objective = v))}
         <div class="inject-actions">
-            <button title={ex("Sposta l’inject più in alto nell’elenco.")} disabled={i == 0} onclick={mv(-1)}>{"▲"}</button>
-            <button title={ex("Sposta l’inject più in basso nell’elenco.")} disabled={i + 1 >= n} onclick={mv(1)}>{"▼"}</button>
+            <button title={ex("Sposta l’inject prima nell’elenco: conta solo a parità di orario.")} disabled={i == 0} onclick={mv(-1)}>{"▲"}</button>
+            <button title={ex("Sposta l’inject dopo nell’elenco: conta solo a parità di orario.")} disabled={i + 1 >= n} onclick={mv(1)}>{"▼"}</button>
             <button title={ex("Crea una copia di questo inject subito dopo, con un nuovo identificativo.")} onclick={dup}>{ex("Duplica")}</button>
             <details class="confirm-inline">
                 <summary class="danger" title={ex("Elimina l’inject: chiede conferma.")}>{ex("Elimina inject")}</summary>
@@ -1165,7 +1403,7 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
 // ------------------------------------------------------------ the view
 
 const TABS: &[(&str, &str, &str)] = &[
-    ("general", "Generale", "Nome, descrizione, ora di inizio, meteo e durata dell’esercitazione."),
+    ("general", "Generale", "Nome, descrizione, ora di inizio, durata dei turni e meteo iniziale."),
     ("roles", "Ruoli", "Chi partecipa (squadre, enti, funzioni) e quali azioni ciascuno può proporre."),
     ("resources", "Risorse", "Tipi di mezzi e squadre disponibili, con quantità e base di partenza."),
     ("ignitions", "Inneschi", "Dove e quando parte l’incendio, scelti sulla mappa."),

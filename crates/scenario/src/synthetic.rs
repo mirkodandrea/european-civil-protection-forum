@@ -325,6 +325,7 @@ pub fn generate(seed: u64) -> Scenario {
         dem,
         render_terrain: None,
         start_clock_s: 13 * 3600,
+        turn_minutes: crate::DEFAULT_TURN_MINUTES,
         weather: WeatherSpec { wind_dir_deg: 45.0, wind_speed_kmh: 45.0, moisture_pct: 4.0 },
         initial_ignitions: vec![IgnitionSpec { at: IGNITION, radius_m: 120.0 }],
         buildings,

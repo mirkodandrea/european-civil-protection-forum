@@ -978,3 +978,23 @@ fn default_scenario_ignition_is_a_timeline_action() {
     assert_eq!(ex.action_runs["A-01"].status, exercise::actions::ActionStatus::Done, "{:?}", ex.action_runs["A-01"]);
     assert!(!ex.world.burning_zones().is_empty(), "the fire must be burning after the ignition ran");
 }
+
+/// The turn length is part of the scenario; EXCON changing the live length
+/// does not move injects that have no explicit time.
+#[test]
+fn live_turn_length_does_not_move_implied_inject_times() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.turn_minutes = 20;
+    scn.msel[0].turn = 3;
+    scn.msel[0].at_s = None;
+    let id = scn.msel[0].id.clone();
+    scn.check().unwrap();
+    let mut ex = Exercise::new(World::new(Arc::new(scn), 1).unwrap());
+    assert_eq!(ex.turn_minutes, 20, "initialised from the scenario");
+    let due = |ex: &Exercise| {
+        ex.planned_injects().iter().find(|i| i["id_inject"] == id.as_str()).unwrap()["scenario_time_s"].as_i64().unwrap()
+    };
+    assert_eq!(due(&ex), 2 * 20 * 60);
+    ex.turn_minutes = 45;
+    assert_eq!(due(&ex), 2 * 20 * 60);
+}

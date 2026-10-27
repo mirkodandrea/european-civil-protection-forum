@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 impl Exercise {
     /// Planned time of an MSEL inject in simulated seconds from start: the live
     /// schedule if any, then the scenario's own `at_s`, otherwise the start of
-    /// its suggested turn.
+    /// its suggested turn, counted with the scenario's turn length (not the
+    /// live one, which EXCON may change without moving the plan).
     fn planned_due_s(&self, id: &str, turn: u32, at_s: Option<i64>) -> i64 {
         self.scheduled_injects
             .iter()
@@ -18,7 +19,7 @@ impl Exercise {
             .map(|s| s.due_s)
             .min()
             .unwrap_or_else(|| {
-                at_s.unwrap_or_else(|| (turn.max(1) as i64 - 1) * self.turn_minutes as i64 * 60)
+                at_s.unwrap_or_else(|| (turn.max(1) as i64 - 1) * self.world.scn.turn_minutes as i64 * 60)
             })
     }
 
