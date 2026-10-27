@@ -1165,7 +1165,6 @@ fn main() {
         editor3d::start();
         return;
     }
-    webmcp::register();
     #[cfg(not(feature = "standalone"))]
     if api::window()
         .location()

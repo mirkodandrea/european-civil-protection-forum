@@ -1,44 +1,58 @@
 //! WebMCP tools for editing scenarios: an agent in the browser (ChatGPT Atlas,
-//! Chrome with WebMCP, …) reads the library and creates or changes scenarios
+//! Chrome with WebMCP, …) works on the scenario open in the Scenario editor
 //! through `navigator.modelContext`.
 //!
-//! The tools go through the same EXCON API as the Scenario view
-//! (`scenario_editor::call`), so they behave alike in the server app and in the
-//! standalone WASM app, and every change is validated by the scenario crate
-//! before it is stored. Nothing here touches the running exercise except
-//! `start_scenario`, which needs an explicit `confirm`.
+//! The tools exist only while a scenario is open in the editor: the editor
+//! calls `attach` when one opens and `detach` when it closes, which registers
+//! and unregisters them. They act on the editor's draft (what the user sees,
+//! even a copy not yet saved); changes are checked by the scenario crate and
+//! stored only by `save_open_scenario`. Nothing touches the running exercise.
+//! Same code for the server app and the standalone app (`api::request`).
 //!
-//! Without `navigator.modelContext` the tools are still reachable as
+//! Without `navigator.modelContext` the tools are reachable while attached as
 //! `window.ttxWebMcp.call(name, args)` (tests, bookmarklets, other agents).
 use crate::scenario_editor::call;
 use futures::{future::LocalBoxFuture, FutureExt};
 use js_sys::{Array, Function, Object, Promise, Reflect};
 use serde_json::{json, Value};
-use std::{cell::RefCell, collections::HashSet};
+use std::{cell::{Cell, RefCell}, collections::HashSet, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 
-thread_local! {
-    /// Scenario the editor should (re)load; read by the Scenario view.
-    static EDITOR_REQUEST: RefCell<Option<EditorRequest>> = const { RefCell::new(None) };
-    static REGISTERED: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+/// The scenario being edited, as the agent sees it.
+pub struct Draft {
+    pub pack: Value,
+    /// Names of the territory (places, zones) to use in edits.
+    pub reference: Value,
+    pub saved_id: Option<String>,
+    pub dirty: bool,
 }
 
-/// What a tool asks of the Scenario view when it is open.
-pub struct EditorRequest {
-    pub id: String,
-    /// `true` replaces whatever is open; `false` only refreshes the same,
-    /// unmodified scenario.
-    pub force: bool,
+/// How the tools reach the editor's state.
+pub struct Editor {
+    pub snapshot: Box<dyn Fn() -> Option<Draft>>,
+    /// Replaces the draft (marks it unsaved).
+    pub replace: Box<dyn Fn(Value) -> Result<(), String>>,
+    /// The draft was stored under this id.
+    pub saved: Box<dyn Fn(String)>,
+}
+
+thread_local! {
+    static EDITOR: RefCell<Option<Rc<Editor>>> = const { RefCell::new(None) };
+    static REGISTERED: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+    /// Bumped on every attach/detach so stale registration retries stop.
+    static EPOCH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub const CHANGED_EVENT: &str = "ttx-scenarios-changed";
 
-pub fn take_editor_request() -> Option<EditorRequest> {
-    EDITOR_REQUEST.with(|r| r.borrow_mut().take())
+fn editor() -> Result<Rc<Editor>, String> {
+    EDITOR
+        .with(|e| e.borrow().clone())
+        .filter(|e| (e.snapshot)().is_some())
+        .ok_or_else(|| "no scenario is open in the editor: ask the user to open one".to_string())
 }
 
-fn notify(id: &str, force: bool) {
-    EDITOR_REQUEST.with(|r| *r.borrow_mut() = Some(EditorRequest { id: id.into(), force }));
+fn notify() {
     if let Ok(event) = web_sys::Event::new(CHANGED_EVENT) {
         let _ = crate::api::window().dispatch_event(&event);
     }
@@ -56,7 +70,7 @@ struct Tool {
 
 const FORMAT_GUIDE: &str = "\
 A scenario is a PACK over a read-only TERRITORY (map, buildings, roads). The pack JSON has: \
-id (a-z 0-9 _ -, max 64), name, description, base (territory id), edits, run.\n\
+id (a-z 0-9 _ -, max 64; changeable only until the first save), name, description, base (territory id), edits, run.\n\
 `edits` holds what a designer controls (a field left out keeps the territory's value): \
 name/start time/weather, turn_minutes (1-1440, default 30), resource types, roles (id, name, resources, allowed actions), \
 reinforcement offers, places, and `injects` (the MSEL).\n\
@@ -65,108 +79,69 @@ Each inject has id, title/text, recipients, a suggested turn or an explicit `at_
 {\"type\":\"SetWeather\",\"wind_dir_deg\":270} or {\"type\":\"Ignite\",...}. The fire starts from an `Ignite` action of an inject \
 (ignitions of at least 40 m; there are no initial ignitions).\n\
 Places can be named places of the territory, 8x8 grid zone codes such as F4, zone edges such as F4:N, or coordinates.\n\
-Workflow: list_scenarios -> get_scenario (full example, plus the territory's names under `reference`) -> create_scenario \
-(copy of an existing one, since built-in scenarios cannot be overwritten) -> edit_scenario with JSON-pointer operations \
--> validate (edit_scenario validates and refuses invalid changes, saving nothing) -> optionally open_in_editor. \
-Never start a scenario unless the user asked for it: it discards the exercise in progress.";
-
-fn id_schema(extra: Value) -> Value {
-    let mut properties = json!({"id": {"type": "string", "description": "Scenario id (a-z 0-9 _ -)"}});
-    if let (Some(p), Some(e)) = (properties.as_object_mut(), extra.as_object()) {
-        p.extend(e.clone());
-    }
-    json!({"type": "object", "properties": properties, "required": ["id"]})
-}
+Workflow: get_open_scenario (the draft and the territory's names under `reference`) -> edit_open_scenario with JSON-pointer \
+operations (the user sees the draft change; invalid changes are refused) -> validate_open_scenario -> save_open_scenario when the \
+user agrees. list_scenarios / get_scenario show other scenarios as examples.";
 
 fn tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "describe_scenario_format",
-            description: "Explains how scenarios are structured and the recommended workflow for creating or editing one. Call this first.",
+            description: "Explains how scenarios are structured and the recommended workflow. Call this first.",
             schema: json!({"type": "object", "properties": {}}),
             read_only: true,
             run: |_| async { Ok(json!({"guide": FORMAT_GUIDE})) }.boxed_local(),
         },
         Tool {
+            name: "get_open_scenario",
+            description: "Returns the scenario open in the editor: the full pack (every editable value filled in, including unsaved changes), whether it is saved, its current problems, and `reference`: the names of the territory (places, zones) to use in edits.",
+            schema: json!({"type": "object", "properties": {}}),
+            read_only: true,
+            run: |_| get_open_scenario().boxed_local(),
+        },
+        Tool {
+            name: "edit_open_scenario",
+            description: "Applies JSON-pointer operations to the open scenario's draft. All-or-nothing: if the result has problems, nothing changes and the problems are returned. The draft is NOT saved (use save_open_scenario). Paths start at the pack root, e.g. /name, /edits/turn_minutes, /edits/injects/- (append). Ops: add (inserts into arrays, '-' appends), replace (must exist), remove.",
+            schema: json!({"type": "object", "properties": {
+                "operations": {"type": "array", "items": {"type": "object", "properties": {
+                    "op": {"type": "string", "enum": ["add", "replace", "remove"]},
+                    "path": {"type": "string", "description": "JSON pointer from the pack root"},
+                    "value": {"description": "New value (not for remove)"}
+                }, "required": ["op", "path"]}},
+                "dry_run": {"type": "boolean", "description": "Check only, leave the draft as it is"}
+            }, "required": ["operations"]}),
+            read_only: false,
+            run: |a| edit_open_scenario(a).boxed_local(),
+        },
+        Tool {
+            name: "validate_open_scenario",
+            description: "Checks the open scenario's draft. Returns every problem found (empty list = valid).",
+            schema: json!({"type": "object", "properties": {}}),
+            read_only: true,
+            run: |_| validate_open_scenario().boxed_local(),
+        },
+        Tool {
+            name: "save_open_scenario",
+            description: "Saves the open scenario to the library (validated; built-in scenarios are never overwritten). Does not start it and does not touch the exercise in progress. Ask the user first if they did not request saving.",
+            schema: json!({"type": "object", "properties": {}}),
+            read_only: false,
+            run: |_| save_open_scenario().boxed_local(),
+        },
+        Tool {
             name: "list_scenarios",
-            description: "Lists the scenario library: id, name, territory (base), whether it is built in (not overwritable), and which one is running.",
+            description: "Lists the scenario library: id, name, territory (base), built-in or not, and which one is running. Read-only; useful to find examples.",
             schema: json!({"type": "object", "properties": {}}),
             read_only: true,
             run: |_| list_scenarios().boxed_local(),
         },
         Tool {
             name: "get_scenario",
-            description: "Returns one scenario as a full pack (every editable value filled in) with its current problems, and `reference`: the names of the territory (places, zones) to use in edits.",
-            schema: id_schema(json!({})),
+            description: "Returns another scenario of the library as a full pack. Read-only; useful as an example of injects, roles or actions.",
+            schema: json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
             read_only: true,
             run: |a| get_scenario(a).boxed_local(),
         },
-        Tool {
-            name: "validate_scenario",
-            description: "Checks a complete pack without saving it. Returns every problem found (empty list = valid).",
-            schema: json!({"type": "object", "properties": {"pack": {"type": "object", "description": "A complete scenario pack"}}, "required": ["pack"]}),
-            read_only: true,
-            run: |a| validate_scenario(a).boxed_local(),
-        },
-        Tool {
-            name: "create_scenario",
-            description: "Creates a new scenario in the library as a copy of an existing one (default: a scenario on `base`, or the first available). Then change it with edit_scenario.",
-            schema: json!({"type": "object", "properties": {
-                "id": {"type": "string", "description": "New id (a-z 0-9 _ -, max 64)"},
-                "name": {"type": "string"},
-                "description": {"type": "string"},
-                "copy_from": {"type": "string", "description": "Id of the scenario to copy (built-ins allowed)"},
-                "base": {"type": "string", "description": "Territory id, when copy_from is not given"}
-            }, "required": ["id", "name"]}),
-            read_only: false,
-            run: |a| create_scenario(a).boxed_local(),
-        },
-        Tool {
-            name: "edit_scenario",
-            description: "Applies JSON-pointer operations to a saved, non-built-in scenario, validates the result and saves it. All-or-nothing: on any problem nothing is saved and the problems are returned. Paths start at the pack root, e.g. /name, /edits/turn_minutes, /edits/injects/- (append). Ops: add (inserts into arrays, '-' appends), replace (must exist), remove.",
-            schema: id_schema(json!({
-                "operations": {"type": "array", "items": {"type": "object", "properties": {
-                    "op": {"type": "string", "enum": ["add", "replace", "remove"]},
-                    "path": {"type": "string", "description": "JSON pointer from the pack root"},
-                    "value": {"description": "New value (not for remove)"}
-                }, "required": ["op", "path"]}},
-                "dry_run": {"type": "boolean", "description": "Validate only, do not save"}
-            })).tap(|s| s["required"] = json!(["id", "operations"])),
-            read_only: false,
-            run: |a| edit_scenario(a).boxed_local(),
-        },
-        Tool {
-            name: "delete_scenario",
-            description: "Permanently deletes a scenario from the library (not built-in, not running). Requires confirm=true after the user agreed.",
-            schema: id_schema(json!({"confirm": {"type": "boolean"}})),
-            read_only: false,
-            run: |a| delete_scenario(a).boxed_local(),
-        },
-        Tool {
-            name: "open_in_editor",
-            description: "Shows a scenario in the Scenario view of the console so the user can follow or continue by hand (works when that view is open).",
-            schema: id_schema(json!({})),
-            read_only: false,
-            run: |a| open_in_editor(a).boxed_local(),
-        },
-        Tool {
-            name: "start_scenario",
-            description: "Starts a NEW exercise from a saved scenario and DISCARDS the exercise in progress (turns, messages, decisions). Use only on the user's explicit request, with confirm=true.",
-            schema: id_schema(json!({"confirm": {"type": "boolean"}})),
-            read_only: false,
-            run: |a| start_scenario(a).boxed_local(),
-        },
     ]
-}
-
-trait Tap: Sized {
-    fn tap(self, f: impl FnOnce(&mut Self)) -> Self;
-}
-impl Tap for Value {
-    fn tap(mut self, f: impl FnOnce(&mut Self)) -> Self {
-        f(&mut self);
-        self
-    }
 }
 
 fn arg_str(args: &Value, key: &str) -> Result<String, String> {
@@ -177,8 +152,9 @@ fn arg_str(args: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing argument `{key}`"))
 }
 
-fn scenario_path(id: &str) -> String {
-    format!("/api/master/scenarios/{}", crate::api::encode(id))
+async fn validate(pack: &Value) -> Result<Vec<String>, String> {
+    let v = call("/api/master/scenarios/validate", Some(json!({"pack": pack}))).await?;
+    Ok(crate::api::list(&v["problems"]).iter().map(|p| crate::api::text(p).to_string()).collect())
 }
 
 async fn list_scenarios() -> Result<Value, String> {
@@ -186,72 +162,65 @@ async fn list_scenarios() -> Result<Value, String> {
     let running = lib["running"].clone();
     let packs: Vec<Value> = crate::api::list(&lib["packs"])
         .iter()
-        .map(|p| {
-            json!({
-                "id": p["id"], "name": p["name"], "description": p["description"],
-                "base": p["base"], "builtin": p["builtin"], "running": p["id"] == running,
-            })
-        })
+        .map(|p| json!({"id": p["id"], "name": p["name"], "description": p["description"], "base": p["base"], "builtin": p["builtin"], "running": p["id"] == running}))
         .collect();
     Ok(json!({"scenarios": packs, "territories": lib["bases"]}))
 }
 
 async fn get_scenario(args: Value) -> Result<Value, String> {
     let id = arg_str(&args, "id")?;
-    let v = call(&scenario_path(&id), None).await?;
-    let problems = validate(&v["pack"]).await.unwrap_or_default();
-    Ok(json!({"pack": v["pack"], "builtin": v["builtin"], "problems": problems, "reference": v["reference"]}))
+    let v = call(&format!("/api/master/scenarios/{}", crate::api::encode(&id)), None).await?;
+    Ok(json!({"pack": v["pack"], "builtin": v["builtin"]}))
 }
 
-async fn validate(pack: &Value) -> Result<Vec<String>, String> {
-    let v = call("/api/master/scenarios/validate", Some(json!({"pack": pack}))).await?;
-    Ok(crate::api::list(&v["problems"]).iter().map(|p| crate::api::text(p).to_string()).collect())
+async fn get_open_scenario() -> Result<Value, String> {
+    let draft = (editor()?.snapshot)().ok_or("no scenario is open")?;
+    let problems = validate(&draft.pack).await.unwrap_or_default();
+    Ok(json!({
+        "pack": draft.pack, "saved_as": draft.saved_id, "unsaved_changes": draft.dirty,
+        "problems": problems, "reference": draft.reference,
+    }))
 }
 
-async fn validate_scenario(args: Value) -> Result<Value, String> {
-    if !args["pack"].is_object() {
-        return Err("missing argument `pack`".into());
-    }
-    let problems = validate(&args["pack"]).await?;
+async fn validate_open_scenario() -> Result<Value, String> {
+    let draft = (editor()?.snapshot)().ok_or("no scenario is open")?;
+    let problems = validate(&draft.pack).await?;
     Ok(json!({"valid": problems.is_empty(), "problems": problems}))
 }
 
-async fn save(pack: &Value) -> Result<(), String> {
-    call("/api/master/scenarios/save", Some(json!({"pack": pack}))).await.map(|_| ())
-}
-
-async fn create_scenario(args: Value) -> Result<Value, String> {
-    let id = arg_str(&args, "id")?;
-    let name = arg_str(&args, "name")?;
-    let lib = call("/api/master/scenarios", None).await?;
-    let packs = crate::api::list(&lib["packs"]);
-    if packs.iter().any(|p| p["id"] == id.as_str()) {
-        return Err(format!("scenario `{id}` already exists: choose another id"));
+async fn edit_open_scenario(args: Value) -> Result<Value, String> {
+    let ed = editor()?;
+    let draft = (ed.snapshot)().ok_or("no scenario is open")?;
+    let ops = args["operations"].as_array().ok_or("missing argument `operations`")?;
+    let mut pack = draft.pack.clone();
+    for (n, o) in ops.iter().enumerate() {
+        let (op, path) = (o["op"].as_str().unwrap_or(""), o["path"].as_str().unwrap_or(""));
+        apply_op(&mut pack, op, path, o.get("value").cloned())
+            .map_err(|e| format!("operation {n} ({op} {path}): {e}; nothing changed"))?;
     }
-    let source = match args["copy_from"].as_str().filter(|s| !s.is_empty()) {
-        Some(s) => s.to_string(),
-        None => {
-            let base = args["base"].as_str().filter(|s| !s.is_empty());
-            packs
-                .iter()
-                .find(|p| base.is_none_or(|b| p["base"] == b))
-                .map(|p| crate::api::text(&p["id"]).to_string())
-                .ok_or("no scenario available to copy: pass `copy_from`")?
-        }
-    };
-    let mut pack = call(&scenario_path(&source), None).await?["pack"].clone();
-    pack["id"] = json!(id);
-    pack["name"] = json!(name);
-    if let Some(d) = args["description"].as_str() {
-        pack["description"] = json!(d);
+    if draft.saved_id.is_some() && pack["id"] != draft.pack["id"] {
+        return Err("the id of a saved scenario cannot be changed".into());
     }
     let problems = validate(&pack).await?;
     if !problems.is_empty() {
-        return Err(problems.join("\n"));
+        return Ok(json!({"applied": false, "problems": problems}));
     }
-    save(&pack).await?;
-    notify(&id, false);
-    Ok(json!({"created": id, "copied_from": source, "next": "use edit_scenario to change it"}))
+    if args["dry_run"] == true {
+        return Ok(json!({"applied": false, "valid": true, "dry_run": true}));
+    }
+    (ed.replace)(pack)?;
+    Ok(json!({"applied": true, "operations": ops.len(), "saved": false}))
+}
+
+async fn save_open_scenario() -> Result<Value, String> {
+    let ed = editor()?;
+    let draft = (ed.snapshot)().ok_or("no scenario is open")?;
+    let id = crate::api::text(&draft.pack["id"]).to_string();
+    // The API refuses problems and built-in ids with a readable message.
+    call("/api/master/scenarios/save", Some(json!({"pack": draft.pack}))).await?;
+    (ed.saved)(id.clone());
+    notify();
+    Ok(json!({"saved": id}))
 }
 
 /// RFC 6901 pointer split, unescaping `~1` and `~0`.
@@ -319,61 +288,6 @@ pub fn apply_op(doc: &mut Value, op: &str, path: &str, value: Option<Value>) -> 
     Ok(())
 }
 
-async fn edit_scenario(args: Value) -> Result<Value, String> {
-    let id = arg_str(&args, "id")?;
-    let ops = args["operations"].as_array().ok_or("missing argument `operations`")?;
-    let loaded = call(&scenario_path(&id), None).await?;
-    if loaded["builtin"] == true {
-        return Err("built-in scenarios cannot be overwritten: create_scenario with copy_from first".into());
-    }
-    let mut pack = loaded["pack"].clone();
-    for (n, o) in ops.iter().enumerate() {
-        let op = o["op"].as_str().unwrap_or("");
-        let path = o["path"].as_str().unwrap_or("");
-        apply_op(&mut pack, op, path, o.get("value").cloned())
-            .map_err(|e| format!("operation {n} ({op} {path}): {e}; nothing saved"))?;
-    }
-    if pack["id"] != id.as_str() {
-        return Err("the scenario id cannot be changed".into());
-    }
-    let problems = validate(&pack).await?;
-    if !problems.is_empty() {
-        return Ok(json!({"saved": false, "problems": problems}));
-    }
-    if args["dry_run"] == true {
-        return Ok(json!({"saved": false, "valid": true, "dry_run": true}));
-    }
-    save(&pack).await?;
-    notify(&id, false);
-    Ok(json!({"saved": true, "id": id, "operations": ops.len()}))
-}
-
-async fn delete_scenario(args: Value) -> Result<Value, String> {
-    let id = arg_str(&args, "id")?;
-    if args["confirm"] != true {
-        return Err("deleting is permanent: ask the user, then call again with confirm=true".into());
-    }
-    call("/api/master/scenarios/delete", Some(json!({"id": id}))).await?;
-    notify(&id, false);
-    Ok(json!({"deleted": id}))
-}
-
-async fn open_in_editor(args: Value) -> Result<Value, String> {
-    let id = arg_str(&args, "id")?;
-    call(&scenario_path(&id), None).await?;
-    notify(&id, true);
-    Ok(json!({"requested": id, "note": "shown if the Scenario view is open"}))
-}
-
-async fn start_scenario(args: Value) -> Result<Value, String> {
-    let id = arg_str(&args, "id")?;
-    if args["confirm"] != true {
-        return Err("this discards the exercise in progress: ask the user, then call again with confirm=true".into());
-    }
-    let message = crate::scenario_editor::start_scenario(&id).await?;
-    Ok(json!({"started": id, "message": message}))
-}
-
 // ------------------------------------------------------------ browser glue
 
 fn run_tool(tools: &'static [Tool], name: &str, args: JsValue) -> Promise {
@@ -420,30 +334,64 @@ fn tool_object(tools: &'static [Tool], tool: &'static Tool) -> Result<Object, Js
     Ok(o)
 }
 
-/// Registers the tools with `navigator.modelContext` as soon as it exists.
-/// Safe to call more than once.
-pub fn register() {
+fn all_tools() -> &'static [Tool] {
     thread_local! { static TOOLS: &'static [Tool] = Box::leak(tools().into_boxed_slice()); }
-    let tools: &'static [Tool] = TOOLS.with(|t| *t);
+    TOOLS.with(|t| *t)
+}
+
+fn model_context() -> Option<JsValue> {
+    let context = Reflect::get(&crate::api::window().navigator(), &"modelContext".into()).ok()?;
+    (!context.is_undefined() && !context.is_null()).then_some(context)
+}
+
+/// A scenario was opened in the editor: expose the tools. Called again with
+/// the same editor it only refreshes the handle.
+pub fn attach(editor: Editor) {
+    let first = EDITOR.with(|e| e.borrow_mut().replace(Rc::new(editor)).is_none());
+    if !first {
+        return;
+    }
+    let epoch = EPOCH.with(|e| {
+        e.set(e.get() + 1);
+        e.get()
+    });
+    let tools = all_tools();
     expose_fallback(tools);
     wasm_bindgen_futures::spawn_local(async move {
         // The context may be injected after load (extensions, polyfills).
         for wait in [0u32, 250, 500, 1000, 2000, 4000, 8000, 15000, 30000] {
             gloo_timers::future::TimeoutFuture::new(wait).await;
-            if try_register(tools) {
+            if EPOCH.with(Cell::get) != epoch || try_register(tools) {
                 return;
             }
         }
     });
 }
 
-fn try_register(tools: &'static [Tool]) -> bool {
-    let Ok(context) = Reflect::get(&crate::api::window().navigator(), &"modelContext".into()) else {
-        return false;
-    };
-    if context.is_undefined() || context.is_null() {
-        return false;
+/// The editor closed: withdraw the tools.
+pub fn detach() {
+    if EDITOR.with(|e| e.borrow_mut().take()).is_none() {
+        return;
     }
+    EPOCH.with(|e| e.set(e.get() + 1));
+    let _ = Reflect::delete_property(&crate::api::window(), &"ttxWebMcp".into());
+    let names: Vec<&'static str> = REGISTERED.with(|r| r.borrow_mut().drain().collect());
+    let Some(context) = model_context() else { return };
+    let unregister = Reflect::get(&context, &"unregisterTool".into()).ok().and_then(|f| f.dyn_into::<Function>().ok());
+    if let Some(unregister) = unregister {
+        for name in names {
+            let _ = unregister.call1(&context, &name.into());
+        }
+    } else if let Some(provide) = Reflect::get(&context, &"provideContext".into()).ok().and_then(|f| f.dyn_into::<Function>().ok()) {
+        // Earlier drafts of the API: an empty list replaces ours.
+        let arg = Object::new();
+        let _ = Reflect::set(&arg, &"tools".into(), &Array::new());
+        let _ = provide.call1(&context, &arg);
+    }
+}
+
+fn try_register(tools: &'static [Tool]) -> bool {
+    let Some(context) = model_context() else { return false };
     let register_tool = Reflect::get(&context, &"registerTool".into()).ok().and_then(|f| f.dyn_into::<Function>().ok());
     if let Some(register_tool) = register_tool {
         for tool in tools {

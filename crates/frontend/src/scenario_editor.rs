@@ -1228,34 +1228,61 @@ pub fn scenario_editor(props: &Props) -> Html {
         })
     };
 
-    // The WebMCP tools (an agent editing scenarios) announce their changes:
-    // refresh the list, and reload what the user has open unless they have
-    // unsaved edits. "Open in editor" always opens.
-    let current = use_mut_ref(|| None::<(Option<String>, bool)>);
-    *current.borrow_mut() = (*open).as_ref().map(|o| (o.saved_id.clone(), o.dirty));
+    // WebMCP tools exist only while a scenario is open here, and act on this
+    // draft. `current` mirrors the latest state for the tools' closures.
+    let current = use_mut_ref(|| None::<Open>);
+    *current.borrow_mut() = (*open).clone();
     {
-        let (load, refresh, current) = (load.clone(), refresh.clone(), current.clone());
-        use_effect_with((), move |_| {
+        let (open_h, current, refresh) = (open.clone(), current.clone(), refresh.clone());
+        use_effect_with(open.is_some(), move |editing| {
             use wasm_bindgen::JsCast;
-            if let Some(req) = crate::webmcp::take_editor_request().filter(|r| r.force) {
-                load.emit((req.id, false));
+            let mut handler = None;
+            if *editing {
+                let (snap, rep, sav) = (current.clone(), current.clone(), current.clone());
+                let (open_r, open_s) = (open_h.clone(), open_h.clone());
+                crate::webmcp::attach(crate::webmcp::Editor {
+                    snapshot: Box::new(move || {
+                        snap.borrow().as_ref().map(|o| crate::webmcp::Draft {
+                            pack: serde_json::to_value(&o.pack).unwrap_or_default(),
+                            reference: o.reference.clone(),
+                            saved_id: o.saved_id.clone(),
+                            dirty: o.dirty,
+                        })
+                    }),
+                    replace: Box::new(move |v| {
+                        let pack: ScenarioPack = serde_json::from_value(v).map_err(|e| format!("not a valid pack: {e}"))?;
+                        let mut cur = rep.borrow().clone().ok_or("no scenario is open")?;
+                        cur.pack = pack;
+                        cur.dirty = true;
+                        *rep.borrow_mut() = Some(cur.clone());
+                        open_r.set(Some(cur));
+                        Ok(())
+                    }),
+                    saved: Box::new(move |id| {
+                        let held = sav.borrow().clone();
+                        if let Some(mut cur) = held {
+                            cur.saved_id = Some(id);
+                            cur.dirty = false;
+                            *sav.borrow_mut() = Some(cur.clone());
+                            open_s.set(Some(cur));
+                        }
+                    }),
+                });
+                let h = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || refresh.emit(()));
+                let _ = api::window().add_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, h.as_ref().unchecked_ref());
+                handler = Some(h);
+            } else {
+                crate::webmcp::detach();
             }
-            let handler = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
-                refresh.emit(());
-                if let Some(req) = crate::webmcp::take_editor_request() {
-                    let same_clean = matches!(&*current.borrow(), Some((Some(id), false)) if *id == req.id);
-                    if req.force || same_clean {
-                        load.emit((req.id, false));
-                    }
-                }
-            });
-            let window = api::window();
-            let _ = window.add_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, handler.as_ref().unchecked_ref());
             move || {
-                let _ = window.remove_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, handler.as_ref().unchecked_ref());
+                if let Some(h) = handler {
+                    let _ = api::window().remove_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, h.as_ref().unchecked_ref());
+                }
             }
         });
     }
+    // Leaving the view while editing also withdraws the tools.
+    use_effect_with((), |_| || crate::webmcp::detach());
 
     // Save (and optionally start). `Ok` shows the outcome, errors list problems.
     let save = {
