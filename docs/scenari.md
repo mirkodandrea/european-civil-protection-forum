@@ -93,7 +93,7 @@ non salvate richiede una scelta esplicita nell’interfaccia.
 
 Gli strumenti lavorano con un clic sulla superficie 3D: quota assoluta e
 vegetazione con pennello circolare, edifici, luoghi, inneschi (raggio minimo
-40 m), strade con due estremi. Gli oggetti si scelgono dalla lista o sulla mappa;
+40 m), strade come polilinee (due clic creano il tracciato, ogni clic successivo aggiunge un vertice; «Termina strada» chiude). Gli oggetti si scelgono dalla lista o sulla mappa;
 le proprietà permettono di cambiare coordinate e attributi, oppure eliminarli.
 Le strade sono selezionabili dalla lista. «Scenario e meteo» modifica nome,
 descrizione, orario iniziale, durata dei turni e meteo. Importazione/esportazione

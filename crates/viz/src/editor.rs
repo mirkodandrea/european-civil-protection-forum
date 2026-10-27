@@ -30,6 +30,7 @@ pub struct Editor {
     elevation: f32,
     fuel: i32,
     road_start: Option<scenario::Pos>,
+    road_open: Option<usize>,
     press: Option<Vec2>,
     message: String,
     new_id: String,
@@ -81,6 +82,7 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         elevation: 100.,
         fuel: 4,
         road_start: None,
+        road_open: None,
         press: None,
         message: String::new(),
         new_id: "nuovo-scenario".into(),
@@ -217,7 +219,7 @@ pub(crate) fn draw(
                     ("height", "Quota terreno"),
                     ("fuel", "Vegetazione"),
                     ("building", "Aggiungi edificio"),
-                    ("road", "Strada: due estremi"),
+                    ("road", "Strada (polilinea)"),
                     ("place", "Aggiungi luogo"),
                     ("ignition", "Aggiungi innesco"),
                 ] {
@@ -226,6 +228,7 @@ pub(crate) fn draw(
                         .clicked()
                     {
                         e.road_start = None;
+                        e.road_open = None;
                     }
                 }
                 if e.tool == "height" || e.tool == "fuel" {
@@ -256,10 +259,15 @@ pub(crate) fn draw(
                             });
                     }
                 }
-                if e.road_start.is_some() {
-                    ui.label("Scegli il secondo estremo sulla mappa.");
-                    if ui.button("Annulla strada").clicked() {
+                if e.road_start.is_some() || e.road_open.is_some() {
+                    ui.label(if e.road_open.is_some() {
+                        "Clic: aggiungi vertice. «Termina strada» per chiudere."
+                    } else {
+                        "Scegli il secondo punto sulla mappa."
+                    });
+                    if ui.button("Termina strada").clicked() {
                         e.road_start = None;
+                        e.road_open = None;
                     }
                 }
                 ui.separator();
@@ -372,6 +380,7 @@ pub(crate) fn draw(
                 );
                 set_selection(e, &d, None);
                 e.road_start = None;
+                        e.road_open = None;
             }
         }
     }
@@ -674,9 +683,16 @@ pub(crate) fn interact(
                 "height" => d.brush(at, e.radius, Some(e.elevation), None),
                 "fuel" => d.brush(at, e.radius, None, Some(e.fuel)),
                 "road" => {
-                    if let Some(start) = e.road_start.take() {
-                        d.add("road", start, Some(at))
-                            .map(|sel| set_selection(&mut e, &d, Some(sel)))
+                    if let Some(i) = e.road_open {
+                        d.extend_road(i, at)
+                            .map(|_| set_selection(&mut e, &d, Some(Selection::Road(i))))
+                    } else if let Some(start) = e.road_start.take() {
+                        d.add("road", start, Some(at)).map(|sel| {
+                            if let Selection::Road(i) = sel {
+                                e.road_open = Some(i);
+                            }
+                            set_selection(&mut e, &d, Some(sel))
+                        })
                     } else {
                         e.road_start = Some(at);
                         Ok(())

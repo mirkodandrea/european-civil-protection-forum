@@ -215,6 +215,20 @@ impl Document {
         })?;
         Ok(selected)
     }
+    /// Appends a vertex to an existing road, turning it into a polyline.
+    pub fn extend_road(&mut self, index: usize, at: Pos) -> Result<()> {
+        self.edit(|s| {
+            ensure!(inside(s, at), "Punto fuori mappa");
+            let road = s
+                .roads
+                .get_mut(index)
+                .ok_or_else(|| anyhow::anyhow!("Strada inesistente"))?;
+            let last = *road.points.last().expect("roads have points");
+            ensure!(distance(last, at) >= 1., "Vertice coincidente con il precedente");
+            road.points.push(at);
+            Ok(())
+        })
+    }
     pub fn delete(&mut self, selection: Selection) -> Result<()> {
         self.edit(|s| {
             match selection {
