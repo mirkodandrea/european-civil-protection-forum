@@ -19,7 +19,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.screenshot({path:path.join(out,'catalog.png')});
   await page.locator('[data-scenario="selvariva_festival"] .edit-scenario').click();
   await page.locator('#scenario-form').waitFor();
-  await page.locator('[data-tab="ignitions"]').click();
+  await page.locator('[data-tab="team"]').click();
   await page.screenshot({path:path.join(out,'territory-editor.png')});
   assert.match(await page.locator('#scenario-form').innerText(),/Selvariva/);
   await page.reload();await ready();await scenarios();await activate('selvariva_festival');

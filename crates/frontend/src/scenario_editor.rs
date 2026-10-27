@@ -10,7 +10,7 @@ use crate::{
     i18n::ex,
 };
 use scenario::{
-    IgnitionSpec, InjectTemplate, Place, ReinforcementOffer, ResourceType, Role, ScenarioPack,
+    InjectTemplate, ReinforcementOffer, ResourceType, Role, ScenarioPack,
 };
 use crate::timeline_plan as plan;
 use serde_json::{json, Value};
@@ -37,6 +37,16 @@ struct Open {
     /// Stored under this id; `None` until the first save.
     saved_id: Option<String>,
     dirty: bool,
+}
+
+/// Settings content supplied by the host (the standalone app: AI key and stored
+/// session). Shown above the scenario list; never equal, so it always refreshes.
+#[derive(Clone)]
+pub struct SettingsSlot(pub Html);
+impl PartialEq for SettingsSlot {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -246,14 +256,15 @@ fn md_item(active: bool, onclick: Callback<MouseEvent>, content: Html) -> Html {
     html! {<button type="button" class={classes!("md-item", active.then_some("active"))} aria-pressed={active.to_string()} onclick={onclick}>{content}</button>}
 }
 
-fn roles_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
-    html! {<RolesTab o={o.clone()} open={open.clone()}/>}
-}
+/// Selection in the combined "Ruoli e risorse" list: (kind, index) with
+/// kind `K_ROLE`, `K_RESOURCE` or `K_REINF`.
+type Sel = UseStateHandle<(u8, usize)>;
+const K_ROLE: u8 = 0;
+const K_RESOURCE: u8 = 1;
+const K_REINF: u8 = 2;
 
-#[function_component(RolesTab)]
-fn roles_view(props: &ListProps) -> Html {
-    let (o, open) = (&props.o, &props.open);
-    let selected = use_state(|| 0usize);
+/// List entries, "add" button and editor of the roles.
+fn roles_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel) -> (Html, Html, Html) {
     let e = &o.pack.edits;
     let roles = e.roles.clone().unwrap_or_default();
     let resources = e.resource_types.clone().unwrap_or_default();
@@ -267,13 +278,14 @@ fn roles_view(props: &ListProps) -> Html {
         .collect();
     let actions: Vec<String> = list(&o.reference["actions"]).iter().map(|a| text(a).to_string()).collect();
     let n = roles.len();
-    let sel = (*selected).min(n.saturating_sub(1));
+    let sel = if selected.0 == K_ROLE { selected.1.min(n.saturating_sub(1)) } else { usize::MAX };
     let items = html! {<>
+        <h5 class="md-group">{ex("Ruoli")}</h5>
         {for roles.iter().enumerate().map(|(i, r)| {
             let stock: Vec<String> = resources.iter().filter_map(|res| r.resources.get(&res.id).map(|q| format!("{} ×{q}", res.name))).collect();
             let level = levels.iter().find(|(v, _)| *v == r.level).map(|(_, n)| n.clone()).unwrap_or_else(|| r.level.clone());
             let bad = r.id.is_empty() || roles.iter().filter(|x| x.id == r.id).count() > 1;
-            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set(i)) }, html!{<>
+            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set((K_ROLE, i))) }, html!{<>
                 <b class="md-id">{ if r.id.is_empty() { ex("nuovo").to_string() } else { r.id.clone() } }</b>
                 <span class="pill">{level}</span>
                 { if bad { html!{<span class="pill pending" title={ex("Identificativo non valido o duplicato.")}>{"!"}</span>} } else { Html::default() } }
@@ -294,11 +306,11 @@ fn roles_view(props: &ListProps) -> Html {
                     description: String::new(), allowed_actions: vec![], resources: Default::default(),
                 });
             }));
-            Callback::from(move |e| { selected.set(n); add.emit(e) })
-        }}>{ex("Aggiungi ruolo")}</button>
+            Callback::from(move |e| { selected.set((K_ROLE, n)); add.emit(e) })
+        }}>{ex("+ Ruolo")}</button>
     };
     let detail = match roles.get(sel) {
-        Some(r) => {
+        Some(r) if selected.0 == K_ROLE => {
             let i = sel;
             let r = r.clone();
             let duplicate = roles.iter().filter(|x| x.id == r.id).count() > 1;
@@ -324,7 +336,7 @@ fn roles_view(props: &ListProps) -> Html {
                             }
                         }))
                     })}
-                    { if resources.is_empty() { html!{<small class="muted">{ex("Nessun tipo di risorsa: aggiungilo nella scheda Risorse.")}</small>} } else { Html::default() } }
+                    { if resources.is_empty() { html!{<small class="muted">{ex("Nessun tipo di risorsa: aggiungilo tra le risorse.")}</small>} } else { Html::default() } }
                 </div>
                 <h4>{ex("Azioni che può proporre")}
                     <span class="rr-bulk">
@@ -349,13 +361,9 @@ fn roles_view(props: &ListProps) -> Html {
                     upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.roles.as_mut() { if i < l.len() { l.remove(i); } } }))}
             </div>}
         }
-        None => html! {<p class="muted">{ex("Aggiungi un ruolo per iniziare.")}</p>},
+        _ => Html::default(),
     };
-    html! {<div class="rr-tab">
-        <p class="muted">{ex("Ogni ruolo è una pagina player. Azioni e risorse decidono cosa può proporre; l’EXCON approva comunque ogni azione.")}</p>
-        {master_detail(items, tools, detail)}
-        {excon_roles_list(e.excon_roles.clone().unwrap_or_default(), open)}
-    </div>}
+    (items, tools, detail)
 }
 
 /// The parts the EXCON plays: one row per name, reorderable.
@@ -386,23 +394,18 @@ fn excon_roles_list(names: Vec<String>, open: &UseStateHandle<Option<Open>>) -> 
     </section>}
 }
 
-fn resources_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
-    html! {<ResourcesTab o={o.clone()} open={open.clone()}/>}
-}
-
-#[function_component(ResourcesTab)]
-fn resources_view(props: &ListProps) -> Html {
-    let (o, open) = (&props.o, &props.open);
-    let selected = use_state(|| 0usize);
+/// List entries, "add" button and editor of the resource types.
+fn resources_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel) -> (Html, Html, Html) {
     let resources = o.pack.edits.resource_types.clone().unwrap_or_default();
     let roles = o.pack.edits.roles.clone().unwrap_or_default();
     let n = resources.len();
-    let sel = (*selected).min(n.saturating_sub(1));
+    let sel = if selected.0 == K_RESOURCE { selected.1.min(n.saturating_sub(1)) } else { usize::MAX };
     let users_of = |id: &str| -> Vec<String> { roles.iter().filter(|x| x.resources.contains_key(id)).map(|x| x.id.clone()).collect() };
     let items = html! {<>
+        <h5 class="md-group">{ex("Tipi di risorsa")}</h5>
         {for resources.iter().enumerate().map(|(i, r)| {
             let bad = r.id.is_empty() || resources.iter().filter(|x| x.id == r.id).count() > 1;
-            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set(i)) }, html!{<>
+            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set((K_RESOURCE, i))) }, html!{<>
                 <b class="md-id">{r.id.clone()}</b>
                 { if bad { html!{<span class="pill pending" title={ex("Identificativo vuoto o duplicato.")}>{"!"}</span>} } else { Html::default() } }
                 <span class="md-name">{r.name.clone()}</span>
@@ -419,11 +422,11 @@ fn resources_view(props: &ListProps) -> Html {
                 let n = l.len() + 1;
                 l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None });
             }));
-            Callback::from(move |e| { selected.set(n); add.emit(e) })
-        }}>{ex("Aggiungi risorsa")}</button>
+            Callback::from(move |e| { selected.set((K_RESOURCE, n)); add.emit(e) })
+        }}>{ex("+ Risorsa")}</button>
     };
     let detail = match resources.get(sel) {
-        Some(r) => {
+        Some(r) if selected.0 == K_RESOURCE => {
             let i = sel;
             let r = r.clone();
             let duplicate = resources.iter().filter(|x| x.id == r.id).count() > 1;
@@ -441,12 +444,9 @@ fn resources_view(props: &ListProps) -> Html {
                     upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.resource_types.as_mut() { if i < l.len() { l.remove(i); } } }))}
             </div>}
         }
-        None => html! {<p class="muted">{ex("Aggiungi un tipo di risorsa per iniziare.")}</p>},
+        _ => Html::default(),
     };
-    html! {<div class="rr-tab">
-        <p class="muted">{ex("Tipi di risorsa del lancio: acqua, squadre, mezzi. La velocità è quella con cui raggiungono il luogo dalla base di partenza.")}</p>
-        {master_detail(items, tools, detail)}
-    </div>}
+    (items, tools, detail)
 }
 
 /// Plain-words explanation of a command kind, for the role action checkboxes.
@@ -564,45 +564,6 @@ fn map_base(o: &Open, g: Geom) -> Html {
     </>}
 }
 
-/// Named places as small diamonds. `always` writes the name; otherwise it shows on hover.
-fn map_places(places: &[Place], g: Geom, always: bool, selected: Option<usize>, hit: bool) -> Html {
-    let r = g.zone * 0.07;
-    html! {<>{for places.iter().enumerate().map(|(i, p)| {
-        let (cx, cy) = (p.pos[0] as f64, g.height - p.pos[1] as f64);
-        let sel = selected == Some(i);
-        let d = format!("M{} {}L{} {}L{} {}L{} {}Z", cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy);
-        html!{<g class={classes!("map-place", always.then_some("always"), sel.then_some("selected"))} data-hit={hit.then(|| i.to_string())}>
-            <title>{if p.aliases.is_empty() { p.name.clone() } else { format!("{} ({})", p.name, p.aliases.join(", ")) }}</title>
-            <circle cx={cx.to_string()} cy={cy.to_string()} r={(r * 2.2).to_string()} fill="rgba(0,0,0,.001)"/>
-            <path d={d} fill={if sel {"#0f6b4d"} else {"#617673"}} stroke="#fff" stroke-width={(g.width / 700.0).to_string()}/>
-            <text class="map-lbl" x={cx.to_string()} y={(cy - r * 1.6).to_string()} text-anchor="middle" font-size={(g.zone * 0.15).to_string()} stroke-width={(g.zone * 0.035).to_string()}>{p.name.clone()}</text>
-        </g>}
-    })}</>}
-}
-
-/// A delete button that needs a second click, so a stray tap cannot lose data.
-#[derive(Properties, PartialEq)]
-struct ConfirmProps {
-    label: &'static str,
-    onconfirm: Callback<MouseEvent>,
-}
-
-#[function_component(ConfirmDelete)]
-fn confirm_delete(p: &ConfirmProps) -> Html {
-    let armed = use_state(|| false);
-    if *armed {
-        let (a, cb) = (armed.clone(), p.onconfirm.clone());
-        let b = armed.clone();
-        html! {<span class="confirm-delete">
-            <button class="danger" onclick={Callback::from(move |e| { a.set(false); cb.emit(e) })}>{ex("Conferma eliminazione")}</button>
-            <button onclick={Callback::from(move |_| b.set(false))}>{ex("Annulla")}</button>
-        </span>}
-    } else {
-        let a = armed.clone();
-        html! {<button class="danger" title={ex("Chiede una conferma prima di eliminare")} onclick={Callback::from(move |_| a.set(true))}>{ex(p.label)}</button>}
-    }
-}
-
 /// `options` plus the current value when it is not among them (a dangling reference stays visible).
 fn with_current(options: &[(String, String)], value: &str) -> Vec<(String, String)> {
     let mut v = options.to_vec();
@@ -612,225 +573,88 @@ fn with_current(options: &[(String, String)], value: &str) -> Vec<(String, Strin
     v
 }
 
-/// Zone grid and ignitions; a click on the map moves the selected ignition.
-fn ignitions_tab(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &UseStateHandle<usize>, map: &NodeRef) -> Html {
-    let ignitions = o.pack.edits.initial_ignitions.clone().unwrap_or_default();
-    let g = geom(o);
-    let sel = (*selected).min(ignitions.len().saturating_sub(1));
-    let onclick = {
-        let (open, selected) = (open.clone(), selected.clone());
-        map_click(map, g, Callback::from(move |(at, hit): ([f32; 2], Option<usize>)| {
-            if let Some(i) = hit {
-                selected.set(i);
-                return;
-            }
-            let Some(cur) = &*open else { return };
-            let mut next = cur.clone();
-            if let Some(i) = next.pack.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(sel)) {
-                i.at = at;
-                next.dirty = true;
-                open.set(Some(next));
-            }
-        }))
-    };
-    let zones: Vec<String> = list(&o.reference["zones"]).iter().map(|z| text(z).to_string()).collect();
-    let centres = o.reference["zone_centres"].clone();
-    let places = o.pack.edits.places.clone().unwrap_or_default();
-    let unit = g.zone;
-    html! {<div class="sc-ign">
-        <div class="sc-split">
-            <div class="sc-map">
-                <p class="map-help"><strong>{ex("Mappa: clic su un punto vuoto = sposta l’innesco selezionato · clic su un cerchio = lo seleziona.")}</strong>{" "}
-                    {ex("Origine in basso a sinistra (sud-ovest); i cerchi sono disegnati in scala col raggio. Passa il mouse sui rombi per il nome dei luoghi.")}</p>
-                <svg ref={map.clone()} class="ignition-map" viewBox={format!("0 0 {} {}", g.width, g.height)} style={format!("aspect-ratio:{}/{}", g.width, g.height)}
-                    role="img" aria-label={ex("Mappa degli inneschi")} onclick={onclick}>
-                    {map_base(o, g)}
-                    {map_places(&places, g, false, None, false)}
-                    {for ignitions.iter().enumerate().map(|(i, g_)| {
-                        let (cx, cy) = (g_.at[0] as f64, g.height - g_.at[1] as f64);
-                        let is_sel = i == sel;
-                        let r = g_.radius_m as f64;
-                        let hit_r = r.max(unit * 0.07);
-                        let tiny = g_.radius_m < 40.0;
-                        html!{<g class={classes!("map-ign", is_sel.then_some("selected"), tiny.then_some("tiny"))} data-hit={i.to_string()}>
-                            <title>{format!("{} {} · {} m{}", ex("Innesco"), i + 1, g_.radius_m, if tiny { format!(" · {}", ex("troppo piccolo")) } else { String::new() })}</title>
-                            <circle cx={cx.to_string()} cy={cy.to_string()} r={hit_r.to_string()} fill="rgba(0,0,0,.001)"/>
-                            <circle class="ign-disc" cx={cx.to_string()} cy={cy.to_string()} r={r.to_string()} stroke-width={(g.width / 450.0 * if is_sel {2.0} else {1.0}).to_string()}/>
-                            if is_sel {
-                                <circle class="ign-ring" cx={cx.to_string()} cy={cy.to_string()} r={(hit_r + unit * 0.03).to_string()} stroke-width={(g.width / 300.0).to_string()} stroke-dasharray={format!("{} {}", unit * 0.05, unit * 0.03)}/>
-                            }
-                            <circle cx={cx.to_string()} cy={cy.to_string()} r={(unit * 0.012).to_string()} fill="#7a1d12"/>
-                            <text class="map-lbl ign-num" x={cx.to_string()} y={(cy - hit_r - unit * 0.05).to_string()} text-anchor="middle"
-                                font-size={(unit * if is_sel {0.2} else {0.15}).to_string()} stroke-width={(unit * 0.04).to_string()}>{i + 1}</text>
-                        </g>}
-                    })}
-                </svg>
-                <p class="muted map-legend">{ex("Cerchio pieno = innesco, con anello tratteggiato se selezionato · tratteggio = raggio sotto i 40 m (si spegne) · rombo = luogo con nome.")}</p>
-            </div>
-            <div class="sc-list">
-                {for ignitions.iter().enumerate().map(|(i, g_)| {
-                    let g_ = g_.clone();
-                    let sel_cb = { let selected = selected.clone(); Callback::from(move |_: MouseEvent| selected.set(i)) };
-                    let zone_now = zone_at(o, g, g_.at);
-                    if i != sel {
-                        return html!{<button class="sc-summary" key={i} onclick={sel_cb} title={ex("Seleziona questo innesco (si evidenzia sulla mappa)")}>
-                            <span class="badge">{i + 1}</span>
-                            {format!("{} {} · {} m · E {} N {}{}", ex("Innesco"), i + 1, g_.radius_m, g_.at[0], g_.at[1], zone_now.map(|z| format!(" · {z}")).unwrap_or_default())}
-                        </button>};
-                    }
-                    let mut zone_options: Vec<(String, String)> = vec![(String::new(), match &zone_now {
-                        Some(z) => format!("{} {z} · {}", ex("Ora in zona"), ex("sposta al centro di…")),
-                        None => ex("Sposta al centro della zona…").to_string(),
-                    })];
-                    zone_options.extend(zones.iter().map(|z| (z.clone(), z.clone())));
-                    let centres = centres.clone();
-                    html!{<fieldset class="inject-row selected" key={i}>
-                        <legend><span class="badge sel">{i + 1}</span>{format!(" {} {}", ex("Innesco"), i + 1)}</legend>
-                        <div class="settings-fields">
-                            {number("Est x (m)", "Metri verso est dall’angolo sud-ovest del territorio (origine 0,0). Si imposta anche con un clic sulla mappa.", g_.at[0].to_string(), upd(open, move |p, v: String| if let (Some(x), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[0] = x }))}
-                            {number("Nord y (m)", "Metri verso nord dall’angolo sud-ovest del territorio (origine 0,0). Si imposta anche con un clic sulla mappa.", g_.at[1].to_string(), upd(open, move |p, v: String| if let (Some(y), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at[1] = y }))}
-                            {number("Raggio (m)", "Raggio iniziale del fuoco, disegnato in scala sulla mappa. Con meno di 40 m l’innesco si spegne da solo (una sola cella non si propaga): usa 40 m o più.", g_.radius_m.to_string(), upd(open, move |p, v: String| if let (Some(r), Some(g)) = (num(&v), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.radius_m = r }))}
-                            {choice("Zona", "Scorciatoia: porta l’innesco al centro di una zona della griglia 8×8 (es. F4), il nome che i giocatori usano nei messaggi.", "", &zone_options, upd(open, move |p, zone: String| {
-                                let c = &centres[zone.as_str()];
-                                if let (Some(x), Some(y), Some(g)) = (c[0].as_f64(), c[1].as_f64(), p.edits.initial_ignitions.as_mut().and_then(|l| l.get_mut(i))) { g.at = [x as f32, y as f32]; }
-                            }))}
-                        </div>
-                        if g_.radius_m < 40.0 {<p class="warn" role="alert">{ex("Raggio sotto i 40 m: l’innesco si spegne da solo. Portalo a 40 m o più.")}</p>}
-                        <ConfirmDelete label="Elimina innesco" onconfirm={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.initial_ignitions.as_mut() { if i < l.len() { l.remove(i); } } })}/>
-                    </fieldset>}
-                })}
-                if ignitions.is_empty() {<p class="muted">{ex("Nessun innesco: l’esercitazione parte senza fuoco. Aggiungine uno e clicca sulla mappa.")}</p>}
-                <button class="primary" title={ex("Crea un nuovo innesco al centro della mappa e lo seleziona")} onclick={{
-                    let (selected, n) = (selected.clone(), ignitions.len());
-                    let add = upd(open, |p, _: MouseEvent| {
-                        p.edits.initial_ignitions.get_or_insert_with(Vec::new).push(IgnitionSpec { at: [1000.0, 1000.0], radius_m: 100.0 });
-                    });
-                    Callback::from(move |e: MouseEvent| { selected.set(n); add.emit(e) })
-                }}>{ex("Aggiungi innesco")}</button>
-            </div>
-        </div>
-    </div>}
-}
-
-fn reinforcements_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
+/// List entries, "add" button and editor of the reinforcement offers.
+fn reinforcements_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel) -> (Html, Html, Html) {
     let e = &o.pack.edits;
     let list_ = e.reinforcements.clone().unwrap_or_default();
     let resources: Vec<(String, String)> = e.resource_types.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
     let roles: Vec<(String, String)> = e.roles.iter().flatten().map(|r| (r.id.clone(), r.name.clone())).collect();
-    html! {<div class="sc-reinf">
-        <p class="muted">{ex("Capacità esterna che un ruolo può richiedere: arriva dopo il ritardo indicato. L’EXCON approva comunque ogni richiesta e ogni arrivo.")}</p>
-        if resources.is_empty() || roles.is_empty() {<p class="warn" role="alert">{ex("Servono almeno una risorsa e un ruolo (schede Risorse e Ruoli) per definire un rinforzo.")}</p>}
+    let n = list_.len();
+    let sel = if selected.0 == K_REINF { selected.1.min(n.saturating_sub(1)) } else { usize::MAX };
+    let items = html! {<>
+        <h5 class="md-group" title={ex("Capacità esterna che un ruolo può richiedere durante l’esercitazione.")}>{ex("Rinforzi")}</h5>
         {for list_.iter().enumerate().map(|(i, r)| {
-            let r = r.clone();
-            html!{<div class="inject-row sc-reinf-row" role="group" aria-label={format!("{} {} → {}", ex("Rinforzo"), r.resource, r.assigned_to)} key={i}>
-                {choice("Risorsa", "Che cosa arriva: uno dei tipi definiti nella scheda Risorse.", &r.resource, &with_current(&resources, &r.resource), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.resource = v }))}
-                {number("Quantità massima", "Capacità massima che il ruolo può richiedere in totale da questa fonte (unità del tipo di risorsa).", r.max_qty.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.max_qty = n }))}
-                {number("Ritardo (min)", "Minuti simulati tra l’approvazione della richiesta e l’arrivo alla base di partenza.", r.delay_min.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.delay_min = n }))}
-                {field("Provenienza", "Testo libero: da dove arrivano (es. «Colonna mobile regionale»). Compare nei messaggi ai giocatori.", r.source.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.source = v }))}
-                {choice("Riceve il ruolo", "Il ruolo (pagina player) che può richiedere e che riceve le unità all’arrivo.", &r.assigned_to, &with_current(&roles, &r.assigned_to), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.assigned_to = v }))}
-                <div class="sc-del"><ConfirmDelete label="Elimina rinforzo" onconfirm={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.reinforcements.as_mut() { if i < l.len() { l.remove(i); } } })}/></div>
-            </div>}
+            md_item(i == sel, { let selected = selected.clone(); Callback::from(move |_| selected.set((K_REINF, i))) }, html!{<>
+                <b class="md-id">{r.resource.clone()}</b>
+                <span class="md-name">{format!("×{} → {}", r.max_qty, r.assigned_to)}</span>
+                <small class="md-sub">{crate::exfmt!("dopo {} min", "after {} min", r.delay_min)}{" · "}{r.source.clone()}</small>
+            </>})
         })}
-        <button onclick={{
+        { if n == 0 { html!{<p class="muted">{ex("Nessun rinforzo definito.")}</p>} } else { Html::default() } }
+    </>};
+    let tools = html! {
+        <button class="primary" onclick={{
             let first_resource = resources.first().map(|r| r.0.clone()).unwrap_or_default();
             let first_role = roles.first().map(|r| r.0.clone()).unwrap_or_default();
-            upd(open, move |p, _: MouseEvent| {
+            let (selected, add) = (selected.clone(), upd(open, move |p, _: MouseEvent| {
                 p.edits.reinforcements.get_or_insert_with(Vec::new).push(ReinforcementOffer {
                     resource: first_resource.clone(), max_qty: 1, delay_min: 60, source: String::new(), assigned_to: first_role.clone(),
                 });
-            })
-        }}>{ex("Aggiungi rinforzo")}</button>
-    </div>}
-}
-
-#[derive(Properties, Clone)]
-struct PlacesProps {
-    o: Open,
-    open: UseStateHandle<Option<Open>>,
-}
-
-impl PartialEq for PlacesProps {
-    fn eq(&self, _: &Self) -> bool {
-        false // the scenario changes with every edit
-    }
-}
-
-fn places_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
-    html! {<PlacesTab o={o.clone()} open={open.clone()}/>}
-}
-
-#[function_component(PlacesTab)]
-fn places_view(props: &PlacesProps) -> Html {
-    let (o, open) = (&props.o, &props.open);
-    let selected = use_state(|| 0usize);
-    let map = use_node_ref();
-    let places = o.pack.edits.places.clone().unwrap_or_default();
-    let ignitions = o.pack.edits.initial_ignitions.clone().unwrap_or_default();
-    let g = geom(o);
-    let sel = (*selected).min(places.len().saturating_sub(1));
-    let onclick = {
-        let (open, selected) = (open.clone(), selected.clone());
-        map_click(&map, g, Callback::from(move |(at, hit): ([f32; 2], Option<usize>)| {
-            if let Some(i) = hit {
-                selected.set(i);
-                return;
-            }
-            let Some(cur) = &*open else { return };
-            let mut next = cur.clone();
-            if let Some(p) = next.pack.edits.places.as_mut().and_then(|l| l.get_mut(sel)) {
-                p.pos = at;
-                next.dirty = true;
-                open.set(Some(next));
-            }
-        }))
+            }));
+            Callback::from(move |e| { selected.set((K_REINF, n)); add.emit(e) })
+        }}>{ex("+ Rinforzo")}</button>
     };
-    html! {<div class="sc-places">
-        <p class="muted">{ex("Luoghi con nome: l’AI li usa per capire «la cresta» o «il municipio». Gli alias sono separati da virgola. I luoghi servono anche come base di partenza delle risorse (scheda Generale).")}</p>
-        <div class="sc-split">
-            <div class="sc-map">
-                <p class="map-help"><strong>{ex("Mappa: clic su un punto vuoto = sposta il luogo selezionato · clic su un rombo = lo seleziona.")}</strong>{" "}
-                    {ex("Origine in basso a sinistra (sud-ovest). I cerchi arancioni sono gli inneschi, per orientarti.")}</p>
-                <svg ref={map.clone()} class="ignition-map" viewBox={format!("0 0 {} {}", g.width, g.height)} style={format!("aspect-ratio:{}/{}", g.width, g.height)}
-                    role="img" aria-label={ex("Mappa dei luoghi")} onclick={onclick}>
-                    {map_base(o, g)}
-                    {for ignitions.iter().map(|i| html!{<circle class="ign-disc faint" cx={i.at[0].to_string()} cy={(g.height - i.at[1] as f64).to_string()} r={i.radius_m.to_string()}/>})}
-                    {map_places(&places, g, true, Some(sel), true)}
-                </svg>
-            </div>
-            <div class="sc-list">
-                {for places.iter().enumerate().map(|(i, pl)| {
-                    let pl = pl.clone();
-                    if i != sel {
-                        let selected = selected.clone();
-                        return html!{<button class="sc-summary" key={i} onclick={Callback::from(move |_| selected.set(i))} title={ex("Seleziona questo luogo (si evidenzia sulla mappa)")}>
-                            <span class="badge">{"◆"}</span>
-                            {format!("{} · E {} N {}{}", pl.name, pl.pos[0], pl.pos[1], zone_at(o, g, pl.pos).map(|z| format!(" · {z}")).unwrap_or_default())}
-                        </button>};
-                    }
-                    html!{<fieldset class="inject-row selected" key={i}>
-                        <legend><span class="badge sel">{"◆"}</span>{format!(" {}", pl.name)}</legend>
-                        <div class="settings-fields">
-                            {field("Nome", "Nome ufficiale del luogo, come lo chiamano i giocatori (es. «Cresta di Valverde»).", pl.name.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.name = v }))}
-                            {field("Alias", "Altri modi di chiamarlo, separati da virgola (es. «la cresta, il crinale»). L’AI li usa per riconoscere il luogo nei messaggi.", pl.aliases.join(", "), upd(open, move |p, v: String| if let Some(x) = p.edits.places.as_mut().and_then(|l| l.get_mut(i)) { x.aliases = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() }))}
-                            {number("Est x (m)", "Metri verso est dall’angolo sud-ovest del territorio. Si imposta anche con un clic sulla mappa.", pl.pos[0].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[0] = n }))}
-                            {number("Nord y (m)", "Metri verso nord dall’angolo sud-ovest del territorio. Si imposta anche con un clic sulla mappa.", pl.pos[1].to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.places.as_mut().and_then(|l| l.get_mut(i))) { x.pos[1] = n }))}
-                        </div>
-                        <ConfirmDelete label="Elimina luogo" onconfirm={upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.places.as_mut() { if i < l.len() { l.remove(i); } } })}/>
-                    </fieldset>}
-                })}
-                if places.is_empty() {<p class="muted">{ex("Nessun luogo definito.")}</p>}
-                <button class="primary" title={ex("Crea un nuovo luogo e lo seleziona: poi clicca sulla mappa per posizionarlo")} onclick={{
-                    let (selected, n) = (selected.clone(), places.len());
-                    let add = upd(open, |p, _: MouseEvent| {
-                        let l = p.edits.places.get_or_insert_with(Vec::new);
-                        let n = l.len() + 1;
-                        l.push(Place { name: format!("Luogo {n}"), aliases: vec![], pos: [1000.0, 1000.0] });
-                    });
-                    Callback::from(move |e: MouseEvent| { selected.set(n); add.emit(e) })
-                }}>{ex("Aggiungi luogo")}</button>
-            </div>
-        </div>
+    let detail = match list_.get(sel) {
+        Some(r) if selected.0 == K_REINF => {
+            let i = sel;
+            let r = r.clone();
+            html! {<div class="rr-body" key={i}>
+                <p class="muted">{ex("Capacità esterna che un ruolo può richiedere: arriva dopo il ritardo indicato. L’EXCON approva comunque ogni richiesta e ogni arrivo.")}</p>
+                if resources.is_empty() || roles.is_empty() {<p class="warn" role="alert">{ex("Servono almeno una risorsa e un ruolo per definire un rinforzo.")}</p>}
+                <div class="settings-fields">
+                    {choice("Risorsa", "Che cosa arriva: uno dei tipi di risorsa definiti.", &r.resource, &with_current(&resources, &r.resource), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.resource = v }))}
+                    {choice("Riceve il ruolo", "Il ruolo (pagina player) che può richiedere e che riceve le unità all’arrivo.", &r.assigned_to, &with_current(&roles, &r.assigned_to), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.assigned_to = v }))}
+                    {number("Quantità massima", "Capacità massima che il ruolo può richiedere in totale da questa fonte (unità del tipo di risorsa).", r.max_qty.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.max_qty = n }))}
+                    {number("Ritardo (min)", "Minuti simulati tra l’approvazione della richiesta e l’arrivo alla base di partenza.", r.delay_min.to_string(), upd(open, move |p, v: String| if let (Some(n), Some(x)) = (num(&v), p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i))) { x.delay_min = n }))}
+                    {field("Provenienza", "Testo libero: da dove arrivano (es. «Colonna mobile regionale»). Compare nei messaggi ai giocatori.", r.source.clone(), upd(open, move |p, v: String| if let Some(x) = p.edits.reinforcements.as_mut().and_then(|l| l.get_mut(i)) { x.source = v }))}
+                </div>
+                {confirm_delete("Elimina rinforzo", "Elimina questa offerta di rinforzo.",
+                    upd(open, move |p, _: MouseEvent| { if let Some(l) = p.edits.reinforcements.as_mut() { if i < l.len() { l.remove(i); } } }))}
+            </div>}
+        }
+        _ => Html::default(),
+    };
+    (items, tools, detail)
+}
+
+#[function_component(TeamTab)]
+fn team_view(props: &ListProps) -> Html {
+    let (o, open) = (&props.o, &props.open);
+    let selected: Sel = use_state(|| (K_ROLE, 0usize));
+    let (ri, rt, rd) = roles_parts(o, open, &selected);
+    let (si, st, sd) = resources_parts(o, open, &selected);
+    let (fi, ft, fd) = reinforcements_parts(o, open, &selected);
+    let items = html! {<>{ri}{si}{fi}</>};
+    let tools = html! {<>{rt}{st}{ft}</>};
+    let detail = match selected.0 {
+        K_RESOURCE => sd,
+        K_REINF => fd,
+        _ => rd,
+    };
+    let detail = if matches!(&detail, Html::VList(v) if v.is_empty()) {
+        html! {<p class="muted">{ex("Scegli una voce dall’elenco o aggiungine una.")}</p>}
+    } else {
+        detail
+    };
+    html! {<div class="rr-tab">
+        <p class="muted">{ex("Ruoli (pagine player), tipi di risorsa e rinforzi in un unico elenco. Azioni e risorse decidono cosa ogni ruolo può proporre; l’EXCON approva comunque ogni azione.")}</p>
+        {master_detail(items, tools, detail)}
+        {excon_roles_list(o.pack.edits.excon_roles.clone().unwrap_or_default(), open)}
     </div>}
+}
+
+fn team_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
+    html! {<TeamTab o={o.clone()} open={open.clone()}/>}
 }
 
 #[derive(Properties, Clone)]
@@ -1333,22 +1157,18 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
 
 const TABS: &[(&str, &str, &str)] = &[
     ("general", "Generale", "Nome, descrizione, ora di inizio, durata dei turni e meteo iniziale."),
-    ("roles", "Ruoli", "Chi partecipa (squadre, enti, funzioni) e quali azioni ciascuno può proporre."),
-    ("resources", "Risorse", "Tipi di mezzi e squadre disponibili, con quantità e base di partenza."),
-    ("ignitions", "Inneschi", "Dove e quando parte l’incendio, scelti sulla mappa."),
-    ("reinforcements", "Rinforzi", "Risorse extra che i giocatori possono richiedere durante l’esercitazione."),
-    ("places", "Luoghi", "Nomi dei luoghi che giocatori e AI possono citare nei messaggi."),
-    ("injects", "Timeline", "Inject (messaggi) con le loro azioni (cambiamenti del mondo) che l’EXCON invia durante l’esercitazione."),
+    ("team", "Ruoli e risorse", "Chi partecipa, quali mezzi ha e quali rinforzi può richiedere."),
+    ("injects", "Timeline", "Inject (messaggi) con le loro azioni (cambiamenti del mondo, inneschi compresi) che l’EXCON invia durante l’esercitazione."),
     ("advanced", "Avanzate", "Impostazioni tecniche: modello operativo, seme casuale, realizzazioni dell’ensemble."),
 ];
 
 #[function_component(ScenarioEditor)]
 pub fn scenario_editor(props: &Props) -> Html {
+    let settings_slot = use_context::<SettingsSlot>();
     let library = use_state(|| None::<Value>);
     let territory = use_state(String::new);
     let open = use_state(|| None::<Open>);
     let tab = use_state(|| "general".to_string());
-    let selected = use_state(|| 0usize);
     let message = use_state(String::new);
     let problems = use_state(Vec::<String>::new);
     let busy = use_state(|| false);
@@ -1356,7 +1176,6 @@ pub fn scenario_editor(props: &Props) -> Html {
     let json = use_state(String::new);
     let pack_json = use_state(String::new);
     let pack_json_open = use_state(|| false);
-    let map = use_node_ref();
 
     let refresh = {
         let library = library.clone();
@@ -1502,10 +1321,15 @@ pub fn scenario_editor(props: &Props) -> Html {
 
     // The list and the editor are two pages of one view: opening a scenario
     // replaces the list, and "← Scenari" goes back.
-    html! {<main class="page scenario-editor" id="scenario-editor">
-        if open.is_none() {<section class="card">
+    html! {<main class={classes!("page","scenario-editor",open.is_some().then_some("editing"))} id="scenario-editor">
+        if open.is_none() {<div class="settings-split"><section class="card settings-card" id="app-settings">
+            <h2>{ex("Impostazioni")}</h2>
+            if let Some(slot) = &settings_slot {{slot.0.clone()}}
+            if !cfg!(feature = "standalone") {<crate::server_settings::ServerSettings revision={props.revision}/>}
+        </section>
+        <section class="card settings-scenarios">
             <h2>{ex("Scenari")}</h2>
-            <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, inneschi, meteo e inject. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
+            <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, meteo e inject con le loro azioni. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
             <ul class="scenario-legend muted">
                 <li><span class="pill">{ex("in corso")}</span> {ex("è l’esercitazione che sta girando ora.")}</li>
                 <li><span class="pill">{ex("prossimo avvio")}</span> {ex("verrà usato al prossimo riavvio dell’applicazione.")}</li>
@@ -1546,13 +1370,17 @@ pub fn scenario_editor(props: &Props) -> Html {
             </tbody></table>
             {busy_note}
             if !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
-        </section>}
+        </section></div>}
         if let Some(o) = &*open {
             <section class="card" id="scenario-form">
                 <div class="row scenario-head">
                     <h2>{o.pack.name.clone()}</h2>
                     <span class="pill" title={if o.saved_id.is_some() {ex("Identificativo con cui lo scenario è salvato nella libreria.")} else {ex("Questo scenario non è ancora nella libreria: salvalo per conservarlo.")}}>{if o.saved_id.is_some() {o.pack.id.clone()} else {ex("non salvato").to_string()}}</span>
                     if o.dirty {<span class="pill pending" title={ex("Hai cambiato qualcosa che non è ancora stato salvato.")}>{ex("modifiche non salvate")}</span>}
+                    if o.saved_id.is_none() {
+                        <label class="scenario-id" title={ex("Nome breve che identifica lo scenario nella libreria: solo lettere minuscole, cifre, «_» e «-». Dopo il primo salvataggio non cambia più.")}>{ex("Identificativo")}
+                            <input value={o.pack.id.clone()} placeholder="a-z 0-9 _ -" oninput={upd(&open, |p, v: String| p.id = v).reform(api::input)}/></label>
+                    }
                     <div class="grow"/>
                     if o.dirty {
                         {twice("close".into(), ex("← Scenari").to_string(), "", "Chiude l’editor e perde le modifiche non salvate.", {let open = open.clone(); let confirm = confirm.clone(); Callback::from(move |_| { confirm.set(String::new()); open.set(None) })})}
@@ -1560,12 +1388,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                         <button title={ex("Chiude l’editor e torna all’elenco.")} onclick={{let open = open.clone(); Callback::from(move |_| open.set(None))}}>{ex("← Scenari")}</button>
                     }
                 </div>
-                if o.saved_id.is_none() {
-                    <div class="settings-fields">
-                        {field("Identificativo (a-z, 0-9, _ -)", "Nome breve che identifica lo scenario nella libreria: solo lettere minuscole, cifre, «_» e «-». Dopo il primo salvataggio non cambia più.", o.pack.id.clone(), upd(&open, |p, v: String| p.id = v))}
-                    </div>
-                }
-                <nav class="scenario-tabs" role="tablist" aria-label={ex("Sezioni dello scenario")}>
+                <div class="scenario-layout"><nav class="scenario-tabs" role="tablist" aria-orientation="vertical" aria-label={ex("Sezioni dello scenario")}>
                     {for TABS.iter().map(|(id, label, tip)| {
                         let tab = tab.clone();
                         let id = id.to_string();
@@ -1575,16 +1398,12 @@ pub fn scenario_editor(props: &Props) -> Html {
                 </nav>
                 <div class="scenario-tab" role="tabpanel">
                     {match tab.as_str() {
-                        "roles" => roles_tab(o, &open),
-                        "resources" => resources_tab(o, &open),
-                        "ignitions" => ignitions_tab(o, &open, &selected, &map),
-                        "reinforcements" => reinforcements_tab(o, &open),
-                        "places" => places_tab(o, &open),
+                        "team" => team_tab(o, &open),
                         "injects" => injects_tab(o, &open, &json, &message),
                         "advanced" => advanced_tab(o, &open),
                         _ => general(o, &open),
                     }}
-                </div>
+                </div></div>
                 if !problems.is_empty() {
                     <div class="error scenario-problems" role="alert"><strong>{format!("{} ({})", ex("Da correggere prima di salvare:"), problems.len())}</strong>
                         <ul>{for problems.iter().map(|p| html!{<li>{p.clone()}</li>})}</ul></div>
