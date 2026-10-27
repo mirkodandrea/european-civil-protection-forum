@@ -823,104 +823,183 @@ fn player_answer_supersedes_the_clarified_proposal() {
     assert_eq!(ex.proposal(other).unwrap().supersedes, None);
 }
 
-fn with_timeline() -> Exercise {
-    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
-    scn.timeline = vec![scenario::TimelineAction {
-        id: "wind_shift".into(),
-        title: "Wind shifts".into(),
-        at_s: 300,
-        command: serde_json::json!({"type": "SetWeather", "wind_dir_deg": 123.0}),
-        after: None,
+fn act(id: &str, offset_s: i64, wind: f64) -> scenario::InjectAction {
+    scenario::InjectAction {
+        id: id.into(),
+        title: format!("Action {id}"),
+        command: json!({"type": "SetWeather", "wind_dir_deg": wind}),
+        offset_s,
         note: String::new(),
-    }];
+    }
+}
+
+/// First inject planned at 600 s with a post-action (offset 0), a delayed one
+/// (+120 s) and a pre-action (-300 s, so at 300 s). Every other inject is far away.
+fn with_actions() -> (Exercise, String) {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    for (n, i) in scn.msel.iter_mut().enumerate() {
+        i.at_s = Some(100_000 + n as i64 * 60);
+    }
+    scn.msel[0].at_s = Some(600);
+    scn.msel[0].actions = vec![act("wind_shift", 0, 123.0), act("late_wind", 120, 200.0), act("pre_wind", -300, 100.0)];
+    let id = scn.msel[0].id.clone();
     scn.check().unwrap();
-    Exercise::new(World::new(Arc::new(scn), 1).unwrap())
+    let mut ex = Exercise::new(World::new(Arc::new(scn), 1).unwrap());
+    ex.start().unwrap();
+    ex.turn_minutes = 30;
+    (ex, id)
+}
+
+fn scan_to(ex: &mut Exercise, to_s: i64) {
+    ex.begin_resolution_until(to_s, true).unwrap();
+    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
+    ex.finish_resolution().unwrap();
+}
+
+fn send(ex: &mut Exercise, id: &str, to: &str, actions: &exercise::actions::SendActions) {
+    ex.send_inject_with(Some(id), "T", "112", &[to.into()], "text", &BTreeMap::new(), actions).unwrap();
 }
 
 #[test]
-fn due_timeline_action_needs_a_decision_and_fires_at_its_instant() {
-    use exercise::actions::{ActionChoice, ActionStatus};
-    use std::collections::BTreeMap;
-    let mut ex = with_timeline();
-    ex.start().unwrap();
-    assert_eq!(ex.due_actions(Some(10)).len(), 1);
-    assert!(ex.due_actions(Some(4)).is_empty());
-    // Undecided: nothing changes.
-    assert!(ex.begin_resolution(Some(10)).is_err());
-    assert_eq!(ex.phase, Phase::Orders);
+fn sending_an_inject_runs_its_actions() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    send(&mut ex, &id, "mayor", &SendActions::all());
+    let run = |ex: &Exercise, k: &str| ex.action_runs.iter().find(|(_, r)| r.action == k).map(|(_, r)| r.clone()).unwrap();
+    assert_eq!(run(&ex, "wind_shift").status, ActionStatus::Done, "delay 0 applies at send");
+    let late = run(&ex, "late_wind");
+    assert_eq!((late.status, late.run_at_s), (ActionStatus::Approved, Some(120)));
+    assert_eq!(run(&ex, "pre_wind").status, ActionStatus::Done, "an early send runs the pending pre-action");
+    // A second send to another role never runs them again.
+    let n = ex.action_runs.len();
+    send(&mut ex, &id, "fire_commander", &SendActions::all());
+    assert_eq!(ex.action_runs.len(), n);
+    // The view lists the actions under the inject.
+    let row = ex.planned_injects().into_iter().find(|i| i["id_inject"] == id.as_str()).unwrap();
+    assert_eq!(row["actions"].as_array().unwrap().len(), 3);
+    assert_eq!(row["actions"][0]["status"], "done");
+}
 
-    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Run)]);
-    ex.begin_resolution_with(Some(10), &choices).unwrap();
-    while ex.world.time_s() < 299 {
+#[test]
+fn unchecked_actions_do_not_run() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    send(&mut ex, &id, "mayor", &SendActions { run: Some(vec!["wind_shift".into()]), custom: vec![] });
+    let status = |ex: &Exercise, k: &str| ex.action_runs.values().find(|r| r.action == k).unwrap().status;
+    assert_eq!(status(&ex, "wind_shift"), ActionStatus::Done);
+    assert_eq!(status(&ex, "late_wind"), ActionStatus::NotRun);
+    assert_eq!(status(&ex, "pre_wind"), ActionStatus::NotRun);
+    scan_to(&mut ex, 1000);
+    assert_eq!(status(&ex, "late_wind"), ActionStatus::NotRun, "never executed");
+}
+
+#[test]
+fn delayed_action_runs_at_its_instant_and_rollback_forgets_it() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
+    send(&mut ex, &id, "mayor", &SendActions::all());
+    ex.begin_resolution_until(300, true).unwrap();
+    while ex.world.time_s() < 119 {
         ex.step_resolution(exercise::STEP_S).unwrap();
     }
-    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Approved);
+    let late = |ex: &Exercise| ex.action_runs.values().find(|r| r.action == "late_wind").unwrap().clone();
+    assert_eq!(late(&ex).status, ActionStatus::Approved);
     ex.step_resolution(exercise::STEP_S).unwrap();
     ex.step_resolution(exercise::STEP_S).unwrap();
-    let run = &ex.action_runs["wind_shift"];
-    assert_eq!(run.status, ActionStatus::Done, "{run:?}");
-    assert_eq!(run.executed_s, Some(300));
+    assert_eq!((late(&ex).status, late(&ex).executed_s), (ActionStatus::Done, Some(120)));
+    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
     ex.finish_resolution().unwrap();
-
-    // Rolling back to the turn it was decided in makes it pending again.
     ex.rollback(1).unwrap();
-    assert!(ex.action_runs.is_empty());
-    assert_eq!(ex.due_actions(Some(10)).len(), 1);
+    assert!(ex.action_runs.is_empty(), "decisions taken after the restored time are forgotten");
 }
 
 #[test]
-fn skipped_and_deferred_actions_do_not_fire() {
-    use exercise::actions::{ActionChoice, ActionStatus};
-    use std::collections::BTreeMap;
-    let mut ex = with_timeline();
-    ex.start().unwrap();
-    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Defer)]);
-    ex.resolve_turn_with(Some(10), &choices).unwrap();
-    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Deferred);
-    // Overdue and still pending: asked again in the next turn.
-    assert_eq!(ex.due_actions(Some(10)).len(), 1);
-    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Skip)]);
-    ex.resolve_turn_with(Some(10), &choices).unwrap();
-    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Skipped);
-    assert!(ex.due_actions(Some(60)).is_empty());
+fn custom_inject_actions_run_and_cannot_precede_it() {
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, _) = with_actions();
+    let bad = SendActions { run: None, custom: vec![act("c1", -60, 90.0)] };
+    assert!(ex.send_inject_with(None, "T", "EXCON", &["mayor".into()], "x", &BTreeMap::new(), &bad).is_err());
+    assert!(ex.messages.is_empty(), "nothing is sent when an action is invalid");
+    let ok = SendActions { run: None, custom: vec![act("c1", 0, 90.0), act("c2", 60, 80.0)] };
+    ex.send_inject_with(None, "T", "EXCON", &["mayor".into()], "x", &BTreeMap::new(), &ok).unwrap();
+    let st = |k: &str| ex.action_runs.values().find(|r| r.action == k).unwrap().status;
+    assert_eq!((st("c1"), st("c2")), (ActionStatus::Done, ActionStatus::Approved));
+}
+
+#[test]
+fn pre_actions_run_during_the_scan_and_can_be_disabled() {
+    use exercise::actions::ActionStatus;
+    let (mut ex, id) = with_actions();
+    assert_eq!(ex.next_pending_inject().unwrap().0, 600);
+    scan_to(&mut ex, 600);
+    let pre = ex.action_runs.values().find(|r| r.action == "pre_wind").unwrap();
+    assert_eq!((pre.status, pre.executed_s), (ActionStatus::Done, Some(300)), "{pre:?}");
+    assert!(ex.action_runs.values().all(|r| r.action == "pre_wind"), "post-actions wait for the send");
+
+    // Disabled beforehand: it does not run.
+    let (mut ex, id2) = with_actions();
+    ex.set_action_enabled(&id2, "pre_wind", false).unwrap();
+    scan_to(&mut ex, 600);
+    assert!(ex.action_runs.is_empty());
+    let row = ex.planned_injects().into_iter().find(|i| i["id_inject"] == id2.as_str()).unwrap();
+    assert_eq!(row["actions"][2]["status"], "not_run");
+    assert!(ex.set_action_enabled(&id2, "wind_shift", false).is_err(), "only pre-actions toggle");
+    let _ = id;
+}
+
+#[test]
+fn skipping_an_inject_cancels_its_pre_actions_and_rollback_forgets_the_skip() {
+    let (mut ex, id) = with_actions();
+    ex.skip_inject(&id).unwrap();
+    scan_to(&mut ex, 600);
+    assert!(ex.action_runs.is_empty(), "a skipped inject's pre-actions never run");
+    // Skipped injects do not count as pending nor as due.
+    assert_ne!(ex.next_pending_inject().map(|p| p.1), Some(id.clone()));
+    let item = ex.turn_agenda()["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).cloned().unwrap();
+    assert_eq!((item["status"].as_str(), item["due"].as_bool()), (Some("skipped"), Some(false)));
+    ex.restore_inject(&id).unwrap();
+    assert_eq!(ex.skipped_injects.len(), 0);
+    ex.skip_inject(&id).unwrap();
+    ex.rollback(1).unwrap();
+    assert!(ex.skipped_injects.is_empty(), "skip decided after the restored time is forgotten");
+}
+
+#[test]
+fn advance_target_stops_at_the_next_inject_or_closes_the_turn() {
+    let (mut ex, id) = with_actions();
+    let t = ex.advance_target();
+    assert_eq!((t.to_s, t.closes_turn, t.inject.as_deref()), (600, false, Some(id.as_str())));
+    assert_eq!(ex.turn_agenda()["next_event_s"], 600);
+    // Clamped to the turn end: the advance closes the turn there.
+    ex.skip_inject(&id).unwrap();
+    let t = ex.advance_target();
+    assert_eq!((t.to_s, t.closes_turn, t.inject), (1800, true, None));
+    ex.restore_inject(&id).unwrap();
+    ex.turn_minutes = 5;
+    let t = ex.advance_target();
+    assert_eq!((t.to_s, t.closes_turn), (300, true));
+    ex.turn_minutes = 30;
+    // Reaching the inject makes it due.
+    scan_to(&mut ex, 600);
+    let item = ex.turn_agenda()["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).cloned().unwrap();
+    assert_eq!(item["due"], true);
+    assert!(ex.sent_injects.is_empty(), "never sent automatically");
+    // Still pending and overdue: the next target is the turn end.
+    assert!(ex.advance_target().closes_turn);
 }
 
 #[test]
 fn substep_advances_inside_the_turn_without_closing_it() {
-    use exercise::actions::ActionChoice;
-    use std::collections::BTreeMap;
-    let mut ex = with_timeline();
-    ex.start().unwrap();
-    ex.turn_minutes = 30;
+    let (mut ex, _) = with_actions();
     let agenda = ex.turn_agenda();
-    assert_eq!(agenda["turn_start_s"], 0);
-    assert_eq!(agenda["planned_end_s"], 1800);
-    assert_eq!(agenda["next_event_s"], 300);
-    assert!(agenda["items"].as_array().unwrap().iter().any(|i| i["id"] == "wind_shift"));
-
-    // Stop exactly at the next event: the turn stays open, the action is decided.
-    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Run)]);
-    ex.begin_resolution_until(300, true, &choices).unwrap();
-    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
-    let report = ex.finish_resolution().unwrap();
-    assert_eq!((report.from_s, report.to_s), (0, 300));
-    assert_eq!(ex.turn, 1);
-    assert_eq!(ex.phase, Phase::Orders);
-    assert_eq!(ex.world.time_s(), 300);
-    assert_eq!(ex.turn_start_s, 0);
+    assert_eq!((agenda["turn_start_s"].as_i64(), agenda["planned_end_s"].as_i64()), (Some(0), Some(1800)));
+    scan_to(&mut ex, 600);
+    assert_eq!((ex.turn, ex.phase, ex.world.time_s(), ex.turn_start_s), (1, Phase::Orders, 600, 0));
     assert_eq!(ex.substeps.len(), 1);
-
     // Closing the turn runs to the planned end, not another full turn.
-    let agenda = ex.turn_agenda();
-    let wind = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == "wind_shift").unwrap();
-    assert_eq!(wind["due"], true, "the event reached is now due");
-    ex.resolve_turn_with(None, &choices).unwrap();
-    assert_eq!(ex.world.time_s(), 1800);
-    assert_eq!(ex.turn, 2);
-    assert_eq!(ex.turn_start_s, 1800);
+    ex.resolve_turn(None).unwrap();
+    assert_eq!((ex.world.time_s(), ex.turn, ex.turn_start_s), (1800, 2, 1800));
     assert!(ex.substeps.is_empty());
-
-    // Rollback to turn 1 forgets the sub-steps and the turn window.
     ex.rollback(1).unwrap();
     assert_eq!((ex.turn_start_s, ex.world.time_s()), (0, 0));
     assert!(ex.substeps.is_empty());
@@ -928,14 +1007,16 @@ fn substep_advances_inside_the_turn_without_closing_it() {
 
 #[test]
 fn stopping_a_resolution_keeps_the_turn_open_at_the_current_second() {
-    use exercise::actions::{ActionChoice, ActionStatus};
-    let mut ex = with_timeline();
-    ex.start().unwrap();
-    ex.turn_minutes = 30;
+    use exercise::actions::{ActionStatus, SendActions};
+    let (mut ex, id) = with_actions();
     assert!(ex.stop_resolution().is_err(), "nothing is running yet");
-    // Closing the turn, with an action planned after the instant we stop at.
-    let choices = BTreeMap::from([("wind_shift".to_string(), ActionChoice::Run)]);
-    ex.begin_resolution_with(None, &choices).unwrap();
+    // A delayed action (+120 s) is approved; stop before the end, it stays approved.
+    let mut custom = act("slow", 1000, 70.0);
+    custom.title = "slow".into();
+    let acts = SendActions { run: None, custom: vec![custom] };
+    ex.send_inject_with(None, "T", "EXCON", &["mayor".into()], "x", &BTreeMap::new(), &acts).unwrap();
+    let _ = id;
+    ex.begin_resolution(None).unwrap();
     for _ in 0..100 {
         assert!(!ex.step_resolution(exercise::STEP_S).unwrap());
     }
@@ -946,15 +1027,13 @@ fn stopping_a_resolution_keeps_the_turn_open_at_the_current_second() {
     let report = ex.finish_resolution().unwrap();
     assert_eq!((report.from_s, report.to_s), (0, at));
     assert_eq!((ex.turn, ex.phase), (1, Phase::Orders), "the turn stays open");
-    assert_eq!(ex.turn_start_s, 0);
     assert_eq!(ex.substeps.len(), 1);
     assert_eq!(ex.last_turn.as_ref().map(|w| w.to_s), Some(at));
-    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Approved);
-
-    // The next advance carries on to the planned end and fires the action on the way.
-    ex.resolve_turn_with(None, &choices).unwrap();
+    let slow = |ex: &Exercise| ex.action_runs.values().find(|r| r.action == "slow").unwrap().status;
+    assert_eq!(slow(&ex), ActionStatus::Approved);
+    ex.resolve_turn(None).unwrap();
     assert_eq!((ex.world.time_s(), ex.turn), (1800, 2));
-    assert_eq!(ex.action_runs["wind_shift"].status, ActionStatus::Done);
+    assert_eq!(slow(&ex), ActionStatus::Done);
 }
 
 #[test]
@@ -971,25 +1050,24 @@ fn inject_at_s_places_it_in_the_agenda() {
     assert_eq!(item["at_s"], 600);
     assert_eq!(item["due"], false);
     // Advancing to it makes it due: proposed to EXCON, never sent automatically.
-    ex.begin_resolution_until(600, true, &BTreeMap::new()).unwrap();
-    while !ex.step_resolution(exercise::STEP_S).unwrap() {}
-    ex.finish_resolution().unwrap();
+    scan_to(&mut ex, 600);
     let agenda = ex.turn_agenda();
     let item = agenda["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap();
     assert_eq!(item["due"], true);
     assert!(ex.sent_injects.is_empty());
 }
 
-/// The default scenario no longer starts burning: the ignition is the
-/// timeline action A-01, which EXCON approves when the first turn starts.
+/// The default scenario no longer starts burning: the ignition is an action of
+/// inject I-01, which runs when EXCON sends it.
 #[test]
-fn default_scenario_ignition_is_a_timeline_action() {
-    use exercise::actions::ActionChoice;
+fn default_scenario_ignition_is_an_action_of_the_first_inject() {
+    use exercise::actions::SendActions;
     let scn: scenario::Scenario = serde_json::from_str(include_str!(
         "../../../data/scenarios/valverde_factory.json"
     ))
     .unwrap();
     assert!(scn.initial_ignitions.is_empty());
+    assert_eq!(scn.msel.iter().find(|i| i.id == "I-01").unwrap().actions[0].id, "A-01");
     let world = World::with_options(
         Arc::new(scn),
         1,
@@ -999,14 +1077,10 @@ fn default_scenario_ignition_is_a_timeline_action() {
     let mut ex = Exercise::new(world);
     ex.start().unwrap();
     assert!(ex.world.burning_zones().is_empty());
-    let due = ex.due_actions(Some(30));
-    assert_eq!(due.len(), 1);
-    assert_eq!(due[0]["id"], "A-01");
-    assert_eq!(due[0]["after"], "I-01");
-    assert!(ex.resolve_turn(Some(30)).is_err(), "undecided ignition must block the turn");
-    let choices = BTreeMap::from([("A-01".to_string(), ActionChoice::Run)]);
-    ex.resolve_turn_with(Some(30), &choices).unwrap();
-    assert_eq!(ex.action_runs["A-01"].status, exercise::actions::ActionStatus::Done, "{:?}", ex.action_runs["A-01"]);
+    ex.send_inject_with(Some("I-01"), "Fire", "112", &["all".into()], "Fire", &BTreeMap::new(), &SendActions::all()).unwrap();
+    let run = ex.action_runs.values().find(|r| r.action == "A-01").unwrap().clone();
+    assert_eq!(run.status, exercise::actions::ActionStatus::Done, "{run:?}");
+    ex.resolve_turn(Some(30)).unwrap();
     assert!(!ex.world.burning_zones().is_empty(), "the fire must be burning after the ignition ran");
 }
 

@@ -3377,75 +3377,90 @@ async fn view_frames_are_compressed_differential_and_excon_only() {
     assert!(body.len() * 5 < serde_json::to_vec(&*first).unwrap().len());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn scripted_timeline_action_is_decided_when_the_turn_starts() {
-    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
-    scn.timeline = vec![scenario::TimelineAction {
-        id: "gust".into(),
+fn gust(id: &str, offset_s: i64) -> scenario::InjectAction {
+    scenario::InjectAction {
+        id: id.into(),
         title: "Gust front".into(),
-        at_s: 600,
         command: json!({"type": "SetWeather", "wind_speed_kmh": 55.0}),
-        after: None,
+        offset_s,
         note: String::new(),
-    }];
-    let ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
-    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
-    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+    }
+}
 
-    let (st, due) = call(&app, "GET", "/api/master/due-actions?minutes=30", None).await;
-    assert_eq!(st, Status::Ok);
-    assert_eq!(due["due"][0]["id"], "gust");
-    let (_, none) = call(&app, "GET", "/api/master/due-actions?minutes=5", None).await;
-    assert!(none["due"].as_array().unwrap().is_empty());
-
-    // No decision: refused, the turn stays open.
-    let (st, err) = call(&app, "POST", "/api/master/resolve", Some(json!({"minutes": 30}))).await;
-    assert_ne!(st, Status::Ok, "{err}");
-    assert!(err["error"].as_str().unwrap().contains("gust"));
-
-    let body = json!({"minutes": 30, "actions": {"gust": "run"}});
-    let (st, _) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
-    assert_eq!(st, Status::Ok);
-    let (_, master) = call(&app, "GET", "/api/master", None).await;
-    assert_eq!(master["timeline_actions"][0]["status"], "done");
+/// Scenario whose first inject (planned at 600 s) carries `actions`.
+fn app_with_inject_actions(actions: Vec<scenario::InjectAction>) -> (exercise::Exercise, String) {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    for (n, i) in scn.msel.iter_mut().enumerate() {
+        i.at_s = Some(100_000 + n as i64 * 60);
+    }
+    scn.msel[0].at_s = Some(600);
+    scn.msel[0].actions = actions;
+    let id = scn.msel[0].id.clone();
+    let mut ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    ex.turn_minutes = 30;
+    (ex, id)
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn substep_stops_at_the_next_event_and_keeps_the_turn_open() {
-    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
-    scn.timeline = vec![scenario::TimelineAction {
-        id: "gust".into(),
-        title: "Gust front".into(),
-        at_s: 600,
-        command: json!({"type": "SetWeather", "wind_speed_kmh": 55.0}),
-        after: None,
-        note: String::new(),
-    }];
-    let mut ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
-    ex.turn_minutes = 30;
+async fn inject_actions_run_when_the_inject_is_sent() {
+    let (ex, id) = app_with_inject_actions(vec![gust("gust", 0), gust("later", 120)]);
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+
+    let (st, sent) = call(&app, "POST", &format!("/api/master/msel/{id}/send"), Some(json!({"actions": ["gust"]}))).await;
+    assert_eq!(st, Status::Ok, "{sent}");
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let row = master["planned_injects"].as_array().unwrap().iter().find(|i| i["id_inject"] == id.as_str()).unwrap().clone();
+    assert_eq!(row["actions"][0]["status"], "done");
+    assert_eq!(row["actions"][1]["status"], "not_run");
+    assert_eq!(master["inject_actions"][0]["status"], "done");
+
+    // A custom inject carries its own actions.
+    let body = json!({"title": "T", "recipients": ["mayor"], "text": "x",
+        "actions": [{"id": "c1", "title": "Gust", "command": {"type": "SetWeather", "wind_speed_kmh": 40.0}, "offset_s": 60}]});
+    let (st, rep) = call(&app, "POST", "/api/master/inject", Some(body)).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let c1 = master["inject_actions"].as_array().unwrap().iter().find(|a| a["id"] == "c1").unwrap().clone();
+    assert_eq!(c1["status"], "approved");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn next_inject_stops_at_the_inject_then_closes_the_turn() {
+    let (ex, id) = app_with_inject_actions(vec![gust("pre", -300)]);
     let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
     call(&app, "POST", "/api/master/start", Some(json!({}))).await;
 
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     assert_eq!(master["agenda"]["planned_end_s"], 1800);
     assert_eq!(master["agenda"]["next_event_s"], 600);
+    assert_eq!(master["agenda"]["advance"]["to_s"], 600);
+    assert_eq!(master["agenda"]["advance"]["closes_turn"], false);
 
-    // Up to the next event: nothing is due before it, so no decision is asked.
-    let body = json!({"substep": true, "until": "next_event"});
+    // The scan runs through the pre-action and stops at the inject, now due.
+    let body = json!({"until": "next_inject"});
     let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
     assert_eq!(st, Status::Ok, "{rep}");
     assert_eq!(rep["to_s"], 600);
     let (_, state) = call(&app, "GET", "/api/state", None).await;
-    assert_eq!(state["turn"], 1);
-    assert_eq!(state["phase"], "orders");
-    assert_eq!(state["turn_window"]["now_s"], 600);
+    assert_eq!((state["turn"].as_i64(), state["phase"].as_str()), (Some(1), Some("orders")));
     assert_eq!(state["turn_window"]["substeps"].as_array().unwrap().len(), 1);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["inject_actions"][0]["status"], "done");
+    assert_eq!(master["inject_actions"][0]["executed_s"], 300);
+    let item = master["agenda"]["items"].as_array().unwrap().iter().find(|i| i["id"] == id.as_str()).unwrap().clone();
+    assert_eq!(item["due"], true);
 
-    // Closing the turn runs to the planned end only; the event needs its decision.
-    let (st, _) = call(&app, "POST", "/api/master/resolve", Some(json!({}))).await;
-    assert_ne!(st, Status::Ok);
-    let body = json!({"actions": {"gust": "run"}});
-    let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(body)).await;
+    // "Non inviare": no longer pending; the next advance closes the turn.
+    let (st, _) = call(&app, "POST", &format!("/api/master/msel/{id}/skip"), None).await;
+    assert_eq!(st, Status::Ok);
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["agenda"]["advance"]["closes_turn"], true);
+    let (st, _) = call(&app, "POST", &format!("/api/master/msel/{id}/restore"), None).await;
+    assert_eq!(st, Status::Ok);
+    let (st, _) = call(&app, "POST", &format!("/api/master/msel/{id}/skip"), None).await;
+    assert_eq!(st, Status::Ok);
+    let (st, rep) = call(&app, "POST", "/api/master/resolve", Some(json!({"until": "next_inject"}))).await;
     assert_eq!(st, Status::Ok, "{rep}");
     assert_eq!(rep["to_s"], 1800);
     let (_, state) = call(&app, "GET", "/api/state", None).await;

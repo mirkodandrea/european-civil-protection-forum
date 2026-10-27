@@ -585,6 +585,7 @@ fn msel() -> Vec<InjectTemplate> {
                 }
                 .into(),
                 at_s: None,
+                actions: vec![],
             }
         };
     vec![

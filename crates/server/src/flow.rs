@@ -73,12 +73,13 @@ pub async fn send_inject(
     sender: &str,
     recipients: &[String],
     text_en: &str,
+    actions: &exercise::actions::SendActions,
 ) -> Result<Vec<u64>> {
     let to = state.lock().recipients(recipients)?;
     let tr = translations(state, &to, text_en).await;
     let ids = state
         .lock()
-        .send_inject(inject_id, title, sender, &to, text_en, &tr)?;
+        .send_inject_with(inject_id, title, sender, &to, text_en, &tr, actions)?;
     Ok(ids)
 }
 
@@ -493,13 +494,14 @@ pub fn dispatch_due(state: &AppState) {
             {
                 return;
             }
-            let result = ex.send_inject(
+            let result = ex.send_inject_with(
                 Some(&template.id),
                 &template.title,
                 &template.sender,
                 &to,
                 &template.text,
                 &tr,
+                &exercise::actions::SendActions::all(),
             );
             ex.complete_schedule(id, result);
         });

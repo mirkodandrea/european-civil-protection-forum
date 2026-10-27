@@ -215,7 +215,6 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_static,
                 get_state,
                 get_master,
-                get_due_actions,
                 get_player,
                 post_presence,
                 get_presence,
@@ -229,6 +228,9 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_start,
                 post_inject,
                 post_msel_send,
+                post_msel_skip,
+                post_msel_restore,
+                post_action_enabled,
                 post_prompt,
                 post_decide,
                 post_clarify,
@@ -586,7 +588,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(json!({
         "proposals": ex.proposals,
         "planned_injects": ex.planned_injects(),
-        "timeline_actions": ex.timeline_actions(),
+        "inject_actions": ex.inject_action_runs(),
         "agenda": ex.turn_agenda(),
         "inject_responses": ex.inject_responses(),
         "clarification_threads": ex.clarification_threads(),
@@ -1104,6 +1106,9 @@ struct InjectBody {
     sender: String,
     recipients: Vec<String>,
     text: String,
+    /// Actions of this custom inject (offsets from the send, never negative).
+    #[serde(default)]
+    actions: Vec<scenario::InjectAction>,
 }
 
 fn default_sender() -> String {
@@ -1119,7 +1124,8 @@ async fn post_inject(_principal: Principal, s: AppState, b: Json<InjectBody>) ->
     if let Some(o) = &b.observation {
         s.lock().validate_observation(o)?;
     }
-    let ids = flow::send_inject(&s, None, &b.title, &b.sender, &b.recipients, &b.text).await?;
+    let actions = exercise::actions::SendActions { run: None, custom: b.actions.clone() };
+    let ids = flow::send_inject(&s, None, &b.title, &b.sender, &b.recipients, &b.text, &actions).await?;
     if let Some(o) = b.observation {
         let mut ex = s.lock();
         for id in &ids {
@@ -1133,6 +1139,9 @@ async fn post_inject(_principal: Principal, s: AppState, b: Json<InjectBody>) ->
 struct MselSendBody {
     #[serde(default)]
     recipients: Option<Vec<String>>,
+    /// Ids of the inject's actions to run; all of them when absent.
+    #[serde(default)]
+    actions: Option<Vec<String>>,
 }
 
 #[cfg_attr(
@@ -1155,13 +1164,56 @@ async fn post_msel_send(
         .cloned()
         .ok_or_else(|| bad(format!("unknown inject {id}")))?;
     // Default to the planned recipients; roles already served are skipped.
-    let recipients = match b.and_then(|Json(b)| b.recipients) {
+    let b = b.map(|j| j.0).unwrap_or_default();
+    let recipients = match b.recipients {
         Some(r) if !r.is_empty() => r,
         _ => t.recipients.clone(),
     };
-    let ids = flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &recipients, &t.text).await?;
+    let actions = exercise::actions::SendActions { run: b.actions, custom: Vec::new() };
+    let ids = flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &recipients, &t.text, &actions).await?;
     let ex = s.lock();
     Ok(Json(json!({"messages": ids, "sent_to": ex.inject_sent_to.get(&t.id)})))
+}
+
+/// EXCON decides not to send a MSEL inject.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/msel/<id>/skip")
+)]
+async fn post_msel_skip(_principal: Principal, s: AppState, id: String) -> ApiResult {
+    s.lock().skip_inject(&id)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// Put a skipped MSEL inject back among the pending ones.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/msel/<id>/restore")
+)]
+async fn post_msel_restore(_principal: Principal, s: AppState, id: String) -> ApiResult {
+    s.lock().restore_inject(&id)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct EnabledBody {
+    enabled: bool,
+}
+
+/// Switch a pre-action of a not-yet-sent inject on or off.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/msel/<id>/actions/<action>/enabled", data = "<b>")
+)]
+async fn post_action_enabled(
+    _principal: Principal,
+    s: AppState,
+    id: String,
+    action: String,
+    b: Json<EnabledBody>,
+) -> ApiResult {
+    s.lock().set_action_enabled(&id, &action, b.enabled)?;
+    Ok(Json(json!({"ok": true})))
 }
 
 #[cfg_attr(
@@ -1456,45 +1508,14 @@ async fn post_command(_principal: Principal, s: AppState, body: Json<Value>) -> 
 struct ResolveBody {
     #[serde(default)]
     minutes: Option<u32>,
-    /// Decision for each scripted timeline action due in the turn.
-    #[serde(default)]
-    actions: std::collections::BTreeMap<String, exercise::actions::ActionChoice>,
     /// Intermediate advance: run for `minutes` (or `until`) and keep the turn open.
     #[serde(default)]
     substep: bool,
-    /// Run up to `"next_event"` (the next pending inject or action of the
-    /// turn) or `"turn_end"` (the planned end) instead of for `minutes`.
+    /// Run up to `"next_inject"` (the next pending inject, never past the
+    /// turn's planned end, which then closes the turn; `"next_event"` is an
+    /// alias) or `"turn_end"` (the planned end) instead of for `minutes`.
     #[serde(default)]
     until: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) struct DueQuery {
-    #[serde(default)]
-    minutes: Option<u32>,
-    #[serde(default)]
-    to_s: Option<i64>,
-}
-
-/// Scripted timeline actions that fall inside the next turn: EXCON decides
-/// on each of them when starting the turn.
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    rocket::get("/api/master/due-actions?<minutes>&<to_s>")
-)]
-async fn get_due_actions(
-    _principal: Principal,
-    s: AppState,
-    minutes: Option<u32>,
-    to_s: Option<i64>,
-) -> ApiResult {
-    let ex = s.lock();
-    let due = match to_s {
-        Some(t) => ex.due_actions_until(t),
-        None => ex.due_actions(minutes),
-    };
-    Ok(Json(json!({"turn": ex.turn, "due": due})))
 }
 
 #[cfg_attr(
@@ -1511,17 +1532,20 @@ async fn post_resolve(
     {
         let mut ex = s.lock();
         if body.substep || body.until.is_some() {
+            let mut substep = body.substep;
             let to_s = match body.until.as_deref() {
-                Some("next_event") => ex.turn_agenda()["next_event_s"]
-                    .as_i64()
-                    .ok_or_else(|| bad("no further event in this turn"))?,
+                Some("next_inject" | "next_event") => {
+                    let t = ex.advance_target();
+                    substep = !t.closes_turn;
+                    t.to_s
+                }
                 Some("turn_end") => ex.planned_end_s(),
                 Some(other) => return Err(bad(format!("unknown target {other}"))),
                 None => ex.world.time_s() + minutes.unwrap_or(1).clamp(1, 24 * 60) as i64 * 60,
             };
-            ex.begin_resolution_until(to_s, body.substep, &body.actions)?;
+            ex.begin_resolution_until(to_s, substep)?;
         } else {
-            ex.begin_resolution_with(minutes, &body.actions)?;
+            ex.begin_resolution(minutes)?;
         }
     }
     // Spawned, so the turn completes even if the client goes away; the

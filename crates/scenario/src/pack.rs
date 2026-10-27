@@ -45,7 +45,9 @@ pub struct ScenarioEdits {
     pub reinforcements: Option<Vec<ReinforcementOffer>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msel: Option<Vec<InjectTemplate>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Legacy standalone actions: read for old packs, converted into inject
+    /// actions when applied and never written back.
+    #[serde(skip_serializing)]
     pub timeline: Option<Vec<TimelineAction>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tactical_policy: Option<TacticalPolicy>,
@@ -173,6 +175,7 @@ impl Scenario {
         if let Some(v) = &e.timeline {
             self.timeline = v.clone();
         }
+        self.migrate_legacy_timeline()?;
         if let Some(v) = &e.tactical_policy {
             self.tactical_policy = v.clone();
         }
@@ -203,7 +206,7 @@ impl Scenario {
             excon_roles: Some(self.excon_roles.clone()),
             reinforcements: Some(self.reinforcements.clone()),
             msel: Some(self.msel.clone()),
-            timeline: Some(self.timeline.clone()),
+            timeline: None,
             tactical_policy: Some(self.tactical_policy.clone()),
             operations: Some(self.operations.clone()),
             staging_base: Some(self.staging_base.clone().unwrap_or_default()),
@@ -352,24 +355,18 @@ impl Scenario {
             }
         }
 
-        let timeline = e.timeline.as_deref().unwrap_or(&self.timeline);
-        for (n, a) in timeline.iter().enumerate() {
-            let at = format!("Azione {}", n + 1);
-            if a.id.trim().is_empty() || a.title.trim().is_empty() {
-                out.push(format!("{at}: identificativo e titolo sono obbligatori"));
-            }
-            if timeline[..n].iter().any(|o| o.id == a.id) {
-                out.push(format!("{at}: identificativo «{}» duplicato", a.id));
-            }
-            if a.at_s < 0 {
-                out.push(format!("{at}: il tempo non può essere negativo"));
-            }
-            if !a.command.is_object() {
-                out.push(format!("{at}: il comando deve essere un oggetto JSON"));
-            }
-            if let Some(after) = &a.after {
-                if !msel.iter().any(|i| &i.id == after) {
-                    out.push(format!("{at}: segue l'inject sconosciuto «{after}»"));
+        let mut action_ids: BTreeSet<&str> = BTreeSet::new();
+        for (n, i) in msel.iter().enumerate() {
+            for a in &i.actions {
+                let at = format!("Inject {}, azione «{}»", n + 1, a.id);
+                if a.id.trim().is_empty() || a.title.trim().is_empty() {
+                    out.push(format!("{at}: identificativo e titolo sono obbligatori"));
+                }
+                if !action_ids.insert(a.id.as_str()) {
+                    out.push(format!("{at}: identificativo duplicato"));
+                }
+                if !a.command.is_object() {
+                    out.push(format!("{at}: il comando deve essere un oggetto JSON"));
                 }
             }
         }

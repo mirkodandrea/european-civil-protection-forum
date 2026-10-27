@@ -462,10 +462,43 @@ pub struct InjectTemplate {
     /// Without it the inject is planned at the start of its suggested `turn`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at_s: Option<i64>,
+    /// World changes that go with the inject: run by EXCON when the inject is
+    /// sent, `offset_s` from it (see [`InjectAction`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<InjectAction>,
 }
 
-/// A scripted world change on the MSEL timeline, independent of any message.
-/// EXCON is asked about it when opening a turn whose window contains `at_s`.
+impl InjectTemplate {
+    /// Planned instant in simulated seconds: its own `at_s`, otherwise the
+    /// start of its suggested turn counted with `turn_minutes`.
+    pub fn planned_s(&self, turn_minutes: u32) -> i64 {
+        self.at_s
+            .unwrap_or_else(|| (self.turn.max(1) as i64 - 1) * turn_minutes as i64 * 60)
+    }
+}
+
+/// A scripted world change that belongs to an inject. With `offset_s >= 0` it
+/// runs when EXCON sends the inject: at once as an EXCON command for 0,
+/// otherwise approved to apply `offset_s` after the send, during the following
+/// resolution. With `offset_s < 0` it is a pre-action: it runs by itself
+/// `-offset_s` before the inject's planned time during the time scan (unless
+/// EXCON disabled it or skipped the inject), or at send time if the inject is
+/// sent early. Ids are unique across the scenario.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InjectAction {
+    pub id: String,
+    pub title: String,
+    /// An EXCON `sim::Command` as JSON; validated when the exercise loads.
+    pub command: serde_json::Value,
+    /// Seconds after the inject is sent; negative: before its planned time.
+    #[serde(default, alias = "delay_s")]
+    pub offset_s: i64,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// Legacy standalone timeline action, still read from old packs and converted
+/// into an [`InjectAction`] on load (see [`Scenario::migrate_legacy_timeline`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimelineAction {
     pub id: String,
@@ -532,8 +565,9 @@ pub struct Scenario {
     pub excon_roles: Vec<String>,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
-    /// Scripted world changes on the timeline (see [`TimelineAction`]).
-    #[serde(default)]
+    /// Legacy standalone actions: read for old files, emptied by
+    /// [`Scenario::migrate_legacy_timeline`] and never written back.
+    #[serde(default, skip_serializing)]
     pub timeline: Vec<TimelineAction>,
     /// Named place resources travel from (the exercise can move it later).
     /// Unknown or `None`: the centre of the map.
@@ -574,8 +608,9 @@ impl Scenario {
         let path = path.as_ref();
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let scn: Scenario =
+        let mut scn: Scenario =
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        scn.migrate_legacy_timeline()?;
         scn.check()?;
         Ok(scn)
     }
@@ -694,29 +729,63 @@ impl Scenario {
                 );
             }
         }
-        for (n, a) in self.timeline.iter().enumerate() {
-            anyhow::ensure!(
-                !a.id.trim().is_empty() && !a.title.trim().is_empty() && a.at_s >= 0,
-                "timeline action {} needs an id, a title and a non-negative time",
-                n + 1
-            );
-            anyhow::ensure!(
-                !self.timeline[..n].iter().any(|o| o.id == a.id),
-                "duplicate timeline action id {}",
-                a.id
-            );
-            anyhow::ensure!(
-                a.command.is_object(),
-                "timeline action {} command must be a JSON object",
-                a.id
-            );
-            if let Some(after) = &a.after {
+        let mut seen = std::collections::BTreeSet::new();
+        for i in &self.msel {
+            for a in &i.actions {
                 anyhow::ensure!(
-                    self.msel.iter().any(|i| &i.id == after),
-                    "timeline action {} follows unknown inject {after}",
+                    !a.id.trim().is_empty() && !a.title.trim().is_empty(),
+                    "action {} of inject {} needs an id and a title",
+                    a.id,
+                    i.id
+                );
+                anyhow::ensure!(seen.insert(a.id.as_str()), "duplicate action id {}", a.id);
+                anyhow::ensure!(
+                    a.command.is_object(),
+                    "action {} command must be a JSON object",
                     a.id
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// Convert legacy standalone `timeline` actions into inject actions and
+    /// empty the legacy list. An action with `after` joins that inject; one
+    /// without joins the latest inject planned at or before its time, or the
+    /// first inject if none is. `offset_s` is the time past the inject's
+    /// planned instant (negative: a pre-action). Fails when there is no inject to
+    /// attach to or `after` names an unknown one.
+    pub fn migrate_legacy_timeline(&mut self) -> Result<()> {
+        if self.timeline.is_empty() {
+            return Ok(());
+        }
+        let tm = self.turn_minutes;
+        let planned: Vec<i64> = self.msel.iter().map(|i| i.planned_s(tm)).collect();
+        let legacy = std::mem::take(&mut self.timeline);
+        for a in legacy {
+            let idx = match &a.after {
+                Some(id) => self
+                    .msel
+                    .iter()
+                    .position(|i| &i.id == id)
+                    .with_context(|| format!("timeline action {} follows unknown inject {id}", a.id))?,
+                None => {
+                    let latest = (0..planned.len())
+                        .filter(|n| planned[*n] <= a.at_s)
+                        .max_by_key(|n| (planned[*n], *n));
+                    let first = (0..planned.len()).min_by_key(|n| (planned[*n], *n));
+                    latest.or(first).with_context(|| {
+                        format!("timeline action {} has no inject to attach to", a.id)
+                    })?
+                }
+            };
+            self.msel[idx].actions.push(InjectAction {
+                id: a.id,
+                title: a.title,
+                command: a.command,
+                offset_s: a.at_s - planned[idx],
+                note: a.note,
+            });
         }
         Ok(())
     }
@@ -885,6 +954,60 @@ mod tests {
         s.render_terrain.as_mut().unwrap().world_size_m[0] = 4000.0;
         s.render_terrain.as_mut().unwrap().elev[10] = f32::NAN;
         assert!(s.check().is_err());
+    }
+
+    fn legacy(id: &str, at_s: i64, after: Option<&str>) -> TimelineAction {
+        TimelineAction {
+            id: id.into(),
+            title: id.into(),
+            at_s,
+            command: serde_json::json!({"type": "SetWeather", "wind_dir_deg": 10.0}),
+            after: after.map(String::from),
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn legacy_timeline_actions_become_inject_actions() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        for (n, i) in s.msel.iter_mut().enumerate() {
+            i.at_s = Some(1000 + n as i64 * 1000);
+        }
+        let (first, second) = (s.msel[0].id.clone(), s.msel[1].id.clone());
+        s.timeline = vec![
+            legacy("linked", 1500, Some(&second)), // after an inject: attaches to it, offset 1500 - 2000
+            legacy("between", 2500, None),         // latest inject at or before: the second, +500
+            legacy("before_all", 200, None),       // earlier than any: the first, -800 (pre-action)
+        ];
+        s.migrate_legacy_timeline().unwrap();
+        assert!(s.timeline.is_empty());
+        let find = |id: &str| {
+            s.msel
+                .iter()
+                .flat_map(|i| i.actions.iter().map(move |a| (i.id.clone(), a.offset_s, a.id.clone())))
+                .find(|a| a.2 == id)
+                .unwrap()
+        };
+        assert_eq!(find("linked"), (second.clone(), -500, "linked".into()));
+        assert_eq!(find("between"), (second, 500, "between".into()));
+        assert_eq!(find("before_all"), (first, -800, "before_all".into()));
+        s.check().unwrap();
+        // The legacy field is never written back, and old files still load.
+        let v = serde_json::to_value(&s).unwrap();
+        assert!(v.get("timeline").is_none());
+        let again: Scenario = serde_json::from_value(v).unwrap();
+        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 3);
+    }
+
+    #[test]
+    fn legacy_timeline_needs_an_inject_and_unique_ids() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        s.timeline = vec![legacy("x", 0, Some("missing"))];
+        assert!(s.migrate_legacy_timeline().is_err());
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        s.timeline = vec![legacy("dup", 0, None), legacy("dup", 10, None)];
+        s.migrate_legacy_timeline().unwrap();
+        assert!(s.check().is_err(), "duplicate action ids are refused");
     }
 
     #[test]
