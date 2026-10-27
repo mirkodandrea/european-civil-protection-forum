@@ -105,7 +105,7 @@ impl FlameView {
     }
 }
 
-fn setup(
+pub(crate) fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,

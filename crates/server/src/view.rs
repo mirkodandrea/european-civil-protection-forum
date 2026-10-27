@@ -110,6 +110,7 @@ pub fn extract(ex: &Exercise, have: Have) -> Option<ViewState> {
     let st = w.stats();
     let options = w.fire.options();
     Some(ViewState {
+        scenario_id: w.scn.id.clone(),
         generation: ex.generation,
         turn: ex.turn,
         phase: format!("{:?}", ex.phase).to_lowercase(),
@@ -253,6 +254,10 @@ impl ViewSource for ExerciseSource {
             .lock()
             .map(|ex| ex.world.scn.clone())
             .map_err(|_| "exercise lock poisoned".to_string())
+    }
+    fn poll_scene(&mut self, current: &Arc<scenario::Scenario>) -> Option<Arc<scenario::Scenario>> {
+        let ex = self.0.try_lock().ok()?;
+        (!Arc::ptr_eq(current, &ex.world.scn)).then(|| ex.world.scn.clone())
     }
     fn poll(&mut self, have: Have) -> Option<ViewState> {
         let ex = self.0.try_lock().ok()?;

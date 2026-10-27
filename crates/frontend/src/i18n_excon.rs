@@ -588,6 +588,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Elimina il tipo di risorsa. Se un ruolo o un rinforzo la usa ancora, «Controlla» lo segnala." => "Deletes the resource type. If a role or reinforcement still uses it, \"Check\" reports it.",
         "Elimina risorsa" => "Delete resource",
         "Conferma eliminazione" => "Confirm deletion",
+        "Filtra per territorio" => "Filter by territory",
+        "Tutti i territori" => "All territories",
         "← Scenari" => "← Scenarios",
         "Unità al turno (0 = nessuna)" => "Units per turn (0 = none)",
         "Apre una linea tagliafuoco (senza vegetazione) lungo un percorso: ferma l’avanzata se è completata prima del fuoco." => "Clears a fire line (no vegetation) along a path: stops the spread if finished before the fire arrives.",

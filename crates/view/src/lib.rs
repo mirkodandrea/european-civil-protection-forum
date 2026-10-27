@@ -33,8 +33,12 @@ pub struct Have {
 /// `poll` must never block a render frame; return `None` when nothing new is
 /// ready (including "the model is busy right now").
 pub trait ViewSource: Send + 'static {
-    /// The static world; fetched once at start.
+    /// The initial static world.
     fn scenario(&mut self) -> Result<Arc<Scenario>, String>;
+    /// A replacement scene, ready without blocking the render thread.
+    fn poll_scene(&mut self, _current: &Arc<Scenario>) -> Option<Arc<Scenario>> {
+        None
+    }
     /// The newest state, if it differs from `have`.
     fn poll(&mut self, have: Have) -> Option<ViewState>;
 }
@@ -202,6 +206,9 @@ pub mod cell {
 /// Grid arrays are row-major like `Scenario::grid`, and travel base64-packed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ViewState {
+    /// Territory identity, to prevent drawing a frame against another grid.
+    #[serde(default)]
+    pub scenario_id: String,
     /// Bumped by the model whenever anything changes.
     pub generation: u64,
     pub turn: u32,
@@ -263,7 +270,11 @@ mod tests {
     #[test]
     fn track_interpolates_and_clamps() {
         let t = Track {
-            points: vec![(10.0, [0.0, 0.0]), (20.0, [100.0, 0.0]), (30.0, [100.0, 50.0])],
+            points: vec![
+                (10.0, [0.0, 0.0]),
+                (20.0, [100.0, 0.0]),
+                (30.0, [100.0, 50.0]),
+            ],
         };
         assert_eq!(t.position(0.0), [0.0, 0.0]);
         assert_eq!(t.position(15.0), [50.0, 0.0]);

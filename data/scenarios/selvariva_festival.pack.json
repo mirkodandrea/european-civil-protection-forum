@@ -1,0 +1,179 @@
+{
+  "id": "selvariva_festival",
+  "name": "Selvariva — il festival e i due abitati",
+  "base": "selvariva_basin",
+  "description": "Demo interattiva di circa 1 ora reale su tre ore simulate: incendio vicino al festival, evacuazione della scolaresca e del borgo, cambiamento del vento e coordinamento dell’assistenza. Tutti i nomi e i luoghi sono di fantasia.",
+  "edits": {
+    "name": "Selvariva — il festival e i due abitati",
+    "msel": [
+      {
+        "at_s": 0,
+        "turn": 1,
+        "id": "SV-01",
+        "title": "Fumo sopra l’area festival",
+        "sender": "Centrale segnalazioni",
+        "recipients": [
+          "all"
+        ],
+        "text": "È un pomeriggio secco nella conca delle Due Valli. All’area festival delle Fonti sono presenti 360 persone. Dopo un boato vengono segnalati due focolai nel bosco sovrastante; la causa non è confermata. Al Rifugio della scolaresca sono registrati 37 bambini e 3 accompagnatori. Concordate il primo quadro di situazione e le priorità.",
+        "objective": "Condividere la situazione e decidere primi impieghi e avvisi.",
+        "event": "Incendio delle Fonti",
+        "actions": [
+          {
+            "id": "SV-A1",
+            "title": "Innesco nel Bosco delle Fonti",
+            "command": {
+              "type": "Ignite",
+              "at": {
+                "x": 1730,
+                "y": 4050
+              },
+              "radius_m": 80
+            },
+            "offset_s": 0,
+            "note": "Intervento EXCON selezionabile all’invio dell’inject."
+          },
+          {
+            "id": "SV-A2",
+            "title": "Secondo focolaio sul versante",
+            "command": {
+              "type": "Ignite",
+              "at": {
+                "x": 2050,
+                "y": 4160
+              },
+              "radius_m": 60
+            },
+            "offset_s": 0,
+            "note": "Intervento EXCON selezionabile all’invio dell’inject."
+          }
+        ]
+      },
+      {
+        "at_s": 900,
+        "turn": 1,
+        "id": "SV-02",
+        "title": "Richiesta di ricognizione e allerta",
+        "sender": "Osservatori sul territorio",
+        "recipients": [
+          "fire_commander",
+          "regional_cp"
+        ],
+        "text": "Gli osservatori chiedono un quadro aggiornato del fuoco e dei possibili effetti su Roverechiare e sulla Strada delle Fonti. Richiedete a EXCON osservazioni o una previsione, condividete le informazioni utili e motivate dove intervenire. I sopralluoghi e l’impiego di droni restano nella narrazione.",
+        "objective": "Usare informazioni disponibili e incertezza per coordinare gli interventi.",
+        "event": "Incendio delle Fonti",
+        "actions": []
+      },
+      {
+        "at_s": 2100,
+        "turn": 1,
+        "id": "SV-03",
+        "title": "Scolaresca e persone con bisogno di assistenza",
+        "sender": "Gestione festival",
+        "recipients": [
+          "mayor",
+          "volunteer_coordinator"
+        ],
+        "text": "Gli organizzatori chiedono dove trasferire il gruppo del Rifugio della scolaresca e come assistere le famiglie del festival. Sono segnalate persone con mobilità ridotta: organizzate supporto e destinazioni. Nel modello il gruppo del rifugio è un aggregato di 40 occupanti che richiede un autobus; le esigenze individuali sono gestite narrativamente da EXCON.",
+        "objective": "Distinguere evacuazione simulata, capienza, mezzi disponibili e assistenza narrativa.",
+        "event": "Incendio delle Fonti",
+        "actions": []
+      },
+      {
+        "at_s": 3600,
+        "turn": 2,
+        "id": "SV-04",
+        "title": "Rotazione del vento",
+        "sender": "Servizio meteo delle Due Valli",
+        "recipients": [
+          "all"
+        ],
+        "text": "Il vento ruota da nord-ovest a ovest-nord-ovest e aumenta. Rivalutate l’esposizione di Roverechiare e gli accessi verso il fondovalle. Le segnalazioni precedenti non sostituiscono una nuova verifica delle strade.",
+        "objective": "Rivedere priorità e percorsi dopo un cambiamento annunciato.",
+        "event": "Incendio delle Fonti",
+        "actions": [
+          {
+            "id": "SV-A3",
+            "title": "Vento più forte da ovest-nord-ovest",
+            "command": {
+              "type": "SetWeather",
+              "wind_dir_deg": 290,
+              "wind_speed_kmh": 42,
+              "moisture_pct": 6
+            },
+            "offset_s": 0,
+            "note": "Intervento EXCON selezionabile all’invio dell’inject."
+          }
+        ]
+      },
+      {
+        "at_s": 5100,
+        "turn": 2,
+        "id": "SV-05",
+        "title": "Verifica degli accessi e dei servizi",
+        "sender": "Osservatori sul territorio",
+        "recipients": [
+          "mayor",
+          "fire_commander"
+        ],
+        "text": "Si segnala fumo presso il Deposito delle Fornaci. Verificate la situazione effettiva della Strada delle Fonti e dell’alternativa del Belvedere prima di scegliere i trasferimenti. Le strade si interrompono nel modello soltanto se il fuoco le rende impraticabili; il contenuto del deposito e gli eventuali effetti sanitari restano valutazioni narrative di EXCON.",
+        "objective": "Separare segnalazioni, stato osservato e decisioni di viabilità.",
+        "event": "Incendio delle Fonti",
+        "actions": []
+      },
+      {
+        "at_s": 6600,
+        "turn": 2,
+        "id": "SV-06",
+        "title": "Assistenza alle famiglie e richiesta di rinforzi",
+        "sender": "Rete di assistenza",
+        "recipients": [
+          "regional_cp",
+          "volunteer_coordinator",
+          "mayor"
+        ],
+        "text": "La rete di assistenza richiede un punto di coordinamento per pasti, beni essenziali, supporto psicologico e ricongiungimenti. Raccogliete i bisogni effettivi, concordate un responsabile e inviate le iniziative narrative a EXCON. Valutate separatamente eventuali rinforzi fisici e i loro tempi di arrivo.",
+        "objective": "Coordinare assistenza narrativa e disponibilità fisiche senza confonderne gli esiti.",
+        "event": "Incendio delle Fonti",
+        "actions": []
+      },
+      {
+        "at_s": 8400,
+        "turn": 3,
+        "id": "SV-07",
+        "title": "Domande dalla popolazione",
+        "sender": "Redazione del Corriere della Conca",
+        "recipients": [
+          "regional_cp",
+          "mayor"
+        ],
+        "text": "Circola la voce di un’esplosione dolosa e di un’interruzione dell’acqua. Nessuna delle due notizie è confermata. Preparate una comunicazione narrativa: cosa è noto, cosa si sta verificando, indicazioni alla popolazione e prossimo aggiornamento. Non presentate come conclusi interventi ancora in viaggio.",
+        "objective": "Comunicare fatti, incertezza e prossimi passi.",
+        "event": "Incendio delle Fonti",
+        "actions": []
+      },
+      {
+        "at_s": 10200,
+        "turn": 3,
+        "id": "SV-08",
+        "title": "Quadro finale per il coordinamento",
+        "sender": "Centrale segnalazioni",
+        "recipients": [
+          "all"
+        ],
+        "text": "Preparate un breve passaggio di consegne usando lo stato corrente: fuoco, abitati esposti, persone ancora dentro/in transito/arrivate, destinazioni aperte, missioni e risorse residue. Indicate separatamente gli esiti narrativi registrati da EXCON e ciò che resta da verificare. La conclusione della demo non implica che l’incendio sia spento.",
+        "objective": "Ricostruire decisioni ed esiti verificabili per il debrief.",
+        "event": "Incendio delle Fonti",
+        "actions": []
+      }
+    ],
+    "initial_ignitions": [],
+    "turn_minutes": 60
+  },
+  "run": {
+    "seed": 1,
+    "realizations": 32,
+    "cutoff": 0.5,
+    "operational_model": true
+  }
+}

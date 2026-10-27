@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 use view::{
-    BuildingDraw, Cue, Deployment, Ensemble, FireLine, Have, RoadSegment, Stats, TurnWindow, Vehicle,
-    ViewSource,
+    BuildingDraw, Cue, Deployment, Ensemble, FireLine, Have, RoadSegment, Stats, TurnWindow,
+    Vehicle, ViewSource,
 };
 
 mod architecture;
@@ -45,6 +45,9 @@ mod snapshot;
 mod terrain;
 
 pub use frame::Frame;
+
+#[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct SceneSetup;
 
 /// What the HUD says about the surroundings of the viewer.
 #[derive(Resource, Clone, Default)]
@@ -183,6 +186,18 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
             ),
         )
         .add_systems(
+            SceneSetup,
+            (
+                camera::setup,
+                terrain::setup,
+                objects::setup,
+                night::setup,
+                deployments::setup,
+                flames::setup.after(terrain::setup),
+            ),
+        )
+        .add_systems(First, replace_scene)
+        .add_systems(
             Update,
             (
                 sync,
@@ -213,9 +228,36 @@ pub fn run(mut source: Box<dyn ViewSource>, info: Info) {
 #[derive(Resource)]
 pub struct Source(Mutex<Box<dyn ViewSource>>);
 
+/// Rebuild only presentation entities. The source owns the exercise and all physics.
+fn replace_scene(world: &mut World) {
+    let current = world.resource::<Scn>().0.clone();
+    let next = world
+        .resource::<Source>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut source| source.poll_scene(&current));
+    let Some(next) = next else {
+        return;
+    };
+    // Keep the window (including its egui context) and the atmosphere. All scene
+    // roots and their children belong to this renderer and are reconstructed.
+    let roots: Vec<Entity> = world
+        .query_filtered::<Entity, (Without<Parent>, Without<Window>, Without<sky::SkyDome>)>()
+        .iter(world)
+        .collect();
+    for entity in roots {
+        world.entity_mut(entity).despawn_recursive();
+    }
+    world.insert_resource(Scn(next));
+    world.insert_resource(Snapshot::default());
+    world.insert_resource(Frame::default());
+    world.run_schedule(SceneSetup);
+}
+
 /// Copy the newest view into the [`Snapshot`] whenever the model has changed
 /// (during a resolution: after every simulated minute).
-fn sync(source: Res<Source>, mut snap: ResMut<Snapshot>) {
+fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
     let have = Have {
         generation: snap.generation,
         cue: snap.cue_seen,
@@ -223,6 +265,9 @@ fn sync(source: Res<Source>, mut snap: ResMut<Snapshot>) {
     let Some(v) = source.0.lock().ok().and_then(|mut s| s.poll(have)) else {
         return;
     };
+    if !v.scenario_id.is_empty() && v.scenario_id != scn.0.id {
+        return;
+    }
     snap.generation = v.generation;
     snap.turn = v.turn;
     snap.phase = v.phase;
@@ -446,4 +491,52 @@ fn record(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod territory_tests {
+    use super::*;
+    struct Replacement(Option<Arc<scenario::Scenario>>);
+    impl ViewSource for Replacement {
+        fn scenario(&mut self) -> Result<Arc<scenario::Scenario>, String> {
+            Err("unused".into())
+        }
+        fn poll_scene(&mut self, _: &Arc<scenario::Scenario>) -> Option<Arc<scenario::Scenario>> {
+            self.0.take()
+        }
+        fn poll(&mut self, _: Have) -> Option<view::ViewState> {
+            None
+        }
+    }
+    #[test]
+    fn scene_switch_discards_old_geometry_and_state_but_keeps_window() {
+        let old = Arc::new(scenario::synthetic::generate(7));
+        let mut next = (*old).clone();
+        next.id = "second-map".into();
+        let mut world = World::new();
+        world.insert_resource(Scn(old));
+        world.insert_resource(Source(Mutex::new(Box::new(Replacement(Some(Arc::new(
+            next,
+        )))))));
+        world.insert_resource(Snapshot {
+            generation: 99,
+            cells: vec![1; 4],
+            ..default()
+        });
+        world.insert_resource(Frame::default());
+        world.add_schedule(bevy::ecs::schedule::Schedule::new(SceneSetup));
+        let window = world.spawn(Window::default()).id();
+        let sky = world.spawn(sky::SkyDome).id();
+        let root = world.spawn(SpatialBundle::default()).id();
+        let child = world.spawn(SpatialBundle::default()).id();
+        world.entity_mut(root).add_child(child);
+        replace_scene(&mut world);
+        assert_eq!(world.resource::<Scn>().0.id, "second-map");
+        assert_eq!(world.resource::<Snapshot>().generation, 0);
+        assert!(world.resource::<Snapshot>().cells.is_empty());
+        assert!(world.get_entity(root).is_none());
+        assert!(world.get_entity(child).is_none());
+        assert!(world.get_entity(window).is_some());
+        assert!(world.get_entity(sky).is_some());
+    }
 }

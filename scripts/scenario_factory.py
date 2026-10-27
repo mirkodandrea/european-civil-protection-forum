@@ -122,6 +122,14 @@ def main():
     p.add_argument('--seed', type=int, default=11)
     p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/valverde_factory.json')
     p.set_defaults(run=landscape)
+    def selvariva(args):
+        from factory.selvariva import landscape as run
+        run(args)
+    p = sub.add_parser('selvariva', help='Generate the fictional basin and festival exercise')
+    p.add_argument('--template', type=Path, default=ROOT/'data/scenarios/synthetic_valley.json')
+    p.add_argument('--seed', type=int, default=33)
+    p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/selvariva_basin.json')
+    p.set_defaults(run=selvariva)
     p = sub.add_parser('sweep'); p.add_argument('scenario', type=Path); p.add_argument('--ignitions', type=Path)
     p.add_argument('--output', type=Path, default=ROOT/'runs/factory/sweep')
     p.add_argument('--seeds', nargs='+', type=int, default=[1,2,3]); p.add_argument('--winds', nargs='+', type=int, default=list(range(0,360,45)))

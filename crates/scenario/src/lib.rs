@@ -18,6 +18,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "embedded")]
+pub mod embedded;
 pub mod factory;
 pub mod pack;
 pub mod synthetic;

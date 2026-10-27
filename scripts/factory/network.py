@@ -71,8 +71,8 @@ def generate():
     return result
 
 
-def grade_roadbeds(dem, network, max_grade=.15):
-    """Cut/fill the synthetic 20 m terrain to the authored road network.
+def grade_roadbeds(dem, network, max_grade=.15, cell_m=20.0):
+    """Cut/fill a synthetic terrain to the authored road network.
 
     Project bilinear road-height differences onto grade constraints. Shared
     junctions read the same DEM; this is generation, never renderer physics.
@@ -80,8 +80,9 @@ def grade_roadbeds(dem, network, max_grade=.15):
     original=dem.copy()
     z=dem.ravel()
     n=dem.shape[0]
+    height_m = n * cell_m
     def weights(p):
-        c,r=np.clip([p[0]/20-.5,(4000-p[1])/20-.5],0,n-1)
+        c,r=np.clip([p[0]/cell_m-.5,(height_m-p[1])/cell_m-.5],0,n-1)
         i,j=int(r),int(c);u,v=c-j,r-i
         result={}
         for ri,cj,w in [(i,j,(1-u)*(1-v)),(i,min(j+1,n-1),u*(1-v)),

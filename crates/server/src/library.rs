@@ -251,6 +251,16 @@ impl FileLibrary {
         self.dir.join(format!("{id}.pack.json"))
     }
 
+    fn base_pack(&self, id: &str) -> Option<ScenarioPack> {
+        #[derive(Deserialize)]
+        struct Metadata { name: String, #[serde(default)] description: String }
+        let file = std::fs::File::open(self.dir.join(format!("{id}.json"))).ok()?;
+        let meta: Metadata = serde_json::from_reader(std::io::BufReader::new(file)).ok()?;
+        let mut pack = ScenarioPack::plain(id, &meta.name, id);
+        pack.description = meta.description;
+        Some(pack)
+    }
+
     fn files(&self) -> Vec<(String, PathBuf)> {
         let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(&self.dir)
             .into_iter()
@@ -283,13 +293,9 @@ impl ScenarioLibrary for FileLibrary {
         let mut out: Vec<PackInfo> = self
             .bases()
             .into_iter()
-            .map(|b| PackInfo {
-                id: b.clone(),
-                name: b.clone(),
-                description: String::new(),
-                base: b,
-                builtin: true,
-            })
+            .filter_map(|b| self.base_pack(&b).map(|p| PackInfo {
+                id: b.clone(), name: p.name, description: p.description, base: b, builtin: true,
+            }))
             .collect();
         for (name, path) in self.files() {
             let Some(id) = name.strip_suffix(".pack.json") else { continue };
@@ -319,7 +325,7 @@ impl ScenarioLibrary for FileLibrary {
             pack.id = id.to_string();
             return Some(pack);
         }
-        self.bases().contains(&id.to_string()).then(|| ScenarioPack::plain(id, id, id))
+        self.bases().contains(&id.to_string()).then(|| self.base_pack(id)).flatten()
     }
 
     fn save(&self, pack: &ScenarioPack) -> Result<(), String> {

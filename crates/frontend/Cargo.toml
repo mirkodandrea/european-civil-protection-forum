@@ -6,7 +6,7 @@ license.workspace = true
 description = "Rust/WebAssembly browser UI for the TTX"
 
 [features]
-standalone = ["dep:server", "dep:sim", "dep:exercise", "dep:llm", "dep:viz", "dep:anyhow"]
+standalone = ["scenario/embedded", "dep:server", "dep:sim", "dep:exercise", "dep:llm", "dep:viz", "dep:anyhow"]
 
 [dependencies]
 server = { workspace = true, optional = true }

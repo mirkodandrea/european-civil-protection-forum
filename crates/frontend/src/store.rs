@@ -18,6 +18,8 @@ const FORMAT: u32 = 2;
 pub struct SavedSession {
     pub v: u32,
     pub pack: scenario::ScenarioPack,
+    #[serde(default)]
+    pub territory_fingerprint: String,
     pub journal: Vec<server::browser::JournalEntry>,
     pub tape: Vec<(String, String)>,
     /// Simulated seconds reached when saved.
@@ -57,10 +59,20 @@ pub fn remove(key: &str) {
 pub fn load_session() -> Option<SavedSession> {
     let text = get(SESSION_KEY)?;
     match serde_json::from_str::<SavedSession>(&text) {
-        Ok(s) if s.v == FORMAT => Some(s),
+        Ok(s)
+            if s.v == FORMAT
+                && scenario::embedded::territory(&s.pack.base).is_ok()
+                && (s.territory_fingerprint.is_empty()
+                    || scenario::embedded::fingerprint(&s.pack.base)
+                        .ok()
+                        .as_deref()
+                        == Some(&s.territory_fingerprint)) =>
+        {
+            Some(s)
+        }
         _ => {
             remove(SESSION_KEY);
-            set_notice("La sessione salvata aveva un formato non più valido ed è stata scartata.");
+            set_notice("La sessione salvata non è compatibile con il formato o il territorio attuale ed è stata scartata.");
             None
         }
     }
@@ -87,33 +99,23 @@ pub fn activate(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The territory shipped inside the app, parsed once.
-fn embedded_base() -> Result<Arc<scenario::Scenario>, String> {
-    thread_local! { static BASE: RefCell<Option<Arc<scenario::Scenario>>> = const { RefCell::new(None) }; }
-    BASE.with(|b| {
-        if let Some(base) = b.borrow().clone() {
-            return Ok(base);
+/// Lazy per-territory cache. Selecting a pack always loads its declared base.
+fn embedded_base(id: &str) -> Result<Arc<scenario::Scenario>, String> {
+    thread_local! { static BASES: RefCell<BTreeMap<String, Arc<scenario::Scenario>>> = const { RefCell::new(BTreeMap::new()) }; }
+    BASES.with(|bases| {
+        if let Some(base) = bases.borrow().get(id) {
+            return Ok(base.clone());
         }
-        let scn: scenario::Scenario =
-            serde_json::from_str(EMBEDDED_BASE).map_err(|e| e.to_string())?;
-        let base = Arc::new(scn);
-        *b.borrow_mut() = Some(base.clone());
+        let base = Arc::new(scenario::embedded::load(id).map_err(|e| e.to_string())?);
+        bases.borrow_mut().insert(id.into(), base.clone());
         Ok(base)
     })
 }
-
-const EMBEDDED_BASE_ID: &str = "valverde_factory";
-const EMBEDDED_BASE: &str = include_str!("../../../data/scenarios/valverde_factory.json");
-/// Scenarios shipped with the app, besides the bare territory.
-const EMBEDDED_PACKS: &[&str] = &[
-    include_str!("../../../data/scenarios/valverde_night_wind.pack.json"),
-];
-
 fn embedded_packs() -> Vec<scenario::ScenarioPack> {
-    EMBEDDED_PACKS
-        .iter()
-        .filter_map(|t| serde_json::from_str(t).ok())
-        .collect()
+    scenario::embedded::packs()
+}
+fn embedded_id(id: &str) -> bool {
+    scenario::embedded::territory(id).is_ok()
 }
 
 /// The scenario library in `localStorage`, over what is embedded in the app.
@@ -121,7 +123,10 @@ pub struct BrowserLibrary;
 
 impl server::library::ScenarioLibrary for BrowserLibrary {
     fn bases(&self) -> Vec<String> {
-        vec![EMBEDDED_BASE_ID.into()]
+        scenario::embedded::TERRITORIES
+            .iter()
+            .map(|t| t.id.into())
+            .collect()
     }
     fn list(&self) -> Vec<server::library::PackInfo> {
         use server::library::PackInfo;
@@ -132,21 +137,30 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
             base: p.base.clone(),
             builtin,
         };
-        let mut out = vec![info(&self.plain(), true)];
+        let mut out = scenario::embedded::TERRITORIES
+            .iter()
+            .map(|t| {
+                let mut p = scenario::ScenarioPack::plain(t.id, t.name, t.id);
+                p.description = t.description.into();
+                info(&p, true)
+            })
+            .collect::<Vec<_>>();
         out.extend(embedded_packs().iter().map(|p| info(p, true)));
         out.extend(saved_packs().values().map(|p| info(p, false)));
         out
     }
     fn load(&self, id: &str) -> Option<scenario::ScenarioPack> {
-        if id == EMBEDDED_BASE_ID {
-            return Some(self.plain());
+        if let Ok(t) = scenario::embedded::territory(id) {
+            let mut pack = scenario::ScenarioPack::plain(t.id, t.name, t.id);
+            pack.description = t.description.into();
+            return Some(pack);
         }
         saved_packs()
             .remove(id)
             .or_else(|| embedded_packs().into_iter().find(|p| p.id == id))
     }
     fn save(&self, pack: &scenario::ScenarioPack) -> Result<(), String> {
-        if pack.id == EMBEDDED_BASE_ID || embedded_packs().iter().any(|p| p.id == pack.id) {
+        if embedded_id(&pack.id) || embedded_packs().iter().any(|p| p.id == pack.id) {
             return Err(format!("«{}» è uno scenario incluso nell’app", pack.id));
         }
         let mut packs = saved_packs();
@@ -170,22 +184,13 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
     }
 }
 
-impl BrowserLibrary {
-    fn plain(&self) -> scenario::ScenarioPack {
-        scenario::ScenarioPack::plain(EMBEDDED_BASE_ID, EMBEDDED_BASE_ID, EMBEDDED_BASE_ID)
-    }
-}
-
 /// Scenario library, territory loader and exercise factory of the standalone app.
 pub fn scenarios() -> Arc<server::library::Scenarios> {
     Arc::new(server::library::Scenarios {
         library: Arc::new(BrowserLibrary),
-        base: Arc::new(|id| {
-            anyhow::ensure!(id == EMBEDDED_BASE_ID, "territorio «{id}» non disponibile nel browser");
-            embedded_base().map_err(anyhow::Error::msg)
-        }),
+        base: Arc::new(|id| embedded_base(id).map_err(anyhow::Error::msg)),
         build: Arc::new(|pack| {
-            let base = embedded_base().map_err(anyhow::Error::msg)?;
+            let base = embedded_base(&pack.base).map_err(anyhow::Error::msg)?;
             let mut scn = pack.build((*base).clone())?;
             scn.enable_operational_model();
             let world = sim::World::with_options(
@@ -198,8 +203,10 @@ pub fn scenarios() -> Arc<server::library::Scenarios> {
             )?;
             Ok(exercise::Exercise::new(world))
         }),
-        fingerprint: Arc::new(|pack| pack.base.clone()),
-        default_id: EMBEDDED_BASE_ID.into(),
+        fingerprint: Arc::new(|pack| {
+            scenario::embedded::fingerprint(&pack.base).unwrap_or_default()
+        }),
+        default_id: scenario::embedded::DEFAULT_TERRITORY.into(),
         running: std::sync::Mutex::new(None),
     })
 }
@@ -265,6 +272,7 @@ pub fn autosave(state: &server::AppState, force: bool) {
     }
     let session = SavedSession {
         v: FORMAT,
+        territory_fingerprint: scenario::embedded::fingerprint(&pack.base).unwrap_or_default(),
         pack,
         journal,
         tape,

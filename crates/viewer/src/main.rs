@@ -24,7 +24,9 @@ struct Remote {
     base: String,
     token: String,
     agent: ureq::Agent,
-    updates: Option<mpsc::Receiver<ViewState>>,
+    updates: Option<mpsc::Receiver<(ViewState, Option<Arc<scenario::Scenario>>)>>,
+    pending: Option<ViewState>,
+    scene: Option<Arc<scenario::Scenario>>,
 }
 
 impl Remote {
@@ -37,6 +39,8 @@ impl Remote {
             base,
             token,
             updates: None,
+            pending: None,
+            scene: None,
         }
     }
 
@@ -70,6 +74,7 @@ impl ViewSource for Remote {
             serde_json::from_slice(&body).context("scenario")
         };
         let scn = load().map_err(|e| format!("{e:#}"))?;
+        let mut scene_id = scn.id.clone();
         // Start polling once the world is known.
         let (tx, rx) = mpsc::sync_channel(1);
         self.updates = Some(rx);
@@ -80,6 +85,8 @@ impl ViewSource for Remote {
                 base,
                 token,
                 updates: None,
+                pending: None,
+                scene: None,
             };
             // What the renderer holds: the base for the next delta.
             let mut current: Option<ViewState> = None;
@@ -99,12 +106,39 @@ impl ViewSource for Remote {
                         view::wire::Frame::Full(state) => Ok(Some(*state)),
                         view::wire::Frame::Delta(delta) => {
                             let base = current.as_ref().context("delta without a base")?;
-                            Ok(Some(view::wire::apply(base, &delta).map_err(anyhow::Error::msg)?))
+                            Ok(Some(
+                                view::wire::apply(base, &delta).map_err(anyhow::Error::msg)?,
+                            ))
                         }
                     }
                 });
                 match next {
                     Ok(Some(state)) => {
+                        // Fetch a matching static scene on this worker, never on a render frame.
+                        let scene =
+                            if !state.scenario_id.is_empty() && state.scenario_id != scene_id {
+                                let loaded = worker.get("/api/view/scene.z").and_then(|body| {
+                                    let body = view::wire::decompress(&body)
+                                        .map_err(anyhow::Error::msg)?;
+                                    Ok(Arc::new(serde_json::from_slice::<scenario::Scenario>(
+                                        &body,
+                                    )?))
+                                });
+                                match loaded {
+                                    Ok(scene) if scene.id == state.scenario_id => {
+                                        scene_id = scene.id.clone();
+                                        Some(scene)
+                                    }
+                                    _ => {
+                                        current = None;
+                                        have = Have::default();
+                                        std::thread::sleep(POLL);
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                None
+                            };
                         failing = false;
                         have = Have {
                             generation: state.generation,
@@ -115,7 +149,7 @@ impl ViewSource for Remote {
                         base.cues.clear();
                         current = Some(base);
                         // Blocks here until the renderer has taken the previous state.
-                        if tx.send(state).is_err() {
+                        if tx.send((state, scene)).is_err() {
                             return;
                         }
                     }
@@ -137,9 +171,20 @@ impl ViewSource for Remote {
         Ok(Arc::new(scn))
     }
 
+    fn poll_scene(
+        &mut self,
+        _current: &Arc<scenario::Scenario>,
+    ) -> Option<Arc<scenario::Scenario>> {
+        if self.pending.is_none() {
+            if let Ok((state, scene)) = self.updates.as_ref()?.try_recv() {
+                self.pending = Some(state);
+                self.scene = scene;
+            }
+        }
+        self.scene.take()
+    }
     fn poll(&mut self, _have: Have) -> Option<ViewState> {
-        // The worker keeps track of what it last delivered.
-        self.updates.as_ref()?.try_recv().ok()
+        self.pending.take()
     }
 }
 

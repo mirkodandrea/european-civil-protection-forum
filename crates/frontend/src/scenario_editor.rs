@@ -1345,6 +1345,7 @@ const TABS: &[(&str, &str, &str)] = &[
 #[function_component(ScenarioEditor)]
 pub fn scenario_editor(props: &Props) -> Html {
     let library = use_state(|| None::<Value>);
+    let territory = use_state(String::new);
     let open = use_state(|| None::<Open>);
     let tab = use_state(|| "general".to_string());
     let selected = use_state(|| 0usize);
@@ -1510,11 +1511,17 @@ pub fn scenario_editor(props: &Props) -> Html {
                 <li><span class="pill">{ex("prossimo avvio")}</span> {ex("verrà usato al prossimo riavvio dell’applicazione.")}</li>
                 <li><span class="pill">{ex("incluso")}</span> {ex("fa parte dell’applicazione e non si sovrascrive: usa Personalizza per ottenerne una copia modificabile.")}</li>
             </ul>
+            <label>{ex("Filtra per territorio")}
+                <select id="scenario-territory" value={(*territory).clone()} onchange={{let territory=territory.clone(); Callback::from(move |event: Event| territory.set(event.target_unchecked_into::<web_sys::HtmlSelectElement>().value()))}}>
+                    <option value="" selected={territory.is_empty()}>{ex("Tutti i territori")}</option>
+                    {for list(&lib["bases"]).iter().map(|base| {let id=text(base); let name=packs.iter().find(|p| text(&p["id"])==id).map(|p|text(&p["name"])).unwrap_or(id); html!{<option value={id.to_string()} selected={territory.as_str()==id}>{name}</option>}})}
+                </select>
+            </label>
             <table class="scenario-list"><thead><tr>
                 <th title={ex("Nome e descrizione dello scenario.")}>{ex("Nome")}</th>
                 <th title={ex("La mappa su cui si svolge: terreno, edifici e strade. Non si modifica da qui.")}>{ex("Territorio")}</th>
                 <th><span class="sr-only">{ex("Azioni")}</span></th></tr></thead><tbody>
-            {for packs.iter().map(|p| {
+            {for packs.iter().filter(|p| territory.is_empty() || text(&p["base"]) == territory.as_str()).map(|p| {
                 let id = text(&p["id"]).to_string();
                 let builtin = p["builtin"] == true;
                 let is_running = id == running;
