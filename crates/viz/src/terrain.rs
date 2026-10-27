@@ -42,6 +42,7 @@ pub fn setup(
     mut mats: ResMut<Assets<TerrainMaterial>>,
     mut foliage: ResMut<Assets<FoliageMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut standard: ResMut<Assets<StandardMaterial>>,
 ) {
     let s = &scn.0;
     let g = s.grid;
@@ -140,6 +141,28 @@ pub fn setup(
         material: material.clone(),
         ..default()
     });
+    // Ground below sea level is a lake or sea: one translucent sheet at 0 m,
+    // hidden by every part of the terrain that rises above it.
+    let below_sea = |v: &f32| *v < scenario::editor::SEA_LEVEL_M;
+    if s.dem.iter().any(below_sea)
+        || s.render_terrain.as_ref().is_some_and(|t| t.elev.iter().any(below_sea))
+    {
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(Plane3d::default().mesh().size(g.width_m(), g.height_m())),
+                material: standard.add(StandardMaterial {
+                    base_color: Color::srgba(0.05, 0.22, 0.32, 0.86),
+                    perceptual_roughness: 0.08,
+                    reflectance: 0.6,
+                    alpha_mode: AlphaMode::Blend,
+                    ..default()
+                }),
+                transform: Transform::from_xyz(0., scenario::editor::SEA_LEVEL_M - 0.15, 0.),
+                ..default()
+            },
+            bevy::pbr::NotShadowCaster,
+        ));
+    }
     // Vegetation and the fire state use the latest source-game GPU pipeline.
     let mut rng = ChaCha8Rng::seed_from_u64(11);
     let chunks_per_row = g.cols.div_ceil(CHUNK);

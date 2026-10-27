@@ -35,6 +35,8 @@ pub struct Editor {
     stroking: bool,
     stroke_clock: f32,
     last_paint: Option<scenario::Pos>,
+    /// Dabs of the stroke in progress, drawn as a cheap preview until the scene catches up.
+    dabs: Vec<(scenario::Pos, f32, bool)>,
     fuel: i32,
     spec: BuildingSpec,
     road_start: Option<scenario::Pos>,
@@ -75,6 +77,9 @@ impl ViewSource for DraftSource {
 }
 impl Editor {
     /// Hold-to-paint tools take the left button and the wheel from the camera.
+    pub(crate) fn stroking(&self) -> bool {
+        self.stroking
+    }
     pub fn brush_tool(&self) -> bool {
         self.tool == "height" || self.tool == "fuel"
     }
@@ -100,6 +105,7 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         stroking: false,
         stroke_clock: 0.,
         last_paint: None,
+        dabs: Vec::new(),
         fuel: 4,
         spec: BuildingSpec::default(),
         road_start: None,
@@ -267,7 +273,7 @@ pub(crate) fn draw(
                                     .prefix("Quota m "),
                             );
                         }
-                        ui.small("Tieni premuto sulla mappa per modellare il terreno.");
+                        ui.small("Tieni premuto sulla mappa per modellare il terreno. Sotto 0 m il terreno diventa acqua (laghi, isole).");
                     } else {
                         ui.small("Tieni premuto sulla mappa per dipingere.");
                         egui::ComboBox::from_label("Combustibile")
@@ -954,6 +960,23 @@ pub(crate) fn interact(
         }
         previous = t;
     }
+    // The rebuilt scene already shows the dabs; until then draw them directly.
+    if !e.stroking && !e.dabs.is_empty() {
+        let document = e.document.clone();
+        let locked = document.try_lock();
+        if locked.is_ok_and(|d| Arc::ptr_eq(s, &d.scene)) {
+            e.dabs.clear();
+        }
+    }
+    let paint = if e.tool == "fuel" {
+        Color::srgb(0.2, 0.9, 0.3).with_alpha(0.25)
+    } else {
+        Color::srgb(1., 1., 0.).with_alpha(0.25)
+    };
+    for (at, radius, lowering) in &e.dabs {
+        let colour = if *lowering { Color::srgb(1., 0.25, 0.2).with_alpha(0.25) } else { paint };
+        gizmos.circle(crate::frame::to_bevy(s, *at, 4.), Dir3::Y, *radius, colour);
+    }
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if let Some(at) = hit {
         if e.brush_tool() {
@@ -971,9 +994,6 @@ pub(crate) fn interact(
                 let Ok(mut d) = document.try_lock() else {
                     return;
                 };
-                if !Arc::ptr_eq(s, &d.scene) {
-                    return; // the scene is still rebuilding; keep the clock running
-                }
                 if !e.stroking {
                     d.begin_stroke();
                     e.stroking = true;
@@ -1000,8 +1020,15 @@ pub(crate) fn interact(
                             d.brush(at, e.radius, None, Some(e.fuel))
                         }
                     };
-                    if let Err(err) = result {
-                        e.message = err.to_string();
+                    match result {
+                        Ok(()) => {
+                            let dab = (at, e.radius, lowering);
+                            e.dabs.push(dab);
+                            if e.dabs.len() > 300 {
+                                e.dabs.remove(0);
+                            }
+                        }
+                        Err(err) => e.message = err.to_string(),
                     }
                 }
             }

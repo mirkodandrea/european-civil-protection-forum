@@ -544,6 +544,24 @@ pub struct RenderTerrain {
     pub elev: Vec<f32>,
 }
 
+impl RenderTerrain {
+    /// Row and column ranges of the postings that can lie within `radius` of `at`.
+    pub fn footprint(&self, at: Pos, radius: f32) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+        let span = |lo: f32, hi: f32, n: usize| {
+            let a = (lo / self.posting_m).floor().max(0.) as usize;
+            let b = ((hi / self.posting_m).ceil().max(0.) as usize + 1).min(n);
+            a.min(n)..b
+        };
+        let cols = span(at[0] - radius, at[0] + radius, self.cols);
+        let rows = span(
+            self.world_size_m[1] - at[1] - radius,
+            self.world_size_m[1] - at[1] + radius,
+            self.rows,
+        );
+        (rows, cols)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
     #[serde(default)]

@@ -76,6 +76,7 @@ impl Document {
     pub fn edit(&mut self, f: impl FnOnce(&mut Scenario) -> Result<()>) -> Result<()> {
         let mut next = (*self.scene).clone();
         f(&mut next)?;
+        flood_below_sea_level(&mut next);
         validate(&next)?;
         let push = match &mut self.stroke {
             Some(done) => !std::mem::replace(done, true),
@@ -171,8 +172,9 @@ impl Document {
             }
             // Keep authored high-resolution geometry consistent with physics.
             if let (Some(t), Some(h)) = (&mut s.render_terrain, elevation) {
-                for row in 0..t.rows {
-                    for col in 0..t.cols {
+                let (rows, cols) = t.footprint(at, radius);
+                for row in rows {
+                    for col in cols.clone() {
                         let p = [
                             col as f32 * t.posting_m,
                             t.world_size_m[1] - row as f32 * t.posting_m,
@@ -206,8 +208,9 @@ impl Document {
                 }
             }
             if let Some(t) = &mut s.render_terrain {
-                for row in 0..t.rows {
-                    for col in 0..t.cols {
+                let (rows, cols) = t.footprint(at, radius);
+                for row in rows {
+                    for col in cols.clone() {
                         let p = [
                             col as f32 * t.posting_m,
                             t.world_size_m[1] - row as f32 * t.posting_m,
@@ -226,6 +229,7 @@ impl Document {
         let mut selected = Selection::Building(0);
         self.edit(|s| {
             ensure!(inside(s, at), "Punto fuori mappa");
+            ensure!(!underwater(s, at), "Punto sott'acqua");
             ensure!(
                 spec.size.iter().all(|v| v.is_finite() && *v >= 3.) && spec.rotation_deg.is_finite(),
                 "Dimensioni o rotazione non valide"
@@ -289,6 +293,7 @@ impl Document {
                     Selection::Road(s.roads.len() - 1)
                 }
                 "ignition" => {
+                    ensure!(!underwater(s, at), "Punto sott'acqua");
                     s.initial_ignitions.push(IgnitionSpec { at, radius_m: 40. });
                     Selection::Ignition(s.initial_ignitions.len() - 1)
                 }
@@ -349,6 +354,34 @@ impl Document {
             Ok(())
         })
     }
+}
+/// Ground at or below this elevation (m) is water.
+pub const SEA_LEVEL_M: f32 = 0.0;
+
+/// Fuel code of cells that are water: the scenario's non-burnable fuel
+/// (legacy table: non-vegetated).
+fn water_fuel(s: &Scenario) -> Option<i32> {
+    if s.fuel_definitions.is_empty() {
+        return Some(fuel::NON_VEGETATED);
+    }
+    let named = |f: &&FuelDefinition| {
+        let n = f.name.to_lowercase();
+        n.contains("water") || n.contains("acqua")
+    };
+    let inert = || s.fuel_definitions.iter().filter(|f| !f.burn);
+    inert().find(named).or_else(|| inert().next()).map(|f| f.id)
+}
+/// Cells below sea level are lakes or sea: they cannot carry vegetation or fire.
+pub fn flood_below_sea_level(s: &mut Scenario) {
+    let Some(water) = water_fuel(s) else { return };
+    for (fuel, dem) in s.fuel.iter_mut().zip(&s.dem) {
+        if *dem < SEA_LEVEL_M {
+            *fuel = water;
+        }
+    }
+}
+pub fn underwater(s: &Scenario, p: Pos) -> bool {
+    s.cell_of(p).is_some_and(|c| s.elevation_at(c) < SEA_LEVEL_M)
 }
 pub fn distance(a: Pos, b: Pos) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()

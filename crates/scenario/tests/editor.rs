@@ -104,3 +104,26 @@ fn buildings_have_variants_rotation_and_places_reference_them() {
     d.delete(Selection::Building(i)).unwrap();
     assert!(d.scene.places[p].buildings.is_empty(), "deleting a building drops the reference");
 }
+
+#[test]
+fn ground_below_sea_level_floods_and_cannot_be_repainted_or_built_on() {
+    use scenario::editor::{blank, underwater, BuildingSpec};
+    let mut d = Document::new(blank("lake", 16, 20.).unwrap()).unwrap();
+    let at = [160., 160.];
+    d.brush(at, 60., None, Some(5)).unwrap();
+    d.brush(at, 60., Some(-8.), None).unwrap();
+    let c = d.scene.cell_of(at).unwrap();
+    assert!(underwater(&d.scene, at));
+    assert!(!d.scene.is_burnable(c), "lake cells do not burn");
+    // Painting vegetation on the lake bed is inert; dry ground stays paintable.
+    d.brush(at, 60., None, Some(5)).unwrap();
+    assert!(!d.scene.is_burnable(c));
+    d.brush([40., 40.], 20., None, Some(5)).unwrap();
+    assert!(d.scene.is_burnable(d.scene.cell_of([40., 40.]).unwrap()));
+    assert!(d.add_building(at, BuildingSpec::default()).is_err());
+    assert!(d.add("ignition", at, None).is_err());
+    // Raising the bed above sea level makes an island that can be planted again.
+    d.brush(at, 60., Some(5.), None).unwrap();
+    d.brush(at, 60., None, Some(5)).unwrap();
+    assert!(d.scene.is_burnable(c));
+}

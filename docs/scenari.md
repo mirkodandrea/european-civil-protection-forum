@@ -99,6 +99,14 @@ Strumenti:
   L'intensità è in m/s. Un tratto di pennello è un solo passo di annulla.
 - **Vegetazione (pennello):** stessa logica, tenendo premuto si dipinge il
   combustibile scelto.
+- **Acqua:** il terreno sotto 0 m s'allaga da solo: nel 3D compare una
+  superficie d'acqua a quota 0 e le celle diventano non combustibili (il
+  combustibile non bruciabile dello scenario), quindi senza vegetazione né
+  fuoco. Dipingere vegetazione sul fondo non ha effetto; edifici e inneschi
+  non si possono posizionare sott'acqua. Per fare un lago basta abbassare la
+  quota sotto zero (o «Livella» a un valore negativo), per un'isola rialzare
+  il fondo sopra zero al centro. Le celle riportate sopra lo zero restano
+  non vegetate finché non si ridipingono.
 - **Raggio del pennello:** rotella del mouse (10–1000 m); Ctrl/Cmd + rotella
   per lo zoom. Con un pennello attivo il tasto sinistro non sposta la vista
   (usare il tasto destro per ruotare, il centrale per spostare).
@@ -124,7 +132,10 @@ Annulla/ripristina conserva fino a 32 revisioni della bozza. Una modifica non
 valida lascia intatti documento e cronologia. I pennelli di quota aggiornano
 anche l’eventuale terreno visuale ad alta risoluzione. Ogni modifica confermata
 ricostruisce la scena in sola lettura, preservando la camera a parità di griglia;
-l’authoring di territori grandi può quindi richiedere un’attesa.
+l’authoring di territori grandi può quindi richiedere un’attesa. Durante un tratto
+di pennello la bozza si aggiorna a ogni passo ma la scena 3D viene ricostruita solo
+ogni qualche decimo di secondo (a un multiplo del costo dell’ultima ricostruzione)
+e a fine tratto; nel frattempo i tocchi sono mostrati come cerchi.
 
 Salvataggio nativo: `<scenarios-dir>/<id>.json`, con sostituzione atomica.
 Un ID già usato da un pack richiede un nuovo identificativo. Salvataggio web:

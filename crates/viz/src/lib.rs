@@ -242,8 +242,27 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
 #[derive(Resource)]
 pub struct Source(Mutex<Box<dyn ViewSource>>);
 
+/// When the scene was last rebuilt and what it cost, to pace rebuilds while the
+/// editor is painting (each one reconstructs terrain, textures and vegetation).
+#[derive(Resource, Default)]
+struct SceneBuild {
+    at: Option<bevy::utils::Instant>,
+    cost: std::time::Duration,
+}
+
 /// Rebuild only presentation entities. The source owns the exercise and all physics.
 fn replace_scene(world: &mut World) {
+    // During a brush stroke the draft changes every tick; rebuilding at that
+    // rate stalls the frame. Preview at most every ~4x the last rebuild cost
+    // (the stroke's end always rebuilds, since stroking is then false).
+    if world.get_resource::<editor::Editor>().is_some_and(|e| e.stroking()) {
+        let build = world.get_resource_or_insert_with(SceneBuild::default);
+        let wait = (build.cost * 4).max(std::time::Duration::from_millis(400));
+        if build.at.is_some_and(|at| at.elapsed() < wait) {
+            return;
+        }
+    }
+    let started = bevy::utils::Instant::now();
     let current = world.resource::<Scn>().0.clone();
     let next = world
         .resource::<Source>()
@@ -287,6 +306,9 @@ fn replace_scene(world: &mut World) {
     if let Some(orbit) = orbit {
         world.insert_resource(orbit);
     }
+    let mut build = world.get_resource_or_insert_with(SceneBuild::default);
+    build.at = Some(bevy::utils::Instant::now());
+    build.cost = started.elapsed();
 }
 
 /// Copy the newest view into the [`Snapshot`] whenever the model has changed
