@@ -956,9 +956,13 @@ impl Component for App {
             self.name(&self.own)
         };
         let phase = text(&self.state["phase"]);
+        // Before the exercise starts, EXCON gets only the start control, Scenario and Controllo.
+        let gated = self.is_master() && !self.is_evaluator() && phase == "briefing";
+        let open_before_start = |id: &str| !gated || matches!(id, "map" | "scenario");
         let nav = |id: &str, label: &str| {
             let id = id.to_string();
             let active = self.active == id;
+            let disabled = !open_before_start(&id);
             let unread = if id == "chat" && !self.is_master() {
                 self.chat_unread()
             } else if id == "map" && !self.is_master() && !self.is_evaluator() {
@@ -968,7 +972,7 @@ impl Component for App {
             } else {
                 0
             };
-            html! {<button class={if active{"active"}else{""}} data-view={id.clone()} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}if unread>0{<span class="unread" data-chat-unread="true">{unread}</span>}</button>}
+            html! {<button class={if active{"active"}else{""}} data-view={id.clone()} disabled={disabled} onclick={ctx.link().callback(move |_|Msg::View(id.clone()))}>{label}if unread>0{<span class="unread" data-chat-unread="true">{unread}</span>}</button>}
         };
         let l = self.lang();
         let l = l.as_str();
@@ -1002,6 +1006,7 @@ impl Component for App {
             <div id="error" class="error" role="alert">{&self.error}</div>
             if (self.page=="advanced"||self.active=="advanced"||(self.is_master()&&self.active=="map")||self.is_evaluator())&&!self.notice.is_empty(){<div class="notice" role="status">{&self.notice}</div>}
             if self.state.is_null(){<p class="page">{i18n::t(l,"loading")}</p>}
+            else if gated&&self.page!="advanced"&&!open_before_start(&self.active){<main class="page"><section class="card" id="excon-gate" role="status"><h2>{i18n::t(l,"awaiting_start")}</h2><p>{crate::i18n::ex("Le schermate di gestione si aprono all’avvio dell’esercitazione.")}</p></section></main>}
             else if self.is_evaluator(){<evaluator::Evaluator stat={self.stat.clone()} state={self.state.clone()} evidence={self.master.clone()} assessment={self.responses.get("assessment").cloned().unwrap_or_default()} busy={self.busy} action={self.action(ctx)} onfilter={ctx.link().callback(Msg::Filter)}/>}
             else if self.is_master()&&(self.page=="history"||self.active=="history"){<history::History master={self.master.clone()} roles={self.roles()}/> }
             else if self.page=="advanced"&&self.is_master(){<controllo::Controllo stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()} links={self.links.clone()} catalogue={self.catalogue.clone()} responses={self.responses.clone()} busy={self.busy} error={self.error.clone()} done={self.done} action={self.action(ctx)}/>}
