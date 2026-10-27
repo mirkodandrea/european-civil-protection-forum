@@ -56,3 +56,13 @@ these fields when editing/regenerating; RGB-only loading loses the PBR response.
 Use Blender in background mode with the generator to rebuild the assets.
 The TTX uses metre-authored meshes with presentation magnification. Physical
 allocations and movement remain in `sim`.
+
+## Vegetation varieties (2026-10-27)
+
+`scripts/build_vegetation_models.py` (Blender) bakes `vegetation.json` and the previews in `vegetation_preview/`
+(`overview_vivo.png`, `overview_bruciato.png`, one burn strip per variety; `-- fast` skips the strips).
+Fuel groups read by silhouette *and* colour: conifers (`pine_*`) are tiers of ragged cones in dark blue-green on
+red-brown bark (marittimo, umbrella, narrow fir, wind-bent Aleppo); broadleaves (`chestnut_*`) are lobed domes in
+light yellow-green on grey-brown bark (classic, tall oval, wide oak, coppice); olives are silvery grey-green;
+shrubs are the macchia clumps. Burnt state follows the game's foliage shader: the live half chars in place, the
+`remains` half holds the fine skeleton (conifers: stubs of boughs at each whorl) and the fallen limbs.

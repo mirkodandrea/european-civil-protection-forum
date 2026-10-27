@@ -38,14 +38,7 @@ pub struct VegChunk {
 /// Terrain mesh nodes: sampled rows, columns and positions. Visual DEM nodes
 /// may be finer than the model raster; fire state is sampled separately from
 /// the authoritative cell texture in the shader.
-fn terrain_grid(s: &Scenario, quality: &str) -> (Vec<usize>, Vec<usize>, Vec<[f32; 3]>) {
-    let stride = if quality == "low" {
-        4
-    } else if quality == "projector" {
-        2
-    } else {
-        1
-    };
+fn terrain_grid(s: &Scenario, stride: usize) -> (Vec<usize>, Vec<usize>, Vec<[f32; 3]>) {
     let g = s.grid;
     let (rows, cols) = s
         .render_terrain
@@ -87,8 +80,8 @@ pub(crate) fn reshape(world: &mut World, s: &Scenario) {
     let Some(mesh) = world.get_resource::<TerrainHandles>().map(|h| h.mesh.clone()) else {
         return;
     };
-    let quality = world.resource::<crate::quality::Quality>().name;
-    let (_, _, pos) = terrain_grid(s, quality);
+    let stride = world.resource::<crate::quality::Quality>().terrain_stride;
+    let (_, _, pos) = terrain_grid(s, stride);
     if let Some(m) = world.resource_mut::<Assets<Mesh>>().get_mut(&mesh) {
         if m.count_vertices() == pos.len() {
             m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
@@ -109,7 +102,7 @@ pub fn setup(
 ) {
     let s = &scn.0;
     let g = s.grid;
-    let (rr, cc, pos) = terrain_grid(s, quality.name);
+    let (rr, cc, pos) = terrain_grid(s, quality.terrain_stride);
     let base = vec![[1., 1., 1., 1.]; pos.len()];
     let mut idx = Vec::new();
     for row in 0..rr.len() - 1 {

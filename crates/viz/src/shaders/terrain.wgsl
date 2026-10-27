@@ -148,8 +148,16 @@ fn terrain_albedo(base: vec4<f32>, p: vec3<f32>, mask_s: vec4<f32>, meadow: f32,
         let past_blades = select(1.0, smoothstep(0.6 * terrain.mask_rect.w, terrain.mask_rect.w, d_eye), terrain.mask_rect.w > 0.5);
         let grain_k = cover * past_blades * (1.0 - smoothstep(20.0, 60.0, metres_per_px));
         if grain_k > 0.01 {
-            let wl = max(3.0 * metres_per_px, 1.0);
-            let g = (value_noise(wp / wl) - 0.5) * 0.8 + (value_noise(wp / (wl * 3.1) + 9.0) - 0.5) * 1.0;
+            // The wavelength steps in octaves and two neighbouring octaves
+            // are cross-faded: a continuously scaled noise slides across the
+            // ground as the camera zooms (it scales about the world origin);
+            // an octave pair stays put and only fades.
+            let lod = log2(max(3.0 * metres_per_px, 1.0));
+            let wl0 = exp2(floor(lod));
+            let lod_t = smoothstep(0.0, 1.0, fract(lod));
+            let g0 = (value_noise(wp / wl0) - 0.5) * 0.8 + (value_noise(wp / (wl0 * 3.1) + 9.0) - 0.5) * 1.0;
+            let g1 = (value_noise(wp / (wl0 * 2.0)) - 0.5) * 0.8 + (value_noise(wp / (wl0 * 6.2) + 9.0) - 0.5) * 1.0;
+            let g = mix(g0, g1, lod_t);
             let dry = smoothstep(-0.15, 0.25, g);
             let tint = mix(vec3<f32>(0.84, 0.97, 0.80), vec3<f32>(1.08, 1.02, 0.84), dry);
             rgb = rgb * mix(vec3<f32>(1.0), tint * (1.0 + 0.30 * g), grain_k);

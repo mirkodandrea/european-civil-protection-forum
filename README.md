@@ -129,8 +129,12 @@ the scenario and simulation crates.
 
 The updated operational model adds segment-local fire closures, terrain-aware
 travel and queue delays, and local execution policies inside an approved mission.
-The renderer defaults to a stable, readable projector profile (`TTX_QUALITY=projector`;
-also `low` and `high`). EXCON can compute private forecast drafts and publish reviewed
+The renderer defaults to a stable, readable projector profile. The graphics level
+(`low`, `projector`, `high`) is picked in the big-screen HUD or cycled with `Q`, applies
+live (shadows, cascades, MSAA/SMAA, bloom, fire lights; terrain mesh and plant density
+rebuild the scene) and is remembered in `~/.ttx/graphics.txt`. `TTX_QUALITY=` wins over
+the remembered level and `TTX_GFX=-bloom,msaa=1,shadow=1500,veg=0.3,stride=2` overrides
+single knobs. EXCON can compute private forecast drafts and publish reviewed
 products to selected roles. The implementation is in the simulation, exercise
 and visualization crates; snapshot tooling is under `scripts/`.
 

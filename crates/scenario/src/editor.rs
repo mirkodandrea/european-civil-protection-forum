@@ -456,6 +456,15 @@ pub fn validate(s: &Scenario) -> Result<()> {
     );
     Ok(())
 }
+/// "grassland - medium susceptibility" in the EU12 table.
+const EU12_GRASSLAND_MEDIUM: i32 = 2;
+
+/// The EU12 fuel table, as the Scenario Factory imports it into the shipped
+/// territories (`data/fuels_eu12.json` is the `fuel_definitions` of Selvariva).
+fn eu12_fuels() -> Vec<FuelDefinition> {
+    serde_json::from_str(include_str!("../data/fuels_eu12.json")).expect("the EU12 fuel table parses")
+}
+
 /// Empty, flat territory with no inherited scenario content.
 pub fn blank(id: &str, cells: usize, cellsize: f32) -> Result<Scenario> {
     ensure!(
@@ -485,7 +494,10 @@ pub fn blank(id: &str, cells: usize, cellsize: f32) -> Result<Scenario> {
     s.reinforcements.clear();
     s.operational_grants.clear();
     s.communication_sites.clear();
-    s.fuel_definitions.clear();
+    // The twelve EU12 classes (grass, broadleaves, shrubs, conifers at three
+    // susceptibilities) plus the non-vegetated ones, not the legacy seven.
+    s.fuel_definitions = eu12_fuels();
+    s.fuel = vec![EU12_GRASSLAND_MEDIUM; s.grid.len()];
     s.staging_base = None;
     let size = s.grid.width_m();
     s.sectors = vec![Sector {
@@ -505,6 +517,15 @@ pub fn blank(id: &str, cells: usize, cellsize: f32) -> Result<Scenario> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_new_scenario_has_the_twelve_eu12_classes() {
+        let s = blank("eu12", 8, 20.).unwrap();
+        let burnable = s.fuel_definitions.iter().filter(|f| f.burn).count();
+        assert_eq!(burnable, 12);
+        assert!(s.is_burnable(Cell { row: 0, col: 0 }));
+        assert!(s.fuel.iter().all(|f| s.fuel_definitions.iter().any(|d| d.id == *f)));
+    }
+
     #[test]
     fn author_roundtrip_history_and_atomic_errors() {
         let mut d = Document::new(blank("test", 32, 20.).unwrap()).unwrap();

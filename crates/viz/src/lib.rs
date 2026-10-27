@@ -40,6 +40,7 @@ mod models;
 mod night;
 mod objects;
 mod quality;
+mod quality_live;
 mod sky;
 mod sky_light;
 mod snapshot;
@@ -163,15 +164,12 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
         } else {
             bevy::time::TimeUpdateStrategy::Automatic
         })
-        .insert_resource(if quality.name == "low" {
-            Msaa::Off
-        } else {
-            Msaa::Sample4
-        })
+        .insert_resource(quality.msaa_mode())
         .insert_resource(bevy::pbr::DirectionalLightShadowMap {
-            size: if quality.name == "high" { 4096 } else { 2048 },
+            size: quality.shadow_map,
         })
         .insert_resource(quality)
+        .init_resource::<quality::Rebuild>()
         .insert_resource(ClearColor(camera::SKY))
         // Sky-tinted fill light; the sun does the modelling.
         .insert_resource(AmbientLight {
@@ -233,6 +231,7 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 snapshot::hold.after(camera::control).after(sync),
                 snapshot::capture.after(snapshot::hold),
                 terrain::lod,
+                quality_live::apply,
             ),
         )
         .run();
@@ -252,6 +251,11 @@ struct SceneBuild {
 /// Rebuild only presentation entities. The source owns the exercise and all physics.
 fn replace_scene(world: &mut World) {
     let current = world.resource::<Scn>().0.clone();
+    // A graphics level whose knobs are baked into the scene (terrain stride,
+    // plant density) was picked: build it again from the scenario in hand.
+    if world.get_resource_mut::<quality::Rebuild>().is_some_and(|mut r| std::mem::take(&mut r.0)) {
+        return replace_with(world, current.clone(), current);
+    }
     let polled = world
         .resource::<Source>()
         .0

@@ -37,6 +37,21 @@ PREVIEW.mkdir(parents=True, exist_ok=True)
 LEAF = (.19, .34, .095)
 LEAF2 = (.29, .43, .15)
 WOOD = (.20, .11, .045)
+# Conifers read as dark blue-green needles on red-brown bark; broadleaves as
+# light yellow-green foliage on grey-brown bark. The fuel is read from the
+# colour and the silhouette together.
+PINE = (.060, .180, .115)
+PINE2 = (.095, .245, .145)
+PINE_TIP = (.14, .31, .17)
+BARK_PINE = (.30, .15, .075)
+BROAD = (.30, .47, .12)
+BROAD2 = (.45, .60, .17)
+BROAD_D = (.20, .36, .09)
+BROAD_Y = (.55, .60, .16)
+BARK_BROAD = (.25, .20, .155)
+# olives: silvery grey-green, apart from the broadleaves
+OLIVE = (.36, .46, .27)
+OLIVE2 = (.50, .58, .38)
 CHAR = (.045, .038, .034)
 CHAR2 = (.11, .085, .07)
 ASH = (.45, .44, .41)
@@ -114,6 +129,40 @@ def disc(name, pos, rx, ry, h, color, rot=0.0):
     o.scale = (rx, ry, 1)
     o.rotation_euler = (0, 0, rot)
     return finish(o, name, 'debris', color)
+
+
+def tier(name, base, r, h, color, seed, sides=7, droop=.22, bend=(0, 0)):
+    """A conifer's whorl of boughs: an open cone, its skirt ragged (the ring
+    alternates up and down, each point pushed in or out) so the silhouette
+    shows tiers and points, never a smooth dome."""
+    bpy.ops.mesh.primitive_cone_add(vertices=sides, radius1=r, radius2=0, depth=h,
+                                    end_fill_type='NOTHING', location=(base[0], base[1], base[2] + h / 2))
+    o = bpy.context.object
+    k = seed * 5.77
+    for v in o.data.vertices:
+        if v.co.z < 0:
+            a = math.atan2(v.co.y, v.co.x)
+            f = 1 + .22 * math.sin(k + a * 3.0) + .10 * math.sin(k * 2 + a * 5.0)
+            v.co.x *= f
+            v.co.y *= f
+            v.co.z += h * droop * (math.sin(k + a * 2.0 + seed) - .3)
+        else:
+            v.co.x += bend[0]
+            v.co.y += bend[1]
+    return finish(o, name, 'leaf', color)
+
+
+def conifer_skeleton(axis, tiers, seed=0):
+    """What a burnt conifer keeps: the leader and, at each whorl, a few stubs
+    of boughs that stay inside the needles until these are gone."""
+    rng = random.Random(seed)
+    for base, r, h, _col in tiers:
+        cx = base[0] + (axis[0] - base[0]) * .0
+        for i in range(3):
+            a = i * math.tau / 3 + rng.uniform(-.5, .5) + base[2] * 9
+            root = (axis[0] + (base[0] - axis[0]) * .5, axis[1] + (base[1] - axis[1]) * .5, base[2] + h * .42)
+            end = (base[0] + math.cos(a) * r * .74, base[1] + math.sin(a) * r * .74, base[2] + h * .10)
+            rod('Bough', root, end, .014, .005, CHAR2 if i % 2 else CHAR, 'skel', 3)
 
 
 # --- shared structure ---------------------------------------------------------
@@ -216,11 +265,22 @@ def variety(species, name, text):
     return deco
 
 
-def umbrella(trunks, pads, limbs=(), fallen=None, twigs=5, seed=0, ash=.5):
+def conifer(trunks, tiers, limbs=(), fallen=None, seed=0, bark=BARK_PINE, sides=7):
     for pts, r0, r1 in trunks:
-        poly('Trunk', pts, r0, r1, 4)
+        poly('Trunk', pts, r0, r1, 4, bark)
     for pts, r0, r1 in limbs:
-        poly('Limb', pts, r0, r1, 4)
+        poly('Limb', pts, r0, r1, 4, bark)
+    for i, (base, r, h, col) in enumerate(tiers):
+        tier('Needles', base, r, h, col, 3 + i + seed, sides)
+    conifer_skeleton(trunks[0][0][-1], tiers, seed)
+    debris(.5, fallen, seed)
+
+
+def umbrella(trunks, pads, limbs=(), fallen=None, twigs=5, seed=0, ash=.5, bark=WOOD):
+    for pts, r0, r1 in trunks:
+        poly('Trunk', pts, r0, r1, 4, bark)
+    for pts, r0, r1 in limbs:
+        poly('Limb', pts, r0, r1, 4, bark)
     for i, (pos, size, col) in enumerate(pads):
         blob('Pad', pos, size, col, 7 + i, .12, .3)
     wood = [t[0] for t in trunks] + [l[0] for l in limbs]
@@ -228,65 +288,69 @@ def umbrella(trunks, pads, limbs=(), fallen=None, twigs=5, seed=0, ash=.5):
     debris(ash, fallen, seed)
 
 
-@variety('pine', 'pine_1', 'Classico: tronco inclinato e ombrello a tre cuscini.')
+@variety('pine', 'pine_1', 'Pino marittimo: fusto dritto e nudo in basso, tre palchi di rami sovrapposti.')
 def pine_1():
-    umbrella([([(0, 0, 0), (.07, .02, .82)], .038, .02)],
-             [((.08, .02, .88), (.36, .32, .09), LEAF), ((.26, .10, .80), (.20, .17, .07), LEAF2), ((-.15, .08, .92), (.22, .19, .07), LEAF2)], seed=1)
+    conifer([([(0, 0, 0), (.02, 0, .40), (.03, .01, .80)], .040, .014)],
+            [((.02, 0, .34), .30, .30, PINE), ((.03, .01, .52), .24, .28, PINE2), ((.03, .01, .70), .17, .26, PINE), ((.03, .01, .86), .09, .20, PINE_TIP)],
+            seed=1)
 
 
-@variety('pine', 'pine_2', 'Gemello: due fusti che partono dalla stessa base.')
+@variety('pine', 'pine_2', 'Pino domestico: ombrello piatto di aghi su un fusto rosso e due rami.')
 def pine_2():
-    umbrella([([(0, 0, 0), (.02, 0, .30)], .045, .035)],
-             [((.18, .05, .86), (.30, .27, .08), LEAF), ((.34, .10, .78), (.16, .14, .06), LEAF2),
-              ((-.17, -.05, .80), (.26, .23, .08), LEAF2), ((-.32, -.10, .72), (.14, .12, .055), LEAF)],
-             limbs=[([(.02, 0, .30), (.16, .04, .80)], .03, .016), ([(.02, 0, .30), (-.14, -.04, .74)], .026, .014)],
-             fallen=((.2, -.2, .03), (.62, -.34, .035), .026), seed=2)
+    conifer([([(0, 0, 0), (.02, 0, .46), (.04, 0, .62)], .050, .028)],
+            [((.04, 0, .58), .46, .15, PINE, ), ((.28, .10, .50), .22, .12, PINE2), ((-.24, -.08, .54), .24, .13, PINE2), ((.02, .0, .70), .20, .12, PINE_TIP)],
+            limbs=[([(.03, 0, .46), (.28, .10, .52)], .026, .012), ([(.03, 0, .50), (-.24, -.08, .55)], .024, .012)],
+            fallen=((.2, -.2, .03), (.62, -.34, .035), .026), seed=2, sides=8)
 
 
-@variety('pine', 'pine_3', 'Slanciato: fusto alto e ombrello stretto, un ramo basso.')
+@variety('pine', 'pine_3', 'Abete slanciato: colonna stretta di cinque palchi, cima a punta.')
 def pine_3():
-    umbrella([([(0, 0, 0), (.03, .01, .5), (.06, .02, .90)], .03, .016)],
-             [((.07, .02, .94), (.26, .23, .075), LEAF), ((.20, .08, .88), (.15, .13, .055), LEAF2),
-              ((-.10, .05, .90), (.16, .14, .055), LEAF2), ((-.17, -.05, .68), (.14, .12, .05), LEAF)],
-             limbs=[([(.035, .011, .56), (-.12, -.04, .64)], .012, .007)], seed=3, ash=.4)
+    conifer([([(0, 0, 0), (0, 0, .50), (0, 0, 1.0)], .030, .010)],
+            [((0, 0, .16), .19, .26, PINE), ((0, 0, .32), .16, .26, PINE2), ((0, 0, .48), .135, .25, PINE),
+             ((0, 0, .64), .105, .24, PINE2), ((0, 0, .79), .07, .21, PINE_TIP)],
+            seed=3, sides=6)
 
 
-@variety('pine', 'pine_4', 'Piegato dal vento: fusto curvo e chioma spostata sottovento.')
+@variety('pine', 'pine_4', 'Pino d\'Aleppo piegato dal vento: fusto curvo e chioma spostata sottovento.')
 def pine_4():
-    umbrella([([(0, 0, 0), (-.05, 0, .30), (.04, .03, .62), (.20, .07, .78)], .042, .02)],
-             [((.26, .08, .84), (.34, .28, .08), LEAF), ((.46, .14, .78), (.20, .16, .06), LEAF2), ((.10, .14, .86), (.18, .15, .06), LEAF2)],
-             fallen=((-.1, .2, .03), (-.5, .38, .035), .024), seed=4)
+    conifer([([(0, 0, 0), (-.04, 0, .30), (.05, .03, .60), (.22, .07, .80)], .042, .014)],
+            [((.04, .02, .42), .26, .24, PINE, ), ((.14, .05, .58), .22, .24, PINE2), ((.22, .07, .74), .15, .22, PINE),
+             ((.30, .09, .86), .08, .16, PINE_TIP)],
+            fallen=((-.1, .2, .03), (-.5, .38, .035), .024), seed=4)
 
 
-@variety('chestnut', 'chestnut_1', 'Classico: tronco tozzo e chioma tonda a lobi.')
+@variety('chestnut', 'chestnut_1', 'Castagno classico: tronco che si biforca e chioma tonda a cinque lobi.')
 def chestnut_1():
-    umbrella([([(0, 0, 0), (0, 0, .40)], .08, .05)],
-             [((0, 0, .66), (.46, .44, .34), LEAF2), ((.30, .16, .56), (.30, .28, .24), LEAF), ((-.28, -.18, .60), (.30, .28, .25), LEAF)],
-             seed=5, ash=.6, twigs=6)
+    umbrella([([(0, 0, 0), (0, 0, .34)], .085, .055)],
+             [((0, 0, .70), (.40, .38, .30), BROAD2), ((.30, .14, .56), (.27, .25, .22), BROAD), ((-.28, -.14, .58), (.28, .26, .23), BROAD_D),
+              ((.04, .28, .64), (.24, .22, .20), BROAD), ((-.10, -.26, .70), (.22, .2, .19), BROAD2)],
+             limbs=[([(0, 0, .30), (.24, .12, .52)], .04, .02), ([(0, 0, .30), (-.22, -.10, .54)], .04, .02)],
+             seed=5, ash=.6, twigs=3, bark=BARK_BROAD)
 
 
-@variety('chestnut', 'chestnut_2', 'Alto: tronco lungo e chioma raccolta.')
+@variety('chestnut', 'chestnut_2', 'Latifoglia alta: chioma ovale a quattro piani, fusto lungo.')
 def chestnut_2():
     umbrella([([(0, 0, 0), (.02, 0, .50)], .07, .045)],
-             [((.02, 0, .72), (.34, .33, .28), LEAF2), ((.22, .12, .64), (.24, .22, .22), LEAF),
-              ((-.20, -.12, .68), (.24, .22, .22), LEAF), ((0, .02, .84), (.20, .19, .14), LEAF2)],
-             fallen=((.1, .1, .03), (.56, .3, .035), .03), seed=6, ash=.5, twigs=6)
+             [((.02, 0, .60), (.28, .27, .22), BROAD_D), ((.02, 0, .78), (.30, .29, .22), BROAD2),
+              ((.10, .06, .94), (.22, .21, .18), BROAD), ((-.08, -.06, .70), (.22, .2, .17), BROAD)],
+             fallen=((.1, .1, .03), (.56, .3, .035), .03), seed=6, ash=.5, twigs=3, bark=BARK_BROAD)
 
 
-@variety('chestnut', 'chestnut_3', 'Largo e basso: chioma ampia su un fusto corto.')
+@variety('chestnut', 'chestnut_3', 'Quercia larga: cupola bassa e ampia su un fusto corto e tozzo.')
 def chestnut_3():
-    umbrella([([(0, 0, 0), (0, 0, .26)], .10, .07)],
-             [((0, 0, .50), (.58, .52, .28), LEAF2), ((.40, .20, .42), (.34, .30, .20), LEAF),
-              ((-.36, -.22, .44), (.34, .30, .21), LEAF), ((0, .38, .40), (.28, .26, .18), LEAF2)],
-             seed=7, ash=.7, twigs=6)
+    umbrella([([(0, 0, 0), (0, 0, .24)], .11, .075)],
+             [((0, 0, .46), (.62, .56, .26), BROAD), ((.44, .22, .40), (.30, .27, .20), BROAD2),
+              ((-.42, -.20, .42), (.32, .28, .21), BROAD_D), ((.02, .42, .40), (.28, .25, .18), BROAD2)],
+             limbs=[([(0, 0, .22), (.38, .20, .40)], .045, .02), ([(0, 0, .22), (-.36, -.18, .42)], .045, .02)],
+             seed=7, ash=.7, twigs=3, bark=BARK_BROAD)
 
 
-@variety('chestnut', 'chestnut_4', 'Ceduo: tre polloni che si aprono dalla ceppaia.')
+@variety('chestnut', 'chestnut_4', 'Ceduo: tre polloni che si aprono dalla ceppaia, chioma gialla e rada.')
 def chestnut_4():
     umbrella([([(0, 0, 0), (.12, .03, .36)], .05, .03), ([(0, 0, 0), (-.10, .06, .40)], .045, .028), ([(0, 0, 0), (-.02, -.12, .34)], .04, .025)],
-             [((.16, .04, .62), (.30, .28, .26), LEAF2), ((-.16, .08, .68), (.28, .26, .25), LEAF),
-              ((-.04, -.17, .58), (.26, .24, .22), LEAF2), ((0, 0, .80), (.20, .19, .15), LEAF)],
-             seed=8, ash=.55, twigs=5)
+             [((.16, .04, .62), (.28, .26, .24), BROAD_Y), ((-.16, .08, .68), (.26, .24, .23), BROAD2),
+              ((-.04, -.17, .58), (.25, .23, .21), BROAD_Y), ((0, 0, .82), (.19, .18, .14), BROAD)],
+             seed=8, ash=.55, twigs=3, bark=BARK_BROAD)
 
 
 def clump(blobs, skeleton_seed, ash, stems=6, fallen=None):
@@ -322,25 +386,25 @@ def bush_4():
 @variety('olive', 'olive_1', 'Classico: tronco nodoso e tre cime argentate.')
 def olive_1():
     umbrella([([(0, 0, 0), (.06, 0, .46)], .07, .035)],
-             [((.06, 0, .62), (.40, .36, .25), LEAF2), ((.28, .10, .52), (.26, .24, .19), LEAF), ((-.20, -.12, .56), (.26, .24, .20), LEAF)],
+             [((.06, 0, .62), (.40, .36, .25), OLIVE2), ((.28, .10, .52), (.26, .24, .19), OLIVE), ((-.20, -.12, .56), (.26, .24, .20), OLIVE)],
              seed=15, ash=.5)
 
 
 @variety('olive', 'olive_2', 'Contorto: tronco a S con un grosso ramo laterale.')
 def olive_2():
     umbrella([([(0, 0, 0), (-.06, .04, .20), (.04, 0, .42)], .08, .04)],
-             [((.06, 0, .62), (.34, .30, .22), LEAF2), ((.30, .14, .58), (.24, .22, .18), LEAF), ((-.16, .10, .60), (.24, .22, .18), LEAF)],
+             [((.06, 0, .62), (.34, .30, .22), OLIVE2), ((.30, .14, .58), (.24, .22, .18), OLIVE), ((-.16, .10, .60), (.24, .22, .18), OLIVE)],
              limbs=[([(0, .02, .34), (.26, .12, .50)], .03, .016)], fallen=((.1, -.2, .03), (.5, -.3, .035), .024), seed=16, ash=.5)
 
 
 @variety('olive', 'olive_3', 'Vecchio a due fusti: ceppaia divisa in due.')
 def olive_3():
     umbrella([([(0, 0, 0), (-.07, 0, .44)], .06, .032), ([(0, 0, 0), (.12, .04, .38)], .055, .03)],
-             [((-.08, 0, .62), (.30, .28, .21), LEAF2), ((.16, .05, .55), (.28, .26, .20), LEAF), ((0, -.12, .66), (.22, .20, .17), LEAF2)],
+             [((-.08, 0, .62), (.30, .28, .21), OLIVE2), ((.16, .05, .55), (.28, .26, .20), OLIVE), ((0, -.12, .66), (.22, .20, .17), OLIVE2)],
              seed=17, ash=.5)
 
 
-SPECIES = [('pine', 'Pino marittimo', 'conifere'), ('chestnut', 'Castagno', 'latifoglie'), ('bush', 'Macchia', 'arbusti'), ('olive', 'Ulivo', 'alberi isolati nei prati')]
+SPECIES = [('pine', 'Conifere', 'aghi blu-verdi in palchi conici'), ('chestnut', 'Latifoglie', 'chiome tonde verde-giallo'), ('bush', 'Macchia', 'arbusti'), ('olive', 'Ulivo', 'alberi isolati nei prati')]
 
 
 # --- build / export -----------------------------------------------------------
@@ -657,9 +721,12 @@ figure{{margin:0 0 18px}} figcaption{{padding:6px 2px;color:var(--mut)}} figcapt
 
 
 if __name__ == '__main__':
+    import sys
+    # `-- fast` skips the per-variety burn strips (minutes of rendering)
+    fast = 'fast' in sys.argv
     reset_scene()
     export()
-    for name in VARIETIES:
+    for name in ([] if fast else VARIETIES):
         strip(name)
     overview(0.0, PREVIEW / 'overview_vivo.png')
     overview(1.0, PREVIEW / 'overview_bruciato.png')

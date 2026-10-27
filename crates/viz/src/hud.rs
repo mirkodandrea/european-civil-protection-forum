@@ -20,6 +20,12 @@ fn local_ip() -> String {
         .unwrap_or_else(|_| "localhost".into())
 }
 
+/// Pick a graphics level: applied live, remembered for the next launch.
+fn set_level(quality: &mut crate::quality::Quality, level: &str) {
+    *quality = crate::quality::Quality::preset(level);
+    crate::quality::save(level);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut ctx: EguiContexts,
@@ -29,7 +35,7 @@ pub fn draw(
     scn: Res<Scn>,
     info: Res<Info>,
     grid: Res<ShowGrid>,
-    quality: Res<crate::quality::Quality>,
+    mut quality: ResMut<crate::quality::Quality>,
     fire_style: Res<crate::fire_field::FirePresentation>,
     keys: Res<ButtonInput<KeyCode>>,
     cam: Query<(&Camera, &GlobalTransform)>,
@@ -53,6 +59,10 @@ pub fn draw(
         show_labels.get_or_insert_with(|| std::env::var("TTX_MAP_LABELS").as_deref() == Ok("1"));
     if keys.just_pressed(KeyCode::KeyL) {
         *show_labels = !*show_labels;
+    }
+    if keys.just_pressed(KeyCode::KeyQ) {
+        let next = quality.next_level();
+        set_level(&mut quality, next);
     }
     let ctx = ctx.ctx_mut();
     let fire_caption = format!(
@@ -212,7 +222,15 @@ pub fn draw(
         let remaining=(task.arrival_s-snap.time_s).max(0);
         ui.label(RichText::new(format!("#{} {} ×{} · {:?}{}",task.id,task.resource,task.qty,task.status,if task.status==view::TaskStatus::EnRoute {format!(" · ETA {remaining}s")}else{String::new()})).color(Color32::WHITE));
        }
-       ui.label(RichText::new(format!("Quality: {} · orange travelling/refilling/withdrawing · cyan working · green complete · red failed", quality.name)).color(Color32::from_rgb(195, 205, 215)).size(11.0));
+       ui.label(RichText::new("orange travelling/refilling/withdrawing · cyan working · green complete · red failed").color(Color32::from_rgb(195, 205, 215)).size(11.0));
+       ui.horizontal(|ui| {
+        ui.label(RichText::new("Graphics (Q)").color(Color32::from_rgb(195, 205, 215)).size(11.0));
+        for level in crate::quality::LEVELS {
+         if ui.selectable_label(quality.name == level, level).clicked() && quality.name != level {
+          set_level(&mut quality, level);
+         }
+        }
+       });
       });
     });
     // Map labels are optional because they can obscure the scene at overview scale.

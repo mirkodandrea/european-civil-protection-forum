@@ -319,7 +319,7 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality:
             ),
         },
     ));
-    if quality.name == "low" && !cfg!(target_arch = "wasm32") {
+    if quality.smaa && !cfg!(target_arch = "wasm32") {
         camera.insert(bevy::core_pipeline::smaa::SmaaSettings {
             preset: bevy::core_pipeline::smaa::SmaaPreset::Medium,
         });
@@ -335,9 +335,9 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality:
             },
             transform: Transform::from_xyz(-1.4, 0.55, 0.5).looking_at(Vec3::ZERO, Vec3::Y),
             cascade_shadow_config: CascadeShadowConfigBuilder {
-                num_cascades: 4,
+                num_cascades: quality.cascades,
                 minimum_distance: 0.1,
-                maximum_distance: 6000.0,
+                maximum_distance: quality.shadow_distance,
                 first_cascade_far_bound: 300.0,
                 overlap_proportion: 0.2,
             }
@@ -346,7 +346,8 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality:
         },
         crate::sky::Sun,
     ));
-    for k in 0..quality.fire_lights.min(FIRE_LIGHTS) {
+    // all of them: the level only decides how many are lit (`fire_lights`)
+    for k in 0..FIRE_LIGHTS {
         commands.spawn((
             PointLightBundle {
                 point_light: PointLight {
@@ -598,6 +599,7 @@ pub fn fire_lights(
     snap: Res<Snapshot>,
     frame: Res<Frame>,
     time: Res<Time>,
+    quality: Res<crate::quality::Quality>,
     mut lights: Query<(&FireLight, &mut PointLight, &mut Transform)>,
 ) {
     let s = &scn.0;
@@ -627,7 +629,7 @@ pub fn fire_lights(
     order.sort_by(|a, b| heat[*b].partial_cmp(&heat[*a]).unwrap());
     let t = time.elapsed_seconds();
     for (light, mut pl, mut tf) in lights.iter_mut() {
-        match order.get(light.0) {
+        match order.get(light.0).filter(|_| light.0 < quality.fire_lights) {
             Some(&b) => {
                 let p = [sum[b][0] / heat[b], sum[b][1] / heat[b]];
                 tf.translation = to_bevy(s, p, 25.0);
