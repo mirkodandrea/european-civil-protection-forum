@@ -108,6 +108,10 @@ impl App {
             let action = self.chat_action();
             Callback::from(move |e: SubmitEvent| {
                 e.prevent_default();
+                // Buttons of the action forms inside the composer must not send the inject.
+                if e.submitter().is_some_and(|b| b.id() != "send") {
+                    return;
+                }
                 if let Some(a) = action.clone() {
                     link.send_message(Msg::Action(a));
                 }
@@ -133,6 +137,14 @@ impl App {
                 <div class="inject-compose-row"><label>{crate::i18n::ex("Destinatari")}</label><select key={format!("scope:{selected}:{}",draft.scope)} id="inject-scope" value={draft.scope.clone()} onchange={select("draft:scope")}><option value="conversation" selected={draft.scope=="conversation"}>{if selected=="all"{crate::i18n::ex("Tutti i player").to_string()}else{crate::exfmt!("Solo {}","Only {}",self.name(&selected))}}</option><option value="custom" selected={draft.scope=="custom"}>{crate::i18n::ex("Scegli i destinatari…")}</option>if !draft.template.is_empty(){<option value="scenario" selected={draft.scope=="scenario"}>{crate::i18n::ex("Destinatari dello scenario")}</option>}</select></div>
                 if draft.scope=="custom"{<fieldset class="inject-compose-row ctl-multi">{for list(&self.stat["roles"]).iter().map(|r|{let id=text(&r["id"]).to_string();let chosen:Vec<String>=draft.recipients.split(',').filter(|k|!k.is_empty()).map(String::from).collect();let on=chosen.contains(&id);let link=ctx.link().clone();let id2=id.clone();html!{<label class="mt-check"><input type="checkbox" checked={on} onchange={Callback::from(move|_|{let mut next:Vec<String>=chosen.iter().filter(|c|**c!=id2).cloned().collect();if !on{next.push(id2.clone())};link.send_message(Msg::Field("draft:recipients".into(),next.join(",")))})}/>{text(&r["name"]).to_string()}</label>}})}</fieldset>}
                 <p class="muted">{crate::i18n::ex("Il player risponde dalla vista di lavoro; la proposta appare nella timeline per l’approvazione. L’invio dell’inject non cambia la fisica.")}</p>
+                if draft.template.is_empty()||draft.scope!="scenario"{<div class="composer-actions" onkeydown={Callback::from(|e:KeyboardEvent|{
+                    // Enter in a field of the action form must not send the inject.
+                    if e.key()=="Enter"&&e.target_dyn_into::<web_sys::HtmlTextAreaElement>().is_none(){e.prevent_default();}
+                })}>
+                    <crate::action_form::ActionList actions={draft.actions.clone()} onchange={ctx.link().callback(|v:Vec<scenario::InjectAction>|Msg::Field("draft:actions".into(),serde_json::to_string(&v).unwrap_or_default()))}
+                        allow_pre=false prefix="C" common={crate::controllo::CommonProps{stat:self.stat.clone(),state:self.state.clone(),master:self.master.clone(),responses:self.responses.clone(),busy:self.busy,error:self.error.clone().into(),done:self.done,action:self.action(ctx),onclose:Callback::noop()}}
+                        weather={{let w=&self.state["world"]["weather"];(w["wind_dir_deg"].as_f64().unwrap_or(0.),w["wind_speed_kmh"].as_f64().unwrap_or(10.),w["moisture_pct"].as_f64().unwrap_or(10.))}}/>
+                </div>}
             </div></div>}
             if self.busy{<div class="activity" role="status" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>{&self.notice}</span></div>}
                 if let Some(quoted)=reply_quote {<div class="chat-reply-composer" data-reply-preview={quoted["id"].to_string()}><div><b>{i18n::tf(l,"replying_to",&[&self.name(text(&quoted["from"]))])}</b><p>{chat_excerpt(reply_text(quoted,text(&quoted["from"])==own.as_str()))}</p></div><button type="button" class="chat-reply-cancel" aria-label={i18n::t(l,"cancel_reply")} onclick={ctx.link().callback(|_|Msg::CancelChatReply)}>{i18n::t(l,"cancel_reply")}</button></div>}
@@ -228,7 +240,7 @@ impl App {
             } else {
                 action.path = "/api/master/inject".into();
                 action.body = Some(
-                    json!({"title":draft.title.trim(),"sender":draft.sender.trim(),"text":message,"recipients":if scenario{template.unwrap()["recipients"].clone()}else if draft.scope=="custom"{json!(draft.recipients.split(',').filter(|k|!k.is_empty()).collect::<Vec<_>>())}else{json!([to])}}),
+                    json!({"title":draft.title.trim(),"sender":draft.sender.trim(),"text":message,"actions":draft.actions,"recipients":if scenario{template.unwrap()["recipients"].clone()}else if draft.scope=="custom"{json!(draft.recipients.split(',').filter(|k|!k.is_empty()).collect::<Vec<_>>())}else{json!([to])}}),
                 );
             }
         }

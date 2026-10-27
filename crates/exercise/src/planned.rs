@@ -9,7 +9,7 @@ impl Exercise {
     /// schedule if any, then the scenario's own `at_s`, otherwise the start of
     /// its suggested turn, counted with the scenario's turn length (not the
     /// live one, which EXCON may change without moving the plan).
-    fn planned_due_s(&self, id: &str, turn: u32, at_s: Option<i64>) -> i64 {
+    pub(crate) fn planned_due_s(&self, id: &str, turn: u32, at_s: Option<i64>) -> i64 {
         self.scheduled_injects
             .iter()
             .filter(|s| {
@@ -62,6 +62,8 @@ impl Exercise {
                         "not_yet_sent_to": not_yet,
                         "sent": !sent_to.is_empty(),
                         "schedule_id": schedule,
+                        "skipped": self.skipped_injects.contains_key(&t.id),
+                        "actions": self.msel_actions_view(t),
                     }),
                 )
             })

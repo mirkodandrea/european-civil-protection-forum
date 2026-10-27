@@ -1,24 +1,17 @@
-//! Pure logic of the scenario editor's Timeline tab: injects and scripted
-//! actions on one chronological axis divided into turn bands, the time a
-//! drag-and-drop lands on, and consistency warnings. No DOM here, so it is
+//! Pure logic of the scenario editor's Timeline tab: injects on one
+//! chronological axis divided into turn bands (their actions are edited inside
+//! each inject), the time a drag-and-drop lands on, and consistency warnings. No DOM here, so it is
 //! tested headless.
-use scenario::{InjectTemplate, ScenarioEdits, TimelineAction};
+use scenario::{InjectTemplate, ScenarioEdits};
 
 /// Turn length used when the scenario does not set one.
 pub const DEFAULT_TURN_MINUTES: u32 = scenario::DEFAULT_TURN_MINUTES;
 /// More consecutive empty turns than this collapse into one band.
 const MAX_EMPTY_RUN: usize = 2;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
-    Inject,
-    Action,
-}
-
-/// An item of one of the two lists (`msel` or `timeline`) by position.
+/// An inject of `msel` by position.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Key {
-    pub kind: Kind,
     pub idx: usize,
 }
 
@@ -54,21 +47,20 @@ pub enum Target {
     After(usize),
 }
 
-/// Result of a drop: the new time and, for equal times, where in the item's
-/// own list it goes (`(index, before)`).
+/// Result of a drop: the new time and, for equal times, where in the list
+/// it goes (`(index, before)`).
 #[derive(Clone, PartialEq, Debug)]
 pub struct Drop {
     pub at_s: i64,
     pub anchor: Option<(usize, bool)>,
 }
 
-/// A problem with a scripted action's place on the timeline.
+/// A problem with an inject's action.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Warn {
-    /// Placed earlier than the inject it follows (`id`, that inject's time).
-    BeforeInject(String, i64),
-    /// Follows an inject that does not exist.
-    UnknownInject(String),
+    /// A pre-action (`id`) whose instant falls before the exercise starts
+    /// (the instant, in seconds from the start): it would run at the first step.
+    BeforeStart(String, i64),
 }
 
 fn turn_len_s(tm: u32) -> i64 {
@@ -94,20 +86,14 @@ pub fn inject_s(m: &InjectTemplate, tm: u32) -> i64 {
     m.at_s.unwrap_or_else(|| implied_s(m.turn, tm)).max(0)
 }
 
-/// Injects and actions by time; at equal times injects come first (an action
-/// announced by an inject follows it), then list order.
-pub fn sorted_entries(msel: &[InjectTemplate], actions: &[TimelineAction], tm: u32) -> Vec<Entry> {
+/// Injects by time; at equal times, list order.
+pub fn sorted_entries(msel: &[InjectTemplate], tm: u32) -> Vec<Entry> {
     let mut v: Vec<Entry> = msel
         .iter()
         .enumerate()
-        .map(|(idx, m)| Entry { key: Key { kind: Kind::Inject, idx }, at_s: inject_s(m, tm), explicit: m.at_s.is_some() })
-        .chain(actions.iter().enumerate().map(|(idx, a)| Entry {
-            key: Key { kind: Kind::Action, idx },
-            at_s: a.at_s.max(0),
-            explicit: true,
-        }))
+        .map(|(idx, m)| Entry { key: Key { idx }, at_s: inject_s(m, tm), explicit: m.at_s.is_some() })
         .collect();
-    v.sort_by_key(|e| (e.at_s, e.key.kind == Kind::Action, e.key.idx));
+    v.sort_by_key(|e| (e.at_s, e.key.idx));
     v
 }
 
@@ -152,7 +138,6 @@ pub fn bands(entries: &[Entry], tm: u32) -> Vec<Band> {
 /// row's own time, placed after it. Dropping a row on itself changes nothing.
 pub fn resolve_drop(entries: &[Entry], bands: &[Band], dragged: Key, target: Target, tm: u32) -> Option<Drop> {
     let me = entries.iter().find(|e| e.key == dragged)?;
-    let same_list = |e: &Entry| e.key.kind == dragged.kind;
     match target {
         Target::Band(b) => Some(Drop { at_s: bands.get(b)?.start_s, anchor: None }),
         Target::Before(pos) => {
@@ -166,10 +151,10 @@ pub fn resolve_drop(entries: &[Entry], bands: &[Band], dragged: Key, target: Tar
                 Some(p) if turn_start(p.at_s, tm) == band_start => p.at_s,
                 _ => band_start,
             };
-            let anchor = if same_list(next) && next.at_s == at_s {
+            let anchor = if next.at_s == at_s {
                 Some((next.key.idx, true))
             } else {
-                prev.filter(|p| same_list(p) && p.at_s == at_s).map(|p| (p.key.idx, false))
+                prev.filter(|p| p.at_s == at_s).map(|p| (p.key.idx, false))
             };
             Some(Drop { at_s, anchor })
         }
@@ -178,7 +163,7 @@ pub fn resolve_drop(entries: &[Entry], bands: &[Band], dragged: Key, target: Tar
             if prev.key == dragged {
                 return Some(Drop { at_s: me.at_s, anchor: None });
             }
-            Some(Drop { at_s: prev.at_s, anchor: same_list(prev).then_some((prev.key.idx, false)) })
+            Some(Drop { at_s: prev.at_s, anchor: Some((prev.key.idx, false)) })
         }
     }
 }
@@ -196,34 +181,24 @@ pub fn move_next_to<T>(list: &mut Vec<T>, from: usize, anchor: usize, before: bo
     at
 }
 
-/// Sets the time of an item. An inject becomes explicit and takes the turn
-/// that contains the instant.
+/// Sets the time of an inject: it becomes explicit and takes the turn that
+/// contains the instant.
 pub fn set_time(edits: &mut ScenarioEdits, key: Key, at_s: i64) {
     let tm = edits.turn_minutes.unwrap_or(DEFAULT_TURN_MINUTES);
     let at_s = at_s.max(0);
-    match key.kind {
-        Kind::Inject => {
-            if let Some(m) = edits.msel.as_mut().and_then(|l| l.get_mut(key.idx)) {
-                m.at_s = Some(at_s);
-                m.turn = turn_of(at_s, tm);
-            }
-        }
-        Kind::Action => {
-            if let Some(a) = edits.timeline.as_mut().and_then(|l| l.get_mut(key.idx)) {
-                a.at_s = at_s;
-            }
-        }
+    if let Some(m) = edits.msel.as_mut().and_then(|l| l.get_mut(key.idx)) {
+        m.at_s = Some(at_s);
+        m.turn = turn_of(at_s, tm);
     }
 }
 
 /// Applies a drop: new time, then the position among equal times. Returns the
-/// item's new index in its own list.
+/// inject's new index.
 pub fn apply_drop(edits: &mut ScenarioEdits, key: Key, drop: &Drop) -> usize {
     set_time(edits, key, drop.at_s);
-    match (key.kind, drop.anchor) {
-        (Kind::Inject, Some((a, before))) => edits.msel.as_mut().map_or(key.idx, |l| move_next_to(l, key.idx, a, before)),
-        (Kind::Action, Some((a, before))) => edits.timeline.as_mut().map_or(key.idx, |l| move_next_to(l, key.idx, a, before)),
-        _ => key.idx,
+    match drop.anchor {
+        Some((a, before)) => edits.msel.as_mut().map_or(key.idx, |l| move_next_to(l, key.idx, a, before)),
+        None => key.idx,
     }
 }
 
@@ -252,9 +227,8 @@ pub fn make_explicit(edits: &mut ScenarioEdits) -> usize {
     n
 }
 
-/// Sorts both lists by time (stable). Returns the permutation as new index of
-/// each old index, for injects and actions.
-pub fn sort_by_time(edits: &mut ScenarioEdits) -> (Vec<usize>, Vec<usize>) {
+/// Sorts the injects by time (stable). Returns the new index of each old index.
+pub fn sort_by_time(edits: &mut ScenarioEdits) -> Vec<usize> {
     let tm = edits.turn_minutes.unwrap_or(DEFAULT_TURN_MINUTES);
     let mut inj = vec![];
     if let Some(l) = edits.msel.as_mut() {
@@ -268,19 +242,7 @@ pub fn sort_by_time(edits: &mut ScenarioEdits) -> (Vec<usize>, Vec<usize>) {
         *l = sorted;
         inj = map;
     }
-    let mut act = vec![];
-    if let Some(l) = edits.timeline.as_mut() {
-        let mut order: Vec<usize> = (0..l.len()).collect();
-        order.sort_by_key(|&i| l[i].at_s);
-        let mut map = vec![0; l.len()];
-        for (new, &old) in order.iter().enumerate() {
-            map[old] = new;
-        }
-        let sorted: Vec<_> = order.iter().map(|&i| l[i].clone()).collect();
-        *l = sorted;
-        act = map;
-    }
-    (inj, act)
+    inj
 }
 
 /// Time for a new item: the start of the selected band, otherwise the time of
@@ -292,21 +254,13 @@ pub fn new_item_time(entries: &[Entry], bands: &[Band], band: Option<usize>) -> 
     }
 }
 
-/// One entry per action: a problem with where it sits relative to the inject
-/// it follows, if any.
-pub fn action_warnings(msel: &[InjectTemplate], actions: &[TimelineAction], tm: u32) -> Vec<Option<Warn>> {
-    actions
+/// Problems with the actions of an inject (none when it is fine).
+pub fn inject_warnings(m: &InjectTemplate, tm: u32) -> Vec<Warn> {
+    let t = inject_s(m, tm);
+    m.actions
         .iter()
-        .map(|a| {
-            let id = a.after.as_deref()?;
-            match msel.iter().find(|m| m.id == id) {
-                None => Some(Warn::UnknownInject(id.to_string())),
-                Some(m) => {
-                    let t = inject_s(m, tm);
-                    (a.at_s.max(0) < t).then(|| Warn::BeforeInject(id.to_string(), t))
-                }
-            }
-        })
+        .filter(|a| a.offset_s < 0 && t + a.offset_s < 0)
+        .map(|a| Warn::BeforeStart(a.id.clone(), t + a.offset_s))
         .collect()
 }
 
@@ -339,15 +293,16 @@ mod tests {
             objective: String::new(),
             event: String::new(),
             at_s: at,
+            actions: vec![],
         }
     }
 
-    fn act(id: &str, at: i64, after: Option<&str>) -> TimelineAction {
-        TimelineAction { id: id.into(), title: id.into(), at_s: at, command: serde_json::json!({"type": "SetWeather"}), after: after.map(Into::into), note: String::new() }
+    fn edits(msel: Vec<InjectTemplate>, tm: u32) -> ScenarioEdits {
+        ScenarioEdits { msel: Some(msel), turn_minutes: Some(tm), ..Default::default() }
     }
 
-    fn edits(msel: Vec<InjectTemplate>, tl: Vec<TimelineAction>, tm: u32) -> ScenarioEdits {
-        ScenarioEdits { msel: Some(msel), timeline: Some(tl), turn_minutes: Some(tm), ..Default::default() }
+    fn k(idx: usize) -> Key {
+        Key { idx }
     }
 
     #[test]
@@ -362,19 +317,18 @@ mod tests {
     }
 
     #[test]
-    fn entries_sort_by_time_injects_before_actions() {
-        let m = vec![inj("I-02", 2, None), inj("I-01", 1, Some(0))];
-        let a = vec![act("A-01", 0, Some("I-01"))];
-        let e = sorted_entries(&m, &a, 30);
-        let order: Vec<_> = e.iter().map(|x| (x.key.kind, x.key.idx)).collect();
-        assert_eq!(order, vec![(Kind::Inject, 1), (Kind::Action, 0), (Kind::Inject, 0)]);
+    fn entries_sort_by_time_then_list_order() {
+        let m = vec![inj("I-02", 2, None), inj("I-01", 1, Some(0)), inj("I-03", 1, Some(0))];
+        let e = sorted_entries(&m, 30);
+        let order: Vec<_> = e.iter().map(|x| x.key.idx).collect();
+        assert_eq!(order, vec![1, 2, 0]);
         assert!(!e[2].explicit && e[2].at_s == 1800);
     }
 
     #[test]
     fn bands_show_gaps_and_a_trailing_empty_turn() {
         let m = vec![inj("I-01", 1, Some(0)), inj("I-02", 1, Some(2400)), inj("I-03", 1, Some(2 * 1800))];
-        let e = sorted_entries(&m, &[], 30);
+        let e = sorted_entries(&m, 30);
         let b = bands(&e, 30);
         // turns 1, 2, 3 and the empty 4th
         assert_eq!(b.len(), 4);
@@ -388,7 +342,7 @@ mod tests {
     #[test]
     fn long_empty_runs_collapse() {
         let m = vec![inj("I-01", 1, Some(0)), inj("I-02", 1, Some(10 * 1800))];
-        let e = sorted_entries(&m, &[], 30);
+        let e = sorted_entries(&m, 30);
         let b = bands(&e, 30);
         // 1 | 2..10 collapsed | 11 | 12
         assert_eq!(b.len(), 4);
@@ -397,53 +351,49 @@ mod tests {
         assert_eq!(b[1].end_s, 10 * 1800);
         // Few empty turns stay separate.
         let m = vec![inj("I-01", 1, Some(0)), inj("I-02", 1, Some(2 * 1800))];
-        let b = bands(&sorted_entries(&m, &[], 30), 30);
+        let b = bands(&sorted_entries(&m, 30), 30);
         assert_eq!(b.len(), 4);
     }
 
     #[test]
     fn drop_rules() {
-        // I-01 @0, A-01 @0, I-02 @900, I-03 @1800 (band 2), I-04 @2400
+        // I-01 @0, I-02 @900, I-03 @1800 (band 2), I-04 @2400
         let m = vec![inj("I-01", 1, Some(0)), inj("I-02", 1, Some(900)), inj("I-03", 2, Some(1800)), inj("I-04", 2, Some(2400))];
-        let a = vec![act("A-01", 0, Some("I-01"))];
-        let e = sorted_entries(&m, &a, 30);
+        let e = sorted_entries(&m, 30);
         let b = bands(&e, 30);
-        let pos = |kind, idx| e.iter().position(|x| x.key == Key { kind, idx }).unwrap();
-        let i04 = Key { kind: Kind::Inject, idx: 3 };
+        let pos = |idx| e.iter().position(|x| x.key == k(idx)).unwrap();
+        let i04 = k(3);
         // On a band header: the band start.
         assert_eq!(resolve_drop(&e, &b, i04, Target::Band(0), 30).unwrap().at_s, 0);
-        // Between rows of the same band: the previous row's time.
-        let d = resolve_drop(&e, &b, i04, Target::Before(pos(Kind::Inject, 2)), 30).unwrap();
+        // First in its band: the band start.
+        let d = resolve_drop(&e, &b, i04, Target::Before(pos(2)), 30).unwrap();
         assert_eq!((d.at_s, d.anchor), (1800, Some((2, true))), "I-03 is first in band 2: band start");
-        let d = resolve_drop(&e, &b, Key { kind: Kind::Inject, idx: 0 }, Target::Before(pos(Kind::Inject, 3)), 30).unwrap();
+        let d = resolve_drop(&e, &b, k(0), Target::Before(pos(3)), 30).unwrap();
         assert_eq!((d.at_s, d.anchor), (1800, Some((2, false))), "previous row (I-03) is in the same band");
         // Lower half: the row's own time, after it.
-        let d = resolve_drop(&e, &b, i04, Target::After(pos(Kind::Inject, 1)), 30).unwrap();
+        let d = resolve_drop(&e, &b, i04, Target::After(pos(1)), 30).unwrap();
         assert_eq!((d.at_s, d.anchor), (900, Some((1, false))));
         // First row of the timeline: band start.
         let d = resolve_drop(&e, &b, i04, Target::Before(0), 30).unwrap();
         assert_eq!(d.at_s, 0);
         // Dropping on itself is a no-op.
-        let d = resolve_drop(&e, &b, i04, Target::Before(pos(Kind::Inject, 3)), 30).unwrap();
+        let d = resolve_drop(&e, &b, i04, Target::Before(pos(3)), 30).unwrap();
         assert_eq!((d.at_s, d.anchor), (2400, None));
-        // An action dropped after an inject takes its time but stays in its own list.
-        let d = resolve_drop(&e, &b, Key { kind: Kind::Action, idx: 0 }, Target::After(pos(Kind::Inject, 1)), 30).unwrap();
-        assert_eq!((d.at_s, d.anchor), (900, None));
     }
 
     #[test]
     fn applying_a_drop_updates_time_turn_and_order() {
         let m = vec![inj("I-01", 1, Some(0)), inj("I-02", 1, Some(0)), inj("I-03", 1, None)];
-        let mut ed = edits(m, vec![], 30);
+        let mut ed = edits(m, 30);
         // I-03 (implicit, turn 1) dropped after I-01 → explicit 0, between I-01 and I-02.
         let drop = Drop { at_s: 0, anchor: Some((0, false)) };
-        let new = apply_drop(&mut ed, Key { kind: Kind::Inject, idx: 2 }, &drop);
+        let new = apply_drop(&mut ed, k(2), &drop);
         assert_eq!(new, 1);
         let ids: Vec<_> = ed.msel.as_ref().unwrap().iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["I-01", "I-03", "I-02"]);
         assert_eq!(ed.msel.as_ref().unwrap()[1].at_s, Some(0));
         // Moving into the third turn re-derives the turn.
-        set_time(&mut ed, Key { kind: Kind::Inject, idx: 0 }, 2 * 1800 + 60);
+        set_time(&mut ed, k(0), 2 * 1800 + 60);
         let m0 = &ed.msel.as_ref().unwrap()[0];
         assert_eq!((m0.at_s, m0.turn), (Some(3660), 3));
     }
@@ -461,7 +411,7 @@ mod tests {
     #[test]
     fn changing_turn_length_keeps_explicit_times_and_makes_times_explicit() {
         let m = vec![inj("I-01", 2, Some(2400)), inj("I-02", 3, None)];
-        let mut ed = edits(m, vec![], 30);
+        let mut ed = edits(m, 30);
         set_turn_minutes(&mut ed, 20);
         let l = ed.msel.as_ref().unwrap();
         assert_eq!((l[0].at_s, l[0].turn), (Some(2400), 3));
@@ -475,30 +425,25 @@ mod tests {
     #[test]
     fn sorting_by_time_reports_where_items_went() {
         let m = vec![inj("I-01", 3, None), inj("I-02", 1, Some(0)), inj("I-03", 2, Some(1900))];
-        let a = vec![act("A-02", 900, None), act("A-01", 0, None)];
-        let mut ed = edits(m, a, 30);
-        let (im, am) = sort_by_time(&mut ed);
+        let mut ed = edits(m, 30);
+        let im = sort_by_time(&mut ed);
         let ids: Vec<_> = ed.msel.as_ref().unwrap().iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["I-02", "I-03", "I-01"]);
         assert_eq!(im, vec![2, 0, 1]);
-        assert_eq!(am, vec![1, 0]);
     }
 
     #[test]
-    fn warns_when_an_action_precedes_its_inject() {
-        let m = vec![inj("I-01", 1, Some(1800))];
-        let a = vec![act("A-01", 1800, Some("I-01")), act("A-02", 600, Some("I-01")), act("A-03", 0, Some("I-99")), act("A-04", 0, None)];
-        let w = action_warnings(&m, &a, 30);
-        assert_eq!(w[0], None, "same instant is fine: injects sort first");
-        assert_eq!(w[1], Some(Warn::BeforeInject("I-01".into(), 1800)));
-        assert_eq!(w[2], Some(Warn::UnknownInject("I-99".into())));
-        assert_eq!(w[3], None);
+    fn warns_when_a_pre_action_falls_before_the_start() {
+        let act = |id: &str, off: i64| scenario::InjectAction { id: id.into(), title: id.into(), command: serde_json::json!({}), offset_s: off, note: String::new() };
+        let mut m = inj("I-01", 1, Some(600));
+        m.actions = vec![act("ok", -300), act("early", -900), act("post", 60)];
+        assert_eq!(inject_warnings(&m, 30), vec![Warn::BeforeStart("early".into(), -300)]);
     }
 
     #[test]
     fn new_items_go_to_the_selected_band_or_the_end() {
         let m = vec![inj("I-01", 1, Some(100)), inj("I-02", 1, Some(2500))];
-        let e = sorted_entries(&m, &[], 30);
+        let e = sorted_entries(&m, 30);
         let b = bands(&e, 30);
         assert_eq!(new_item_time(&e, &b, None), 2500);
         assert_eq!(new_item_time(&e, &b, Some(1)), 1800);

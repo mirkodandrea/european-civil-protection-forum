@@ -444,8 +444,13 @@ pub struct Exercise {
     pub phase_history: Vec<PhaseEntry>,
     pub clock_control: ClockControl,
     pub scheduled_injects: Vec<ScheduledInject>,
-    /// Decisions taken on scripted timeline actions (see [`actions`]).
+    /// Actions run (or not) for each inject delivery (see [`actions`]).
     pub action_runs: BTreeMap<String, actions::ActionRun>,
+    /// MSEL injects EXCON decided not to send, with the simulated time of the
+    /// decision. Skipped injects never block advancing to the next inject.
+    pub skipped_injects: BTreeMap<String, i64>,
+    /// Pre-actions EXCON switched off before they ran (`inject:action` → time).
+    pub disabled_actions: BTreeMap<String, i64>,
     pub world: World,
     pub turn: u32,
     pub phase: Phase,
@@ -523,6 +528,8 @@ impl Exercise {
             clock_control: ClockControl::default(),
             scheduled_injects: Vec::new(),
             action_runs: BTreeMap::new(),
+            skipped_injects: BTreeMap::new(),
+            disabled_actions: BTreeMap::new(),
             world,
             turn: 0,
             phase: Phase::Briefing,
@@ -689,41 +696,23 @@ impl Exercise {
     /// the same three steps with the lock released between steps, so the
     /// renderer and the browsers see the turn unfold.
     pub fn resolve_turn(&mut self, minutes: Option<u32>) -> Result<TurnReport> {
-        self.resolve_turn_with(minutes, &BTreeMap::new())
-    }
-
-    /// [`Self::resolve_turn`] with decisions on the scripted timeline actions.
-    pub fn resolve_turn_with(
-        &mut self,
-        minutes: Option<u32>,
-        choices: &BTreeMap<String, actions::ActionChoice>,
-    ) -> Result<TurnReport> {
-        self.begin_resolution_with(minutes, choices)?;
+        self.begin_resolution(minutes)?;
         while !self.step_resolution(STEP_S)? {}
         self.finish_resolution()
     }
 
     /// Start resolving the open turn: approved player actions are applied now,
     /// then the phase is `Resolving` until simulated time reaches the end.
+    /// `minutes` counts from now; without it the turn runs to its planned end
+    /// (after any intermediate advances), or one minute if that has already
+    /// been passed. Approved inject actions apply at their instants.
     pub fn begin_resolution(&mut self, minutes: Option<u32>) -> Result<()> {
-        self.begin_resolution_with(minutes, &BTreeMap::new())
-    }
-
-    /// As [`Self::begin_resolution`], with EXCON's decisions on the scripted
-    /// timeline actions that fall inside the turn. `minutes` counts from now;
-    /// without it the turn runs to its planned end (after any intermediate
-    /// advances), or one minute if that has already been passed.
-    pub fn begin_resolution_with(
-        &mut self,
-        minutes: Option<u32>,
-        choices: &BTreeMap<String, actions::ActionChoice>,
-    ) -> Result<()> {
         let now = self.world.time_s();
         let to_s = match minutes {
             Some(m) => now + m.clamp(1, 24 * 60) as i64 * 60,
             None => self.planned_end_s().max(now + 60),
         };
-        self.begin_resolution_until(to_s, false, choices)
+        self.begin_resolution_until(to_s, false)
     }
 
     /// Resolve up to the simulated instant `to_s`. With `partial` the turn
@@ -732,7 +721,6 @@ impl Exercise {
         &mut self,
         to_s: i64,
         partial: bool,
-        choices: &BTreeMap<String, actions::ActionChoice>,
     ) -> Result<()> {
         if self.phase != Phase::Orders {
             bail!("no turn is open");
@@ -743,7 +731,6 @@ impl Exercise {
         }
         let to_s = to_s.min(from_s + 24 * 3600);
         let minutes = ((to_s - from_s + 59) / 60) as u32;
-        self.decide_actions(to_s, choices)?;
         self.stop_clock("Turn resolution uses its own duration and playback speed");
         let mut applied = Vec::new();
         let approved: Vec<u64> = self
@@ -1041,8 +1028,8 @@ impl Exercise {
         id
     }
 
-    /// Send an inject. `translations` maps role → text in that role's language;
-    /// missing roles get the English text.
+    /// Send an inject without running any of its actions (see
+    /// [`Self::send_inject_with`]).
     pub fn send_inject(
         &mut self,
         inject_id: Option<&str>,
@@ -1052,8 +1039,37 @@ impl Exercise {
         text_en: &str,
         translations: &BTreeMap<String, String>,
     ) -> Result<Vec<u64>> {
+        self.send_inject_with(
+            inject_id,
+            title,
+            sender,
+            recipients,
+            text_en,
+            translations,
+            &actions::SendActions::none(),
+        )
+    }
+
+    /// Send an inject. `translations` maps role → text in that role's language;
+    /// missing roles get the English text. `actions` says which of the
+    /// inject's actions run: the MSEL inject's own ones on its first send, or
+    /// the custom inject's (see [`actions`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_inject_with(
+        &mut self,
+        inject_id: Option<&str>,
+        title: &str,
+        sender: &str,
+        recipients: &[String],
+        text_en: &str,
+        translations: &BTreeMap<String, String>,
+        actions: &actions::SendActions,
+    ) -> Result<Vec<u64>> {
         if self.phase == Phase::Debrief {
             bail!("the exercise has ended");
+        }
+        if inject_id.is_none() && actions.custom.iter().any(|a| a.offset_s < 0) {
+            bail!("a custom inject has no planned time: its actions cannot come before it");
         }
         let mut to = self.recipients(recipients)?;
         // Roles that already received this MSEL inject are skipped silently.
@@ -1065,6 +1081,8 @@ impl Exercise {
         if to.is_empty() {
             return Ok(Vec::new());
         }
+        let first = inject_id
+            .is_none_or(|id| self.inject_sent_to.get(id).is_none_or(|v| v.is_empty()));
         let delivery_id = self.id();
         let mut ids = Vec::new();
         for r in &to {
@@ -1091,8 +1109,11 @@ impl Exercise {
             }
             self.inject_sent_to.entry(id.to_string()).or_default().extend(to.iter().cloned());
             self.delivery_msel.insert(delivery_id, id.to_string());
+            // Sending a skipped inject takes it off the skipped list.
+            self.skipped_injects.remove(id);
         }
         self.record("inject_sent", MASTER, json!({"inject_id": delivery_id, "msel_id": inject_id, "title": title, "sender": sender, "recipients": to, "messages": ids}));
+        self.register_inject_actions(delivery_id, inject_id, actions, first);
         Ok(ids)
     }
 
@@ -2206,7 +2227,7 @@ impl Exercise {
             "phase_history":self.phase_history,
             "clock_control":self.clock_control,
             "scheduled_injects":self.scheduled_injects,
-            "timeline_actions":self.timeline_actions(),
+            "inject_actions":self.inject_action_runs(),
             "scenario": self.world.scn.name,
             "turns": self.turn,
             "stats": self.world.stats(),

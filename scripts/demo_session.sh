@@ -45,8 +45,8 @@ for id in $(curl -sf -H "$A" "$B/master" | python3 -c 'import json,sys; d=json.l
 done
 sleep 5
 echo "== resolve turn 1 (30 min)"
-# The default scenario starts the fire from a timeline action (A-01): approve it.
-post /master/resolve '{"minutes":30,"actions":{"A-01":"run"}}' > /dev/null
+# The fire started when I-01 was sent: its action A-01 (ignition) runs with the send.
+post /master/resolve '{"minutes":30}' > /dev/null
 sleep 3; shot sim_turn1_end.png
 
 echo "== EXCON confirms first-turn fire tasks completed and units returned"

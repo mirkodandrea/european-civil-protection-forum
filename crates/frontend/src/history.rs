@@ -47,7 +47,7 @@ fn action_note(master: &Value, e: &Value) -> String {
     match text(&e["kind"]) {
         "timeline_action_decided" | "timeline_action_executed" => {
             let id = text(&e["data"]["action"]);
-            let title = list(&master["timeline_actions"])
+            let title = list(&master["inject_actions"])
                 .iter()
                 .find(|a| text(&a["id"]) == id)
                 .map(|a| text(&a["title"]).to_string())
@@ -69,7 +69,7 @@ mod tests {
     use super::*;
     #[test]
     fn action_notes() {
-        let m = json!({"timeline_actions":[{"id":"a1","title":"Ignition"}]});
+        let m = json!({"inject_actions":[{"id":"a1","title":"Ignition"}]});
         let e = json!({"kind":"timeline_action_executed","data":{"action":"a1"}});
         assert_eq!(action_note(&m, &e), " · Ignition");
         let e = json!({"kind":"action_executed","data":{"execution":{"ok":false,"detail":"no route"}}});

@@ -1,3 +1,4 @@
+mod action_form;
 mod advanced;
 mod controllo;
 mod api;
@@ -81,6 +82,8 @@ pub struct Draft {
     pub scope: String,
     /// Comma-joined role ids when `scope` is "custom".
     pub recipients: String,
+    /// Actions of a custom inject (run when it is sent).
+    pub actions: Vec<scenario::InjectAction>,
     pub private: Value,
     pub dirty: bool,
     pub clock_revision: Value,
@@ -97,6 +100,7 @@ impl Default for Draft {
             sender: "EXCON".into(),
             scope: "conversation".into(),
             recipients: String::new(),
+            actions: Vec::new(),
             private: Value::Null,
             dirty: false,
             clock_revision: Value::Null,
@@ -127,8 +131,9 @@ pub struct App {
     busy: bool,
     reading: bool,
     resolving_request: bool,
-    /// Pre-advance review: (resolve body, target second, scripted actions the advance crosses).
-    due_modal: Option<(Value, i64, Vec<Value>)>,
+    /// Pre-advance review: (resolve body, target second) of an advance that
+    /// crosses unsent injects or pre-actions.
+    due_modal: Option<(Value, i64)>,
     /// Report of the last advance run from this console, for the turn panel.
     last_report: Value,
     /// EXCON console language; stored in this browser only.
@@ -172,7 +177,6 @@ pub enum Msg {
     /// Advance to simulated second `.1` with resolve body `.0` (intermediate
     /// advance or turn close), reviewing what it crosses first.
     Advance(Value, i64),
-    DueActions(Value, i64, Result<Value, String>),
     CloseDue,
     Action(Action),
     Done(ActionKind, Result<Value, String>),
@@ -227,6 +231,11 @@ impl App {
         let a = &self.master["agenda"];
         let (now, start) = (a["now_s"].as_i64().unwrap_or(0), a["turn_start_s"].as_i64().unwrap_or(0));
         !timeline::unsent_injects(list(&self.master["planned_injects"]), now, to_s, start).is_empty()
+    }
+    /// Pre-actions an advance to `to_s` runs by itself on the way.
+    fn has_pre_actions_before(&self, to_s: i64) -> bool {
+        let now = self.master["agenda"]["now_s"].as_i64().unwrap_or(0);
+        !timeline::crossed_pre_actions(list(&self.master["planned_injects"]), now, to_s).is_empty()
     }
     fn roles(&self) -> Vec<Value> {
         let mut roles = list(&self.stat["roles"]).to_vec();
@@ -593,21 +602,13 @@ impl Component for App {
                     return false;
                 }
                 self.error.clear();
-                let key = self.token.clone();
-                ctx.link().send_future(async move {
-                    let path = format!("/api/master/due-actions?to_s={to_s}");
-                    Msg::DueActions(body, to_s, api::request(&key, &path, None).await)
-                });
-            }
-            Msg::DueActions(body, to_s, result) => match result {
-                // Nothing to decide and no unsent inject reached or crossed: go.
-                Ok(v) if list(&v["due"]).is_empty() && !self.has_unsent_before(to_s) => {
+                // Nothing unsent reached or crossed and no pre-action on the way: go.
+                if !self.has_unsent_before(to_s) && !self.has_pre_actions_before(to_s) {
                     ctx.link().send_message(Msg::Action(Action::post("/api/master/resolve", body)));
                     return false;
                 }
-                Ok(v) => self.due_modal = Some((body, to_s, list(&v["due"]).to_vec())),
-                Err(e) => self.error = e,
-            },
+                self.due_modal = Some((body, to_s));
+            }
             Msg::CloseDue => self.due_modal = None,
             Msg::ResolutionDone(result) => {
                 self.resolving_request = false;
@@ -886,6 +887,7 @@ impl Component for App {
                         "draft:sender" => d.sender = value,
                         "draft:scope" => d.scope = value,
                         "draft:recipients" => d.recipients = value,
+                        "draft:actions" => d.actions = serde_json::from_str(&value).unwrap_or_default(),
                         "draft:template" => {
                             d.template = value.clone();
                             if let Some(t) =
@@ -1003,7 +1005,7 @@ impl Component for App {
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
             else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy}/></main>}
             else{{self.view_chat(ctx)}}
-            if let Some((body,to_s,due))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} due={due.clone()} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
+            if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject personalizzato").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
 
         </>}

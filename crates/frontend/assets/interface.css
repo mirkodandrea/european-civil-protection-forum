@@ -761,3 +761,28 @@ button.warn:hover:not(:disabled){background:#ffe7a8}
 .excon-role-list{list-style:none;margin:.4rem 0;padding:0;display:grid;gap:.35rem}
 .excon-role{display:flex;gap:.35rem;align-items:center}
 .excon-role input{flex:1;min-width:0}
+
+/* BEGIN inject actions: sub-elements of an inject row, the shared action form */
+.pi-actions{list-style:none;margin:2px 0 4px 40px;padding:0 0 0 10px;border-left:3px solid #e08a00;display:grid;gap:3px}
+.pi-action{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;padding:2px 4px}
+.pi-action.pre{border-left:0}
+.pi-action.fired{background:#f4faf6}
+.pi-action.bad{background:#fff5f4}
+.pi-action.off{opacity:.65}
+.pi-action .planned-title{flex:none;max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pi-action .pi-preview{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pi-off{flex:none;min-width:58px;font-variant-numeric:tabular-nums;font-weight:600;color:#8a5a00}
+.pi-run-toggle{flex:none;white-space:nowrap}
+.pi.is-skipped{opacity:.7;background:#f3f3f3}
+.pi.is-skipped .planned-title{text-decoration:line-through}
+.pi.is-due .planned-open.primary{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}
+.pill.skipped{background:#e4e4e4;color:#555}
+.send-action-list{list-style:none;margin:4px 0;padding:0;display:grid;gap:4px}
+.tl-detail-actions{margin:0;padding-left:18px;font-size:13px}
+.inject-actions-section{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0;display:grid;gap:8px}
+.inject-actions-section>legend{font-weight:600;padding:0 6px}
+.action-item{border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fff}
+.action-item>summary{cursor:pointer}
+.action-editor{display:grid;gap:8px;margin-top:8px}
+.composer-actions{margin:6px 0}
+/* END inject actions */

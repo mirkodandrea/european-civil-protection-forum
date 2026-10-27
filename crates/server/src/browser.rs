@@ -271,11 +271,6 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         }
         ("GET", "/api/state") => get_state(principal.clone(), s.clone()).await,
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
-        ("GET", "/api/master/due-actions") => {
-            let q: crate::DueQuery =
-                serde_urlencoded::from_str(query).map_err(|e| bad(e.to_string()))?;
-            get_due_actions(principal.clone(), s.clone(), q.minutes, q.to_s).await
-        }
         ("GET", "/api/player/<role>") => {
             get_player(principal.clone(), s.clone(), captures["role"].to_string()).await
         }
@@ -453,6 +448,22 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             };
             post_msel_send(principal.clone(), s.clone(), captures["id"].to_string(), b).await
         }
+        ("POST", "/api/master/msel/<id>/skip") => {
+            post_msel_skip(principal.clone(), s.clone(), captures["id"].to_string()).await
+        }
+        ("POST", "/api/master/msel/<id>/restore") => {
+            post_msel_restore(principal.clone(), s.clone(), captures["id"].to_string()).await
+        }
+        ("POST", "/api/master/msel/<id>/actions/<action>/enabled") => {
+            post_action_enabled(
+                principal.clone(),
+                s.clone(),
+                captures["id"].to_string(),
+                captures["action"].to_string(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/master/prompt") => {
             post_prompt(
                 principal.clone(),
@@ -626,7 +637,6 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/evaluator"),
     ("GET", "/api/state"),
     ("GET", "/api/master"),
-    ("GET", "/api/master/due-actions"),
     ("GET", "/api/player/<role>"),
     ("POST", "/api/player/<role>/presence"),
     ("GET", "/api/player/<role>/presence"),
@@ -653,6 +663,9 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/start"),
     ("POST", "/api/master/inject"),
     ("POST", "/api/master/msel/<id>/send"),
+    ("POST", "/api/master/msel/<id>/skip"),
+    ("POST", "/api/master/msel/<id>/restore"),
+    ("POST", "/api/master/msel/<id>/actions/<action>/enabled"),
     ("POST", "/api/master/prompt"),
     ("POST", "/api/master/proposals/<id>/decide"),
     ("POST", "/api/master/proposals/<id>/clarify"),

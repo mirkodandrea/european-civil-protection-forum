@@ -31,6 +31,90 @@ pub fn send_body(selected: &BTreeSet<String>) -> Value {
     json!({"recipients": selected.iter().collect::<Vec<_>>()})
 }
 
+/// Body for `POST /api/master/msel/<id>/send` with the actions to run.
+pub fn send_body_with(selected: &BTreeSet<String>, actions: &BTreeSet<String>) -> Value {
+    json!({"recipients": selected.iter().collect::<Vec<_>>(), "actions": actions.iter().collect::<Vec<_>>()})
+}
+
+/// Actions the send dialog offers: those of an inject not yet sent whose fate
+/// is still open (not yet run), plus pre-actions switched off beforehand.
+pub fn sendable_actions(inject: &Value) -> Vec<Value> {
+    if !list(&inject["sent_to"]).is_empty() {
+        return Vec::new();
+    }
+    list(&inject["actions"])
+        .iter()
+        .filter(|a| a["status"].is_null() || (a["pre"] == true && a["enabled"] == false))
+        .cloned()
+        .collect()
+}
+
+/// Actions ticked by default in the send dialog: all the offered ones that are
+/// not switched off.
+pub fn default_actions(inject: &Value) -> BTreeSet<String> {
+    sendable_actions(inject)
+        .iter()
+        .filter(|a| a["enabled"] != false)
+        .map(|a| text(&a["id"]).to_string())
+        .collect()
+}
+
+/// An action's offset as a chip: `−5 min`, `+2 min`, `all’invio`.
+pub fn offset_chip(offset_s: i64) -> String {
+    let m = (offset_s.abs() as f64 / 60.0 * 10.0).round() / 10.0;
+    let m = if m.fract() == 0.0 { format!("{}", m as i64) } else { format!("{m:.1}") };
+    match offset_s.signum() {
+        0 => crate::i18n::ex("all’invio").to_string(),
+        1 => format!("+{m} min"),
+        _ => format!("−{m} min"),
+    }
+}
+
+/// The actions of an inject split into those before it (pre-actions, most
+/// anticipated first) and those from its send on, each in time order.
+pub fn split_actions(inject: &Value) -> (Vec<Value>, Vec<Value>) {
+    let mut all = list(&inject["actions"]).to_vec();
+    all.sort_by_key(|a| a["offset_s"].as_i64().unwrap_or(0));
+    all.into_iter().partition(|a| a["pre"] == true)
+}
+
+/// Pre-actions an advance up to `to_s` runs by itself: not yet run, from
+/// injects neither sent nor skipped, with their instant before `to_s`.
+/// `(inject, action)`, chronological.
+pub fn crossed_pre_actions(injects: &[Value], _now: i64, to_s: i64) -> Vec<(Value, Value)> {
+    let mut out: Vec<(i64, Value, Value)> = injects
+        .iter()
+        .filter(|i| list(&i["sent_to"]).is_empty() && i["skipped"] != true)
+        .flat_map(|i| {
+            list(&i["actions"])
+                .iter()
+                .filter(|a| a["pre"] == true && a["status"].is_null() || (a["pre"] == true && a["enabled"] == false && a["status"] == "not_run"))
+                .filter_map(|a| {
+                    let t = a["instant_s"].as_i64()?;
+                    (t <= to_s).then(|| (t, i.clone(), a.clone()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    out.sort_by_key(|(t, ..)| *t);
+    out.into_iter().map(|(_, i, a)| (i, a)).collect()
+}
+
+/// Status of an action in a few words.
+pub fn action_status_text(inject: &Value, a: &Value) -> String {
+    match text(&a["status"]) {
+        "approved" => match text(&a["run_at_clock"]) {
+            "" => crate::i18n::ex("approvata").to_string(),
+            c => crate::exfmt!("approvata alle {}", "approved at {}", c.rsplit(' ').next().unwrap_or(c)),
+        },
+        "done" => crate::i18n::ex("eseguita").to_string(),
+        "failed" => crate::i18n::ex("fallita").to_string(),
+        "not_run" => crate::i18n::ex("non eseguita").to_string(),
+        _ if inject["skipped"] == true && a["pre"] == true => crate::i18n::ex("annullata").to_string(),
+        _ => crate::i18n::ex("pianificata").to_string(),
+    }
+}
+
 /// Groups of injects sharing an `event` (first-appearance order, chronological
 /// inside). Injects without event (or all, when `group` is false) form
 /// consecutive unnamed groups.
@@ -52,22 +136,11 @@ pub fn group_by_event(injects: &[Value], group: bool) -> Vec<(String, Vec<Value>
     out
 }
 
-/// Injects and scripted actions as one chronological list. Each item is
-/// tagged with `"item": "inject" | "action"` and sorted by scenario time
-/// (stable, so injects come before actions planned at the same instant).
-pub fn merge_items(injects: &[Value], actions: &[Value]) -> Vec<Value> {
-    let tag = |v: &Value, kind: &str, t: i64| {
-        let mut v = v.clone();
-        v["item"] = json!(kind);
-        (t, v)
-    };
-    let mut rows: Vec<(i64, Value)> = injects
-        .iter()
-        .map(|i| tag(i, "inject", i["scenario_time_s"].as_i64().unwrap_or(0)))
-        .chain(actions.iter().map(|a| tag(a, "action", a["at_s"].as_i64().unwrap_or(0))))
-        .collect();
-    rows.sort_by_key(|(t, _)| *t);
-    rows.into_iter().map(|(_, v)| v).collect()
+/// Injects in chronological order (stable).
+pub fn sorted_injects(injects: &[Value]) -> Vec<Value> {
+    let mut rows = injects.to_vec();
+    rows.sort_by_key(|i| i["scenario_time_s"].as_i64().unwrap_or(0));
+    rows
 }
 
 pub fn role_name(roles: &[Value], id: &str) -> String {
@@ -103,15 +176,17 @@ fn send_dialog(props: &SendDialogProps) -> Html {
     let id = text(&inject["id_inject"]).to_string();
     let served = strings(&inject["sent_to"]);
     let selected = use_state(|| default_recipients(inject));
+    let chosen_actions = use_state(|| default_actions(inject));
+    let offered = sendable_actions(inject);
     let all_roles = props.roles.iter().map(|r| text(&r["id"]).to_string()).collect::<Vec<_>>();
     let planned = strings(&inject["recipients_planned"]);
     let send = {
-        let selected = selected.clone();
+        let (selected, chosen_actions) = (selected.clone(), chosen_actions.clone());
         let action = props.action.clone();
         let onclose = props.onclose.clone();
         let id = id.clone();
         Callback::from(move |_| {
-            action.emit(Action::post(format!("/api/master/msel/{id}/send"), send_body(&selected)));
+            action.emit(Action::post(format!("/api/master/msel/{id}/send"), send_body_with(&selected, &chosen_actions)));
             onclose.emit(());
         })
     };
@@ -133,6 +208,23 @@ fn send_dialog(props: &SendDialogProps) -> Html {
             html!{<label class={classes!("send-role",done.then_some("served"))}><input type="checkbox" data-send-role={r.clone()} checked={checked} disabled={done||props.busy} {onchange}/> <span>{role_name(&props.roles,r)}</span>
                 if done{<small>{crate::i18n::ex("già inviato")}</small>}else if !planned.contains(r){<small>{crate::i18n::ex("non previsto dallo scenario")}</small>}</label>}
         })}</div>
+        if !offered.is_empty(){<h3>{crate::i18n::ex("Azioni")}</h3>
+            <p class="muted">{crate::i18n::ex("Cambiamenti del mondo che accompagnano l’inject: l’EXCON li esegue con l’invio (quelli con ritardo, durante il prossimo avanzamento). Togli la spunta per non eseguirli.")}</p>
+            <ul class="send-action-list">{for offered.iter().map(|a|{
+                let aid=text(&a["id"]).to_string();
+                let off=a["enabled"]==false;
+                let checked=chosen_actions.contains(&aid);
+                let onchange={let chosen_actions=chosen_actions.clone();let aid=aid.clone();Callback::from(move |e:Event|{
+                    use yew::TargetCast;
+                    let on=e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+                    let mut next=(*chosen_actions).clone();
+                    if on{next.insert(aid.clone());}else{next.remove(&aid);}
+                    chosen_actions.set(next);
+                })};
+                html!{<li key={aid.clone()}><label class="send-role"><input type="checkbox" data-send-action={aid.clone()} checked={checked} disabled={off||props.busy} {onchange}/>
+                    <span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span> <b>{text(&a["title"])}</b> <span class="muted">{text(&a["summary"])}</span>
+                    if off{<small>{crate::i18n::ex("disattivata nella timeline")}</small>}</label></li>}
+            })}</ul>}
         <div class="row send-actions"><div class="grow"/><button class="primary" data-send="" disabled={props.busy||selected.is_empty()} onclick={send}>{crate::exfmt!("Invia a {} destinatari","Send to {} recipients",selected.len())}</button></div>
     </section></div>}
 }
@@ -221,10 +313,9 @@ pub fn cluster_items(items: &[Value], start: i64, end: i64, gap_pct: f64) -> (Ve
     (clusters, overdue)
 }
 
-/// `(injects, actions)` that are due now: reached (or overdue) and undecided.
-pub fn attention_counts(items: &[Value]) -> (usize, usize) {
-    let due = items.iter().filter(|i| i["due"] == true);
-    (due.clone().filter(|i| i["kind"] == "inject").count(), due.filter(|i| i["kind"] == "action").count())
+/// Injects that are due now: reached (or overdue), neither sent nor skipped.
+pub fn attention_count(items: &[Value]) -> usize {
+    items.iter().filter(|i| i["due"] == true).count()
 }
 
 /// Why an unsent inject is raised before an advance.
@@ -243,7 +334,7 @@ pub enum Reach {
 pub fn unsent_injects(injects: &[Value], now: i64, to_s: i64, window_start: i64) -> Vec<(Value, Reach)> {
     let mut out: Vec<(i64, Value, Reach)> = injects
         .iter()
-        .filter(|i| !list(&i["not_yet_sent_to"]).is_empty())
+        .filter(|i| !list(&i["not_yet_sent_to"]).is_empty() && i["skipped"] != true)
         .filter_map(|i| {
             let at = i["scenario_time_s"].as_i64().unwrap_or(0);
             let reach = if at < window_start {
@@ -265,17 +356,23 @@ pub fn unsent_injects(injects: &[Value], now: i64, to_s: i64, window_start: i64)
 /// Which advance a resolve body asks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AdvanceKind {
-    /// Up to the next pending event; the turn stays open.
-    Event,
+    /// Up to the next pending inject; the turn stays open.
+    Inject,
     /// By a number of minutes; the turn stays open.
     Step,
     /// To the end of the turn, which opens the next one.
     Close,
 }
 
-pub fn advance_kind(body: &Value) -> AdvanceKind {
-    if body["until"] == "next_event" {
-        AdvanceKind::Event
+/// `closes_turn` is the agenda's statement that the advance to the next inject
+/// reaches the turn's planned end.
+pub fn advance_kind(body: &Value, closes_turn: bool) -> AdvanceKind {
+    if matches!(body["until"].as_str(), Some("next_inject" | "next_event")) {
+        if closes_turn {
+            AdvanceKind::Close
+        } else {
+            AdvanceKind::Inject
+        }
     } else if body["substep"] == true {
         AdvanceKind::Step
     } else {
@@ -309,13 +406,9 @@ pub fn recipients_summary(inject: &Value) -> String {
     }
 }
 
-/// Position of an item in the list: scenario second of an inject or action.
+/// Position of an inject in the list: its scenario second.
 pub fn item_time(item: &Value) -> i64 {
-    if item["item"] == "action" {
-        item["at_s"].as_i64().unwrap_or(0)
-    } else {
-        item["scenario_time_s"].as_i64().unwrap_or(0)
-    }
+    item["scenario_time_s"].as_i64().unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -380,12 +473,12 @@ pub fn turn_bands(items: &[Value], cur_turn: u32, cur_start: i64, cur_end: i64) 
     bands
 }
 
-/// Scripted actions executed during `[from_s, to_s)`: `(title, ok, result)`.
-pub fn executed_actions(actions: &[Value], from_s: i64, to_s: i64) -> Vec<(String, bool, String)> {
-    actions
-        .iter()
-        .filter(|a| a["run"]["executed_s"].as_i64().is_some_and(|t| t >= from_s && t < to_s))
-        .map(|a| (text(&a["title"]).to_string(), a["run"]["status"] == "done", text(&a["run"]["result"]).to_string()))
+/// Inject actions executed during `[from_s, to_s)`: `(title, ok, result)`,
+/// from the flat list of action runs.
+pub fn executed_actions(runs: &[Value], from_s: i64, to_s: i64) -> Vec<(String, bool, String)> {
+    runs.iter()
+        .filter(|a| a["executed_s"].as_i64().is_some_and(|t| t >= from_s && t < to_s))
+        .map(|a| (text(&a["title"]).to_string(), a["status"] == "done", text(&a["result"]).to_string()))
         .collect()
 }
 
@@ -453,13 +546,12 @@ fn scroll_to_current_turn() {
 
 #[derive(Properties, PartialEq)]
 pub struct AdvanceReviewProps {
-    /// Resolve body of the advance being started; the choices are added to it.
+    /// Resolve body of the advance being started.
     pub body: Value,
     /// Simulated second the advance goes to.
     pub to_s: i64,
-    /// Scripted actions the advance crosses: each needs a decision.
-    pub due: Vec<Value>,
-    /// Planned injects as of now, so sending one updates the list.
+    /// Planned injects as of now, so sending one or switching an action
+    /// updates the list.
     pub injects: Vec<Value>,
     pub agenda: Value,
     pub roles: Vec<Value>,
@@ -468,26 +560,12 @@ pub struct AdvanceReviewProps {
     pub onclose: Callback<()>,
 }
 
-/// Asked at every advance that has something to handle: what to do with each
-/// scripted action it crosses (default: apply it at its planned instant) and
-/// with the injects whose instant was reached or will be crossed but are still
-/// unsent. Advancing with unsent injects is possible, but explicit.
-pub fn actions_body(base: &Value, choices: &BTreeMap<String, String>) -> Value {
-    let mut body = base.clone();
-    body["actions"] = json!(choices);
-    body
-}
-
+/// Asked at every advance that has something to handle: the injects whose
+/// instant was reached or will be crossed but are still unsent (send them,
+/// skip them, or advance anyway), and the pre-actions the advance runs by
+/// itself, each with its switch.
 #[function_component(AdvanceReviewDialog)]
 pub fn advance_review_dialog(props: &AdvanceReviewProps) -> Html {
-    let choices = {
-        let due = props.due.clone();
-        use_state(move || {
-            due.iter()
-                .map(|a| (text(&a["id"]).to_string(), "run".to_string()))
-                .collect::<BTreeMap<_, _>>()
-        })
-    };
     let sending = use_state(|| Option::<String>::None);
     let a = &props.agenda;
     let origin = a["clock_origin_s"].as_i64().unwrap_or(0);
@@ -495,67 +573,55 @@ pub fn advance_review_dialog(props: &AdvanceReviewProps) -> Html {
     let start = a["turn_start_s"].as_i64().unwrap_or(0);
     let turn = a["turn"].as_u64().unwrap_or(1);
     let unsent = unsent_injects(&props.injects, now, props.to_s, start);
-    let kind = advance_kind(&props.body);
+    let pre = crossed_pre_actions(&props.injects, now, props.to_s);
+    let kind = advance_kind(&props.body, a["advance"]["closes_turn"] == true);
     let (title, confirm_label) = advance_wording(kind, turn, &clock_at(origin, props.to_s), &hhmm(origin, props.to_s));
     let confirm = {
-        let (choices, action, onclose, base) =
-            (choices.clone(), props.action.clone(), props.onclose.clone(), props.body.clone());
+        let (action, onclose, body) = (props.action.clone(), props.onclose.clone(), props.body.clone());
         Callback::from(move |_| {
-            action.emit(Action::post("/api/master/resolve", actions_body(&base, &choices)));
+            action.emit(Action::post("/api/master/resolve", body.clone()));
             onclose.emit(());
         })
-    };
-    let option = |id: &str, value: &'static str, label: &'static str| {
-        let selected = choices.get(id).is_some_and(|c| c == value);
-        let onchange = {
-            let (choices, id) = (choices.clone(), id.to_string());
-            Callback::from(move |_| {
-                let mut next = (*choices).clone();
-                next.insert(id.clone(), value.to_string());
-                choices.set(next);
-            })
-        };
-        html! {<label class="inline-check"><input type="radio" name={format!("due-{id}")} data-due-choice={value} checked={selected} {onchange}/> {crate::i18n::ex(label)}</label>}
     };
     let open_inject = sending
         .as_ref()
         .and_then(|id| props.injects.iter().find(|i| text(&i["id_inject"]) == id).cloned());
-    let nothing = props.due.is_empty() && unsent.is_empty();
+    let nothing = pre.is_empty() && unsent.is_empty();
     let confirm_class = classes!("primary", (!unsent.is_empty()).then_some("warn"));
     html! {<div class="modal-backdrop"><section class="inject-modal send-dialog advance-review" role="dialog" aria-modal="true" aria-labelledby="due-dialog-title">
         <div class="row"><h2 id="due-dialog-title">{title}</h2><div class="grow"/><button onclick={{let c=props.onclose.clone();Callback::from(move |_|c.emit(()))}}>{crate::i18n::ex("Annulla")}</button></div>
         <p class="muted">{crate::exfmt!("Ora {} → {}.","Now {} → {}.",clock_at(origin,now),clock_at(origin,props.to_s))}</p>
         if nothing{<p>{crate::i18n::ex("Non c’è più nulla da gestire.")}</p>}
         if !unsent.is_empty(){<h3>{crate::exfmt!("Inject non ancora inviati ({})","Injects not yet sent ({})",unsent.len())}</h3>
-            <p class="muted">{crate::i18n::ex("Gli istanti previsti sono raggiunti o attraversati da questo avanzamento: inviali ora, oppure avanza comunque.")}</p>
+            <p class="muted">{crate::i18n::ex("Gli istanti previsti sono raggiunti o attraversati da questo avanzamento: inviali ora, scegli di non inviarli, oppure avanza comunque.")}</p>
             <ul class="planned-list">{for unsent.iter().map(|(inj,reach)|{
                 let id=text(&inj["id_inject"]).to_string();
                 let why=match reach{Reach::Overdue=>crate::i18n::ex("in ritardo"),Reach::Reached=>crate::i18n::ex("raggiunto"),Reach::Crossed=>crate::i18n::ex("attraversato dall’avanzamento")};
                 let at=inj["scenario_time_s"].as_i64().unwrap_or(0);
                 let send_now={let (action,id)=(props.action.clone(),id.clone());let body=send_body(&default_recipients(inj));
                     Callback::from(move |_|action.emit(Action::post(format!("/api/master/msel/{id}/send"),body.clone())))};
+                let skip={let (action,id)=(props.action.clone(),id.clone());Callback::from(move |_|action.emit(Action::post(format!("/api/master/msel/{id}/skip"),json!({}))))};
                 let choose={let (sending,id)=(sending.clone(),id.clone());Callback::from(move |_|sending.set(Some(id.clone())))};
                 html!{<li class="planned-inject review-row" data-review-inject={id.clone()} key={id.clone()}>
                     <span class="planned-times"><b>{compact_clock(origin,at)}</b></span>
                     <span class="planned-body"><span class="row"><b class="planned-title">{text(&inj["title"])}</b><span class={classes!("pill","due-now",(*reach==Reach::Overdue).then_some("late"))}>{why}</span></span>
                         <small class="muted">{recipients_summary(inj)}</small></span>
                     <span class="review-send"><button class="primary" data-review-send="" disabled={props.busy} onclick={send_now}>{crate::i18n::ex("Invia ora")}</button>
-                        <button disabled={props.busy} onclick={choose}>{crate::i18n::ex("Destinatari…")}</button></span></li>}
+                        <button disabled={props.busy} onclick={choose}>{crate::i18n::ex("Destinatari…")}</button>
+                        <button data-review-skip="" disabled={props.busy} onclick={skip}>{crate::i18n::ex("Non inviare")}</button></span></li>}
             })}</ul>}
-        if !props.due.is_empty(){<h3>{crate::exfmt!("Azioni pianificate ({})","Scheduled actions ({})",props.due.len())}</h3>
-            <p class="muted">{crate::i18n::ex("Decidi cosa fare di ciascuna azione che l’avanzamento attraversa.")}</p>
-            <ul class="planned-list">{for props.due.iter().map(|act|{
-                let id=text(&act["id"]).to_string();
-                let overdue=act["overdue"]==true;
-                let after=text(&act["after"]).to_string();
-                let waits=!after.is_empty()&&unsent.iter().any(|(i,_)|text(&i["id_inject"])==after);
-                html!{<li class="planned-inject" data-action={id.clone()} key={id.clone()}>
-                    <span class="planned-times"><b>{compact_clock(origin,act["at_s"].as_i64().unwrap_or(0))}</b>if overdue{<small>{crate::i18n::ex("istante già passato")}</small>}</span>
+        if !pre.is_empty(){<h3>{crate::exfmt!("Azioni che partono da sole ({})","Actions that run by themselves ({})",pre.len())}</h3>
+            <p class="muted">{crate::i18n::ex("Azioni che precedono il loro inject: l’avanzamento le esegue all’istante previsto. Disattivane una per non eseguirla.")}</p>
+            <ul class="planned-list">{for pre.iter().map(|(inj,act)|{
+                let (iid,aid)=(text(&inj["id_inject"]).to_string(),text(&act["id"]).to_string());
+                let enabled=act["enabled"]!=false;
+                let toggle={let (action,iid,aid)=(props.action.clone(),iid.clone(),aid.clone());Callback::from(move |_|action.emit(Action::post(format!("/api/master/msel/{iid}/actions/{aid}/enabled"),json!({"enabled":!enabled}))))};
+                html!{<li class="planned-inject review-row" data-review-pre={format!("{iid}:{aid}")} key={format!("{iid}:{aid}")}>
+                    <span class="planned-times"><b>{compact_clock(origin,act["instant_s"].as_i64().unwrap_or(0))}</b><small>{offset_chip(act["offset_s"].as_i64().unwrap_or(0))}</small></span>
                     <span class="planned-body"><b class="planned-title">{text(&act["title"])}</b>
                         <span class="planned-text">{text(&act["summary"])}</span>
-                        if waits{<span class="pill due-now late">{crate::exfmt!("segue l’inject {}, non ancora inviato","follows inject {}, not yet sent",after)}</span>}
-                        if !text(&act["note"]).is_empty(){<small class="planned-objective">{text(&act["note"])}</small>}
-                        <span class="row">{if overdue{option(&id,"run","Esegui subito")}else{option(&id,"run","Esegui all’istante previsto")}}{option(&id,"skip","Salta")}{option(&id,"defer","Rinvia")}</span></span></li>}
+                        <small class="muted">{crate::exfmt!("prima dell’inject «{}»","before inject «{}»",text(&inj["title"]))}</small></span>
+                    <span class="review-send"><label class="inline-check"><input type="checkbox" data-pre-toggle={aid.clone()} checked={enabled} disabled={props.busy} onchange={toggle}/> {crate::i18n::ex("esegui")}</label></span></li>}
             })}</ul>}
         <div class="row send-actions"><div class="grow"/>
             <button class={confirm_class} data-due-confirm="" disabled={props.busy} onclick={confirm}>{if unsent.is_empty(){confirm_label}else{crate::exfmt!("Avanza comunque · {}","Advance anyway · {}",confirm_label)}}</button></div>
@@ -584,23 +650,26 @@ pub fn track_pct(t: i64, start: i64, end: i64) -> f64 {
     ((t - start) as f64 / (end - start).max(1) as f64 * 100.0).clamp(0.0, 100.0)
 }
 
-/// Intermediate advances of the open turn: `[to the next event, by step_min]`
-/// as `(target second, resolve body)`; the turn stays open.
-pub fn advance_targets(now: i64, next: Option<i64>, step_min: u32) -> [Option<(i64, Value)>; 2] {
-    [
-        next.map(|t| (t, json!({"substep": true, "until": "next_event"}))),
-        Some((now + step_min.max(1) as i64 * 60, json!({"substep": true, "minutes": step_min.max(1)}))),
-    ]
+/// The primary advance: where "advance to the next inject" goes according to
+/// the agenda: `(target second, resolve body, closes the turn)`.
+pub fn next_inject_advance(agenda: &Value) -> Option<(i64, Value, bool)> {
+    let adv = &agenda["advance"];
+    Some((adv["to_s"].as_i64()?, json!({"until": "next_inject"}), adv["closes_turn"] == true))
 }
 
-/// Closing the open turn: run to its planned end, or one minute once that has
-/// been passed by intermediate advances.
-pub fn close_target(now: i64, end: i64) -> (i64, Value) {
-    if end > now {
-        (end, json!({"until": "turn_end"}))
+/// Label of the primary advance button.
+pub fn advance_label(agenda: &Value) -> String {
+    let adv = &agenda["advance"];
+    if adv["closes_turn"] == true {
+        crate::exfmt!("▶▶ Avanza e chiudi turno {} ({})", "▶▶ Advance and close turn {} ({})", agenda["turn"], text(&adv["clock"]).rsplit(' ').next().unwrap_or(""))
     } else {
-        (now + 60, json!({"minutes": 1}))
+        crate::exfmt!("▶▶ Avanza al prossimo inject ({})", "▶▶ Advance to the next inject ({})", text(&adv["clock"]).rsplit(' ').next().unwrap_or(""))
     }
+}
+
+/// Intermediate advance by `step_min` minutes; the turn stays open.
+pub fn step_target(now: i64, step_min: u32) -> (i64, Value) {
+    (now + step_min.max(1) as i64 * 60, json!({"substep": true, "minutes": step_min.max(1)}))
 }
 
 /// What the last advance did: executed scripted actions with their result,
@@ -645,9 +714,10 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
     let target = props.state["resolving"]["to_s"].as_i64();
     let speed = props.state["speed"].as_f64().unwrap_or(0.0);
     let items = list(&a["items"]);
-    let next = a["next_event_s"].as_i64();
     let step_min = step.parse::<u32>().unwrap_or(5);
-    let [to_next, to_step] = advance_targets(now, next, step_min);
+    let primary = next_inject_advance(a);
+    let to_next = primary.clone().map(|(t, b, _)| (t, b));
+    let to_step = Some(step_target(now, step_min));
     let go = |t: Option<(i64, Value)>| {
         let onadvance = props.onadvance.clone();
         Callback::from(move |_| {
@@ -667,7 +737,7 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
         })
     };
     let (clusters, overdue) = cluster_items(items, start, end, 1.2);
-    let (due_inj, due_act) = attention_counts(items);
+    let due_inj = attention_count(items);
     let due_targets: Vec<(String, String)> = items
         .iter()
         .filter(|i| i["due"] == true)
@@ -675,7 +745,6 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
         .collect();
     let overdue_targets: Vec<(String, String)> = overdue.iter().map(|i| (text(&i["kind"]).to_string(), text(&i["id"]).to_string())).collect();
     let pct = |t: i64| track_pct(t, start, end);
-    let (close_to, close_body) = close_target(now, end);
     let speed_select = {
         let action = props.action.clone();
         html! {<label class="tp-speed">{crate::i18n::ex("Velocità")}
@@ -738,27 +807,42 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
             </div></div>
         </div>
         <div class="tp-controls">
-            if due_inj+due_act>0{<button class="tp-attention" id="tp-attention" title={crate::i18n::ex("Mostra gli elementi nella lista")} onclick={{let t=due_targets.clone();Callback::from(move |_|reveal_rows(&t))}}><b>{crate::i18n::ex("Da gestire ora")}</b>{format!(": {} inject · {} {}",due_inj,due_act,if due_act==1{crate::i18n::ex("azione")}else{crate::i18n::ex("azioni")})}</button>}
+            if due_inj>0{<button class="tp-attention" id="tp-attention" title={crate::i18n::ex("Mostra gli inject nella lista: invia o non inviare")} onclick={{let t=due_targets.clone();Callback::from(move |_|reveal_rows(&t))}}><b>{crate::i18n::ex("Da gestire ora")}</b>{format!(": {} inject",due_inj)}</button>}
             else{<span class="tp-attention none muted" id="tp-attention">{crate::i18n::ex("Nulla da gestire ora")}</span>}
             {if resolving{Html::default()}else{last_advance_summary(&props.state,&props.actions,&props.report,origin)}}
             <div class="grow"/>
-            <button id="advance-next" disabled={ctl_off||to_next.is_none()} title={next.map(|t|crate::exfmt!("Porta il tempo a {} e lascia il turno aperto","Moves time to {} and keeps the turn open",clock_at(origin,t)))} onclick={go(to_next)}>{match next{Some(_)=>crate::exfmt!("▶ al prossimo evento ({})","▶ to the next event ({})",text(&a["next_event_clock"])),None=>crate::i18n::ex("▶ nessun evento successivo in programma").to_string()}}</button>
+            <button class="primary" id="advance-next" disabled={ctl_off||to_next.is_none()} title={primary.as_ref().map(|(t,_,closes)|if *closes{crate::exfmt!("Porta il tempo alle {} e chiude il turno {}: si apre il turno {}","Moves time to {} and closes turn {}: turn {} opens",hhmm(origin,*t),a["turn"],a["turn"].as_u64().unwrap_or(1)+1)}else{crate::exfmt!("Porta il tempo a {} e lascia il turno aperto: l’EXCON decide poi se inviare l’inject","Moves time to {} and keeps the turn open: you then decide whether to send the inject",clock_at(origin,*t))})} onclick={go(to_next)}>{advance_label(a)}</button>
             <span class="tp-step">{crate::i18n::ex("Avanza di")}<input aria-label={crate::i18n::ex("Minuti di avanzamento")} id="advance-step" type="number" min="1" max="1440" value={(*step).clone()} oninput={{let s=step.clone();Callback::from(move |e|s.set(crate::api::input(e)))}}/>{"min"}
                 <button id="advance-step-go" disabled={ctl_off} title={crate::exfmt!("Porta il tempo a {} e lascia il turno aperto","Moves time to {} and keeps the turn open",clock_at(origin,now+step_min.max(1) as i64*60))} onclick={go(to_step)}>{"▶"}</button></span>
-            <button class="primary" id="resolve" disabled={ctl_off} title={crate::exfmt!("Porta il tempo alle {} e apre il turno {}","Moves time to {} and opens turn {}",hhmm(origin,close_to),a["turn"].as_u64().unwrap_or(1)+1)} onclick={{let onadvance=props.onadvance.clone();Callback::from(move |_|onadvance.emit((close_body.clone(),close_to)))}}>{crate::exfmt!("Chiudi turno {} ▶▶","Close turn {} ▶▶",a["turn"])}</button>
         </div>
     </section>}
 }
 
-fn action_status_label(a: &Value) -> &'static str {
-    match text(&a["status"]) {
-        "approved" => crate::i18n::ex("approvata"),
-        "done" => crate::i18n::ex("eseguita"),
-        "failed" => crate::i18n::ex("fallita"),
-        "skipped" => crate::i18n::ex("saltata"),
-        _ if a["run"].is_null() => crate::i18n::ex("in attesa"),
-        _ => crate::i18n::ex("rinviata"),
-    }
+/// One action under its inject: offset, title, command, status and, for a
+/// pre-action still to come, the switch that decides whether it runs.
+fn action_sub_row(inject: &Value, a: &Value, can_toggle: bool, action: &Callback<Action>) -> Html {
+    let id = text(&a["id"]).to_string();
+    let iid = text(&inject["id_inject"]).to_string();
+    let status = text(&a["status"]).to_string();
+    let enabled = a["enabled"] != false;
+    let pre = a["pre"] == true;
+    let open = !(inject["sent"] == true || inject["skipped"] == true) && (status.is_empty() || (status == "not_run" && !enabled));
+    let toggle = (pre && open && can_toggle).then(|| {
+        let onchange = {
+            let (action, iid, id) = (action.clone(), iid.clone(), id.clone());
+            Callback::from(move |_| action.emit(Action::post(format!("/api/master/msel/{iid}/actions/{id}/enabled"), json!({"enabled": !enabled}))))
+        };
+        html! {<label class="inline-check pi-run-toggle" title={crate::i18n::ex("Azione che precede l’inject: parte da sola all’istante previsto durante l’avanzamento. Togli la spunta per non eseguirla.")}>
+            <input type="checkbox" data-action-enabled={id.clone()} checked={enabled} {onchange}/> {crate::i18n::ex("esegui")}</label>}
+    });
+    html! {<li class={classes!("pi-action",pre.then_some("pre"),matches!(status.as_str(),"done"|"failed").then_some("fired"),(status=="failed").then_some("bad"),(status=="not_run").then_some("off"))} data-action={id.clone()} data-action-of={iid.clone()} key={format!("{iid}:{id}")}>
+        <span class="pi-off" title={if pre{crate::i18n::ex("Prima dell’ora prevista dell’inject")}else{crate::i18n::ex("Dopo l’invio dell’inject")}}>{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>
+        <span class="pill kind action" title={crate::i18n::ex("Azione dell’inject: cambia il mondo")}>{crate::i18n::ex("Azione")}</span>
+        <b class="planned-title">{text(&a["title"])}</b>
+        <span class="pi-preview muted">{text(&a["summary"])}</span>
+        <span class="pill rcpt">{action_status_text(inject,a)}</span>
+        {toggle.unwrap_or_default()}
+        if let Some(r)=a["result"].as_str().filter(|r|!r.is_empty()){<small class="pi-result muted" title={r.to_string()}>{r}</small>}</li>}
 }
 
 #[derive(Properties, PartialEq)]
@@ -781,7 +865,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
     let grouped = use_state(|| true);
     let collapsed = use_state(BTreeSet::<String>::new);
     let opened = use_state(|| Option::<String>::None);
-    // Row shown in the detail column (`i:<id>` / `a:<id>`); by default the first waiting item.
+    // Row shown in the detail column (`i:<id>`); by default the first waiting inject.
     let selected = use_state(|| Option::<String>::None);
     // Bands the user toggled, against their default (past turns without pending items stay closed).
     let toggled = use_state(BTreeSet::<u32>::new);
@@ -798,34 +882,25 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         .cloned()
         .collect::<Vec<_>>();
     let injects = list(&props.master["planned_injects"]).to_vec();
-    let actions = list(&props.master["timeline_actions"]).to_vec();
+    let runs = list(&props.master["inject_actions"]).to_vec();
     let origin = agenda["clock_origin_s"].as_i64().unwrap_or(0);
     let started = !matches!(text(&props.state["phase"]), "briefing" | "");
     let win_start = agenda["turn_start_s"].as_i64().unwrap_or(0);
     let win_end = agenda["planned_end_s"].as_i64().unwrap_or(win_start + 1800);
-    let bands = turn_bands(&merge_items(&injects, &actions), turn, win_start, win_end);
+    let all_items = sorted_injects(&injects);
+    let bands = turn_bands(&all_items, turn, win_start, win_end);
     let due_ids: BTreeSet<String> = list(&agenda["items"])
         .iter()
         .filter(|i| i["due"] == true && started)
-        .map(|i| format!("{}:{}", text(&i["kind"]), text(&i["id"])))
+        .map(|i| text(&i["id"]).to_string())
         .collect();
     let sent_count = injects.iter().filter(|i| i["sent"] == true).count();
     let open_inject = opened
         .as_ref()
         .and_then(|id| injects.iter().find(|i| text(&i["id_inject"]) == id).cloned());
-    let all_items = merge_items(&injects, &actions);
-    let item_key = |i: &Value| {
-        if i["item"] == "action" {
-            format!("a:{}", text(&i["id"]))
-        } else {
-            format!("i:{}", text(&i["id_inject"]))
-        }
-    };
+    let item_key = |i: &Value| format!("i:{}", text(&i["id_inject"]));
     let current_key = (*selected).clone().or_else(|| {
-        all_items
-            .iter()
-            .find(|i| due_ids.contains(&item_key(i).replacen("a:", "action:", 1).replacen("i:", "inject:", 1)))
-            .map(item_key)
+        all_items.iter().find(|i| due_ids.contains(text(&i["id_inject"]))).map(item_key)
     });
     let toggle_expanded = |key: String| {
         let selected = selected.clone();
@@ -842,29 +917,18 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             html! {<span class="pill due-now">{reached}</span>}
         }
     };
+    let skip_cb = |id: &str, restore: bool| {
+        let (action, id) = (props.action.clone(), id.to_string());
+        Callback::from(move |_| action.emit(Action::post(format!("/api/master/msel/{id}/{}", if restore { "restore" } else { "skip" }), json!({}))))
+    };
     let row = |i: &Value| {
         let at = item_time(i);
         let time = html! {<span class="pi-time" title={clock_at(origin,at)}>{compact_clock(origin,at)}</span>};
-        if i["item"] == "action" {
-            let id = text(&i["id"]).to_string();
-            let fired = matches!(text(&i["status"]), "done" | "failed");
-            let due = due_ids.contains(&format!("action:{id}"));
-            let key = format!("a:{id}");
-            let open = current_key.as_deref() == Some(key.as_str());
-            return html! {<li class={classes!("planned-inject","planned-action","pi",open.then_some("is-selected"),fired.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"))} data-action={id.clone()} key={key.clone()}>
-                <div class="pi-line">{time}
-                    <span class="pill kind action" title={crate::i18n::ex("Azione pianificata")}>{crate::i18n::ex("Azione")}</span>
-                    <button class="pi-toggle" aria-expanded={open.to_string()} onclick={toggle_expanded(key)}><span class="pi-chev">{if open{"▾"}else{"▸"}}</span><b class="planned-title">{text(&i["title"])}</b><span class="pi-preview muted" aria-hidden="true">{text(&i["summary"])}</span></button>
-                    <span class="pill rcpt">{action_status_label(i)}</span>
-                    {late_pill(due,at,crate::i18n::ex("raggiunta: decidi all’avanzamento"))}
-                    if let Some(r)=i["run"]["result"].as_str(){<small class="pi-result muted" title={r.to_string()}>{r}</small>}</div>
-                if open{<div class="pi-detail"><span class="planned-text">{text(&i["summary"])}</span>
-                    if !text(&i["note"]).is_empty(){<small class="planned-objective">{text(&i["note"])}</small>}</div>}</li>};
-        }
         let id = text(&i["id_inject"]).to_string();
         let sent = i["sent"] == true;
+        let skipped = i["skipped"] == true;
         let complete = sent && list(&i["not_yet_sent_to"]).is_empty();
-        let due = due_ids.contains(&format!("inject:{id}"));
+        let due = due_ids.contains(&id);
         let key = format!("i:{id}");
         let open = current_key.as_deref() == Some(key.as_str());
         let onclick = {
@@ -872,68 +936,71 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             let id = id.clone();
             Callback::from(move |_| opened.set(Some(id.clone())))
         };
-        html! {<li class={classes!("planned-inject","pi",open.then_some("is-selected"),sent.then_some("is-sent"),complete.then_some("is-complete"),sent.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"))} data-inject={id.clone()} key={key.clone()}>
+        let (pre, post) = split_actions(i);
+        let can_toggle = started && !props.busy;
+        let subs = |l: &[Value]| if l.is_empty() { Html::default() } else {
+            html! {<ul class="pi-actions">{for l.iter().map(|a|action_sub_row(i,a,can_toggle,&props.action))}</ul>}
+        };
+        let send_label = if due { crate::i18n::ex("Invia") } else if complete { crate::i18n::ex("Altri destinatari…") } else { crate::i18n::ex("Invia…") };
+        html! {<li class={classes!("planned-inject","pi",open.then_some("is-selected"),sent.then_some("is-sent"),complete.then_some("is-complete"),sent.then_some("fired"),due.then_some("is-due"),(due&&at<win_start).then_some("is-late"),skipped.then_some("is-skipped"))} data-inject={id.clone()} key={key.clone()}>
+            {subs(&pre)}
             <div class="pi-line">{time}
                 <span class="pill kind inject" title={crate::i18n::ex("Inject pianificato")}>{crate::i18n::ex("Inject")}</span>
                 <button class="pi-toggle" aria-expanded={open.to_string()} onclick={toggle_expanded(key)}><span class="pi-chev">{if open{"▾"}else{"▸"}}</span><b class="planned-title">{text(&i["title"])}</b><span class="pi-preview muted" aria-hidden="true">{text(&i["text"])}</span></button>
                 {late_pill(due,at,crate::i18n::ex("raggiunto: da inviare"))}
                 if sent{<span class="pill rcpt sent">{if complete{crate::i18n::ex("Inviato")}else{crate::i18n::ex("Inviato in parte")}}</span>}
+                if skipped{<span class="pill rcpt skipped">{crate::i18n::ex("Non inviato")}</span>}
                 <small class="pi-recips muted">{recipients_summary(i)}</small>
-                <button class="planned-open" {onclick} disabled={props.busy} aria-label={crate::exfmt!("Apri l’invio dell’inject {}","Open sending for inject {}",text(&i["title"]))}>{if complete{crate::i18n::ex("Altri destinatari…")}else{crate::i18n::ex("Invia…")}}</button></div>
+                if skipped{<button class="planned-open" data-restore="" onclick={skip_cb(&id,true)} disabled={props.busy||!started}>{crate::i18n::ex("Ripristina")}</button>}
+                else{<>
+                    <button class={classes!("planned-open",due.then_some("primary"))} data-send-open="" {onclick} disabled={props.busy} aria-label={crate::exfmt!("Apri l’invio dell’inject {}","Open sending for inject {}",text(&i["title"]))}>{send_label}</button>
+                    if due{<button class="planned-open" data-skip="" onclick={skip_cb(&id,false)} disabled={props.busy} title={crate::i18n::ex("Non invia questo inject: l’avanzamento prosegue oltre e le sue azioni anticipate vengono annullate. Si può ripristinare.")}>{crate::i18n::ex("Non inviare")}</button>}
+                </>}</div>
             if open{<div class="pi-detail"><span class="planned-text">{text(&i["text"])}</span>
                 if !text(&i["objective"]).is_empty(){<small class="planned-objective">{crate::exfmt!("Obiettivo: {}","Objective: {}",text(&i["objective"]))}</small>}
-                {pills(i,&roles)}</div>}</li>}
+                {pills(i,&roles)}</div>}
+            {subs(&post)}</li>}
     };
     let panel = (!agenda.is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving")).then(|| {
-        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={actions.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()}/>}
+        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()}/>}
     });
-    // The selected row in full, in the side column on wide screens (inline below it otherwise).
+    // The selected inject in full, in the side column on wide screens (inline below it otherwise).
     let detail = current_key.as_ref().and_then(|k| all_items.iter().find(|i| item_key(i) == *k)).map(|i| {
         let at = item_time(i);
         let close = {
             let selected = selected.clone();
             Callback::from(move |_| selected.set(Some(String::new())))
         };
-        let head = |kind: Html, title: &str| html! {<div class="tl-detail-head">{kind}<b class="tl-detail-title">{title.to_string()}</b><div class="grow"/>
-            <button class="tp-small" aria-label={crate::i18n::ex("Chiudi")} onclick={close.clone()}>{"✕"}</button></div>};
-        let body = if i["item"] == "action" {
-            html! {<>
-                {head(html!{<span class="pill kind action">{crate::i18n::ex("Azione")}</span>}, text(&i["title"]))}
-                <p class="muted tl-detail-when">{clock_at(origin, at)}{" · "}{action_status_label(i)}
-                    if !text(&i["after"]).is_empty(){{" · "}{crate::exfmt!("segue l’inject {}","follows inject {}",text(&i["after"]))}}</p>
-                <p class="planned-text">{text(&i["summary"])}</p>
-                if !text(&i["note"]).is_empty(){<p class="planned-objective">{text(&i["note"])}</p>}
-                if let Some(r)=i["run"]["result"].as_str(){<p class="tl-detail-result"><b>{crate::i18n::ex("Esito")}{": "}</b>{r}</p>}
-                if due_ids.contains(&format!("action:{}", text(&i["id"]))){<p class="pill due-now">{crate::i18n::ex("Raggiunta: la decidi al prossimo avanzamento")}</p>}
-            </>}
-        } else {
-            let id = text(&i["id_inject"]).to_string();
-            let complete = i["sent"] == true && list(&i["not_yet_sent_to"]).is_empty();
-            let send = {
-                let opened = opened.clone();
-                Callback::from(move |_| opened.set(Some(id.clone())))
-            };
-            html! {<>
-                {head(html!{<span class="pill kind inject">{crate::i18n::ex("Inject")}</span>}, text(&i["title"]))}
-                <p class="muted tl-detail-when">{clock_at(origin, at)}
-                    if !text(&i["sender"]).is_empty(){{" · "}{crate::exfmt!("da {}","from {}",text(&i["sender"]))}}
-                    if !text(&i["event"]).is_empty(){{" · "}{text(&i["event"])}}</p>
-                <p class="planned-text">{text(&i["text"])}</p>
-                if !text(&i["objective"]).is_empty(){<p class="planned-objective">{crate::exfmt!("Obiettivo: {}","Objective: {}",text(&i["objective"]))}</p>}
-                {pills(i, &roles)}
-                <div class="row"><div class="grow"/><button class={classes!((!complete).then_some("primary"))} disabled={props.busy} onclick={send}>{if complete{crate::i18n::ex("Altri destinatari…")}else{crate::i18n::ex("Invia…")}}</button></div>
-            </>}
+        let id = text(&i["id_inject"]).to_string();
+        let complete = i["sent"] == true && list(&i["not_yet_sent_to"]).is_empty();
+        let send = {
+            let (opened, id) = (opened.clone(), id.clone());
+            Callback::from(move |_| opened.set(Some(id.clone())))
         };
+        let (pre, post) = split_actions(i);
+        let acts = |l: &[Value]| html! {{for l.iter().map(|a|html!{<li><span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>{" "}<b>{text(&a["title"])}</b>{" · "}<span class="muted">{text(&a["summary"])}{" · "}{action_status_text(i,a)}</span></li>})}};
+        let body = html! {<>
+            <div class="tl-detail-head"><span class="pill kind inject">{crate::i18n::ex("Inject")}</span><b class="tl-detail-title">{text(&i["title"])}</b><div class="grow"/>
+                <button class="tp-small" aria-label={crate::i18n::ex("Chiudi")} onclick={close}>{"✕"}</button></div>
+            <p class="muted tl-detail-when">{clock_at(origin, at)}
+                if !text(&i["sender"]).is_empty(){{" · "}{crate::exfmt!("da {}","from {}",text(&i["sender"]))}}
+                if !text(&i["event"]).is_empty(){{" · "}{text(&i["event"])}}</p>
+            <p class="planned-text">{text(&i["text"])}</p>
+            if !text(&i["objective"]).is_empty(){<p class="planned-objective">{crate::exfmt!("Obiettivo: {}","Objective: {}",text(&i["objective"]))}</p>}
+            {pills(i, &roles)}
+            if !pre.is_empty()||!post.is_empty(){<><h4>{crate::i18n::ex("Azioni")}</h4><ul class="tl-detail-actions">{acts(&pre)}{acts(&post)}</ul></>}
+            <div class="row"><div class="grow"/><button class={classes!((!complete).then_some("primary"))} disabled={props.busy} onclick={send}>{if complete{crate::i18n::ex("Altri destinatari…")}else{crate::i18n::ex("Invia…")}}</button></div>
+        </>};
         html! {<section class="card tl-detail" aria-label={crate::i18n::ex("Dettaglio dell’elemento selezionato")}>{body}</section>}
     });
-    let side_hint = html! {<section class="card tl-detail empty"><p class="muted">{crate::i18n::ex("Seleziona un inject o un’azione nella lista per vederne qui il testo completo, i destinatari e l’invio.")}</p></section>};
+    let side_hint = html! {<section class="card tl-detail empty"><p class="muted">{crate::i18n::ex("Seleziona un inject nella lista per vederne qui il testo completo, le azioni, i destinatari e l’invio.")}</p></section>};
     html! {<div class="timeline-layout"><aside class="tl-side">{panel.unwrap_or_default()}{detail.unwrap_or(side_hint)}</aside><section class="card" id="excon-timeline"><div class="row tl-head"><h2>{crate::i18n::ex("Timeline EXCON")}</h2>
         <small class="muted">{crate::exfmt!("{} inject · {} inviati","{} injects · {} sent",injects.len(),sent_count)}</small><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="group-by-event" checked={*grouped} onchange={{let g=grouped.clone();Callback::from(move |e:Event|{use yew::TargetCast;g.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("raggruppa per evento")}</label>
         <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject personalizzato")}</button></div>
-        if injects.is_empty()&&actions.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject pianificato")}</p>}
+        if injects.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject pianificato")}</p>}
         {for bands.iter().map(|band|{
-            let waiting=band.items.iter().filter(|i|{let k=if i["item"]=="action"{format!("action:{}",text(&i["id"]))}else{format!("inject:{}",text(&i["id_inject"]))};due_ids.contains(&k)}).count();
+            let waiting=band.items.iter().filter(|i|due_ids.contains(text(&i["id_inject"]))).count();
             let default_open=match band.state{BandState::Past=>waiting>0,_=>true};
             let is_open=band.state==BandState::Current||(default_open!=toggled.contains(&band.turn));
             let state_label=match band.state{BandState::Past=>crate::i18n::ex("concluso"),BandState::Current if started=>crate::i18n::ex("in corso"),BandState::Current=>crate::i18n::ex("da iniziare"),BandState::Future=>crate::i18n::ex("previsto")};
@@ -978,13 +1045,10 @@ mod tests {
         assert_eq!(send_body(&default_recipients(&i)), json!({"recipients":["a","c"]}));
     }
     #[test]
-    fn merged_chronologically() {
+    fn injects_sort_chronologically() {
         let i = vec![json!({"id_inject":"i1","scenario_time_s":600}), json!({"id_inject":"i2","scenario_time_s":0})];
-        let a = vec![json!({"id":"a1","at_s":300}), json!({"id":"a2","at_s":600})];
-        let m = merge_items(&i, &a);
-        let kinds = m.iter().map(|v| v["item"].as_str().unwrap()).collect::<Vec<_>>();
-        assert_eq!(kinds, ["inject", "action", "inject", "action"]);
-        assert_eq!(m[1]["id"], "a1");
+        let m = sorted_injects(&i);
+        assert_eq!(m[0]["id_inject"], "i2");
     }
     #[test]
     fn track_positions_clamp_to_the_window() {
@@ -993,13 +1057,17 @@ mod tests {
         assert_eq!(track_pct(5000, 0, 1800), 100.0);
     }
     #[test]
-    fn advance_targets_follow_the_agenda() {
-        let [next, step] = advance_targets(300, Some(600), 5);
-        assert_eq!(next.unwrap().0, 600);
-        assert_eq!(step.unwrap().0, 600);
-        assert!(advance_targets(1800, None, 5)[0].is_none());
-        assert_eq!(close_target(300, 1800).1["until"], "turn_end");
-        assert_eq!(close_target(1800, 1800).0, 1860);
+    fn primary_advance_follows_the_agenda() {
+        let agenda = json!({"turn": 1, "advance": {"to_s": 600, "clock": "Day 1 13:10", "closes_turn": false, "inject": "I-01"}});
+        let (to, body, closes) = next_inject_advance(&agenda).unwrap();
+        assert_eq!((to, closes), (600, false));
+        assert_eq!(body["until"], "next_inject");
+        assert_eq!(advance_label(&agenda), "▶▶ Avanza al prossimo inject (13:10)");
+        let agenda = json!({"turn": 2, "advance": {"to_s": 1800, "clock": "Day 1 13:30", "closes_turn": true, "inject": null}});
+        assert_eq!(advance_label(&agenda), "▶▶ Avanza e chiudi turno 2 (13:30)");
+        assert!(next_inject_advance(&json!({})).is_none());
+        let (to, body) = step_target(300, 5);
+        assert_eq!((to, &body["minutes"], &body["substep"]), (600, &json!(5), &json!(true)));
     }
     #[test]
     fn grouping() {
@@ -1045,13 +1113,8 @@ mod tests {
     }
     #[test]
     fn attention_counts_what_is_due() {
-        let items = vec![
-            json!({"kind": "inject", "due": true}),
-            json!({"kind": "inject", "due": false}),
-            json!({"kind": "action", "due": true}),
-            json!({"kind": "action", "due": true}),
-        ];
-        assert_eq!(attention_counts(&items), (1, 2));
+        let items = vec![json!({"kind": "inject", "due": true}), json!({"kind": "inject", "due": false}), json!({"kind": "inject", "due": true})];
+        assert_eq!(attention_count(&items), 2);
     }
     #[test]
     fn unsent_injects_are_reached_or_crossed() {
@@ -1060,16 +1123,20 @@ mod tests {
         let got = unsent_injects(&injects, 300, 1800, 120);
         let ids: Vec<(&str, Reach)> = got.iter().map(|(v, r)| (v["id_inject"].as_str().unwrap(), *r)).collect();
         assert_eq!(ids, [("old", Reach::Overdue), ("now", Reach::Reached), ("soon", Reach::Crossed)]);
-        // Stopping at the next event only raises what is already reached.
+        // Stopping at the next inject only raises what is already reached.
         assert_eq!(unsent_injects(&injects, 300, 900, 120).len(), 2);
+        // A skipped inject no longer needs attention.
+        let skipped = vec![json!({"id_inject": "s", "scenario_time_s": 300, "not_yet_sent_to": ["a"], "skipped": true})];
+        assert!(unsent_injects(&skipped, 300, 1800, 120).is_empty());
     }
     #[test]
     fn advance_wording_states_target_and_effect() {
-        let body = advance_targets(0, Some(300), 5)[0].clone().unwrap().1;
-        assert_eq!(advance_kind(&body), AdvanceKind::Event);
-        assert_eq!(advance_kind(&advance_targets(0, None, 5)[1].clone().unwrap().1), AdvanceKind::Step);
-        assert_eq!(advance_kind(&close_target(0, 1800).1), AdvanceKind::Close);
-        let (title, button) = advance_wording(AdvanceKind::Event, 1, "Day 1 13:05", "13:05");
+        let body = json!({"until": "next_inject"});
+        assert_eq!(advance_kind(&body, false), AdvanceKind::Inject);
+        assert_eq!(advance_kind(&body, true), AdvanceKind::Close, "the target is the turn end");
+        assert_eq!(advance_kind(&step_target(0, 5).1, false), AdvanceKind::Step);
+        assert_eq!(advance_kind(&json!({"until": "turn_end"}), false), AdvanceKind::Close);
+        let (title, button) = advance_wording(AdvanceKind::Inject, 1, "Day 1 13:05", "13:05");
         assert_eq!(title, "Avanza a Day 1 13:05 · il turno resta aperto");
         assert_eq!(button, "Avanza a 13:05");
         let (title, button) = advance_wording(AdvanceKind::Close, 1, "Day 1 13:30", "13:30");
@@ -1100,10 +1167,60 @@ mod tests {
     }
     #[test]
     fn executed_actions_of_an_advance() {
-        let a = |t: &str, at: Option<i64>, st: &str| json!({"title": t, "run": {"executed_s": at, "status": st, "result": "108 celle"}});
+        let a = |t: &str, at: Option<i64>, st: &str| json!({"title": t, "executed_s": at, "status": st, "result": "108 celle"});
         let list = vec![a("Innesco", Some(0), "done"), a("Vento", Some(300), "failed"), a("Altro", None, "approved")];
         assert_eq!(executed_actions(&list, 0, 300), [("Innesco".to_string(), true, "108 celle".to_string())]);
         assert_eq!(executed_actions(&list, 300, 900).len(), 1);
+    }
+    fn act(id: &str, off: i64, status: Value) -> Value {
+        json!({"id": id, "title": id, "offset_s": off, "pre": off < 0, "enabled": true, "status": status,
+            "instant_s": if off < 0 { json!(600 + off) } else { Value::Null }, "summary": "x"})
+    }
+    #[test]
+    fn actions_split_around_their_inject() {
+        let i = json!({"actions": [act("late", 120, Value::Null), act("pre2", -600, Value::Null), act("now", 0, json!("done")), act("pre1", -300, Value::Null)]});
+        let (pre, post) = split_actions(&i);
+        assert_eq!(pre.iter().map(|a| text(&a["id"])).collect::<Vec<_>>(), ["pre2", "pre1"], "most anticipated first");
+        assert_eq!(post.iter().map(|a| text(&a["id"])).collect::<Vec<_>>(), ["now", "late"]);
+        assert_eq!(offset_chip(-300), "−5 min");
+        assert_eq!(offset_chip(120), "+2 min");
+        assert_eq!(offset_chip(90), "+1.5 min");
+        assert_eq!(offset_chip(0), "all’invio");
+    }
+    #[test]
+    fn advance_review_lists_the_pre_actions_it_crosses() {
+        let mut off = act("off", -120, json!("not_run"));
+        off["enabled"] = json!(false);
+        let inj = |id: &str, acts: Vec<Value>, extra: Value| {
+            let mut v = json!({"id_inject": id, "sent_to": [], "skipped": false, "actions": acts});
+            for (k, x) in extra.as_object().unwrap() { v[k] = x.clone(); }
+            v
+        };
+        let injects = vec![
+            inj("a", vec![act("p1", -300, Value::Null), act("post", 60, Value::Null), act("ran", -400, json!("done"))], json!({})),
+            inj("b", vec![off.clone()], json!({})),
+            inj("sent", vec![act("p3", -300, Value::Null)], json!({"sent_to": ["x"]})),
+            inj("skip", vec![act("p4", -300, Value::Null)], json!({"skipped": true})),
+        ];
+        // Instants: p1 at 300, off at 480; the advance to 400 crosses only p1.
+        let got: Vec<String> = crossed_pre_actions(&injects, 0, 400).iter().map(|(_, a)| text(&a["id"]).to_string()).collect();
+        assert_eq!(got, ["p1"]);
+        // Further on it also shows the one EXCON switched off, so it can be switched back on.
+        let got: Vec<String> = crossed_pre_actions(&injects, 0, 600).iter().map(|(_, a)| text(&a["id"]).to_string()).collect();
+        assert_eq!(got, ["p1", "off"]);
+    }
+    #[test]
+    fn send_dialog_offers_the_undecided_actions() {
+        let mut off = act("off", -120, json!("not_run"));
+        off["enabled"] = json!(false);
+        let i = json!({"sent_to": [], "actions": [act("a", 0, Value::Null), act("done", -60, json!("done")), off]});
+        let ids: Vec<&str> = sendable_actions(&i).iter().map(|a| text(&a["id"])).collect::<Vec<_>>().into_iter().map(|s| if s == "a" { "a" } else { "off" }).collect();
+        assert_eq!(ids, ["a", "off"]);
+        assert_eq!(default_actions(&i).into_iter().collect::<Vec<_>>(), ["a"], "the switched-off one is not ticked");
+        assert_eq!(send_body_with(&BTreeSet::from(["m".to_string()]), &default_actions(&i)), json!({"recipients": ["m"], "actions": ["a"]}));
+        // Already sent: the actions were decided with the first send.
+        let sent = json!({"sent_to": ["m"], "actions": [act("a", 0, Value::Null)]});
+        assert!(sendable_actions(&sent).is_empty());
     }
     #[test]
     fn speed_choices_keep_the_current_value() {
