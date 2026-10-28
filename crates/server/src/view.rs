@@ -72,6 +72,16 @@ fn deployment(w: &sim::World, task: &sim::DeploymentTask) -> Deployment {
         arrival_s: task.arrival_s,
         track: track(task, w.time_s()),
         route: task.route.as_ref().map(|r| r.points()),
+        action: task.command.kind().to_string(),
+        zones: match &task.command {
+            sim::Command::MonitorArea { zones, .. } => w
+                .d
+                .monitors
+                .get(&task.id)
+                .map(|m| m.zones.clone())
+                .unwrap_or_else(|| w.parse_monitor_zones(zones).unwrap_or_default()),
+            _ => Vec::new(),
+        },
     }
 }
 
@@ -150,6 +160,15 @@ pub fn extract(ex: &Exercise, have: Have) -> Option<ViewState> {
                 threatened: b.threatened,
                 evacuating: b.evac_done_at.is_some(),
                 empty_evacuated: b.people_inside == 0 && b.evacuated > 0,
+                evac_people: if b.evac_done_at.is_some() {
+                    b.evac_pending.min(b.people_inside)
+                } else {
+                    0
+                },
+                evac_to: b
+                    .evac_destination
+                    .and_then(|id| w.scn.buildings.iter().find(|s| s.id == id))
+                    .map(|s| s.pos),
             })
             .collect(),
         roads: w
@@ -202,6 +221,7 @@ pub fn extract(ex: &Exercise, have: Have) -> Option<ViewState> {
             .map(|d| Drop {
                 at: d.at,
                 radius_m: d.radius_m,
+                t_s: d.t_s,
             })
             .collect(),
         traffic: w
@@ -217,6 +237,7 @@ pub fn extract(ex: &Exercise, have: Have) -> Option<ViewState> {
             })
             .collect(),
         deployments: w.d.tasks.iter().map(|t| deployment(w, t)).collect(),
+        traffic_model: w.scn.operations.traffic,
         warned: w.d.warned.iter().cloned().collect(),
         last_turn: ex.last_turn.as_ref().map(window),
         resolving: ex.resolving.as_ref().map(|r| TurnWindow {

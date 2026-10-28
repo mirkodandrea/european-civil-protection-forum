@@ -315,7 +315,7 @@ pub fn update(
     }
     // Water drops and the zone grid as gizmos (cheap, redrawn every frame).
     let show_marks = std::env::var("TTX_SNAPSHOT_MARKS").as_deref() != Ok("0");
-    for view::Drop { at, radius_m: r } in snap.drops.iter().filter(|_| show_marks) {
+    for view::Drop { at, radius_m: r, .. } in snap.drops.iter().filter(|_| show_marks) {
         let pts: Vec<Vec3> = (0..=40)
             .map(|k| {
                 let a = k as f32 / 40.0 * std::f32::consts::TAU;

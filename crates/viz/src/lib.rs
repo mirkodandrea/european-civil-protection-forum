@@ -29,6 +29,7 @@ mod architecture;
 mod bench;
 mod camera;
 mod deployments;
+mod effects;
 mod fire_field;
 mod fire_shader;
 mod fire_textures;
@@ -66,6 +67,8 @@ pub struct Info {
 #[derive(Resource, Default)]
 pub struct Snapshot {
     pub deployments: Vec<Deployment>,
+    /// Evacuation traffic is modelled (and in `traffic`): draw no stand-ins.
+    pub traffic_model: bool,
     pub traffic: Vec<Vehicle>,
     pub generation: u64,
     pub turn: u32,
@@ -190,6 +193,7 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 objects::setup,
                 night::setup,
                 deployments::setup,
+                effects::setup,
             ),
         )
         .add_systems(
@@ -200,10 +204,22 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 objects::setup,
                 night::setup,
                 deployments::setup,
+                effects::setup,
                 flames::setup.after(terrain::setup),
             ),
         )
         .add_systems(First, replace_scene)
+        .add_systems(
+            Update,
+            (
+                effects::water_drops,
+                effects::ground_work,
+                effects::wet_ground,
+                effects::evacuation,
+                effects::puffs,
+            )
+                .after(sync),
+        )
         .add_systems(PreUpdate, editor::paste_input
             .after(bevy_egui::EguiSet::ProcessInput)
             .before(bevy_egui::EguiSet::BeginFrame))
@@ -357,6 +373,7 @@ fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
     snap.drops = v.drops;
     snap.traffic = v.traffic;
     snap.deployments = v.deployments;
+    snap.traffic_model = v.traffic_model;
     snap.warned = v.warned;
     snap.last_turn = v.last_turn;
     snap.resolving = v.resolving;

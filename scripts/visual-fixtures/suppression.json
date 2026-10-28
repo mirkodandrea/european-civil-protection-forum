@@ -1,0 +1,11 @@
+{
+  "minutes": 26,
+  "commands": [
+    {"type": "Ignite", "at": {"x": 2620, "y": 1840}, "radius_m": 120}
+  ],
+  "role_orders": [
+    {"role": "fire_commander", "commands": [{"type": "DeployEngine", "at": {"x": 2450, "y": 2000}}]},
+    {"role": "fire_commander", "commands": [{"type": "WaterDrop", "at": {"x": 2560, "y": 1800}}]},
+    {"role": "fire_commander", "commands": [{"type": "MonitorArea", "zones": ["F5"]}]}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "minutes": 3,
+  "commands": [
+    {"type": "Ignite", "at": {"x": 3150, "y": 2720}, "radius_m": 120},
+    {"type": "EvacuateZone", "zone": "F4"},
+    {"type": "EvacuateZone", "zone": "C6"}
+  ]
+}
