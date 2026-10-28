@@ -98,7 +98,7 @@ impl Exercise {
                     })
                     .map(|r| {
                         json!({"id": r.id, "reply_to": r.reply_to, "clock": r.clock,
-                        "t_s": r.t_s, "text": r.text_en, "original": r.original,
+                        "t_s": r.t_s, "text": r.text_excon.as_ref().unwrap_or(&r.text_en), "original": r.original,
                         "proposal": r.proposal, "from": r.from,
                         "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation)})
                     })
@@ -151,7 +151,7 @@ impl Exercise {
                             .map(|c| c.id);
                         json!({"id": t.id, "kind": t.kind, "from": t.from, "to": t.to,
                         "turn": t.turn, "clock": t.clock, "t_s": t.t_s, "title": t.title,
-                        "text": t.text_en, "original": original, "reply_to": t.reply_to,
+                        "text": if t.to != MASTER { &t.text_en } else if t.kind == MsgKind::Chat { t.text_excon.as_ref().unwrap_or(&t.text) } else { t.text_excon.as_ref().unwrap_or(&t.text_en) }, "original": original, "reply_to": t.reply_to,
                         "clarification_thread": clarification})
                     })
                     .collect();

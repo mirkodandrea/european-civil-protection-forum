@@ -131,6 +131,7 @@ pub fn new(ex: Exercise, scenarios: Option<Arc<library::Scenarios>>) -> AppState
         scenarios,
     };
     tokio::spawn(flow::run_clock(state.clone()));
+    tokio::spawn(flow::run_excon_translator(state.clone()));
     state
 }
 

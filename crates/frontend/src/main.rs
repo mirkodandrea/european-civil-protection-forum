@@ -412,6 +412,15 @@ impl Component for App {
         ctx.link().send_future(async move {
             let result = async {
                 let access = api::request(&key, "/api/access", None).await?;
+                if access["kind"] == "master" {
+                    // The server translates player messages to the EXCON language.
+                    let lang = web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
+                        .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+                        .unwrap_or_else(|| "it".into());
+                    let _ = api::request(&key, "/api/player/master/language", Some(json!({"language": lang}))).await;
+                }
                 let stat = api::request(&key, "/api/static", None).await?;
                 let links = if access["kind"] == "master" {
                     api::request(&key, "/api/master/access", None).await?

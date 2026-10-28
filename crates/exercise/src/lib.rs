@@ -95,6 +95,11 @@ pub enum MsgKind {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Message {
+    /// Copy for the EXCON console, in `excon_language` (see [`Exercise::excon_pending`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_excon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excon_lang: Option<String>,
     pub original: Option<String>,
     pub language_src: Option<String>,
     pub translation_failed: bool,
@@ -479,6 +484,8 @@ pub struct Exercise {
     pub exercise_phase: ExercisePhase,
     pub phase_history: Vec<PhaseEntry>,
     pub clock_control: ClockControl,
+    /// Language of the EXCON console (players have their own in `Player`).
+    pub excon_language: String,
     pub scheduled_injects: Vec<ScheduledInject>,
     /// Actions run (or not) for each inject delivery (see [`actions`]).
     pub action_runs: BTreeMap<String, actions::ActionRun>,
@@ -567,6 +574,7 @@ impl Exercise {
                 reason: "Initial training phase".into(),
             }],
             clock_control: ClockControl::default(),
+            excon_language: "en".into(),
             scheduled_injects: Vec::new(),
             action_runs: BTreeMap::new(),
             skipped_injects: BTreeMap::new(),
@@ -675,10 +683,39 @@ impl Exercise {
     }
 
     pub fn language_of(&self, role: &str) -> String {
+        if role == MASTER {
+            return self.excon_language.clone();
+        }
         self.players
             .get(role)
             .map(|p| p.language.clone())
             .unwrap_or_else(|| "en".into())
+    }
+
+    /// Player messages to the EXCON that still lack a copy in the EXCON
+    /// language: `(id, source text, source language)`. The source is the
+    /// player's original, so the translation never goes through English twice.
+    pub fn excon_pending(&self) -> Vec<(u64, String, String)> {
+        self.messages
+            .iter()
+            .filter(|m| {
+                m.to == MASTER
+                    && m.from != MASTER
+                    && matches!(m.kind, MsgKind::Reply | MsgKind::Clarification)
+                    && m.excon_lang.as_deref() != Some(self.excon_language.as_str())
+            })
+            .map(|m| match (&m.original, &m.language_src) {
+                (Some(o), Some(l)) => (m.id, o.clone(), l.clone()),
+                _ => (m.id, m.text_en.clone(), "en".into()),
+            })
+            .collect()
+    }
+
+    pub fn set_excon_text(&mut self, id: u64, lang: &str, text: String) {
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
+            m.text_excon = Some(text);
+            m.excon_lang = Some(lang.into());
+        }
     }
 
     pub fn set_language(&mut self, role: &str, lang: &str) -> Result<()> {
@@ -688,6 +725,11 @@ impl Exercise {
         .contains(&lang)
         {
             bail!("choose a supported language");
+        }
+        if role == MASTER {
+            self.excon_language = lang.to_string();
+            self.record("language_set", role, json!({"language": lang}));
+            return Ok(());
         }
         let Some(p) = self.players.get_mut(role) else {
             bail!("unknown role {role}")
@@ -1023,6 +1065,8 @@ impl Exercise {
         };
         let reply_to = message_reply_to.or(thread_reply_to);
         let m = Message {
+            text_excon: None,
+            excon_lang: None,
             original: None,
             language_src: None,
             translation_failed: false,

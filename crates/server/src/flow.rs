@@ -590,6 +590,31 @@ pub async fn settle(state: &AppState) {
     }
 }
 
+/// Player messages reach the EXCON in the EXCON language, as chat does between
+/// players: the player's own words are translated (or copied when the language
+/// matches), falling back to the English working copy on failure.
+pub async fn run_excon_translator(state: AppState) {
+    loop {
+        let (lang, work) = {
+            let ex = state.lock();
+            (ex.excon_language.clone(), ex.excon_pending())
+        };
+        for (id, text, src) in work {
+            let out = if src == lang || text.trim().is_empty() {
+                text.clone()
+            } else {
+                state.llm.translate(&text, &lang).await.unwrap_or_else(|_| text.clone())
+            };
+            // The console language may have changed meanwhile: retry then.
+            let mut ex = state.lock();
+            if ex.excon_language == lang {
+                ex.set_excon_text(id, &lang, out);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
+}
+
 /// Wall-time pacing while a decision turn stays open. Revision changes (pause,
 /// ratio edits, explicit time jumps and rollback) always reanchor at the actual world.
 pub async fn run_clock(state: AppState) {

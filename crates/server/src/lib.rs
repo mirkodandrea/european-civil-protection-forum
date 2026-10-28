@@ -176,6 +176,7 @@ fn router_inner(
         scenarios,
     };
     tokio::spawn(flow::run_clock(state.clone()));
+    tokio::spawn(flow::run_excon_translator(state.clone()));
     if state.persist.is_some() {
         let state = state.clone();
         tokio::spawn(async move {
@@ -861,7 +862,7 @@ async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
         (ex.language_of(&from), ex.turn, ex.clock_control.revision)
     };
     let mut failed = false;
-    let text_en = if language == "en" || from == exercise::MASTER {
+    let text_en = if language == "en" {
         b.text.clone()
     } else {
         match s.llm.translate_to_english(&b.text, &language).await {
