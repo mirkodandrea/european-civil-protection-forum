@@ -1151,8 +1151,6 @@ impl Component for App {
         html! {<>
             <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
-            if self.is_master()&&!self.is_evaluator(){<select key={self.excon_lang.clone()} id="language" aria-label={i18n::t(l,"language")} value={self.excon_lang.clone()} onchange={ctx.link().callback(|e|Msg::ExconLang(api::select(e)))}>{for api::EXCON_LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.excon_lang}>{name}</option>})}</select>}
-            if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label={i18n::t(l,"language")} value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
             {self.view_notification_bell(ctx)}
             </header>
 
