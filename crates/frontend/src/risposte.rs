@@ -150,7 +150,7 @@ pub fn risposte(props: &RisposteProps) -> Html {
             html!{<li key={format!("{}:{}",k.0,k.1)} data-response={format!("{}:{}",k.0,k.1)}><button class={classes!("response-row",match st{ReplyState::Pending=>"is-pending",ReplyState::Replied|ReplyState::Decided(_)=>"is-replied",ReplyState::Clarifying=>"is-pending",ReplyState::None=>"is-none"})} {onclick}>
                 <span class="planned-times"><b>{text(&r["clock"])}</b><small>{format_offset(r["t_s"].as_i64().unwrap_or(0))}</small></span>
                 <span class="planned-body"><b>{if text(&r["title"]).is_empty(){crate::i18n::ex("Inject")}else{text(&r["title"])}}</b><span class="planned-text">{text(&r["inject_text"])}</span></span>
-                <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span><span class={classes!("pill","reply-state",state_tone(st))} data-reply-state={format!("{st:?}")}>{state_label(st)}</span></span>
+                <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span>if let ReplyState::Decided(_)=st{{for list(&r["decided_proposals"]).iter().map(|d|{let v=ReplyState::Decided(verdict(text(&d["review"])));html!{<span key={d["id"].to_string()} class={classes!("pill","reply-state",state_tone(v))} data-reply-state={format!("{v:?}")} title={format!("#{}",d["id"])}>{state_label(v)}</span>}})}}else{<span class={classes!("pill","reply-state",state_tone(st))} data-reply-state={format!("{st:?}")}>{state_label(st)}</span>}</span>
             </button></li>}
         })}</ol>
         if let Some(r)=selected{{dialog(props,&r,&roles,{let o=opened.clone();Callback::from(move |_|o.set(None))})}}
