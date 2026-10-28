@@ -693,8 +693,10 @@ impl Exercise {
             "known_zones":self.known_zones(role), "observed_units":units,
             "roads":roads, "lines":lines, "drops":drops, "warned":[], "burning_zones":[],
             "buildings":(0..self.world.scn.buildings.len()).map(|i| buildings.get(&i).cloned().unwrap_or(Value::Null)).collect::<Vec<_>>(),
-            "estimates":self.knowledge_events.iter().rev().find(|e| e.role == role && !e.observation.estimates.is_empty())
-                .map(|e| e.observation.estimates.iter().map(|x| json!({"at":x.at,"radius_m":x.radius_m,"area_ha":x.area_ha,"spread_toward_deg":x.spread_toward_deg,"error_m":x.error_m,"source":e.source_name,"clock":e.clock,"t_s":e.t_s})).collect::<Vec<_>>())
+            // The latest estimate, until a later disclosure of the fire itself supersedes it.
+            "estimates":self.knowledge_events.iter().enumerate().rev().find(|(_, e)| e.role == role && !e.observation.estimates.is_empty())
+                .filter(|(i, _)| !self.knowledge_events[i + 1..].iter().any(|e| e.role == role && !e.observation.cells.is_empty()))
+                .map(|(_, e)| e.observation.estimates.iter().map(|x| json!({"at":x.at,"radius_m":x.radius_m,"area_ha":x.area_ha,"spread_toward_deg":x.spread_toward_deg,"error_m":x.error_m,"source":e.source_name,"clock":e.clock,"t_s":e.t_s})).collect::<Vec<_>>())
                 .unwrap_or_default(),
             "drones":self.world.drone_status(role),
             "live_zones":self.world.drone_status(role).iter().filter(|d| d["status"] == "on_station")

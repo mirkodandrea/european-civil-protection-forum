@@ -982,6 +982,7 @@ fn draw_labels(
     (zcols, zrows): (u64, u64),
     reqs: &[LabelReq],
     badges: &[Badge],
+    avoid: &[(f64, f64, f64, f64)],
 ) -> Result<(), wasm_bindgen::JsValue> {
     use crate::label_layout::{place, Item, Rect};
     let rect = canvas.get_bounding_client_rect();
@@ -1004,6 +1005,10 @@ fn draw_labels(
         if visible(p) {
             markers.push(Rect { x: p.0 - 8., y: p.1 - 8., w: 16., h: 16. });
         }
+    }
+    for &(x0, y0, x1, y1) in avoid {
+        let (a, b) = (to_screen(x0, y0), to_screen(x1, y1));
+        markers.push(Rect { x: a.0, y: a.1, w: b.0 - a.0, h: b.1 - a.1 });
     }
     let mut seen: Vec<(String, (f64, f64))> = Vec::new();
     for r in reqs {
@@ -1191,6 +1196,21 @@ fn draw(
             if fg[3] > 0 {
                 rgba[i..i + 4].copy_from_slice(&fg);
                 states[i / 4] = obs["state"].as_u64().unwrap_or(0) as u8;
+            }
+        }
+    }
+    // Labels must not hide the active front: blocks of cells with active fire become obstacles.
+    let mut front: Vec<(f64, f64, f64, f64)> = Vec::new();
+    if on(L_FIRE) && cols > 0 && rows > 0 {
+        const B: usize = 6;
+        let (cw, chh) = (size / cols as f64, h * k / rows as f64);
+        for br in (0..rows).step_by(B) {
+            for bc in (0..cols).step_by(B) {
+                let hot = (br..(br + B).min(rows))
+                    .any(|r| (bc..(bc + B).min(cols)).any(|c| states[r * cols + c] == 1));
+                if hot {
+                    front.push((bc as f64 * cw, br as f64 * chh, (bc + B).min(cols) as f64 * cw, (br + B).min(rows) as f64 * chh));
+                }
             }
         }
     }
@@ -1606,15 +1626,17 @@ fn draw(
             "en_route" => "map_drone_en_route",
             _ => "map_drone_returning",
         };
-        label(&format!("{} · {}", crate::i18n::t(lang, "map_drone"), crate::i18n::t(lang, status_key)), x, y, 0);
+        label(&format!("{} · {}", crate::i18n::t(lang, "map_drone"), crate::i18n::t(lang, status_key)), x, y, 1);
     }
+    // Drones have their own marker above; do not draw them again as a generic unit.
+    let drone_tasks: Vec<&Value> = list(&v["drones"]).iter().map(|d| &d["task"]).collect();
     for d in list(&v["deployments"])
         .iter()
         .chain(list(&v["observed_units"]))
         .filter(|_| on(L_UNITS))
     {
         let t = &d["task"];
-        if d["active_qty"] == 0 || t["status"] == "cancelled" {
+        if d["active_qty"] == 0 || t["status"] == "cancelled" || drone_tasks.contains(&&t["id"]) {
             continue;
         }
         let x = n(&d["position_m"][0]) * k;
@@ -1714,6 +1736,7 @@ fn draw(
         (zcols, zrows),
         &reqs.into_inner(),
         &badges.into_inner(),
+        &front,
     )
 }
 /// Metric scale bar in screen space (bitmap pixels), drawn after the world transform is reset.

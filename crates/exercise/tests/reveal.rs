@@ -208,3 +208,16 @@ fn refresh_repeats_the_latest_zone_reveal_as_a_fresh_snapshot() {
     assert!(ex.player_map("fire_commander").unwrap()["cells"].as_array().unwrap().len() >= before);
     assert!(ex.player_map("mayor").unwrap()["cells"].as_array().unwrap().is_empty(), "other roles are untouched");
 }
+
+#[test]
+fn a_later_fire_map_supersedes_the_estimate() {
+    let mut ex = exercise_with(|_| {});
+    send(&mut ex, "I-01", &["mayor", "fire_commander"]);
+    assert!(estimate(&ex, "fire_commander").is_object());
+    // I-03 gives the commander the fire itself: his estimate is no longer shown.
+    send(&mut ex, "I-03", &["fire_commander"]);
+    assert_eq!(run_of(&ex, "A-03").status, ActionStatus::Done);
+    assert!(ex.player_map("fire_commander").unwrap()["estimates"].as_array().unwrap().is_empty());
+    // The mayor never saw the fire map, so the estimate stays.
+    assert!(estimate(&ex, "mayor").is_object());
+}

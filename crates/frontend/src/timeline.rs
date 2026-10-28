@@ -65,6 +65,43 @@ pub fn default_actions(inject: &Value) -> BTreeSet<String> {
 }
 
 /// An action's offset as a chip: `−5 min`, `+2 min`, `all’invio`.
+/// Readable summary of an inject action; reveal actions are described in the EXCON language.
+fn action_summary(a: &Value) -> String {
+    use crate::i18n_excon::ex;
+    let r = &a["reveal"];
+    if !r.is_object() {
+        return text(&a["summary"]).to_string();
+    }
+    if r["kind"] == "approximate" {
+        return format!(
+            "{} · ±{:.0} m · {} ±{:.0}%",
+            ex("Stima sulla mappa (non verificata)"),
+            r["position_error_m"].as_f64().unwrap_or(0.),
+            ex("area"),
+            r["area_error_frac"].as_f64().unwrap_or(0.) * 100.
+        );
+    }
+    let zones = match &r["zones"] {
+        Value::String(s) if s == "burning" => ex("zone in fiamme").to_string(),
+        Value::String(s) if s == "burning_and_adjacent" => ex("zone in fiamme e adiacenti").to_string(),
+        z => list(z).iter().map(|x| text(x).to_string()).collect::<Vec<_>>().join(", "),
+    };
+    let layers = list(&r["layers"])
+        .iter()
+        .map(|l| match text(l) {
+            "fire" => ex("Incendio"),
+            "buildings" => ex("Edifici"),
+            "roads" => ex("Strade"),
+            "lines" => ex("Linee e lanci"),
+            "units" => ex("Squadre"),
+            other => other,
+        }
+        .to_lowercase())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}: {zones} · {layers}", ex("Mappa rivelata"))
+}
+
 pub fn offset_chip(offset_s: i64) -> String {
     let m = (offset_s.abs() as f64 / 60.0 * 10.0).round() / 10.0;
     let m = if m.fract() == 0.0 { format!("{}", m as i64) } else { format!("{m:.1}") };
@@ -227,7 +264,7 @@ fn send_dialog(props: &SendDialogProps) -> Html {
                     chosen_actions.set(next);
                 })};
                 html!{<li key={aid.clone()}><label class="send-role"><input type="checkbox" data-send-action={aid.clone()} checked={checked} disabled={off||props.busy} {onchange}/>
-                    <span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span> <b>{text(&a["title"])}</b> <span class="muted">{text(&a["summary"])}</span>
+                    <span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span> <b>{text(&a["title"])}</b> <span class="muted">{action_summary(a)}</span>
                     if off{<small>{crate::i18n::ex("disattivata nella timeline")}</small>}</label></li>}
             })}</ul>}
         <div class="row send-actions"><div class="grow"/><button class="primary" data-send="" disabled={props.busy||selected.is_empty()} onclick={send}>{crate::exfmt!("Invia a {} destinatari","Send to {} recipients",selected.len())}</button></div>
@@ -627,7 +664,7 @@ pub fn advance_review_dialog(props: &AdvanceReviewProps) -> Html {
                 html!{<li class="planned-inject review-row" data-review-pre={format!("{iid}:{aid}")} key={format!("{iid}:{aid}")}>
                     <span class="planned-times"><b>{compact_clock(origin,act["instant_s"].as_i64().unwrap_or(0))}</b><small>{offset_chip(act["offset_s"].as_i64().unwrap_or(0))}</small></span>
                     <span class="planned-body"><b class="planned-title">{text(&act["title"])}</b>
-                        <span class="planned-text">{text(&act["summary"])}</span>
+                        <span class="planned-text">{action_summary(act)}</span>
                         <small class="muted">{crate::exfmt!("prima dell’inject «{}»","before inject «{}»",text(&inj["title"]))}</small></span>
                     <span class="review-send"><label class="inline-check"><input type="checkbox" data-pre-toggle={aid.clone()} checked={enabled} disabled={props.busy} onchange={toggle}/> {crate::i18n::ex("esegui")}</label></span></li>}
             })}</ul>}
@@ -874,7 +911,7 @@ fn action_sub_row(inject: &Value, a: &Value, can_toggle: bool, action: &Callback
         <span class="pi-off" title={if pre{crate::i18n::ex("Prima dell’ora prevista dell’inject")}else{crate::i18n::ex("Dopo l’invio dell’inject")}}>{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>
         <span class="pill kind action" title={crate::i18n::ex("Azione dell’inject: cambia il mondo")}>{crate::i18n::ex("Azione")}</span>
         <b class="planned-title">{text(&a["title"])}</b>
-        <span class="pi-preview muted">{text(&a["summary"])}</span>
+        <span class="pi-preview muted">{action_summary(a)}</span>
         <span class="pill rcpt">{action_status_text(inject,a)}</span>
         {toggle.unwrap_or_default()}
         if let Some(r)=a["result"].as_str().filter(|r|!r.is_empty()){<small class="pi-result muted" title={r.to_string()}>{r}</small>}</li>}
@@ -1019,7 +1056,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             Callback::from(move |_| opened.set(Some(id.clone())))
         };
         let (pre, post) = split_actions(i);
-        let acts = |l: &[Value]| html! {{for l.iter().map(|a|html!{<li><span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>{" "}<b>{text(&a["title"])}</b>{" · "}<span class="muted">{text(&a["summary"])}{" · "}{action_status_text(i,a)}</span></li>})}};
+        let acts = |l: &[Value]| html! {{for l.iter().map(|a|html!{<li><span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>{" "}<b>{text(&a["title"])}</b>{" · "}<span class="muted">{action_summary(a)}{" · "}{action_status_text(i,a)}</span></li>})}};
         let body = html! {<>
             <div class="tl-detail-head"><span class="pill kind inject">{crate::i18n::ex("Inject")}</span><b class="tl-detail-title">{text(&i["title"])}</b><div class="grow"/>
                 <button class="tp-small" aria-label={crate::i18n::ex("Chiudi")} onclick={close}>{"✕"}</button></div>

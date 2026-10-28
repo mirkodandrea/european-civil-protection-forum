@@ -224,6 +224,8 @@ pub enum Msg {
     ExconLang(String),
     /// Language chosen in the start-of-session gate.
     PickLang(String),
+    /// Static view reloaded in the player's language.
+    StaticLoaded(Result<Value, String>),
     OpenInject(String),
     /// Open the drill-down of a response row (empty: back to the list).
     OpenInjectDetail(String),
@@ -933,10 +935,20 @@ impl Component for App {
                 if self.is_master() {
                     ctx.link().send_message(Msg::ExconLang(l));
                 } else {
-                    let own = self.own.clone();
-                    ctx.link().send_message(Msg::Action(Action::post(format!("/api/player/{own}/language"), json!({"language": l}))));
+                    // Static names (roles, resources) are localised by the server: reload them
+                    // once the language is set.
+                    let (token, own) = (self.token.clone(), self.own.clone());
+                    ctx.link().send_future(async move {
+                        let _ = api::request(&token, &format!("/api/player/{own}/language"), Some(json!({"language": l}))).await;
+                        Msg::StaticLoaded(api::request(&token, "/api/static", None).await)
+                    });
                 }
             }
+            Msg::StaticLoaded(Ok(stat)) => {
+                self.stat = stat;
+                ctx.link().send_message(Msg::Refresh);
+            }
+            Msg::StaticLoaded(Err(_)) => ctx.link().send_message(Msg::Refresh),
             Msg::ExconLang(l) => {
                 if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
                     let _ = s.set_item("ttx_excon_lang", &l);
