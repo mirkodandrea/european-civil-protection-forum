@@ -12,6 +12,7 @@ mod history;
 mod inject_panel;
 mod i18n;
 mod i18n_excon;
+mod i18n_function;
 mod i18n_lang;
 mod map;
 #[cfg(not(feature = "standalone"))]
@@ -161,6 +162,8 @@ pub struct App {
     last_report: Value,
     /// EXCON console language; stored in this browser only.
     excon_lang: String,
+    /// The language gate was answered in this browser session.
+    lang_chosen: bool,
     refresh_again: bool,
     drafts: BTreeMap<String, Draft>,
     dismissed: BTreeSet<u64>,
@@ -212,6 +215,8 @@ pub enum Msg {
     OpenNotification(String),
     DismissToast(String),
     ExconLang(String),
+    /// Language chosen in the start-of-session gate.
+    PickLang(String),
     OpenInject(String),
     /// Open the drill-down of a response row (empty: back to the list).
     OpenInjectDetail(String),
@@ -409,6 +414,7 @@ impl Component for App {
         #[cfg(not(feature = "standalone"))]
         let token = ctx.props().token.clone().unwrap_or_else(api::token);
         let key = token.clone();
+        let lang_chosen = session_flag(&format!("ttx_lang_ok_{token}"));
         ctx.link().send_future(async move {
             let result = async {
                 let access = api::request(&key, "/api/access", None).await?;
@@ -480,6 +486,7 @@ impl Component for App {
                 .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
                 .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
                 .unwrap_or_else(|| "it".into()),
+            lang_chosen,
             refresh_again: false,
             drafts: BTreeMap::new(),
             dismissed: BTreeSet::new(),
@@ -907,6 +914,19 @@ impl Component for App {
                 self.error.clear();
                 focus_when_rendered("#inject-title", 10);
             }
+            Msg::PickLang(l) => {
+                let key = format!("ttx_lang_ok_{}", self.token);
+                if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+                    let _ = s.set_item(&key, "1");
+                }
+                self.lang_chosen = true;
+                if self.is_master() {
+                    ctx.link().send_message(Msg::ExconLang(l));
+                } else {
+                    let own = self.own.clone();
+                    ctx.link().send_message(Msg::Action(Action::post(format!("/api/player/{own}/language"), json!({"language": l}))));
+                }
+            }
             Msg::ExconLang(l) => {
                 if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
                     let _ = s.set_item("ttx_excon_lang", &l);
@@ -1121,6 +1141,13 @@ impl Component for App {
         } else {
             html! {<span class="pill sim-state paused" id="sim-state" role="status">{i18n::t(l,if phase=="orders"{"sim_paused_orders"}else{"sim_paused"})}</span>}
         };
+        if !self.lang_chosen && !self.own.is_empty() && !self.is_evaluator() && self.page != "lobby" && self.page != "advanced" {
+            let options = if self.is_master() { api::EXCON_LANGUAGES } else { api::LANGUAGES };
+            return html! {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="lang-gate-title">
+                <h2 id="lang-gate-title">{"Language / Lingua"}</h2>
+                <div class="row" id="language-gate">{for options.iter().map(|(id, name)| { let id = id.to_string(); html!{<button class="primary" data-lang={id.clone()} onclick={ctx.link().callback(move |_| Msg::PickLang(id.clone()))}>{*name}</button>} })}</div>
+            </section></div>};
+        }
         html! {<>
             <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
@@ -1194,4 +1221,12 @@ fn main() {
     }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();
+}
+
+/// True when this browser session already stored `key`.
+fn session_flag(key: &str) -> bool {
+    web_sys::window()
+        .and_then(|w| w.session_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .is_some()
 }

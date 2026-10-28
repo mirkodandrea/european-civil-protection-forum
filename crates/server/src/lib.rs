@@ -71,11 +71,61 @@ pub struct AppState {
     /// Background turn preview of the EXCON situation view.
     situation: situation::SlotRef,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
+    /// Role name/description translated for a player's language, by (role, language).
+    role_texts: Arc<Mutex<std::collections::BTreeMap<(String, String), RoleText>>>,
     /// Saved session; `None` keeps everything in memory.
     #[cfg(not(target_arch = "wasm32"))]
     persist: Option<Arc<persist::Persist>>,
     /// Scenario packs the EXCON can edit and start; `None` hides the editor.
     pub scenarios: Option<Arc<library::Scenarios>>,
+}
+
+/// Cached translation of a role's name and description.
+struct RoleText {
+    /// The scenario text it was made from; a scenario edit invalidates it.
+    source: (String, String),
+    /// `None` after a failed attempt, retried after [`ROLE_TEXT_RETRY`].
+    text: Option<(String, String)>,
+    at: Instant,
+}
+const ROLE_TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The role's name and description in the player's language, translated by the
+/// LLM once per role and language. `None` keeps the scenario text (same
+/// language, no LLM, or a failed translation).
+async fn localized_role(s: &AppState, role: &str, language: &str) -> Option<(String, String)> {
+    let source = {
+        let ex = s.lock();
+        let r = ex.world.scn.role(role)?;
+        if r.language == language {
+            return None;
+        }
+        (r.name.clone(), r.description.clone())
+    };
+    let key = (role.to_string(), language.to_string());
+    {
+        let cache = s.role_texts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(c) = cache.get(&key) {
+            if c.source == source && (c.text.is_some() || c.at.elapsed() < ROLE_TEXT_RETRY) {
+                return c.text.clone();
+            }
+        }
+    }
+    if !s.llm.is_available() {
+        return None;
+    }
+    let text = match (
+        s.llm.translate(&source.0, language).await,
+        s.llm.translate(&source.1, language).await,
+    ) {
+        (Ok(name), Ok(description)) => Some((name, description)),
+        _ => None,
+    };
+    s.role_texts.lock().unwrap_or_else(|p| p.into_inner()).insert(
+        key,
+        RoleText { source, text: text.clone(), at: Instant::now() },
+    );
+    text
 }
 
 impl AppState {
@@ -172,6 +222,7 @@ fn router_inner(
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         situation: Default::default(),
         presence: Default::default(),
+        role_texts: Default::default(),
         persist,
         scenarios,
     };
@@ -625,6 +676,11 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
 async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
+    let language = s.lock().players.get(&role).map(|p| p.language.clone());
+    let role_text = match language {
+        Some(language) => localized_role(&s, &role, &language).await,
+        None => None,
+    };
     let ex = s.lock();
     let player = ex
         .players
@@ -682,6 +738,10 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "clarification_threads": ex.player_clarification_threads(&role),
         "linked_conversations": ex.player_linked_conversations(&role),
     });
+    if let Some((name, description)) = role_text {
+        view["role"]["name"] = name.into();
+        view["role"]["description"] = description.into();
+    }
     // Players never read "EXCON": any leftover wording of the model becomes the
     // default persona. What participants wrote themselves stays as typed.
     scrub_excon(&ex, &mut view, &player.language, &role);

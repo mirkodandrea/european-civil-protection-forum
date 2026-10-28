@@ -5,7 +5,9 @@ pub fn t(lang: &str, key: &'static str) -> &'static str {
     if lang == "it" {
         it(key)
     } else {
-        crate::i18n_lang::lookup(lang, key).unwrap_or_else(|| en(key))
+        crate::i18n_lang::lookup(lang, key)
+            .or_else(|| crate::i18n_function::lookup(lang, key))
+            .unwrap_or_else(|| en(key))
     }
 }
 /// Localized command field name (`zone`, `qty`, ...); unknown names pass through.

@@ -100,6 +100,16 @@ async fn player_chat_rejects_profanity_before_translation_and_tracks_valid_reply
     )
     .await;
     assert_eq!(status, Status::Ok);
+    // A player view translates the role's own name and description once; warm
+    // that cache so only message translations are counted below.
+    for token in ["fire-test", "mayor-test"] {
+        let role = if token == "fire-test" { "fire_commander" } else { "mayor" };
+        client
+            .get(format!("/api/player/{role}"))
+            .header(Header::new("Authorization", format!("Bearer {token}")))
+            .dispatch()
+            .await;
+    }
     let before_same_language = translations.load(Ordering::SeqCst);
     let (status, same_language) = post(
         &client,
