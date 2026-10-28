@@ -3635,7 +3635,8 @@ async fn msel_reveal_gives_recipients_map_knowledge_and_refresh_updates_it() {
     assert_eq!(st, Status::Ok, "{rep}");
     let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert!(mayor["map"]["estimates"].as_array().is_some_and(|e| !e.is_empty()), "{mayor}");
-    assert_eq!(mayor["map"]["estimates"][0]["source"], "112 Dispatch");
+    // The sender is shown in the player's language (Italian mayor).
+    assert!(matches!(mayor["map"]["estimates"][0]["source"].as_str(), Some("112 Dispatch" | "Centrale 112")), "{}", mayor["map"]["estimates"][0]["source"]);
     assert!(mayor["map"]["last_observation_clock"].is_string());
     let (_, master) = call(&app, "GET", "/api/master", None).await;
     let a02 = master["inject_actions"].as_array().unwrap().iter().find(|a| a["id"] == "A-02").unwrap().clone();

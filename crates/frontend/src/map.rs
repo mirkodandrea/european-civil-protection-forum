@@ -1466,11 +1466,10 @@ fn draw(
         }
         let area = n(&e["area_ha"]);
         label(
-            &ctx,
             &format!("{} · ~{} ha", crate::i18n::tf(lang, "map_estimate", &[text(&e["source"]), text(&e["clock"])]), if area < 10. { format!("{area:.1}") } else { format!("{area:.0}") }),
-            x + 12. * u,
-            y - r - 4. * u,
-            &mut labels,
+            x,
+            y - r,
+            0,
         );
     }
     if let Some(forecast) = list(&v["forecast_products"])
