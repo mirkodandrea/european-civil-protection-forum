@@ -8,7 +8,7 @@ use crate::browser::Json;
 use crate::{ApiResult, AppState};
 use anyhow::{bail, Result};
 #[cfg(not(target_arch = "wasm32"))]
-use rocket::serde::json::Json;
+use crate::body::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};

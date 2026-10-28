@@ -18,6 +18,8 @@ mod i18n_place;
 mod i18n_lang;
 mod label_layout;
 mod i18n_review;
+mod i18n_reply;
+mod pdf_view;
 mod map;
 mod map_legend;
 #[cfg(not(feature = "standalone"))]
@@ -816,7 +818,7 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:free_text", "work:reply"] {
+                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:free_text", "work:reply", "work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error"] {
                                     self.fields.remove(key);
                                 }
                                 if let Some(draft) = self.drafts.remove("master") {
@@ -892,6 +894,9 @@ impl Component for App {
                 if self.field("work:reply_to", "") != parent {
                     self.fields.remove("work:staged");
                     self.fields.remove("work:narrative");
+                    for key in ["work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error"] {
+                        self.fields.remove(key);
+                    }
                     if let Some(draft) = self.drafts.remove("master") {
                         if let Some(id) = draft.private["id"].as_u64() {
                             self.dismissed.insert(id);
@@ -1176,7 +1181,7 @@ impl Component for App {
             else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy||gated} pending={self.pending.clone()} oninject={ctx.link().callback(Msg::OpenInject)} onview={ctx.link().callback(Msg::View)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
             else if self.is_master()&&self.active=="situazione"{<situation::Situation stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()}/>}
-            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
+            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte token={self.token.clone()} master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
             else{{self.view_chat(ctx)}}
             if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} pending={self.pending.clone()} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject personalizzato").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}

@@ -28,7 +28,7 @@ pub fn with_ui_lang<R>(lang: &str, f: impl FnOnce() -> R) -> R {
 /// Translates an Italian console string when the console language is English.
 pub fn ex(it: &'static str) -> &'static str {
     if EN.with(|c| c.get()) {
-        en(it).unwrap_or(it)
+        en(it).or_else(|| crate::i18n_reply::ex_en(it)).unwrap_or(it)
     } else {
         it
     }

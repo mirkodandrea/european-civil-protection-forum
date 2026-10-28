@@ -905,3 +905,23 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 .pill.reply-state.partial{background:#fbe6c4;color:#7a4b00}.pill.reply-state.rejected{background:#f6d8d5;color:#8a2520}
 .response-decisions ul{list-style:none;margin:4px 0 10px;padding:0;display:grid;gap:4px}
 .inj-badge.partial{background:#fbe6c4;color:#7a4b00;font-weight:600}.inj-actions li.not-approved{color:#8a2520}.inj-actions li.not-approved small{color:var(--muted)}
+/* EXCON reply dialog: conversation on the left, the reply to handle on the right (desktop). */
+.inject-modal.response-dialog{width:min(1320px,96vw);max-height:94dvh;display:flex;flex-direction:column;overflow:hidden;padding:18px 20px}
+.response-head{display:flex;align-items:flex-start;gap:12px;flex:none;padding-bottom:10px;border-bottom:1px solid var(--line)}.response-head p{margin:2px 0 0}
+.response-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:18px;flex:1;min-height:0;margin-top:12px}
+.response-col{min-height:0;overflow:auto;padding-right:6px}.response-col-title{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.response-col-thread{border-right:1px solid var(--line);padding-right:16px}.response-col .response-thread{margin-top:0}
+.reply-basis{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 2px}.reply-doc{padding:3px 10px;font-size:13px;border-color:#3b7dd8;color:#1f4f99;background:#eef6ff}
+.pdf-viewer{margin:0 0 14px;border:1px solid var(--line);border-radius:10px;background:#f7f9f8;padding:8px}.pdf-bar{gap:8px;align-items:center;flex-wrap:wrap}.pdf-name{overflow-wrap:anywhere}
+.pdf-pages{display:grid;gap:8px;max-height:62dvh;overflow:auto;margin-top:8px}.pdf-page{display:block;background:#fff;box-shadow:0 1px 6px #0003}
+.pdf-viewer a.action{padding:6px 10px;font-size:13px;text-decoration:none}
+/* Player response form: grouped blocks. */
+.work-modal #player-work .work-block{padding:12px 0;border-top:1px solid var(--line)}.work-modal #player-work .work-block:first-child{border-top:0;padding-top:0}
+.work-modal #player-work .work-block>.work-section{margin:0 0 4px;font-size:15px}.work-modal #player-work .work-block>.work-section label{font-weight:700}
+.work-help{margin:2px 0 8px;font-size:13px;color:var(--muted)}
+.basis-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:6px 0 12px}
+.basis-option{display:flex;gap:8px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;font-weight:600;margin:0}
+.basis-option.is-selected{border-color:var(--accent);background:#e7f3ee;box-shadow:0 0 0 1px var(--accent) inset}.basis-option input[type=radio]{margin:0;width:20px;height:20px;min-height:20px;flex:none}
+.work-attach label{display:block;font-weight:600;margin-bottom:2px}.work-attach input[type=file]{max-width:100%}
+.work-file{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#f4f7f5}.work-file-name{font-weight:600;overflow-wrap:anywhere}
+.work-modal #player-work textarea#response-narrative{min-height:150px;white-space:pre-wrap}

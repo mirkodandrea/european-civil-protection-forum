@@ -4,7 +4,7 @@
 use crate::browser::Json;
 use crate::{access::Principal, bad, ApiResult, AppState};
 #[cfg(not(target_arch = "wasm32"))]
-use rocket::serde::json::Json;
+use crate::body::Json;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeMap;

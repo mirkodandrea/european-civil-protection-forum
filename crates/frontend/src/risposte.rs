@@ -123,12 +123,16 @@ pub struct RisposteProps {
     pub responses: BTreeMap<String, Value>,
     pub action: Callback<Action>,
     pub busy: bool,
+    /// Identity the PDF viewer reads attachments with.
+    pub token: String,
 }
 
 #[function_component(Risposte)]
 pub fn risposte(props: &RisposteProps) -> Html {
     let opened = use_state(|| Option::<(u64, String)>::None);
     let only_pending = use_state(|| false);
+    // PDF being read in the open dialog: (document id, file name).
+    let pdf = use_state(|| Option::<(u64, String)>::None);
     let roles = list(&props.stat["roles"]).to_vec();
     let rows = list(&props.master["inject_responses"]).to_vec();
     let key = |r: &Value| (r["inject_message_id"].as_u64().unwrap_or(0), text(&r["role"]).to_string());
@@ -153,7 +157,7 @@ pub fn risposte(props: &RisposteProps) -> Html {
                 <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span>if let ReplyState::Decided(_)=st{{for list(&r["decided_proposals"]).iter().map(|d|{let v=ReplyState::Decided(verdict(text(&d["review"])));html!{<span key={d["id"].to_string()} class={classes!("pill","reply-state",state_tone(v))} data-reply-state={format!("{v:?}")} title={format!("#{}",d["id"])}>{state_label(v)}</span>}})}}else{<span class={classes!("pill","reply-state",state_tone(st))} data-reply-state={format!("{st:?}")}>{state_label(st)}</span>}</span>
             </button></li>}
         })}</ol>
-        if let Some(r)=selected{{dialog(props,&r,&roles,{let o=opened.clone();Callback::from(move |_|o.set(None))})}}
+        if let Some(r)=selected{{dialog(props,&r,&roles,&pdf,{let o=opened.clone();let pdf=pdf.clone();Callback::from(move |_|{pdf.set(None);o.set(None)})})}}
     </section>}
 }
 
@@ -171,31 +175,81 @@ fn common(props: &RisposteProps) -> crate::controllo::CommonProps {
     }
 }
 
-fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<()>) -> Html {
+fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], pdf: &UseStateHandle<Option<(u64, String)>>, onclose: Callback<()>) -> Html {
     let st = reply_state(r);
     let on_key = {
         let onclose = onclose.clone();
         Callback::from(move |e: KeyboardEvent| if e.key() == "Escape" { onclose.emit(()) })
     };
+    let on_pdf = {
+        let pdf = pdf.clone();
+        Callback::from(move |doc: (u64, String)| pdf.set(Some(doc)))
+    };
+    let has_reply_column = list(&r["pending_proposals"]).iter().any(is_open)
+        || list(&props.master["proposals"]).iter().any(|p| approved_for(r, p));
     html! {<crate::inject_panel::ModalShell class={classes!("modal-backdrop")} onkeydown={on_key}><section class="inject-modal response-dialog" role="dialog" aria-modal="true" aria-labelledby="response-dialog-title">
-        <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
-        <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
-        {thread_view(props,r,roles)}
-        {decisions_view(r)}
-        {for list(&props.master["proposals"]).iter().filter(|p|p["narrative"]==true&&["approved","applied","failed"].contains(&text(&p["status"]))&&p["inject_id"]==r["delivery_id"]&&(p["source"]["role"]==r["role"]||(p["via_conversation"].is_number()&&p["reply_to"]==r["inject_message_id"]))).map(|p|html!{<>
-            {via_conversation(r,p,roles)}
-            <Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={Value::Null} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/>
-        </>})}
-        if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
-        {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
-            let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
-            match full{
-                Some(p)=>{let key=format!("proposal:{}",p["id"]);
-                    html!{<>{via_conversation(r,&p,roles)}<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={props.responses.get(&key).cloned().unwrap_or_default()} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/></>}}
-                None=>html!{<p class="muted">{text(&pp["summary"])}</p>},
-            }
-        })}
+        <header class="response-head"><div><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2>
+        <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p></div><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></header>
+        <div class="response-cols">
+            <div class="response-col response-col-thread" data-response-col="thread">{thread_view(props,r,roles,&on_pdf)}</div>
+            <div class="response-col response-col-reply" data-response-col="reply"><h3 class="response-col-title">{crate::i18n::ex("Risposta da gestire")}</h3>
+                {decisions_view(r)}
+                if let Some((id,name))=pdf.as_ref(){<crate::pdf_view::PdfViewer key={*id} token={props.token.clone()} id={*id} name={name.clone()} onclose={{let pdf=pdf.clone();Callback::from(move |_|pdf.set(None))}}/>}
+                if !has_reply_column&&list(&r["decided_proposals"]).is_empty(){<p class="muted">{crate::i18n::ex("Nessuna risposta da gestire.")}</p>}
+                {for list(&props.master["proposals"]).iter().filter(|p|approved_for(r,p)).map(|p|html!{<>
+                    {via_conversation(r,p,roles)}
+                    {basis_line(r,&p["id"],&on_pdf)}
+                    <Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={Value::Null} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/>
+                </>})}
+                if list(&r["pending_proposals"]).iter().any(is_open){<h3>{if st==ReplyState::Clarifying{crate::i18n::ex("In attesa di chiarimento")}else{crate::i18n::ex("In attesa di approvazione")}}</h3>}
+                {for list(&r["pending_proposals"]).iter().filter(|pp|is_open(pp)).map(|pp|{
+                    let full=list(&props.master["proposals"]).iter().find(|p|p["id"]==pp["id"]).cloned();
+                    match full{
+                        Some(p)=>{let key=format!("proposal:{}",p["id"]);
+                            html!{<>{via_conversation(r,&p,roles)}{basis_line(r,&p["id"],&on_pdf)}<Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={props.responses.get(&key).cloned().unwrap_or_default()} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/></>}}
+                        None=>html!{<p class="muted">{text(&pp["summary"])}</p>},
+                    }
+                })}
+            </div>
+        </div>
     </section></crate::inject_panel::ModalShell>}
+}
+
+/// A narrative proposal already decided that belongs to this delivery.
+fn approved_for(r: &Value, p: &Value) -> bool {
+    p["narrative"] == true
+        && ["approved", "applied", "failed"].contains(&text(&p["status"]))
+        && p["inject_id"] == r["delivery_id"]
+        && (p["source"]["role"] == r["role"]
+            || (p["via_conversation"].is_number() && p["reply_to"] == r["inject_message_id"]))
+}
+
+fn basis_name(kind: &str) -> &'static str {
+    match kind {
+        "plan" | "procedure" => crate::i18n::ex("Piani"),
+        "law" => crate::i18n::ex("Leggi"),
+        _ => crate::i18n::ex("Giudizi operativi"),
+    }
+}
+
+/// What a reply rests on and the PDF behind it, with the button that opens it.
+fn basis_chip(basis: &Value, document: &Value, on_pdf: &Callback<(u64, String)>) -> Html {
+    if !basis.is_string() && !document.is_object() {
+        return html! {};
+    }
+    let doc = document.as_object().map(|_| (document["id"].as_u64().unwrap_or(0), text(&document["name"]).to_string()));
+    html! {<div class="reply-basis" data-reply-basis={text(basis).to_string()}>
+        <span class="pill reply-basis-kind">{format!("{}: {}",crate::i18n::ex("Base della risposta"),basis_name(text(basis)))}</span>
+        if let Some((id,name))=doc{<button type="button" class="reply-doc" data-open-pdf={id.to_string()} onclick={{let on_pdf=on_pdf.clone();let name=name.clone();Callback::from(move |_|on_pdf.emit((id,name.clone())))}}>{format!("PDF · {name}")}</button>}
+    </div>}
+}
+
+/// The basis line of the reply that opened proposal `pid`.
+fn basis_line(r: &Value, pid: &Value, on_pdf: &Callback<(u64, String)>) -> Html {
+    match list(&r["replies"]).iter().find(|m| m["proposal"] == *pid) {
+        Some(m) => basis_chip(&m["basis"], &m["document"], on_pdf),
+        None => html! {},
+    }
 }
 
 /// The EXCON verdicts already given on this recipient's responses, newest last.
@@ -261,7 +315,7 @@ fn thread_messages(r: &Value) -> Vec<Value> {
     v
 }
 
-fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value]) -> Html {
+fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value], on_pdf: &Callback<(u64, String)>) -> Html {
     let messages = thread_messages(r);
     let player = text(&r["role"]).to_string();
     html! {<div class="response-thread" data-response-thread={r["inject_message_id"].to_string()}>
@@ -276,6 +330,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value]) -> Html {
                 <div class="thread-head"><b class="thread-from">{crate::render::role_label(roles,from)}</b><span class="thread-arrow" aria-hidden="true">{"→"}</span><span class="thread-to">{crate::render::role_label(roles,text(&m["to"]))}</span><span class="pill thread-kind">{kind_label(kind)}</span><div class="grow"/><time>{text(&m["clock"])}</time></div>
                 if !text(&m["title"]).is_empty(){<b class="thread-title">{text(&m["title"])}</b>}
                 <p class="thread-text">{text(&m["text"])}</p>
+                {basis_chip(&m["basis"],&m["document"],on_pdf)}
                 if !original.is_empty()&&original!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",original)}</small>}
                 if m["reply_to"].is_number(){<small class="thread-reply-to">{crate::exfmt!("In risposta al messaggio #{}","In reply to message #{}",m["reply_to"])}</small>}
             </li>}

@@ -4,7 +4,7 @@
 //! with a narrative outcome; the commands still need EXCON approval and
 //! feasibility checks and are the only part that can touch the world. At least
 //! one of the two is required. A narrative needs an inject to answer.
-use crate::{DecisionEvidence, Exercise, MsgKind, ParsedInput, Phase, ProposalStatus, MASTER};
+use crate::{BasisKind, DecisionBasis, DecisionEvidence, Exercise, PdfUpload, MsgKind, ParsedInput, Phase, ProposalStatus, MASTER};
 use anyhow::{bail, Result};
 use serde_json::json;
 use sim::Command;
@@ -23,6 +23,10 @@ pub struct PlayerResponse {
     /// Linked conversation the response comes out of (needed to answer an inject
     /// the player never received).
     pub conversation: Option<u64>,
+    /// What the response rests on (plans, laws or operational judgement).
+    pub basis: Option<BasisKind>,
+    /// PDF of the plan or law the response cites; needs a plan/law basis.
+    pub document: Option<PdfUpload>,
 }
 
 impl PlayerResponse {
@@ -39,6 +43,15 @@ impl Exercise {
         }
         if !self.players.contains_key(role) {
             bail!("unknown role {role}");
+        }
+        if let Some(document) = &r.document {
+            if !matches!(
+                r.basis,
+                Some(BasisKind::Plan | BasisKind::Law | BasisKind::Procedure)
+            ) {
+                bail!("a PDF can be attached only when the response rests on plans or laws");
+            }
+            self.validate_document(role, document)?;
         }
         let narrative = r.narrative_text();
         if narrative.is_none() && r.commands.is_empty() {
@@ -134,7 +147,24 @@ impl Exercise {
             )),
             _ => None,
         };
+        let evidence = match r.basis {
+            Some(kind) => Some(DecisionEvidence {
+                basis: DecisionBasis {
+                    kind,
+                    reference: match &r.document {
+                        Some(d) => format!("Declared by the player: {}; document {}", basis_label(kind), d.name),
+                        None => format!("Declared by the player: {}", basis_label(kind)),
+                    },
+                },
+                attachments: Vec::new(),
+            }),
+            None => evidence,
+        };
         let pid = self.open_chat_proposal(role, &original, inject_id, r.reply_to, evidence)?;
+        let document = match r.document {
+            Some(upload) => Some(self.store_document(role, pid, upload)?),
+            None => None,
+        };
         {
             let p = self.proposal_mut(pid)?;
             p.thread = thread;
@@ -195,16 +225,23 @@ impl Exercise {
             }
         }
         if narrative.is_some() {
-            let note = if r.commands.is_empty() {
+            let mut note = if r.commands.is_empty() {
                 original.clone()
             } else {
                 format!("{original}\n[actions] {actions_text}")
             };
+            // The AI context keeps what the player said the decision rests on.
+            if let Some(kind) = r.basis {
+                note.push_str(&format!("\n[basis] {}", basis_label(kind)));
+                if let Some(d) = &document {
+                    note.push_str(&format!("; attached PDF: {}", d.name));
+                }
+            }
             self.converse(role, "user", note);
             self.record(
                 "narrative_submitted",
                 role,
-                json!({"proposal":pid,"message":mid,"inject_id":inject_id,"translation_failed":r.translation_failed,"actions":r.commands.len(),"conversation":r.conversation}),
+                json!({"proposal":pid,"message":mid,"inject_id":inject_id,"translation_failed":r.translation_failed,"actions":r.commands.len(),"conversation":r.conversation,"basis":r.basis,"document":document}),
             );
         }
         if let Some(cid) = r.conversation {
@@ -215,5 +252,15 @@ impl Exercise {
             );
         }
         Ok(pid)
+    }
+}
+
+/// English wording of a basis for logs and the AI context.
+pub fn basis_label(kind: BasisKind) -> &'static str {
+    match kind {
+        BasisKind::Plan => "plans",
+        BasisKind::Law => "laws",
+        BasisKind::Procedure => "procedures",
+        BasisKind::OperationalJudgment => "operational judgement",
     }
 }

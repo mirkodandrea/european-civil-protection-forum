@@ -69,6 +69,24 @@ fn tape() -> Arc<llm::cassette::Cassette> {
     TAPE.with(Arc::clone)
 }
 
+/// The browser keeps its journal in `localStorage` (a few MB). A PDF above this
+/// many base64 characters is replaced there by a minimal valid stub, so a
+/// replay still produces the same exercise but the document itself is gone.
+const JOURNAL_PDF_CHARS: usize = 512 * 1024;
+const STUB_PDF: &str = "%PDF-1.4\n% document not kept in the browser save\n";
+
+fn journal_body(mut body: Value) -> Value {
+    use base64::Engine;
+    if let Some(a) = body.get_mut("attachment").filter(|a| a.is_object()) {
+        if a["data"].as_str().is_some_and(|d| d.len() > JOURNAL_PDF_CHARS) {
+            a["data"] = Value::String(
+                base64::engine::general_purpose::STANDARD.encode(STUB_PDF),
+            );
+        }
+    }
+    body
+}
+
 fn journaled(url: &str) -> bool {
     !url.contains("/presence") && !url.contains("/api/master/scenarios")
 }
@@ -184,7 +202,7 @@ pub async fn request(
 ) -> Result<Value, String> {
     // Recorded at the start, so the order matches what was asked; dropped again
     // if the request fails and therefore changed nothing.
-    let seq = body.clone().filter(|_| journaled(url)).map(|body| {
+    let seq = body.clone().filter(|_| journaled(url)).map(journal_body).map(|body| {
         let t_s = s.lock().world.time_s();
         JOURNAL.with(|j| {
             let mut j = j.borrow_mut();
@@ -280,6 +298,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         }
         ("GET", "/api/state") => get_state(principal.clone(), s.clone()).await,
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
+        ("GET", "/api/attachments/<id>") => {
+            get_attachment(
+                principal.clone(),
+                s.clone(),
+                captures["id"].parse().map_err(|_| bad("invalid document id"))?,
+            )
+            .await
+        }
         ("GET", "/api/player/<role>") => {
             get_player(principal.clone(), s.clone(), captures["role"].to_string()).await
         }
@@ -685,6 +711,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/evaluator"),
     ("GET", "/api/state"),
     ("GET", "/api/master"),
+    ("GET", "/api/attachments/<id>"),
     ("GET", "/api/player/<role>"),
     ("POST", "/api/player/<role>/presence"),
     ("GET", "/api/player/<role>/presence"),

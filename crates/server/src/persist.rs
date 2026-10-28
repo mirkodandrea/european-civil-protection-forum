@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 const FORMAT: u32 = 2;
 const SESSION_FILE: &str = "session.json";
 pub const ACTIVE_FILE: &str = "active.txt";
-const BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JournalEntry {
@@ -257,7 +256,15 @@ pub async fn restore(
 
 // ------------------------------------------------------------ journal fairing
 
-struct Recorded(Option<u64>);
+/// A POST the fairing decided to journal; its body arrives with the data guard.
+struct Pending {
+    principal: Principal,
+    uri: String,
+    t_s: i64,
+}
+
+/// Journal sequence of the request, once its body has been recorded.
+struct Recorded(Mutex<Option<u64>>);
 
 pub struct JournalFairing;
 
@@ -266,6 +273,20 @@ fn journaled(path: &str) -> bool {
         && !path.contains("/presence")
         && !path.starts_with("/api/master/storage")
         && !path.starts_with("/api/master/scenarios")
+}
+
+/// Record the whole body of a journaled request (called by the JSON data guard).
+pub(crate) fn record_body(req: &rocket::Request<'_>, bytes: &[u8]) {
+    let Some(p) = req.local_cache(|| None::<Pending>) else { return };
+    let Some(state) = req.rocket().state::<AppState>() else { return };
+    let Some(persist) = state.persist.clone() else { return };
+    let seq = persist.begin(
+        p.principal.clone(),
+        p.uri.clone(),
+        String::from_utf8_lossy(bytes).into_owned(),
+        p.t_s,
+    );
+    *req.local_cache(|| Recorded(Mutex::new(None))).0.lock().unwrap() = Some(seq);
 }
 
 #[rocket::async_trait]
@@ -286,22 +307,29 @@ impl Fairing for JournalFairing {
             .and_then(|h| h.strip_prefix("Bearer "))
             .and_then(|t| state.access.principal(t));
         let Some(principal) = principal else { return };
-        let bytes = data.peek(BODY_LIMIT + 1).await;
-        if bytes.len() > BODY_LIMIT {
-            return;
-        }
-        let body = String::from_utf8_lossy(bytes).into_owned();
         let uri = req.uri().to_string();
         let t_s = state.lock().world.time_s();
-        let seq = persist.begin(principal, uri, body, t_s);
-        let _ = req.local_cache(|| Recorded(Some(seq)));
+        if data.peek(1).await.is_empty() {
+            // No body: nothing for a data guard to read.
+            let seq = persist.begin(principal, uri, String::new(), t_s);
+            let _ = req.local_cache(|| Recorded(Mutex::new(Some(seq))));
+        } else {
+            let _ = req.local_cache(|| Some(Pending { principal, uri, t_s }));
+        }
     }
 
     async fn on_response<'r>(&self, req: &'r rocket::Request<'_>, res: &mut Response<'r>) {
-        let Recorded(seq) = req.local_cache(|| Recorded(None));
-        let (Some(seq), Some(state)) = (seq, req.rocket().state::<AppState>()) else { return };
+        let Some(state) = req.rocket().state::<AppState>() else { return };
         let Some(persist) = state.persist.clone() else { return };
-        persist.finish(*seq, res.status().class().is_success());
+        let mut seq = *req.local_cache(|| Recorded(Mutex::new(None))).0.lock().unwrap();
+        if seq.is_none() {
+            // A route that never reads its body (no data guard): it has nothing to replay.
+            if let Some(p) = req.local_cache(|| None::<Pending>) {
+                seq = Some(persist.begin(p.principal.clone(), p.uri.clone(), String::new(), p.t_s));
+            }
+        }
+        let Some(seq) = seq else { return };
+        persist.finish(seq, res.status().class().is_success());
         persist.autosave(state, false);
     }
 }
