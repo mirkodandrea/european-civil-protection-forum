@@ -1399,6 +1399,33 @@ pub fn scenario_editor(props: &Props) -> Html {
                     {for list(&lib["bases"]).iter().map(|base| {let id=text(base); let name=packs.iter().find(|p| text(&p["id"])==id).map(|p|text(&p["name"])).unwrap_or(id); html!{<option value={id.to_string()} selected={territory.as_str()==id}>{name}</option>}})}
                 </select>
             </label>
+            <div class="row">
+                <label class="button" title={ex("Legge uno scenario da un file JSON e lo apre nell’editor come nuovo scenario; salva poi per aggiungerlo alla libreria.")}>{ex("Importa scenario da file")}
+                    <input id="import-scenario-file" type="file" accept=".json,application/json" hidden=true onchange={{
+                        let (open, message, problems, tab) = (open.clone(), message.clone(), problems.clone(), tab.clone());
+                        Callback::from(move |e: Event| {
+                            let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                            let Some(file) = input.files().and_then(|f| f.get(0)) else { return };
+                            input.set_value("");
+                            let (open, message, problems, tab) = (open.clone(), message.clone(), problems.clone(), tab.clone());
+                            wasm_bindgen_futures::spawn_local(async move {
+                                match read_pack(file).await {
+                                    Ok(pack) => match call(&format!("/api/master/scenarios/{}", api::encode(&pack.base)), None).await {
+                                        Ok(v) => {
+                                            problems.set(vec![]);
+                                            message.set(String::new());
+                                            tab.set("general".into());
+                                            open.set(Some(Open { pack, reference: v["reference"].clone(), saved_id: None, dirty: true }));
+                                        }
+                                        Err(e) => message.set(format!("Territorio «{}» non disponibile: {e}", pack.base)),
+                                    },
+                                    Err(e) => message.set(e),
+                                }
+                            });
+                        })
+                    }}/>
+                </label>
+            </div>
             <table class="scenario-list"><thead><tr>
                 <th title={ex("Nome e descrizione dello scenario.")}>{ex("Nome")}</th>
                 <th title={ex("La mappa su cui si svolge: terreno, edifici e strade. Non si modifica da qui.")}>{ex("Territorio")}</th>
@@ -1419,7 +1446,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                         <button class="edit-scenario" disabled={*busy}
                             title={if builtin {ex("Apre una copia modificabile: lo scenario incluso resta com’è.")} else {ex("Apre lo scenario nell’editor. Salvare non tocca l’esercitazione in corso.")}}
                             onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), false)))}}>{if builtin {ex("Personalizza")} else {ex("Modifica")}}</button>
-                        if !builtin {<button disabled={*busy} title={ex("Apre una copia di questo scenario con un nuovo identificativo.")} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), true)))}}>{ex("Duplica")}</button>}
+                        <button class="clone-scenario" disabled={*busy} title={ex("Apre una copia di questo scenario con un nuovo identificativo.")} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), true)))}}>{ex("Duplica")}</button>
                         {twice(format!("start:{id}"), ex("Avvia").to_string(), "primary", "Avvia una nuova esercitazione da questo scenario. La sessione in corso (turni, messaggi, decisioni) viene scartata.", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("start", id.clone())))})}
                         if !builtin && !is_running {{twice(format!("delete:{id}"), ex("Elimina").to_string(), "danger", "Elimina definitivamente questo scenario dalla libreria. Non si può annullare.", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("/api/master/scenarios/delete", id.clone())))})}}
                     </td>
@@ -1476,24 +1503,40 @@ pub fn scenario_editor(props: &Props) -> Html {
                         <button disabled={*busy} title={ex("Verifica lo scenario senza salvare e segnala gli errori da correggere.")} onclick={validate}>{ex("Controlla")}</button>
                     </div>
                     <div class="row scenario-transfer">
-                        <button title={ex("Scrive lo scenario intero come testo JSON nel riquadro «Avanzate: JSON» qui sotto, per copiarlo o archiviarlo.")} onclick={{
-                            let (pack_json, pack_json_open, pack) = (pack_json.clone(), pack_json_open.clone(), o.pack.clone());
-                            Callback::from(move |_| { pack_json.set(serde_json::to_string_pretty(&pack).unwrap_or_default()); pack_json_open.set(true) })
-                        }}>{ex("Esporta scenario (JSON)")}</button>
-                        <button title={ex("Sostituisce il contenuto dell’editor con il testo JSON incollato; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale.")} onclick={{
-                            let (pack_json, pack_json_open, open, message) = (pack_json.clone(), pack_json_open.clone(), open.clone(), message.clone());
-                            Callback::from(move |_| { if pack_json.trim().is_empty() { pack_json_open.set(true); message.set(ex("Incolla prima il testo JSON dello scenario (riquadro «Avanzate: JSON» qui sotto), poi premi Importa.").to_string()); return; } match serde_json::from_str::<ScenarioPack>(&pack_json) {
-                                Ok(mut pack) => {
-                                    if let Some(cur) = &*open {
-                                        // An imported pack never renames the scenario it is imported into.
-                                        pack.id = cur.pack.id.clone();
-                                        open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
-                                        message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
-                                    }
+                        <button id="export-scenario" title={ex("Scarica lo scenario intero come file JSON.")} onclick={{
+                            let (message, pack) = (message.clone(), o.pack.clone());
+                            Callback::from(move |_| {
+                                let value = serde_json::to_value(&pack).unwrap_or_default();
+                                match api::download_as(&value, &format!("{}.json", pack.id)) {
+                                    Ok(()) => message.set(ex("Scenario esportato").to_string()),
+                                    Err(e) => message.set(e),
                                 }
-                                Err(e) => message.set(format!("JSON non valido: {e}")),
-                            } })
-                        }}>{ex("Importa scenario (JSON)")}</button>
+                            })
+                        }}>{ex("Esporta scenario (JSON)")}</button>
+                        <label class="button" title={ex("Sostituisce il contenuto dell’editor con lo scenario letto da un file JSON; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale.")}>{ex("Importa scenario (JSON)")}
+                            <input id="import-scenario" type="file" accept=".json,application/json" hidden=true onchange={{
+                                let (open, message) = (open.clone(), message.clone());
+                                Callback::from(move |e: Event| {
+                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                    let Some(file) = input.files().and_then(|f| f.get(0)) else { return };
+                                    input.set_value("");
+                                    let (open, message) = (open.clone(), message.clone());
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        match read_pack(file).await {
+                                            Ok(mut pack) => {
+                                                if let Some(cur) = &*open {
+                                                    // An imported pack never renames the scenario it is imported into.
+                                                    pack.id = cur.pack.id.clone();
+                                                    open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
+                                                    message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
+                                                }
+                                            }
+                                            Err(e) => message.set(e),
+                                        }
+                                    });
+                                })
+                            }}/>
+                        </label>
                     </div>
                     <details class="scenario-json" open={*pack_json_open} ontoggle={{
                         let pack_json_open = pack_json_open.clone();
@@ -1513,6 +1556,16 @@ pub fn scenario_editor(props: &Props) -> Html {
             </section>
         }
     </main>}
+}
+
+/// Reads a scenario pack from a JSON file chosen by the user.
+async fn read_pack(file: web_sys::File) -> Result<ScenarioPack, String> {
+    let text = wasm_bindgen_futures::JsFuture::from(file.text())
+        .await
+        .map_err(|_| ex("File non leggibile").to_string())?
+        .as_string()
+        .unwrap_or_default();
+    serde_json::from_str(&text).map_err(|e| format!("JSON non valido: {e}"))
 }
 
 /// Begin a new exercise from `id`. In the browser the page reloads into it.
