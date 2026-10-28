@@ -272,12 +272,18 @@ fn via_conversation(r: &Value, p: &Value, roles: &[Value]) -> Html {
     let Some(cid) = p["via_conversation"].as_u64() else { return html! {} };
     let conv = list(&r["conversations"]).iter().find(|c| c["id"] == cid);
     let people = conv.map(|c| list(&c["participants"]).iter().map(|x| role_name(roles, text(x))).collect::<Vec<_>>().join(", ")).unwrap_or_default();
-    let en = crate::i18n_excon::is_en();
     html! {<div class="response-via-block"><p class="muted response-via" data-via-conversation={cid.to_string()}>{crate::exfmt!("Risposta di {} tramite la conversazione #{} ({}).","Response by {} through conversation #{} ({}).",role_name(roles,text(&p["source"]["role"])),cid,people)}</p>
-        <details class="conversation-transcript" data-conversation-transcript={cid.to_string()}><summary>{crate::exfmt!("Trascrizione ({} messaggi)","Transcript ({} messages)",list(&conv.map(|c|c["messages"].clone()).unwrap_or_default()).len())}</summary>
-        <ol>{for list(&conv.map(|c|c["messages"].clone()).unwrap_or_default()).iter().map(|m|html!{<li key={m["id"].to_string()} data-conv-message={m["id"].to_string()}><small>{format!("{} · {}",text(&m["clock"]),role_name(roles,text(&m["from"])))}</small>
+        {transcript(cid,conv,roles)}</div>}
+}
+
+/// Collapsible transcript of a linked conversation.
+fn transcript(cid: u64, conv: Option<&Value>, roles: &[Value]) -> Html {
+    let en = crate::i18n_excon::is_en();
+    let messages = list(&conv.map(|c| c["messages"].clone()).unwrap_or_default()).to_vec();
+    html! {<details class="conversation-transcript" data-conversation-transcript={cid.to_string()}><summary>{crate::exfmt!("Trascrizione ({} messaggi)","Transcript ({} messages)",messages.len())}</summary>
+        <ol>{for messages.iter().map(|m|html!{<li key={m["id"].to_string()} data-conv-message={m["id"].to_string()}><small>{format!("{} · {}",text(&m["clock"]),role_name(roles,text(&m["from"])))}</small>
             <p>{if en||text(&m["original"]).is_empty(){text(&m["text_en"])}else{text(&m["original"])}}</p>
-            if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta a #{}","In reply to #{}",m["reply_to"])}</small>}</li>})}</ol></details></div>}
+            if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta a #{}","In reply to #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
 }
 
 /// Visual kind of a thread message: who speaks decides the side and the colour.
@@ -335,6 +341,13 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value], on_pdf: &Callb
                 if m["reply_to"].is_number(){<small class="thread-reply-to">{crate::exfmt!("In risposta al messaggio #{}","In reply to message #{}",m["reply_to"])}</small>}
             </li>}
         })}</ol>
+        {for list(&r["conversations"]).iter().map(|c|{
+            let cid=c["id"].as_u64().unwrap_or(0);
+            let people=list(&c["participants"]).iter().map(|x|role_name(roles,text(x))).collect::<Vec<_>>().join(", ");
+            html!{<div key={cid} class="response-via-block" data-linked-conversation={cid.to_string()}>
+                <p class="muted response-via">{crate::exfmt!("Conversazione #{} ({})","Conversation #{} ({})",cid,people)}</p>
+                {transcript(cid,Some(c),roles)}</div>}
+        })}
         {for list(&r["clarification_threads"]).iter().map(|c|{
             let id=c["id"].as_u64().unwrap_or(0);
             let closed=c["status"]=="closed";

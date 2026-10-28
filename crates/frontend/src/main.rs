@@ -1197,7 +1197,7 @@ impl Component for App {
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
-            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("situazione",crate::i18n::ex("Situazione"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
+            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("situazione",crate::i18n::ex("Situazione"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))}}}
             <div class="grow"/>
             if self.page=="chat"&&self.is_master(){<div class="mgmt-tabs" role="group" aria-label="Management"><span class="mgmt-label">{"Management"}</span>{nav("history",i18n::t(l,"nav_history"))}{nav("scenario",crate::i18n::ex("Impostazioni"))}</div>}
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
