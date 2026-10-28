@@ -375,7 +375,7 @@ pub fn render_with_raw(kind: &str, v: &Value) -> Html {
 
 /// Small collapsed "dati grezzi" block.
 pub fn raw(v: &Value) -> Html {
-    html! {<details class="rv-raw"><summary>{crate::i18n::ex("dati grezzi")}</summary><pre>{crate::api::pretty(v)}</pre></details>}
+    html! {<details class="rv-raw"><summary>{crate::i18n::ex("dati tecnici (JSON)")}</summary><pre>{crate::api::pretty(v)}</pre></details>}
 }
 
 /// Collapsible titled block with the readable rendering of `v`.

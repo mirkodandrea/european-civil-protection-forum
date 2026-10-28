@@ -407,6 +407,7 @@ impl Scenario {
             roles: vec![],
             excon_roles: vec![],
             default_persona: String::new(),
+            translations: Default::default(),
             reinforcements: vec![],
             msel: vec![],
             timeline: vec![],

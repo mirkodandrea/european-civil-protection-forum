@@ -71,8 +71,8 @@ pub struct AppState {
     /// Background turn preview of the EXCON situation view.
     situation: situation::SlotRef,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
-    /// Role name/description translated for a player's language, by (role, language).
-    role_texts: Arc<Mutex<std::collections::BTreeMap<(String, String), RoleText>>>,
+    /// Runtime translations of scenario texts, by (English text, language).
+    text_cache: Arc<Mutex<std::collections::BTreeMap<(String, String), CachedText>>>,
     /// Saved session; `None` keeps everything in memory.
     #[cfg(not(target_arch = "wasm32"))]
     persist: Option<Arc<persist::Persist>>,
@@ -80,52 +80,74 @@ pub struct AppState {
     pub scenarios: Option<Arc<library::Scenarios>>,
 }
 
-/// Cached translation of a role's name and description.
-struct RoleText {
-    /// The scenario text it was made from; a scenario edit invalidates it.
-    source: (String, String),
-    /// `None` after a failed attempt, retried after [`ROLE_TEXT_RETRY`].
-    text: Option<(String, String)>,
+/// Cached runtime translation of one scenario text into one language.
+struct CachedText {
+    /// `None` after a failed attempt, retried after [`TEXT_RETRY`].
+    text: Option<String>,
     at: Instant,
 }
-const ROLE_TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+const TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+/// Most texts translated at runtime for one view.
+const MAX_RUNTIME_TEXTS: usize = 60;
 
-/// The role's name and description in the player's language, translated by the
-/// LLM once per role and language. `None` keeps the scenario text (same
-/// language, no LLM, or a failed translation).
-async fn localized_role(s: &AppState, role: &str, language: &str) -> Option<(String, String)> {
-    let source = {
+/// English source text -> text in `language` for the scenario-authored
+/// content players read (role, resource and inject texts, senders). The
+/// built-in glossary and the scenario's own `translations` come first and work
+/// without an LLM; the rest (and `extra`, e.g. titles of injects the EXCON
+/// wrote) is translated once per language and cached. What cannot be
+/// translated stays in the scenario's language.
+async fn display_map(
+    s: &AppState,
+    language: &str,
+    extra: Vec<String>,
+    use_llm: bool,
+) -> std::collections::BTreeMap<String, String> {
+    if language == "en" {
+        return Default::default();
+    }
+    let (mut map, mut texts) = {
         let ex = s.lock();
-        let r = ex.world.scn.role(role)?;
-        if r.language == language {
-            return None;
+        let scn = &ex.world.scn;
+        let mut texts = scn.translatable_texts();
+        // A role written in the player's language needs no translation.
+        for r in scn.roles.iter().filter(|r| r.language == language) {
+            texts.retain(|t| *t != r.name && *t != r.description);
         }
-        (r.name.clone(), r.description.clone())
+        (scn.display_map(language), texts)
     };
-    let key = (role.to_string(), language.to_string());
+    texts.extend(extra);
+    texts.sort();
+    texts.dedup();
+    texts.retain(|t| !map.contains_key(t) && !t.trim().is_empty());
+    texts.truncate(MAX_RUNTIME_TEXTS);
+    if !use_llm || texts.is_empty() || !s.llm.is_available() {
+        return map;
+    }
+    let cached = |t: &String| {
+        let cache = s.text_cache.lock().unwrap_or_else(|p| p.into_inner());
+        cache
+            .get(&(t.clone(), language.to_string()))
+            .filter(|c| c.text.is_some() || c.at.elapsed() < TEXT_RETRY)
+            .map(|c| c.text.clone())
+    };
+    let missing: Vec<String> = texts.iter().filter(|t| cached(t).is_none()).cloned().collect();
+    let done = futures::future::join_all(missing.iter().map(|t| async move {
+        let r = s.llm.translate(t, language).await.ok().filter(|x| !x.trim().is_empty());
+        (t.clone(), r)
+    }))
+    .await;
     {
-        let cache = s.role_texts.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(c) = cache.get(&key) {
-            if c.source == source && (c.text.is_some() || c.at.elapsed() < ROLE_TEXT_RETRY) {
-                return c.text.clone();
-            }
+        let mut cache = s.text_cache.lock().unwrap_or_else(|p| p.into_inner());
+        for (t, r) in done {
+            cache.insert((t, language.to_string()), CachedText { text: r, at: Instant::now() });
         }
     }
-    if !s.llm.is_available() {
-        return None;
+    for t in texts {
+        if let Some(Some(tr)) = cached(&t) {
+            map.insert(t, tr);
+        }
     }
-    let text = match (
-        s.llm.translate(&source.0, language).await,
-        s.llm.translate(&source.1, language).await,
-    ) {
-        (Ok(name), Ok(description)) => Some((name, description)),
-        _ => None,
-    };
-    s.role_texts.lock().unwrap_or_else(|p| p.into_inner()).insert(
-        key,
-        RoleText { source, text: text.clone(), at: Instant::now() },
-    );
-    text
+    map
 }
 
 impl AppState {
@@ -222,7 +244,7 @@ fn router_inner(
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         situation: Default::default(),
         presence: Default::default(),
-        role_texts: Default::default(),
+        text_cache: Default::default(),
         persist,
         scenarios,
     };
@@ -491,15 +513,22 @@ fn bad(msg: impl Into<String>) -> ApiError {
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/static"))]
 async fn get_static(s: AppState, principal: Principal) -> ApiResult {
-    let ex = s.lock();
-    if let Principal::Player { role } = principal {
-        return Ok(Json(ex.player_static(&role)?));
+    if let Principal::Player { role } = &principal {
+        let language = s.lock().language_of(role);
+        let map = display_map(&s, &language, Vec::new(), true).await;
+        let mut v = s.lock().player_static(role)?;
+        scenario::glossary::localize_value(&mut v, &map);
+        return Ok(Json(v));
     }
+    let language = s.lock().language_of(exercise::MASTER);
+    let map = display_map(&s, &language, Vec::new(), false).await;
+    let ex = s.lock();
     let mut v = ex.world.static_view();
     v["msel"] = json!(ex.world.scn.msel);
     v["excon_roles"] = json!(ex.world.scn.excon_roles);
     v["default_persona"] = json!(ex.world.scn.default_persona);
     v["personas"] = ex.personas();
+    scenario::glossary::localize_value(&mut v, &map);
     Ok(Json(v))
 }
 
@@ -601,9 +630,10 @@ async fn get_evaluator(
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/state"))]
-async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
+async fn get_state(principal: Principal, s: AppState) -> ApiResult {
+    let map = excon_display_map(&s, &principal).await;
     let ex = s.lock();
-    Ok(Json(json!({
+    let mut view = json!({
         "wall_ms": web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
         "exercise_phase":ex.exercise_phase,
         "phase_history":ex.phase_history,
@@ -624,11 +654,26 @@ async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
         "llm": {"available": s.llm.is_available(), "model": s.llm.model(), "translation_model":s.llm.model_for("translate")},
         "world": ex.world.view(),
         "resource_accounting": ex.resource_accounting(None),
-    })))
+    });
+    scenario::glossary::localize_value(&mut view, &map);
+    Ok(Json(view))
+}
+
+/// Display texts for the EXCON console (built-in and scenario translations only).
+async fn excon_display_map(
+    s: &AppState,
+    principal: &Principal,
+) -> std::collections::BTreeMap<String, String> {
+    if !matches!(principal, Principal::Master) {
+        return Default::default();
+    }
+    let language = s.lock().language_of(exercise::MASTER);
+    display_map(s, &language, Vec::new(), false).await
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master"))]
-async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
+async fn get_master(principal: Principal, s: AppState) -> ApiResult {
+    let map = excon_display_map(&s, &principal).await;
     let ex = s.lock();
     // Peer-to-peer chat is private to its two participants. Operational
     // proposals remain visible to EXCON through the separate review queue.
@@ -655,7 +700,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
                         .is_some_and(|to| to != exercise::MASTER))
         })
         .collect::<Vec<_>>();
-    Ok(Json(json!({
+    let mut view = json!({
         "proposals": ex.proposals,
         "planned_injects": ex.planned_injects(),
         "inject_actions": ex.inject_action_runs(),
@@ -671,15 +716,26 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "digest": ex.world.digest(None),
         "conversations": std::collections::BTreeMap::from([(exercise::MASTER, ex.conversation(exercise::MASTER))]),
         "role_knowledge": ex.role_knowledge(),
-    })))
+    });
+    scenario::glossary::localize_value(&mut view, &map);
+    Ok(Json(view))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
 async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
-    let language = s.lock().players.get(&role).map(|p| p.language.clone());
-    let role_text = match language {
-        Some(language) => localized_role(&s, &role, &language).await,
-        None => None,
+    let (language, extra) = {
+        let ex = s.lock();
+        let extra = ex
+            .inbox(&role)
+            .into_iter()
+            .filter(|m| m.kind == exercise::MsgKind::Inject)
+            .flat_map(|m| [m.title.clone().unwrap_or_default(), m.from.clone()])
+            .collect::<Vec<_>>();
+        (ex.players.get(&role).map(|p| p.language.clone()), extra)
+    };
+    let map = match language {
+        Some(language) => display_map(&s, &language, extra, true).await,
+        None => Default::default(),
     };
     let ex = s.lock();
     let player = ex
@@ -738,10 +794,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "clarification_threads": ex.player_clarification_threads(&role),
         "linked_conversations": ex.player_linked_conversations(&role),
     });
-    if let Some((name, description)) = role_text {
-        view["role"]["name"] = name.into();
-        view["role"]["description"] = description.into();
-    }
+    scenario::glossary::localize_value(&mut view, &map);
     // Players never read "EXCON": any leftover wording of the model becomes the
     // default persona. What participants wrote themselves stays as typed.
     scrub_excon(&ex, &mut view, &player.language, &role);

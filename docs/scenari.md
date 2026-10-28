@@ -34,6 +34,35 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 
 `GET /api/master/scenarios`, `GET /api/master/scenarios/<id>` (pack completo + nomi del territorio), `POST …/validate`, `…/save`, `…/delete`, `…/activate` (solo server). Tutti i problemi di un pack tornano insieme (400, uno per riga).
 
+## Testi in più lingue (`translations`)
+
+I contenuti dello scenario (nomi e descrizioni di ruoli e risorse, titoli e mittenti
+degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
+(scelta a inizio sessione) con questa precedenza:
+
+1. `translations` dello scenario: `{"it": {"Buses": "Autobus", ...}}`, lingua → testo
+   inglese di origine → traduzione. Vale per ogni punto in cui compare la stringa
+   intera (corrispondenza esatta, non parziale).
+2. Glossario incorporato (`crates/scenario/src/glossary.rs`): ruoli e risorse standard
+   in tutte le lingue dei giocatori; testi completi della Valverde in italiano.
+3. Traduzione LLM a runtime (solo giocatori), una volta per testo e lingua, in cache;
+   include i titoli degli inject scritti dall'EXCON.
+4. Senza LLM e senza voce: resta il testo dello scenario.
+
+La sostituzione avviene sul server (`display_map` in `crates/server/src/lib.rs`) nelle
+viste di giocatore, `/api/static`, `/api/state` e `/api/master`; mai nell'editor scenario.
+Un ruolo scritto nella lingua del lettore non viene tradotto.
+
+## Terminologia per i giocatori
+
+Nelle pagine dei giocatori «inject» diventa «messaggio» (it/en e le 10 lingue di
+`i18n_help.rs`); «Traduzione letterale» diventa «Tradotto automaticamente» con un
+suggerimento che lo spiega. L'EXCON mantiene «inject» (termine MSEL). JSON e dati
+tecnici stanno solo dietro sezioni «Avanzate» o «dati tecnici (JSON)»; lo «Spotting»
+è spiegato come «braci che accendono nuovi focolai». Limite noto: le chiavi
+dell'interfaccia giocatore fuori da `i18n_lang`, `i18n_function` e `i18n_help` restano
+in inglese per le lingue diverse da it/en.
+
 ## Cosa non è più cablato
 
 Base di partenza delle risorse (`staging_base`), velocità per risorsa (`speed_mps`), risorse e azioni che il modello operativo aggiunge a un ruolo (`operational_grants`), esempi del catalogo comandi per l'AI (derivati dallo scenario).

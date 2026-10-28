@@ -339,7 +339,9 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Danneggiato" => "Damaged",
         "Integro" => "Intact",
         // BEGIN render.rs
-        "dati grezzi" => "raw data",
+        "dati tecnici (JSON)" => "technical data (JSON)",
+        "Spotting (braci che accendono nuovi focolai)" => "Spotting (embers starting new fires)",
+        "Spotting: il vento trasporta braci che accendono nuovi focolai davanti al fronte. Rende il fuoco più imprevedibile: da attivare solo se lo scenario lo richiede." => "Spotting: the wind carries embers that start new fires ahead of the front. Makes the fire less predictable: enable only if the scenario needs it.",
         "Direzione vento" => "Wind direction",
         "Velocità vento" => "Wind speed",
         "Umidità combustibile" => "Fuel moisture",

@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "embedded")]
 pub mod embedded;
 pub mod factory;
+pub mod glossary;
 pub mod editor;
 pub mod pack;
 pub mod synthetic;
@@ -587,6 +588,12 @@ pub struct Scenario {
     /// persona applies. Empty: a built-in neutral name ("Operations room").
     #[serde(default)]
     pub default_persona: String,
+    /// Texts of this scenario in other languages: language code -> English
+    /// source text -> translation (role and resource names and descriptions,
+    /// inject titles, senders). Overrides [`glossary`]; missing entries stay English
+    /// or are translated at runtime.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub translations: BTreeMap<String, BTreeMap<String, String>>,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
     /// Legacy standalone actions: read for old files, emptied by
@@ -603,6 +610,38 @@ pub struct Scenario {
 }
 
 impl Scenario {
+    /// English source text -> text in `lang`: built-in glossary overlaid with
+    /// this scenario's `translations`. Empty for the working language.
+    pub fn display_map(&self, lang: &str) -> BTreeMap<String, String> {
+        if lang == "en" {
+            return BTreeMap::new();
+        }
+        let mut map = glossary::builtin(lang);
+        if let Some(own) = self.translations.get(lang) {
+            map.extend(own.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        map.retain(|k, v| k != v && !v.trim().is_empty());
+        map
+    }
+
+    /// Scenario-authored texts players read, which need a translation.
+    pub fn translatable_texts(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for r in &self.roles {
+            out.extend([r.name.clone(), r.description.clone()]);
+        }
+        for r in &self.resource_types {
+            out.extend([r.name.clone(), r.description.clone()]);
+        }
+        for m in &self.msel {
+            out.extend([m.title.clone(), m.sender.clone()]);
+        }
+        out.retain(|t| !t.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The persona exercise control speaks as by default, in `language`.
     pub fn default_persona_name(&self, language: &str) -> String {
         let name = self.default_persona.trim();
