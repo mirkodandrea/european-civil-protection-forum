@@ -54,7 +54,7 @@ fn approve_warning(ex: &mut Exercise) {
         },
     )
     .unwrap();
-    ex.decide(pid, Decision { approve: true, commands: None, note: None, persona: None }).unwrap();
+    ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
 }
 
 fn signature(ex: &Exercise) -> String {

@@ -79,7 +79,7 @@ impl Exercise {
             let last_inject = self.messages.iter().rev().find(|m| m.to == player.role && m.kind == MsgKind::Inject);
             let first_reply = last_inject.and_then(|m| own.iter().find(|p| p.inject_id == m.inject_id));
             json!({"player":player,"last_inject":last_inject,"last_reply":own.last(),"awaiting_reply":last_inject.is_some() && first_reply.is_none(),
-                "counts":{"declared":own.len(),"approved":own.iter().filter(|p| p.decision.as_ref().is_some_and(|d| d.approve)).count(),"edited":own.iter().filter(|p| p.decision.as_ref().is_some_and(|d| d.edited)).count(),"rejected":own.iter().filter(|p| p.decision.as_ref().is_some_and(|d| !d.approve)).count(),"executed":own.iter().filter(|p| p.executions.iter().any(|e| e.ok)).count(),"failed":own.iter().filter(|p| p.status == ProposalStatus::Failed).count()}})
+                "counts":{"declared":own.len(),"approved":own.iter().filter(|p| p.decision.as_ref().is_some_and(|d| d.approve)).count(),"edited":own.iter().filter(|p| p.decision.as_ref().is_some_and(|d| d.edited)).count(),"rejected":own.iter().filter(|p| p.decision.as_ref().is_some_and(|d| !d.approve)).count(),"partially_approved":own.iter().filter(|p| p.review == crate::Review::PartiallyApproved).count(),"acknowledged":own.iter().filter(|p| p.review == crate::Review::Acknowledged).count(),"executed":own.iter().filter(|p| p.executions.iter().any(|e| e.ok)).count(),"failed":own.iter().filter(|p| p.status == ProposalStatus::Failed).count()}})
         }).collect::<Vec<_>>();
         let objectives = self.world.scn.msel.iter().map(|i| {
             let deliveries = self.log.iter().filter(|l| l.kind == "inject_sent" && l.data["msel_id"] == i.id).collect::<Vec<_>>();

@@ -17,6 +17,7 @@ mod i18n_help;
 mod i18n_place;
 mod i18n_lang;
 mod label_layout;
+mod i18n_review;
 mod map;
 mod map_legend;
 #[cfg(not(feature = "standalone"))]

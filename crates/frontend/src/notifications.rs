@@ -572,7 +572,7 @@ impl App {
                     format!(
                         "{} · {}",
                         tr(lang, "Proposta", "Proposal"),
-                        i18n::status(lang, if p["narrative"]==true&&status=="approved" {"narrative_approved"}else{status})
+                        if p["narrative"]==true&&status=="approved" {i18n::status(lang, "narrative_approved")}else{i18n::proposal_status(lang, p)}
                     ),
                     text(&p["original"]).into(),
                     "",

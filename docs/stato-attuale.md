@@ -121,6 +121,49 @@ La simulazione applica solo comandi autorizzati e approvati. EXCON può annullar
 un ramo dell'esercitazione con il rollback. Può inoltre calcolare previsioni del
 fuoco, revisionarle e pubblicarle ai ruoli scelti.
 
+### Decisione EXCON per singola azione
+
+`POST /api/master/proposals/<id>/decide` accetta, oltre a `approve`, `commands`
+(modifica) e `note` (`reason` è accettato come sinonimo), l'elenco
+`rejected_actions: [{index, note?}]` (indici nelle azioni revisionate: la modifica
+EXCON, altrimenti i comandi della proposta; `note` ammette il sinonimo `reason`).
+
+- **Approvazione parziale** (`approve: true` con azioni escluse): si eseguono solo le
+  azioni approvate; la verifica di fattibilità vale solo per queste, quindi un'azione
+  non fattibile si può escludere senza bloccare le altre. La proposta è `approved`
+  (poi `applied`/`failed`) e le comunicazioni rivedute partono come per
+  un'approvazione completa. `ApprovalRecord` conserva `proposed_commands`,
+  `effective_commands` (solo le approvate) e `rejected_actions` (indice, comando,
+  descrizione, motivo). Escludere tutte le azioni di una proposta che non porta
+  altro (comunicazioni, inject, limiti, narrazione) equivale a un rifiuto.
+- **Rifiuto** (`approve: false`): tutte le azioni sono rifiutate; i motivi per
+  azione eventualmente indicati sono conservati e comunicati.
+- **Presa visione** (`approve: true` su una proposta senza nulla da eseguire, ad
+  esempio una domanda informativa): stato `acknowledged`, finale; nessuna
+  esecuzione, la nota EXCON è la risposta al player. Diversa da un'iniziativa
+  narrativa, che dopo l'approvazione attende un esito: una risposta presa visione
+  non riceve esiti narrativi. Il rollback non la annulla (come un rifiuto).
+- **Stato della revisione** (`review` su ogni proposta e nella decisione):
+  `in_review`, `clarification_requested`, `approved`, `partially_approved`,
+  `rejected`, `acknowledged`, `informational`, `superseded`, `withdrawn` (annullata
+  da rollback prima di una decisione). È separato da `status`, che segue anche
+  l'esecuzione: una proposta `applied` resta `partially_approved`, e dopo un
+  rollback (`rolled_back`) la decisione e il suo `review` restano nel record.
+  Ogni riga di `inject_responses` ha `decided_proposals` (`review`, nota, numero
+  di azioni approvate/rifiutate): la tab Risposte mostra «approvata», «approvata
+  in parte», «rifiutata», «presa visione» invece di «risposta ricevuta». Il player
+  vede lo stesso esito nella lista e, per un'approvazione parziale, ogni azione
+  con ✓/✗ e il motivo.
+- Il messaggio di riscontro al player (e quindi la sua conversazione con l'AI)
+  elenca `APPROVED: …` e `NOT APPROVED: … Reason: …` per ogni azione. L'evento
+  `proposal_decided` del log riporta `review` e la decisione completa; il journal
+  della sessione ripete il corpo della richiesta, e i campi nuovi hanno valori
+  predefiniti (sessioni salvate prima restano leggibili).
+
+Nella console (Risposte) ogni azione ha la casella «Approva questa azione» e, se
+esclusa, un motivo facoltativo per il player; il pulsante diventa «Approva N di M
+azioni». Una proposta senza azioni offre «Prendi atto».
+
 ### Risposte con narrazione e azioni
 
 Una risposta è una sola proposta (`Proposal`) con testo narrativo opzionale e comandi

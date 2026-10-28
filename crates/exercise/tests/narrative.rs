@@ -148,14 +148,19 @@ fn explicit_narrative_path_cannot_bypass_operational_validation_or_role_visibili
         )
         .unwrap();
     ex.attach_parse(normal, ParsedInput::default()).unwrap();
+    // A reply with nothing to execute is acknowledged, never turned into a
+    // narrative initiative waiting for an outcome.
+    ex.decide(
+        normal,
+        Decision {
+            approve: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(ex.proposal(normal).unwrap().status, ProposalStatus::Acknowledged);
     assert!(ex
-        .decide(
-            normal,
-            Decision {
-                approve: true,
-                ..Default::default()
-            }
-        )
+        .record_narrative_outcome(normal, "Done", "Done", "Done", false)
         .is_err());
     assert!(!ex
         .inbox("fire_commander")

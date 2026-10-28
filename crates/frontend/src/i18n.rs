@@ -2,7 +2,9 @@
 //! EXCON and evaluator views never call this (App::lang is always "it" for them).
 pub use crate::i18n_excon::{ex, is_en, set_ui_lang_if_visible, with_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
-    if lang == "it" {
+    if let Some(s) = crate::i18n_review::lookup(lang, key) {
+        s
+    } else if lang == "it" {
         it(key)
     } else {
         crate::i18n_help::lookup(lang, key)
@@ -53,7 +55,19 @@ pub fn status<'a>(lang: &str, s: &'a str) -> &'a str {
         "rolled_back" => t(lang, "st_rolled_back"),
         "rejected" => t(lang, "st_rejected"),
         "superseded" => t(lang, "st_superseded"),
+        "acknowledged" => t(lang, "st_acknowledged"),
+        "partially_approved" => t(lang, "st_partially_approved"),
         _ => s,
+    }
+}
+/// Label of a proposal: the EXCON verdict when it says more than the status
+/// (partially approved, acknowledged), otherwise the status itself.
+pub fn proposal_status<'a>(lang: &str, p: &'a serde_json::Value) -> &'a str {
+    let review = p["review"].as_str().or(p["decision"]["review"].as_str()).unwrap_or("");
+    match (review, p["status"].as_str().unwrap_or("")) {
+        ("partially_approved", "approved" | "applied" | "failed") => t(lang, "st_partially_approved"),
+        ("acknowledged", _) => t(lang, "st_acknowledged"),
+        (_, s) => status(lang, s),
     }
 }
 pub fn summary_status(lang: &str, s: &str) -> &'static str {

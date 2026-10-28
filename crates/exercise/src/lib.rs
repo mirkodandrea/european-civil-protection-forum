@@ -148,6 +148,54 @@ pub enum ProposalStatus {
     RolledBack,
     /// Replaced by the player's answer to the EXCON's clarification question.
     Superseded,
+    /// EXCON took note of a response that carried nothing to execute (no
+    /// actions, communications or drafts). Terminal: the EXCON note is the answer.
+    Acknowledged,
+}
+
+/// What the EXCON made of a proposal, as players and the EXCON lists show it.
+/// It is orthogonal to [`ProposalStatus`], which also tracks execution: an
+/// `Applied` proposal can still be `PartiallyApproved`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Review {
+    /// Not decided yet (being interpreted or awaiting the EXCON).
+    #[default]
+    InReview,
+    /// A question to the player is open (asked by EXCON or by the AI).
+    ClarificationRequested,
+    Approved,
+    /// Some actions approved, the others rejected (see [`ApprovalRecord::rejected_actions`]).
+    PartiallyApproved,
+    Rejected,
+    /// Nothing to execute: the EXCON took note (see [`ProposalStatus::Acknowledged`]).
+    Acknowledged,
+    /// Chat without operational content; nothing to decide.
+    Informational,
+    /// Replaced by a newer reply before any decision.
+    Superseded,
+    /// Undone by a rollback before any decision.
+    Withdrawn,
+}
+
+/// The EXCON rejects one action of a proposal it otherwise approves.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionRejection {
+    /// Index into the reviewed actions (the EXCON's edit, else the proposal's commands).
+    pub index: usize,
+    /// Reason for the player (optional).
+    #[serde(default, alias = "reason")]
+    pub note: Option<String>,
+}
+
+/// One action the EXCON did not approve, kept with the decision.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RejectedAction {
+    /// Position in the reviewed actions.
+    pub index: usize,
+    pub command: Command,
+    pub description: String,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,7 +251,12 @@ pub struct ApprovalRecord {
     pub persona: Option<String>,
     pub edited: bool,
     pub proposed_commands: Vec<Command>,
+    /// The approved actions (what executes); empty for a rejection.
     pub effective_commands: Vec<Command>,
+    /// Actions the EXCON did not approve, with their reasons.
+    pub rejected_actions: Vec<RejectedAction>,
+    /// Approved, partially approved, rejected or acknowledged.
+    pub review: Review,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +353,20 @@ impl Proposal {
     pub fn pure_narrative(&self) -> bool {
         self.narrative && !self.carries_actions
     }
+
+    /// The EXCON's verdict when decided, else where the proposal stands.
+    pub fn review_state(&self) -> Review {
+        if let Some(d) = &self.decision {
+            return d.review;
+        }
+        match self.status {
+            ProposalStatus::NeedsClarification => Review::ClarificationRequested,
+            ProposalStatus::Informational => Review::Informational,
+            ProposalStatus::Superseded => Review::Superseded,
+            ProposalStatus::RolledBack => Review::Withdrawn,
+            _ => Review::InReview,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -341,6 +408,8 @@ pub struct Proposal {
     pub invalid: Vec<String>,
     pub clarification: Option<String>,
     pub status: ProposalStatus,
+    /// Derived from `status` and `decision` (see [`Proposal::review_state`]); kept current by every transition.
+    pub review: Review,
     pub master_note: Option<String>,
     /// Question the EXCON put to the proposing player (status `NeedsClarification`).
     #[serde(default)]
@@ -380,6 +449,9 @@ pub struct Decision {
     pub note: Option<String>,
     /// Who EXCON speaks as in the note and the feedback (see [`persona`]).
     pub persona: Option<String>,
+    /// With `approve`: actions not approved (partial approval). With a
+    /// rejection: optional per-action reasons (every action is rejected).
+    pub rejected_actions: Vec<ActionRejection>,
 }
 
 /// A clarification the EXCON asked of a player, to be delivered.
@@ -965,6 +1037,7 @@ impl Exercise {
             .filter(|p| {
                 p.turn >= turn
                     && p.status != ProposalStatus::Rejected
+                    && p.status != ProposalStatus::Acknowledged
                     && p.status != ProposalStatus::RolledBack
             })
             .map(|p| p.id)
@@ -1401,6 +1474,7 @@ impl Exercise {
             invalid: Vec::new(),
             clarification: None,
             status: ProposalStatus::Parsing,
+            review: Review::InReview,
             master_note: None,
             clarification_request: None,
             clarification_closed: false,
@@ -1570,6 +1644,7 @@ impl Exercise {
             invalid: Vec::new(),
             clarification: None,
             status: ProposalStatus::Parsing,
+            review: Review::InReview,
             master_note: None,
             clarification_request: None,
             clarification_closed: false,
@@ -1610,6 +1685,7 @@ impl Exercise {
         };
         let p = self.proposal_mut(pid)?;
         p.status = status;
+        p.review = p.review_state();
         p.history.push(change.clone());
         self.record(
             "proposal_status",
@@ -2128,6 +2204,18 @@ impl Exercise {
     }
 
     /// The EXCON decides on a proposal.
+    ///
+    /// * `approve` with no [`Decision::rejected_actions`]: every action is approved.
+    /// * `approve` with some rejected actions: **partial approval**. Only the
+    ///   other actions are kept (and executed); the rejected ones are stored
+    ///   in [`ApprovalRecord::rejected_actions`] with their reasons, and the
+    ///   player is told which is which. Rejecting every action of a proposal
+    ///   that carries nothing else is a rejection.
+    /// * `approve` on a proposal with nothing to execute (no actions,
+    ///   communications, drafts or limits, not a narrative initiative): the
+    ///   EXCON **acknowledges** it ([`ProposalStatus::Acknowledged`]).
+    /// * no `approve`: the whole proposal is rejected; per-action reasons, if
+    ///   any, are kept and reported.
     pub fn decide(&mut self, pid: u64, d: Decision) -> Result<DecisionOutcome> {
         if self.phase != Phase::Orders {
             bail!("decisions require an open exercise turn");
@@ -2143,49 +2231,85 @@ impl Exercise {
             bail!("proposal {pid} is already {status:?}");
         }
         let proposed_commands = self.proposal(pid).unwrap().commands.clone();
-        // Re-check feasibility now: resources may have changed since parsing.
-        let cmds = match d.commands.clone() {
-            Some(c) => c,
-            None => self.proposal(pid).unwrap().commands.clone(),
+        // The actions the EXCON reviewed: its edit, else the interpretation.
+        let reviewed = d.commands.clone().unwrap_or_else(|| proposed_commands.clone());
+        let clean = |n: &Option<String>| n.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        let mut reasons: BTreeMap<usize, Option<String>> = BTreeMap::new();
+        for r in &d.rejected_actions {
+            if r.index >= reviewed.len() {
+                bail!(
+                    "action {} does not exist: proposal {pid} has {} action(s)",
+                    r.index + 1,
+                    reviewed.len()
+                );
+            }
+            if reasons.insert(r.index, clean(&r.note)).is_some() {
+                bail!("action {} is rejected twice", r.index + 1);
+            }
+        }
+        let rejected_action = |i: usize, c: &Command, note: Option<String>| RejectedAction {
+            index: i,
+            command: c.clone(),
+            description: c.describe(),
+            note,
         };
-        self.set_commands(pid, cmds)?;
+        let rejected: Vec<RejectedAction> = reviewed
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match reasons.get(&i) {
+                Some(note) => Some(rejected_action(i, c, note.clone())),
+                // A whole rejection rejects every action, with or without a reason.
+                None if !d.approve => Some(rejected_action(i, c, None)),
+                None => None,
+            })
+            .collect();
+        let kept: Vec<Command> = reviewed
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !reasons.contains_key(i))
+            .map(|(_, c)| c.clone())
+            .collect();
+        let before = self.proposal(pid).unwrap();
+        let carries_other = before.narrative
+            || !before.inject_drafts.is_empty()
+            || !before.communication_drafts.is_empty()
+            || before.resource_limit_draft.is_some();
+        // Rejecting every action of a proposal with nothing else left is a rejection.
+        let approve = d.approve && (!kept.is_empty() || carries_other || rejected.is_empty());
+        let acknowledge = approve && kept.is_empty() && rejected.is_empty() && !carries_other;
+        let partial = approve && !rejected.is_empty();
+        // Re-check feasibility now (resources may have changed since parsing),
+        // only for what is approved.
+        self.set_commands(pid, if approve { kept.clone() } else { reviewed.clone() })?;
         let p = self.proposal(pid).unwrap().clone();
         let notify = match &p.source {
             Source::Player(r) => Some(r.clone()),
             Source::Master => None,
         };
-        let note = d.note.clone().filter(|n| !n.trim().is_empty());
+        let note = clean(&d.note);
         let persona = self.persona_for(d.persona.as_deref(), p.inject_id);
         let who = self.persona_name(persona.as_deref(), "en");
-        if d.approve
+        if approve
             && matches!(p.source, Source::Master)
             && p.summary.contains("UNPLANNED DIVERGENCE")
             && note.is_none()
         {
             bail!("unplanned training divergence requires explicit EXCON rationale");
         }
-        if d.approve {
+        if approve {
             self.edit_communications(
                 pid,
                 Some(p.communication_drafts.clone()),
                 Some(p.inject_drafts.clone()),
             )?;
-            if !p.narrative
-                && p.commands.is_empty()
-                && p.inject_drafts.is_empty()
-                && p.communication_drafts.is_empty()
-                && p.resource_limit_draft.is_none()
-            {
-                bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)");
-            }
             if p.verdicts.iter().any(|v| !v.is_ok()) {
-                bail!("proposal is not feasible; edit its actions or resources before approval");
+                bail!("proposal is not feasible; edit or reject the infeasible actions before approval");
             }
             if d.commands.is_none() && !p.invalid.is_empty() {
                 bail!("proposal contains invalid actions; edit it before approval");
             }
         }
-        let effective_limits = if d.approve {
+        let effective_limits = if approve {
             p.resource_limit_draft
                 .as_ref()
                 .map(|v| serde_json::from_value::<ResourceLimits>(v.clone()))
@@ -2193,26 +2317,43 @@ impl Exercise {
         } else {
             None
         };
-        if d.approve {
+        if approve {
             if let Some(limits) = &effective_limits {
                 self.validate_limits_for_phase(limits, self.exercise_phase)?;
             }
         }
+        let review = if !approve {
+            Review::Rejected
+        } else if acknowledge {
+            Review::Acknowledged
+        } else if partial {
+            Review::PartiallyApproved
+        } else {
+            Review::Approved
+        };
         self.proposal_mut(pid)?.decision = Some(ApprovalRecord {
             resource_limits: effective_limits,
-            approve: d.approve,
+            approve,
             actor: MASTER.into(),
             turn: self.turn,
             t_s: self.world.time_s(),
             wall_ms: wall_ms(),
             note: note.clone(),
             persona: persona.clone(),
-            edited: d.commands.is_some() && p.commands != proposed_commands,
+            edited: d.commands.is_some() && reviewed != proposed_commands,
             proposed_commands,
-            effective_commands: p.commands.clone(),
+            effective_commands: if approve { p.commands.clone() } else { Vec::new() },
+            rejected_actions: rejected.clone(),
+            review,
         });
+        let reason = |r: &RejectedAction| {
+            r.note
+                .as_ref()
+                .map(|n| format!(" Reason: {n}"))
+                .unwrap_or_default()
+        };
         let mut facts = Vec::new();
-        if !d.approve {
+        if !approve {
             self.transition(
                 pid,
                 ProposalStatus::Rejected,
@@ -2227,13 +2368,37 @@ impl Exercise {
                     p.descriptions.join("; ")
                 }
             ));
+            for r in rejected.iter().filter(|r| r.note.is_some()) {
+                facts.push(format!("NOT APPROVED: {}.{}", r.description, reason(r)));
+            }
+        } else if acknowledge {
+            self.transition(
+                pid,
+                ProposalStatus::Acknowledged,
+                MASTER,
+                note.as_deref().unwrap_or("Acknowledged by EXCON"),
+            )?;
+            facts.push(format!(
+                "Your message was acknowledged by {who}. It contained no orders to execute."
+            ));
         } else {
             self.transition(
                 pid,
                 ProposalStatus::Approved,
                 MASTER,
-                note.as_deref().unwrap_or("Approved by EXCON"),
+                note.as_deref().unwrap_or(if partial {
+                    "Partially approved by EXCON"
+                } else {
+                    "Approved by EXCON"
+                }),
             )?;
+            if partial {
+                facts.push(format!(
+                    "{who} approved {} of the {} actions of your orders; the others will NOT be executed.",
+                    kept.len(),
+                    reviewed.len()
+                ));
+            }
             if p.pure_narrative() {
                 facts.push(format!("Narrative initiative approved by {who}. Its outcome is pending; no simulated action was executed."));
             } else if matches!(p.source, Source::Master) || p.commands.is_empty() {
@@ -2262,8 +2427,15 @@ impl Exercise {
                     ));
                 }
             }
+            for r in &rejected {
+                facts.push(format!(
+                    "NOT APPROVED: {}. It will not be executed.{}",
+                    r.description,
+                    reason(r)
+                ));
+            }
         }
-        if d.approve && p.narrative && p.carries_actions {
+        if approve && p.narrative && p.carries_actions {
             facts.push("The narrative part of your response was approved; its outcome is pending and is not simulated.".into());
         }
         if let Some(n) = &note {
@@ -2271,7 +2443,7 @@ impl Exercise {
         }
         self.proposal_mut(pid)?.master_note = note;
         let facts_en = facts.join("\n");
-        self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
+        self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "review": review, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
         Ok(DecisionOutcome {
             proposal: pid,
             notify,
