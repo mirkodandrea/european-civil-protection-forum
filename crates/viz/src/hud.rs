@@ -273,7 +273,9 @@ pub fn draw(
     {
         label(
             task.position(snap.time_s),
-            if task.resource == "air_tankers" {
+            if task.resource == "drones" {
+                120.0
+            } else if task.resource == "air_tankers" {
                 155.0
             } else {
                 50.0

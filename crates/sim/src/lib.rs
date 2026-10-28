@@ -21,11 +21,13 @@ use serde::Serialize;
 
 pub mod command;
 pub mod digest;
+pub mod drone;
 pub mod hazard;
 pub mod impact;
 pub mod network;
 pub mod traffic;
 pub mod travel;
+pub use drone::{MonitorSample, MonitorState, SampleKind};
 pub use travel::{DeploymentTask, TaskStatus, TravelSetting};
 
 pub use command::{catalogue, catalogue_for, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
@@ -194,6 +196,10 @@ pub struct Dyn {
     pub resource_events: Vec<ResourceEvent>,
     pub arrivals: Vec<Arrival>,
     pub events: Vec<SimEvent>,
+    /// Drones on station: their update schedule, by task id.
+    pub monitors: BTreeMap<u64, MonitorState>,
+    /// Drone observations not yet taken up by the exercise layer.
+    pub monitor_samples: Vec<MonitorSample>,
 }
 
 #[derive(Clone)]
@@ -326,6 +332,8 @@ impl World {
                 resource_events: Vec::new(),
                 arrivals: Vec::new(),
                 events: Vec::new(),
+                monitors: BTreeMap::new(),
+                monitor_samples: Vec::new(),
             },
             cache,
             network,
@@ -877,6 +885,15 @@ impl World {
         actor: &Actor,
         pools: &mut BTreeMap<String, BTreeMap<String, Pool>>,
     ) -> Result<Vec<String>, String> {
+        // EXCON tasking a drone acts through the owner's drone.
+        let owner;
+        let actor = match (actor, cmd) {
+            (Actor::Master, Command::MonitorArea { role, .. }) => {
+                owner = Actor::Role(self.drone_owner(role.as_deref())?);
+                &owner
+            }
+            _ => actor,
+        };
         let role = match actor {
             Actor::Master => None,
             Actor::Role(id) => {
@@ -925,7 +942,9 @@ impl World {
         }
         let mut notes = Vec::new();
         if let Actor::Role(id) = actor {
-            if self.scn.operations.road_routing && !matches!(cmd, Command::WaterDrop { .. }) {
+            if self.scn.operations.road_routing
+                && !matches!(cmd, Command::WaterDrop { .. } | Command::MonitorArea { .. })
+            {
                 if let Some(target) = self.travel_target(cmd) {
                     let resource = match cmd {
                         Command::CutFireLine { .. } => "ground_crews",
@@ -1001,6 +1020,15 @@ impl World {
             Command::WaterDrop { at } => {
                 self.resolve_loc(at)?;
                 take("air_tankers", 1, "a water drop")?;
+            }
+            Command::MonitorArea { zones, .. } => {
+                let (resource, spec) = role
+                    .and_then(|r| self.drone_of(r))
+                    .ok_or("no monitoring drone is available to this role")?;
+                let covered = self.checked_monitor_zones(zones, &spec)?;
+                self.check_drone_wind(&spec)?;
+                take(&resource, 1, "a monitoring drone")?;
+                notes.push(format!("drone over {}", covered.join(", ")));
             }
             Command::EvacuateZone { zone, destination } => {
                 let code = self
@@ -1158,6 +1186,7 @@ impl World {
                                 task.command,
                                 Command::CutFireLine { .. } | Command::DeployEngine { .. }
                             ))
+                        && !matches!(task.command, Command::MonitorArea { .. })
                     {
                         return Err("units are performing the task; wait for completion".into());
                     }
@@ -1299,6 +1328,14 @@ impl World {
     /// Execute a command. Validates first; resources are consumed from the
     /// acting role. Returns human-readable notes.
     pub fn apply(&mut self, cmd: &Command, actor: &Actor) -> Result<Vec<String>, String> {
+        let owner;
+        let actor = match (actor, cmd) {
+            (Actor::Master, Command::MonitorArea { role, .. }) => {
+                owner = Actor::Role(self.drone_owner(role.as_deref())?);
+                &owner
+            }
+            _ => actor,
+        };
         let before_pools = self.d.pools.clone();
         let mut pools = before_pools.clone();
         let notes = self.check_inner(cmd, actor, &mut pools)?;
@@ -1357,6 +1394,9 @@ impl World {
         match cmd {
             Command::DeployEngine { .. } => {
                 out.push("Engine deployment requires allocated role resources".into());
+            }
+            Command::MonitorArea { .. } => {
+                out.push("Drone monitoring requires an allocated drone".into());
             }
             Command::CutFireLine {
                 from,
@@ -1636,6 +1676,7 @@ impl World {
                     .map(|a| a.qty - a.returned)
                     .unwrap_or(0);
                 if *qty == remaining {
+                    self.drone_recalled(*allocation);
                     if let Some(task) = self.d.tasks.iter_mut().find(|task| {
                         task.allocations.contains(allocation)
                             && !matches!(

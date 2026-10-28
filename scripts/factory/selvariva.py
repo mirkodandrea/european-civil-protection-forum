@@ -170,12 +170,15 @@ def generate(template, seed=33):
         ('air_tankers','Mezzi aerei','Lanci puntuali con viaggio e rientro per rifornimento.',55),
         ('engines','Autobotti','Missioni stradali con acqua limitata e rifornimento alla base.',10),
         ('buses','Autobus','50 posti; necessari per scuole e presidio sanitario. Il modello non riusa gli autobus con navette.',10),
-        ('police_patrols','Pattuglie','Chiusure al traffico civile. Non riparano le strade.',12)]]
+        ('police_patrols','Pattuglie','Chiusure al traffico civile. Non riparano le strade.',12),
+        ('drones','Droni di monitoraggio','Mantengono aggiornata la mappa di al massimo 4 zone ogni 5 minuti mentre sono in posizione (40 minuti), poi rientrano e si ricaricano per 15.',20)]]
+    for r in s['resource_types']:
+        if r['id']=='drones':r['drone']=dict(max_zones=4,endurance_s=2400,turnaround_s=900,update_interval_s=300)
     s['roles']=[dict(id=rid,name=name,level=level,language='it',description=desc,allowed_actions=actions,resources=res) for rid,name,level,desc,actions,res in [
         ('mayor','Coordinamento comunale','local','Avvisi, evacuazione e accoglienza nei due abitati. Concorda priorità e percorsi con il direttore antincendio.',
          ['IssueWarning','EvacuateZone','EvacuateBuilding','OpenShelter','CloseRoad','ReopenRoad'],{'buses':4,'police_patrols':3}),
-        ('fire_commander','Direzione antincendio','regional','Scegli dove impegnare squadre, autobotti e mezzo aereo; i trasferimenti e la sicurezza limitano le missioni.',
-         ['CutFireLine','WaterDrop','DeployEngine'],{'ground_crews':4,'air_tankers':1,'engines':2}),
+        ('fire_commander','Direzione antincendio','regional','Scegli dove impegnare squadre, autobotti, mezzo aereo e drone di monitoraggio; i trasferimenti e la sicurezza limitano le missioni.',
+         ['CutFireLine','WaterDrop','DeployEngine','MonitorArea'],{'ground_crews':4,'air_tankers':1,'engines':2,'drones':1}),
         ('regional_cp','Sala di coordinamento','national','Raccogli il quadro di situazione, richiedi rinforzi e coordina comunicazione pubblica e assistenza esterna.',
          ['RequestReinforcement','IssueWarning','OpenShelter'],{}),
         ('volunteer_coordinator','Coordinamento assistenza','local','Organizza assistenza alle famiglie, supporto psicologico e raccolta dei bisogni con iniziative narrative sottoposte a EXCON. Nessuna missione sanitaria o ricerca è simulata automaticamente.',[],{})]]
@@ -204,7 +207,7 @@ def exercise_pack():
              action('SV-A1','Innesco nel Bosco delle Fonti',dict(type='Ignite',at=dict(x=1730,y=4050),radius_m=80)),
              action('SV-A2','Secondo focolaio sul versante',dict(type='Ignite',at=dict(x=2050,y=4160),radius_m=60))]),
         (15,'SV-02','Richiesta di ricognizione e allerta','Osservatori sul territorio',['fire_commander','regional_cp'],
-         'Gli osservatori chiedono un quadro aggiornato del fuoco e dei possibili effetti su Roverechiare e sulla Strada delle Fonti. Richiedete a EXCON osservazioni o una previsione, condividete le informazioni utili e motivate dove intervenire. I sopralluoghi e l’impiego di droni restano nella narrazione.',
+         'Gli osservatori chiedono un quadro aggiornato del fuoco e dei possibili effetti su Roverechiare e sulla Strada delle Fonti. Richiedete a EXCON osservazioni o una previsione, condividete le informazioni utili e motivate dove intervenire. Il drone di monitoraggio della direzione antincendio può tenere aggiornata la mappa di alcune zone; gli altri sopralluoghi restano nella narrazione.',
          'Usare informazioni disponibili e incertezza per coordinare gli interventi.',[]),
         (35,'SV-03','Scolaresca e persone con bisogno di assistenza','Gestione festival',['mayor','volunteer_coordinator'],
          'Gli organizzatori chiedono dove trasferire il gruppo del Rifugio della scolaresca e come assistere le famiglie del festival. Sono segnalate persone con mobilità ridotta: organizzate supporto e destinazioni. Nel modello il gruppo del rifugio è un aggregato di 40 occupanti che richiede un autobus; le esigenze individuali sono gestite narrativamente da EXCON.',

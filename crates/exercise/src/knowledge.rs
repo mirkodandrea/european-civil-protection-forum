@@ -105,6 +105,8 @@ pub struct MapObservation {
 pub enum KnowledgeSource {
     Delivered,
     Acquired,
+    /// Periodic observation by a drone on station; tied to no message.
+    Monitoring,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -344,6 +346,11 @@ impl Exercise {
     /// EXCON explicitly discloses the chosen layers inside the chosen zones: every cell of those
     /// zones (so clear cells read "no fire"), plus buildings/roads/lines/units located there.
     pub fn zone_observation(&self, zones: &[String], layers: &[String]) -> Result<MapObservation> {
+        self.zone_observation_from(&self.world.view(), zones, layers)
+    }
+
+    /// As [`Self::zone_observation`] for the world as it was in `view` (a [`sim::World::view`]).
+    pub fn zone_observation_from(&self, view: &Value, zones: &[String], layers: &[String]) -> Result<MapObservation> {
         let scn = &self.world.scn;
         if zones.is_empty() {
             bail!("select at least one zone");
@@ -364,7 +371,6 @@ impl Exercise {
                 .iter()
                 .any(|b| p[0] >= b[0] && p[0] < b[2] && p[1] >= b[1] && p[1] < b[3])
         };
-        let view = self.world.view();
         let pos = |v: &Value| -> Option<[f32; 2]> {
             Some([v[0].as_f64()? as f32, v[1].as_f64()? as f32])
         };
@@ -374,7 +380,7 @@ impl Exercise {
         };
         if has("fire") {
             let raster = base64::engine::general_purpose::STANDARD
-                .decode(self.world.fire_raster_b64())
+                .decode(view["fire"].as_str().unwrap_or_default())
                 .expect("simulator emits base64");
             let g = &scn.grid;
             for (i, state) in raster.into_iter().enumerate() {
@@ -564,7 +570,11 @@ impl Exercise {
             .keys()
             .filter_map(|role| {
                 let e = self.knowledge_events.iter().rev().find(|e| {
-                    &e.role == role && e.timeline == timeline && !e.layers.is_empty() && !e.observation.zones.is_empty()
+                    &e.role == role
+                        && e.timeline == timeline
+                        && !matches!(e.source, KnowledgeSource::Monitoring)
+                        && !e.layers.is_empty()
+                        && !e.observation.zones.is_empty()
                 })?;
                 Some(json!({"role":role,"zones":e.observation.zones,"layers":e.layers,"clock":e.clock,"source":e.source_name}))
             })
@@ -649,7 +659,11 @@ impl Exercise {
             })
             .map(|e| e.observation.forecast_products.clone())
             .unwrap_or_default();
+        let mut zone_updates = serde_json::Map::new();
         for event in self.knowledge_events.iter().filter(|e| e.role == role) {
+            for z in &event.observation.zones {
+                zone_updates.insert(z.clone(), json!(event.t_s));
+            }
             for cell in &event.observation.cells {
                 cells.insert((cell.row, cell.col), cell);
             }
@@ -682,6 +696,10 @@ impl Exercise {
             "estimates":self.knowledge_events.iter().rev().find(|e| e.role == role && !e.observation.estimates.is_empty())
                 .map(|e| e.observation.estimates.iter().map(|x| json!({"at":x.at,"radius_m":x.radius_m,"area_ha":x.area_ha,"spread_toward_deg":x.spread_toward_deg,"error_m":x.error_m,"source":e.source_name,"clock":e.clock,"t_s":e.t_s})).collect::<Vec<_>>())
                 .unwrap_or_default(),
+            "drones":self.world.drone_status(role),
+            "live_zones":self.world.drone_status(role).iter().filter(|d| d["status"] == "on_station")
+                .flat_map(|d| d["zones"].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>(),
+            "zone_updates":zone_updates,
             "last_observation_source":self.knowledge_events.iter().rev().find(|e| e.role == role).map(|e| &e.source_name),
             "last_observation_s":self.knowledge_events.iter().rev().find(|e| e.role == role).map(|e| e.t_s),
             "last_observation_clock":self.knowledge_events.iter().rev().find(|e| e.role == role).map(|e| &e.clock)}),

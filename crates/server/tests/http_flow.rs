@@ -3660,3 +3660,49 @@ async fn msel_reveal_gives_recipients_map_knowledge_and_refresh_updates_it() {
     // Players cannot refresh.
     assert_eq!(call_key(&app, "POST", "/api/master/knowledge/refresh", Some(json!({})), Some("test-mayor")).await.0, Status::Forbidden);
 }
+
+#[tokio::test]
+async fn approved_drone_order_keeps_the_commanders_map_updated() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    for (n, i) in scn.msel.iter_mut().enumerate() {
+        i.at_s = Some(100_000 + n as i64 * 60);
+    }
+    let ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":"F3","radius_m":100}))).await;
+    let parent = reply_parent(&app, "fire_commander").await;
+    let (_, declared) = call(
+        &app,
+        "POST",
+        "/api/player/fire_commander/reply",
+        Some(json!({"text":"Drone over F3 and G3","reply_to":parent})),
+    )
+    .await;
+    let pid = declared["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"][0]["status"] == "pending").await;
+    let (st, rep) = call(&app, "POST", &format!("/api/master/proposals/{pid}/decide"), Some(json!({"approve":true,"commands":[{"type":"MonitorArea","zones":["F3-G3"]}]}))).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    let (_, before) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(before["map"]["cells"].as_array().unwrap().is_empty(), "approval alone shows nothing");
+    let (st, rep) = call(&app, "POST", &format!("/api/master/proposals/{pid}/execute"), None).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    let (_, flying) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert_eq!(flying["map"]["drones"][0]["status"], "en_route", "{flying}");
+    assert!(flying["map"]["cells"].as_array().unwrap().is_empty(), "no data in transit");
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"AdvanceTime","minutes":20}))).await;
+    let (_, live) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert_eq!(live["map"]["drones"][0]["status"], "on_station", "{live}");
+    assert_eq!(live["map"]["live_zones"], json!(["F3", "G3"]));
+    assert_eq!(live["map"]["cells"].as_array().unwrap().len(), 2 * 25 * 25);
+    assert_eq!(live["map"]["last_observation_source"], "Drone");
+    let stamp = live["map"]["last_observation_s"].as_i64().unwrap();
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"AdvanceTime","minutes":10}))).await;
+    let (_, later) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(later["map"]["last_observation_s"].as_i64().unwrap() >= stamp + 300, "periodic updates, no new message needed");
+    assert_eq!(later["map"]["drones"][0]["task"], live["map"]["drones"][0]["task"]);
+    // The other roles learn nothing.
+    let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert!(mayor["map"]["cells"].as_array().unwrap().is_empty());
+    assert!(mayor["map"]["drones"].as_array().unwrap().is_empty());
+}

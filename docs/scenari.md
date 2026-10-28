@@ -110,6 +110,32 @@ Un'azione può, invece di un `command`, rivelare **conoscenza sulla mappa** ai d
 
 **Aggiorna mappe dei ruoli** (manuale, mai automatico): nel pannello del turno compare, se almeno un ruolo ha ricevuto una rivelazione per zone (anche dallo strumento «Informazioni ai ruoli»), il pulsante che per ciascun ruolo ripete le stesse zone e gli stessi livelli dell'ultima rivelazione come nuovo snapshot (`POST /api/master/knowledge/refresh {source?}`; fonte predefinita la persona della sala operativa). I ruoli e le zone interessati sono elencati accanto al pulsante (`role_knowledge[ruolo].refresh`).
 
+## Drone di monitoraggio (`drones`, `MonitorArea`)
+
+Una risorsa che, finché è in posizione, tiene aggiornata la mappa del ruolo che la possiede. Gli aggiornamenti continui si guadagnano impegnando la risorsa: non sono gratuiti. Nei territori forniti (`synthetic_valley`/Valverde, `valverde_factory`, `selvariva_basin`) il `fire_commander` ha 1 drone e l'azione `MonitorArea`; i pack (`edits`) non ridefiniscono risorse e ruoli, quindi lo ereditano dalla base.
+
+Risorsa (in `resource_types`; un id `drones` senza `drone` usa i valori predefiniti):
+
+```json
+{"id":"drones","name":"Monitoring drones","description":"…","speed_mps":20,
+ "drone":{"max_zones":4,"endurance_s":2400,"turnaround_s":900,"update_interval_s":300,"wind_limit_kmh":50}}
+```
+
+| Campo | Predefinito | Significato |
+|---|---|---|
+| `max_zones` | 4 | il rettangolo che contiene le zone ordinate (griglia 8×8) non supera tanti riquadri |
+| `endurance_s` | 2400 | tempo **in posizione**; il transito dalla base non conta |
+| `turnaround_s` | 900 | dall'atterraggio alla base a "di nuovo disponibile" |
+| `update_interval_s` | 300 | intervallo tra due aggiornamenti della mappa, tempo simulato |
+| `wind_limit_kmh` | assente (nessun limite) | sopra questo vento non decolla (ordine rifiutato) e, in volo, viene richiamato |
+| `speed_mps` (risorsa) | 20 | velocità di transito in linea d'aria dalla base (`staging_base`, o `SetDeploymentTravel`) |
+
+Comando: `{"type":"MonitorArea","zones":["F3-G4"]}`. Ogni voce di `zones` è un codice (`"F3"`) o un rettangolo di zone (`"F3-G4"`); sono accettati anche nomi di luogo (la zona in cui cadono). `role` (solo EXCON) indica il possessore; senza, il primo ruolo che ha un drone. Un giocatore usa sempre il proprio e passa dal normale flusso proposta → approvazione EXCON → esecuzione (`DeployEngine`-like: partenza dalla base, transito, effetto all'arrivo). L'EXCON può comandarlo direttamente (`POST /api/master/command`, strumento «Drone di monitoraggio» in Controllo, JSON per più zone); il drone resta comunque impegnato. Un drone solo: finché non è di nuovo disponibile ogni ordine è rifiutato.
+
+Ciclo (`sim::drone`, nel `Dyn`, quindi annullato dal rollback): *in volo* (`en_route`) → *in posizione* (`working`, campionamenti a `arrivo + k·update_interval_s` per `k = 0…`, l'ultimo a fine autonomia) → *rientro e ricarica* (`refilling`) → `completed` e allocazione restituita da sola (nessun `ReturnResource` necessario). Un `ReturnResource` dell'EXCON lo richiama subito.
+
+Conoscenza (`exercise::monitoring`): ogni campione diventa un `KnowledgeEvent` di fonte `Monitoring` (`message` 0, `source_name` «Drone», livelli fire, buildings, roads, lines, units sulle zone coperte), senza messaggio. Solo due messaggi di situazione: «Drone in posizione» all'arrivo e «Drone rientrato» alla fine della copertura (autonomia, vento, richiamo). Il campionamento avviene ai secondi simulati esatti dentro `World::advance`, quindi non dipende dal passo con cui si avanza; l'`Exercise` li raccoglie dopo ogni avanzamento. Un rollback elimina le osservazioni `Monitoring` successive all'istante ripristinato. Lo stato per il giocatore è in `map.drones`, `map.live_zones`, `map.zone_updates`; la mappa disegna il perimetro tratteggiato delle zone in diretta e il drone, e vela leggermente le altre zone note.
+
 Formato precedente: un pack può ancora avere `edits.timeline` (e un territorio `timeline`) con azioni autonome `{id, title, at_s, command, after?, note}`. Al caricamento vengono convertite e il campo non è più scritto: con `after` l'azione passa a quell'inject; senza `after` passa all'ultimo inject pianificato a `at_s` o prima di esso, altrimenti al primo inject; `offset_s = at_s − ora prevista dell'inject` (negativo se l'azione cadeva prima: diventa un'azione anticipata). L'errore è esplicito se non esiste alcun inject cui agganciarla.
 
 Gli scenari non hanno inneschi iniziali (il concetto `initial_ignitions` non esiste più; i pack salvati che lo contengono si caricano e il campo viene ignorato). Negli scenari forniti l'innesco è un'azione `Ignite` di un inject: l'azione `A-01` (e `N-A1` nel pack notturno) dell'inject `I-01` (`N-01`), con `offset_s` 0: il fuoco parte quando EXCON invia l'inject che lo annuncia; prima mappa e vista 3D non mostrano fuoco. Chi guida l'esercitazione da script invia l'inject (`POST /api/master/msel/I-01/send`) prima di avanzare (vedi `scripts/demo_session.sh`).

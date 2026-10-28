@@ -455,6 +455,7 @@ mod tests {
         "CutFireLine",
         "WaterDrop",
         "DeployEngine",
+        "MonitorArea",
         "EvacuateZone",
         "EvacuateBuilding",
         "IssueWarning",

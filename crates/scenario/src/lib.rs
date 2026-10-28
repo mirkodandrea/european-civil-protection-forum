@@ -379,6 +379,10 @@ pub struct ResourceType {
     /// built-in default for the id (air tankers 90, buses 8, anything else 10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_mps: Option<f32>,
+    /// Makes the resource a monitoring drone (see [`DroneSpec`]). The id
+    /// `drones` is a drone with the default parameters even when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drone: Option<DroneSpec>,
 }
 
 impl ResourceType {
@@ -387,8 +391,54 @@ impl ResourceType {
         self.speed_mps.unwrap_or(match self.id.as_str() {
             "air_tankers" => 90.0,
             "buses" => 8.0,
+            "drones" => 20.0,
             _ => 10.0,
         })
+    }
+}
+
+/// Parameters of a monitoring drone. Times are simulated seconds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DroneSpec {
+    /// Largest area one mission may cover: the bounding box of the ordered
+    /// zones of the 8×8 grid may hold at most this many zones.
+    pub max_zones: u32,
+    /// Time on station before the battery obliges it to return.
+    pub endurance_s: i64,
+    /// Time from landing at the staging base to being available again.
+    pub turnaround_s: i64,
+    /// Interval between map updates of the covered zones while on station.
+    pub update_interval_s: i64,
+    /// The drone does not fly (and is recalled) when the wind blows faster, km/h.
+    /// `None`: no wind limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_limit_kmh: Option<f32>,
+}
+
+impl Default for DroneSpec {
+    fn default() -> Self {
+        Self {
+            max_zones: 4,
+            endurance_s: 2400,
+            turnaround_s: 900,
+            update_interval_s: 300,
+            wind_limit_kmh: None,
+        }
+    }
+}
+
+impl DroneSpec {
+    pub fn check(&self) -> Result<()> {
+        anyhow::ensure!(
+            (1..=64).contains(&self.max_zones)
+                && (60..=86_400).contains(&self.endurance_s)
+                && (0..=86_400).contains(&self.turnaround_s)
+                && (1..=self.endurance_s).contains(&self.update_interval_s)
+                && self.wind_limit_kmh.is_none_or(|w| w.is_finite() && w > 0.0),
+            "invalid drone parameters"
+        );
+        Ok(())
     }
 }
 
@@ -419,6 +469,7 @@ pub(crate) fn legacy_grants() -> Vec<OperationalGrant> {
             name: "Road engines".into(),
             description: "2,500 L training engine; 60 m hose reach; refills at staging".into(),
             speed_mps: None,
+            drone: None,
         }),
     }]
 }
@@ -907,6 +958,11 @@ impl Scenario {
                 b.sector
             );
         }
+        for r in &self.resource_types {
+            if let Some(d) = self.drone_spec(&r.id) {
+                d.check().with_context(|| format!("resource {}", r.id))?;
+            }
+        }
         for r in &self.reinforcements {
             anyhow::ensure!(
                 self.role(&r.assigned_to).is_some(),
@@ -983,6 +1039,14 @@ impl Scenario {
 
     pub fn role(&self, id: &str) -> Option<&Role> {
         self.roles.iter().find(|r| r.id == id)
+    }
+
+    /// Drone parameters of a resource, if it is a drone.
+    pub fn drone_spec(&self, resource: &str) -> Option<DroneSpec> {
+        match self.resource_types.iter().find(|r| r.id == resource) {
+            Some(r) => r.drone.clone().or_else(|| (resource == "drones").then(DroneSpec::default)),
+            None => None,
+        }
     }
 
     pub fn sector(&self, id: &str) -> Option<&Sector> {
@@ -1202,7 +1266,7 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("timeline").is_none());
         let again: Scenario = serde_json::from_value(v).unwrap();
-        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 6);
+        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 10);
     }
 
     #[test]

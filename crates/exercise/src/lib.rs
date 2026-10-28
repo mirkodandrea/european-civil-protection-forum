@@ -32,6 +32,7 @@ pub use files::{FileRef, PdfUpload};
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
+mod monitoring;
 pub mod conversations;
 pub mod narrative;
 pub mod persona;
@@ -939,6 +940,7 @@ impl Exercise {
             let resource_event_count = self.world.d.resource_events.len();
             let events = self.world.advance(dt)?;
             self.record_resource_events(resource_event_count, MASTER);
+            self.absorb_monitoring();
             if let Some(r) = self.resolving.as_mut() {
                 r.events.extend(events);
             }
@@ -978,6 +980,7 @@ impl Exercise {
             let resource_event_count = self.world.d.resource_events.len();
             self.world.advance(dt)?;
             self.record_resource_events(resource_event_count, MASTER);
+            self.absorb_monitoring();
         }
         let report = TurnReport {
             turn: r.turn,
@@ -1037,6 +1040,7 @@ impl Exercise {
         self.world.restore(&snap)?;
         self.restore_epoch += 1;
         self.forget_actions_since_restore();
+        self.forget_monitoring_since_restore();
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self
             .proposals
@@ -1782,6 +1786,7 @@ impl Exercise {
                 Err(reason) => (false, reason),
             };
             self.record_resource_events(resource_event_count, p.source.label());
+            self.absorb_monitoring();
             if ok && matches!(cmd, Command::AdvanceTime { .. }) {
                 self.clock_control.revision += 1;
             }
@@ -2492,6 +2497,7 @@ impl Exercise {
             self.world.apply(cmd, &Actor::Master)
         };
         self.record_resource_events(resource_event_count, MASTER);
+        self.absorb_monitoring();
         if r.is_ok() && matches!(cmd, Command::AdvanceTime { .. }) {
             self.clock_control.revision += 1;
         }

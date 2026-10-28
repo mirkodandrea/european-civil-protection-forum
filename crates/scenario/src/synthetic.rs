@@ -473,6 +473,7 @@ fn resource_types() -> Vec<ResourceType> {
         name: name.into(),
         description: d.into(),
         speed_mps: None,
+        drone: None,
     };
     vec![
         rt(
@@ -495,6 +496,14 @@ fn resource_types() -> Vec<ResourceType> {
             "Buses",
             "50 seats each; needed to evacuate schools and hospitals. Committed for the turn.",
         ),
+        ResourceType {
+            drone: Some(DroneSpec::default()),
+            ..rt(
+                "drones",
+                "Monitoring drones",
+                "Keeps the map of up to 4 zones updated every 5 minutes while on station (40 minutes), then returns and recharges for 15.",
+            )
+        },
         rt(
             "police_patrols",
             "Police patrols",
@@ -526,9 +535,9 @@ fn roles() -> Vec<Role> {
             name: "Fire and Rescue Commander".into(),
             level: "local".into(),
             language: "en".into(),
-            description: "Commands firefighting: fire lines (fuel breaks) with ground crews, water drops with air tankers.".into(),
-            allowed_actions: acts(&["CutFireLine", "WaterDrop", "DeployEngine"]),
-            resources: res(&[("ground_crews", 3), ("air_tankers", 1), ("engines", 2)]),
+            description: "Commands firefighting: fire lines (fuel breaks) with ground crews, water drops with air tankers, aerial monitoring with a drone.".into(),
+            allowed_actions: acts(&["CutFireLine", "WaterDrop", "DeployEngine", "MonitorArea"]),
+            resources: res(&[("ground_crews", 3), ("air_tankers", 1), ("engines", 2), ("drones", 1)]),
         },
         Role {
             id: "regional_cp".into(),
@@ -649,6 +658,33 @@ fn msel() -> Vec<InjectTemplate> {
         offset_s: 0,
         note: "Il comandante vede il fuoco e le strade nelle zone interessate.".into(),
     });
+    let exact = |id: &str, title: &str, layers: &[&str], note: &str| InjectAction {
+        id: id.into(),
+        title: title.into(),
+        command: serde_json::Value::Null,
+        reveal: Some(RevealSpec::Exact {
+            zones: RevealZones::Rule(ZoneRule::BurningAndAdjacent),
+            layers: layers.iter().map(|l| l.to_string()).collect(),
+            source: None,
+        }),
+        offset_s: 0,
+        note: note.into(),
+    };
+    msel[4].actions.push(exact("A-05", "Strade viste dalla polizia", &["roads"],
+        "Sindaco e comandante vedono lo stato delle strade intorno al fuoco."));
+    msel[5].actions.push(exact("A-06", "Fronte verso il distributore", &["fire", "buildings"],
+        "Il fuoco e gli edifici minacciati nelle zone interessate."));
+    // The ERCC sees the fire from satellite products: position and size only.
+    msel[6].actions.push(InjectAction {
+        id: "A-07".into(),
+        title: "Stima satellitare (ERCC)".into(),
+        command: serde_json::Value::Null,
+        reveal: Some(RevealSpec::Approximate { position_error_m: 200.0, area_error_frac: 0.15, source: None }),
+        offset_s: 0,
+        note: "La Regione vede una stima da prodotti satellitari.".into(),
+    });
+    msel[7].actions.push(exact("A-08", "Quadro operativo", &["fire", "lines", "units"],
+        "Fuoco, linee e squadre nelle zone interessate."));
     msel
 }
 

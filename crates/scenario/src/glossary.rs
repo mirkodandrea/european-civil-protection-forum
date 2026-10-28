@@ -22,6 +22,7 @@ const NAMES: &[(&str, [&str; 10])] = &[
     ("Ground crews", ["Équipes au sol", "Bodentrupps", "Cuadrillas terrestres", "Ցամաքային խմբեր", "სახმელეთო ბრიგადები", "Наземні бригади", "Echipe terestre", "Quru qüvvələr qrupları", "Επίγειες ομάδες", "Equipas terrestres"]),
     ("Air tankers", ["Avions bombardiers d'eau", "Löschflugzeuge", "Aviones cisterna", "Ջրային ինքնաթիռներ", "წყლის სამფრქვევი თვითმფრინავები", "Пожежні літаки", "Aeronave de stingere", "Yanğınsöndürən təyyarələr", "Εναέρια μέσα κατάσβεσης", "Aviões-tanque"]),
     ("Buses", ["Autobus", "Busse", "Autobuses", "Ավտոբուսներ", "ავტობუსები", "Автобуси", "Autobuze", "Avtobuslar", "Λεωφορεία", "Autocarros"]),
+    ("Monitoring drones", ["Drones de surveillance", "Überwachungsdrohnen", "Drones de vigilancia", "Մոնիտորինգի ԱԹՍ-ներ", "მონიტორინგის დრონები", "Дрони моніторингу", "Drone de monitorizare", "Monitorinq dronları", "Drones παρακολούθησης", "Drones de monitorização"]),
     ("Police patrols", ["Patrouilles de police", "Polizeistreifen", "Patrullas de policía", "Ոստիկանական պարեկներ", "პოლიციის პატრულები", "Поліцейські патрулі", "Patrule de poliție", "Polis patrulları", "Περιπολίες αστυνομίας", "Patrulhas da polícia"]),
 ];
 
@@ -35,8 +36,10 @@ const ITALIAN: &[(&str, &str)] = &[
     ("Air tankers", "Mezzi aerei"),
     ("Buses", "Autobus"),
     ("Police patrols", "Pattuglie di polizia"),
+    ("Monitoring drones", "Droni di monitoraggio"),
+    ("Keeps the map of up to 4 zones updated every 5 minutes while on station (40 minutes), then returns and recharges for 15.", "Mantiene aggiornata la mappa di al massimo 4 zone ogni 5 minuti mentre è in posizione (40 minuti), poi rientra e si ricarica per 15."),
     ("Local authority for Valverde and Pineta: warnings, evacuation orders, shelters, municipal police.", "Autorità locale di Valverde e Pineta: avvisi, ordini di evacuazione, rifugi, polizia municipale."),
-    ("Commands firefighting: fire lines (fuel breaks) with ground crews, water drops with air tankers.", "Dirige lo spegnimento: linee tagliafuoco (fasce senza combustibile) con le squadre a terra, lanci d'acqua con i mezzi aerei."),
+    ("Commands firefighting: fire lines (fuel breaks) with ground crews, water drops with air tankers, aerial monitoring with a drone.", "Dirige lo spegnimento: linee tagliafuoco (fasce senza combustibile) con le squadre a terra, lanci d'acqua con i mezzi aerei, monitoraggio dall'alto con un drone."),
     ("Regional coordination: requests reinforcements (regional and international/UCPM), opens shelters, can order evacuations and warnings.", "Coordinamento regionale: richiede rinforzi (regionali e internazionali/UCPM), apre rifugi, può ordinare evacuazioni e avvisi."),
     ("2,500 L tank; 60 m hose reach; refills at the staging base.", "Cisterna da 2.500 L; getto fino a 60 m; si rifornisce alla base di partenza."),
     ("Each crew can cut up to 600 m of fire line (fuel break) per turn.", "Ogni squadra può tracciare fino a 600 m di linea tagliafuoco (fascia senza combustibile) per turno."),

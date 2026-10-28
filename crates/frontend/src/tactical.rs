@@ -17,7 +17,7 @@ fn norm(s: &str) -> String {
 /// What kind of place an action takes: a grid zone, a building, a road, a point.
 fn place_kind(action: &str) -> &'static str {
     match action {
-        "IssueWarning" | "EvacuateZone" => "zone",
+        "IssueWarning" | "EvacuateZone" | "MonitorArea" => "zone",
         "EvacuateBuilding" | "OpenShelter" => "building",
         "CloseRoad" | "ReopenRoad" => "road",
         _ => "point",
@@ -53,6 +53,7 @@ impl App {
                 .unwrap_or(""),
         );
         let click_field = self.field("work:target_field", "work:location");
+        let monitor_zones = self.field("work:location", "");
         let map_click = ctx.link().callback(move |point: Value| {
             let (field, value) = match click_action.as_str() {
                 "CloseRoad" | "ReopenRoad" => ("work:location", text(&point["road"]).to_string()),
@@ -79,6 +80,16 @@ impl App {
                         point["y"].as_f64().unwrap_or(0.)
                     ),
                 ),
+                "MonitorArea" => {
+                    // Clicking zones builds the list; clicking one again removes it.
+                    let mut zones: Vec<String> = monitor_zones.split(',').map(|z| z.trim().to_string()).filter(|z| !z.is_empty()).collect();
+                    let clicked = text(&point["zone"]).to_string();
+                    match zones.iter().position(|z| *z == clicked) {
+                        Some(i) => { zones.remove(i); }
+                        None => zones.push(clicked),
+                    }
+                    ("work:location", zones.join(", "))
+                }
                 _ => ("work:location", text(&point["zone"]).to_string()),
             };
             Msg::Field(field.into(), value)
@@ -173,6 +184,7 @@ impl App {
                 };
                 let command = match action.as_str() {
                     "IssueWarning" | "EvacuateZone" => json!({"type":action,"zone":location}),
+                    "MonitorArea" => json!({"type":action,"zones":location.split(',').map(str::trim).filter(|z| !z.is_empty()).collect::<Vec<_>>()}),
                     "EvacuateBuilding" | "OpenShelter" => {
                         json!({"type":action,"building":location})
                     }
@@ -230,7 +242,7 @@ impl App {
         let notice = self.field("work:notice", "");
         let zone_notice = if !notice.is_empty() && place_kind(&work_action) == "building" {
             i18n::tf(l, "place_switched", &[&notice, i18n::action(l, "EvacuateBuilding")])
-        } else if place_kind(&work_action) == "zone" && !work_location.trim().is_empty() && !is_zone_code(&self.stat, &work_location) {
+        } else if work_action != "MonitorArea" && place_kind(&work_action) == "zone" && !work_location.trim().is_empty() && !is_zone_code(&self.stat, &work_location) {
             if building_named(&self.stat, &work_location).is_some() {
                 i18n::tf(l, "place_is_building", &[work_location.trim()])
             } else if zone_options.iter().any(|o| norm(o) == norm(&work_location)) {
@@ -487,7 +499,7 @@ impl App {
         <main id="map-view" class="page tactical-view" hidden={self.active!="map"}>
             <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div><div class="grow"/><button class="primary" id="new-player-action" disabled={!can_act} onclick={{let open=open.clone();Callback::from(move |_|open.emit(None))}}>{i18n::t(l,"new_action")}</button></section>
             <section class="tactical-resources" id="resources" aria-label={i18n::t(l,"resources")}>{for self.state["resources"].as_object().into_iter().flatten().map(|(id,pool)|{let account=&self.state["resource_accounting"][id];html!{<div class="resource-token"><strong>{account["available"].to_string()}</strong><span>{resource_name(id)}<small>{i18n::tf(l,"res_of",&[&pool["total"].to_string(),&(account["committed"].as_u64().unwrap_or(0)+account["deployed"].as_u64().unwrap_or(0)).to_string()])}</small></span></div>}})}</section>
-            <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));format!("{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()})}else{i18n::t(l,"no_map_data").into()}}</p>
+            <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
                 <SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} lang={l.to_string()}/><p class="map-instruction">{i18n::t(l,"map_hint")}</p>
                 if !list(&self.state["map"]["forecast_products"]).is_empty(){<details><summary>{i18n::t(l,"forecasts")}</summary>{for list(&self.state["map"]["forecast_products"]).iter().map(|f|widgets::details(i18n::tf(l,"issued",&[&f["issued_s"].to_string()]),&json!({"assumptions":f["assumptions"],"horizons":f["horizons"]})))}</details>}
                 if !list(&self.state["deployments"]).is_empty(){<details open=true class="tactical-missions"><summary>{i18n::t(l,"missions")}</summary>{for list(&self.state["deployments"]).iter().map(|d|html!{<p><b>{resource_name(text(&d["task"]["resource"]))}</b>{format!(" · {}",text(&d["task"]["status"]))}<br/><small>{text(&d["task"]["detail"])}</small></p>})}</details>}

@@ -95,6 +95,8 @@ pub fn setup(
 fn model_for(resource: &str) -> (&'static str, f32, f32) {
     match resource {
         "air_tankers" => ("tanker", 2.8, 120.),
+        // No dedicated drone mesh: a small aircraft hovering over its area.
+        "drones" => ("tanker", 0.9, 90.),
         "ground_crews" => ("firefighter", 4., 0.2),
         "buses" => ("bus", 3., 0.2),
         "police_patrols" => ("police", 3.5, 0.2),

@@ -1243,6 +1243,48 @@ fn draw(
             }
         }
     }
+    // A drone on station keeps its zones live: tinted, dashed footprint; the rest of what
+    // the role knows stays a snapshot, slightly veiled while a drone is flying.
+    let live: Vec<(u64, u64)> = list(&v["live_zones"])
+        .iter()
+        .filter_map(|name| parse_zone(text(name), zcols, zrows))
+        .collect();
+    if on(L_UNITS) && !live.is_empty() {
+        if let Some(known) = fog_zones(stat, v) {
+            ctx.set_fill_style_str("rgba(24,36,40,.14)");
+            for row in 0..zrows {
+                for col in 0..zcols {
+                    if known[(row * zcols + col) as usize] && !live.contains(&(col, row)) {
+                        ctx.fill_rect(col as f64 * zsize, row as f64 * zsize, zsize, zsize);
+                    }
+                }
+            }
+        }
+        ctx.set_fill_style_str("rgba(0,160,190,.12)");
+        ctx.set_stroke_style_str("#008c9e");
+        ctx.set_line_width(3. * s);
+        ctx.set_line_dash(&js_sys::Array::of2(&(10. * s).into(), &(6. * s).into()))?;
+        for &(col, row) in &live {
+            let (x, y) = (col as f64 * zsize, row as f64 * zsize);
+            ctx.fill_rect(x, y, zsize, zsize);
+            // Outline only the sides that border a zone the drone does not cover.
+            for (dc, dr, x0, y0, x1, y1) in [
+                (0i64, -1i64, x, y, x + zsize, y),
+                (0, 1, x, y + zsize, x + zsize, y + zsize),
+                (-1, 0, x, y, x, y + zsize),
+                (1, 0, x + zsize, y, x + zsize, y + zsize),
+            ] {
+                let next = ((col as i64 + dc) as u64, (row as i64 + dr) as u64);
+                if !live.contains(&next) {
+                    ctx.begin_path();
+                    ctx.move_to(x0, y0);
+                    ctx.line_to(x1, y1);
+                    ctx.stroke();
+                }
+            }
+        }
+        ctx.set_line_dash(&js_sys::Array::new())?;
+    }
     for (names, fill, dash) in [
         (marked, "rgba(18,103,82,.10)", true),
         (selected, "rgba(18,103,82,.28)", false),
@@ -1533,6 +1575,38 @@ fn draw(
             ctx.stroke();
             ctx.set_line_dash(&js_sys::Array::new())?;
         }
+    }
+    // The role's own drone: position known from its telemetry, whatever the fog.
+    for d in list(&v["drones"]).iter().filter(|_| on(L_UNITS)) {
+        let (x, y) = (n(&d["position_m"][0]) * k, (h - n(&d["position_m"][1])) * k);
+        let status = text(&d["status"]);
+        let color = match status {
+            "on_station" => "#008c9e",
+            "en_route" => "#ad6912",
+            _ => "#7a7f85",
+        };
+        ctx.set_stroke_style_str(color);
+        ctx.set_fill_style_str("rgba(255,255,255,.85)");
+        ctx.set_line_width(2.5 * s);
+        ctx.begin_path();
+        ctx.arc(x, y, 7. * s, 0., std::f64::consts::TAU)?;
+        ctx.fill();
+        ctx.stroke();
+        for (dx, dy) in [(-1., -1.), (1., -1.), (-1., 1.), (1., 1.)] {
+            ctx.begin_path();
+            ctx.arc(x + dx * 11. * s, y + dy * 11. * s, 4. * s, 0., std::f64::consts::TAU)?;
+            ctx.stroke();
+            ctx.begin_path();
+            ctx.move_to(x + dx * 5. * s, y + dy * 5. * s);
+            ctx.line_to(x + dx * 8. * s, y + dy * 8. * s);
+            ctx.stroke();
+        }
+        let status_key = match status {
+            "on_station" => "map_drone_on_station",
+            "en_route" => "map_drone_en_route",
+            _ => "map_drone_returning",
+        };
+        label(&format!("{} · {}", crate::i18n::t(lang, "map_drone"), crate::i18n::t(lang, status_key)), x, y, 0);
     }
     for d in list(&v["deployments"])
         .iter()

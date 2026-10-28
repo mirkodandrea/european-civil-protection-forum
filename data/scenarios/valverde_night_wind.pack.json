@@ -24,6 +24,17 @@
             "offset_s": 0,
             "command": { "type": "Ignite", "at": { "x": 2200.0, "y": 2500.0 }, "radius_m": 100.0 },
             "note": "Il fuoco parte alle 02:30, come segnalato dall'inject N-01. Lascia spuntata «Esegui» per far partire l'incendio."
+          },
+          {
+            "id": "N-R1",
+            "title": "Stima notturna (112)",
+            "reveal": {
+              "kind": "approximate",
+              "position_error_m": 600.0,
+              "area_error_frac": 0.5
+            },
+            "offset_s": 0,
+            "note": "Di notte le chiamate danno solo una posizione e un'estensione molto incerte."
           }
         ]
       },

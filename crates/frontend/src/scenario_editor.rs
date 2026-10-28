@@ -422,7 +422,7 @@ fn resources_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel
             let (selected, add) = (selected.clone(), upd(open, |p, _: MouseEvent| {
                 let l = p.edits.resource_types.get_or_insert_with(Vec::new);
                 let n = l.len() + 1;
-                l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None });
+                l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None, drone: None });
             }));
             Callback::from(move |e| { selected.set((K_RESOURCE, n)); add.emit(e) })
         }}>{ex("+ Risorsa")}</button>
@@ -456,6 +456,7 @@ fn action_tip(action: &str) -> &'static str {
     match action {
         "CutFireLine" => "Apre una linea tagliafuoco (senza vegetazione) lungo un percorso: ferma l’avanzata se è completata prima del fuoco.",
         "WaterDrop" => "Lancio d’acqua da aerei o elicotteri su una zona: rallenta o spegne il fuoco sotto il passaggio.",
+        "MonitorArea" => "Manda il drone del comandante su alcune zone (fino a 4): finché è in posizione tiene aggiornata la sua mappa ogni pochi minuti, poi rientra e si ricarica.",
         "DeployEngine" => "Invia un’autobotte o una squadra a terra in un luogo: agisce dopo il viaggio dalla base, se le strade sono praticabili.",
         "EvacuateZone" => "Ordina di evacuare tutta una zona della griglia, con i suoi edifici e abitanti.",
         "EvacuateBuilding" => "Ordina di evacuare un singolo edificio, ad esempio una scuola o una casa di riposo.",

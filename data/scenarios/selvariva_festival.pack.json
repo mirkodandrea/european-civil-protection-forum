@@ -46,6 +46,17 @@
             },
             "offset_s": 0,
             "note": "Intervento EXCON selezionabile all’invio dell’inject."
+          },
+          {
+            "id": "SV-R1",
+            "title": "Colonna di fumo segnalata",
+            "reveal": {
+              "kind": "approximate",
+              "position_error_m": 500.0,
+              "area_error_frac": 0.4
+            },
+            "offset_s": 0,
+            "note": "Si vede solo il fumo: posizione ed estensione molto incerte."
           }
         ]
       },
@@ -59,10 +70,22 @@
           "fire_commander",
           "regional_cp"
         ],
-        "text": "Gli osservatori chiedono un quadro aggiornato del fuoco e dei possibili effetti su Roverechiare e sulla Strada delle Fonti. Richiedete a EXCON osservazioni o una previsione, condividete le informazioni utili e motivate dove intervenire. I sopralluoghi e l’impiego di droni restano nella narrazione.",
+        "text": "Gli osservatori chiedono un quadro aggiornato del fuoco e dei possibili effetti su Roverechiare e sulla Strada delle Fonti. Richiedete a EXCON osservazioni o una previsione, condividete le informazioni utili e motivate dove intervenire. Il drone di monitoraggio della direzione antincendio può tenere aggiornata la mappa di alcune zone; gli altri sopralluoghi restano nella narrazione.",
         "objective": "Usare informazioni disponibili e incertezza per coordinare gli interventi.",
         "event": "Incendio delle Fonti",
-        "actions": []
+        "actions": [
+          {
+            "id": "SV-R2",
+            "title": "Stima degli osservatori",
+            "reveal": {
+              "kind": "approximate",
+              "position_error_m": 250.0,
+              "area_error_frac": 0.2
+            },
+            "offset_s": 0,
+            "note": "Gli osservatori sul territorio danno una stima più precisa."
+          }
+        ]
       },
       {
         "at_s": 2100,
@@ -119,7 +142,22 @@
         "text": "Si segnala fumo presso il Deposito delle Fornaci. Verificate la situazione effettiva della Strada delle Fonti e dell’alternativa del Belvedere prima di scegliere i trasferimenti. Le strade si interrompono nel modello soltanto se il fuoco le rende impraticabili; il contenuto del deposito e gli eventuali effetti sanitari restano valutazioni narrative di EXCON.",
         "objective": "Separare segnalazioni, stato osservato e decisioni di viabilità.",
         "event": "Incendio delle Fonti",
-        "actions": []
+        "actions": [
+          {
+            "id": "SV-R3",
+            "title": "Accessi e servizi verificati",
+            "reveal": {
+              "kind": "exact",
+              "zones": "burning_and_adjacent",
+              "layers": [
+                "roads",
+                "buildings"
+              ]
+            },
+            "offset_s": 0,
+            "note": "Strade ed edifici nelle zone interessate."
+          }
+        ]
       },
       {
         "at_s": 6600,
@@ -164,10 +202,26 @@
         "text": "Preparate un breve passaggio di consegne usando lo stato corrente: fuoco, abitati esposti, persone ancora dentro/in transito/arrivate, destinazioni aperte, missioni e risorse residue. Indicate separatamente gli esiti narrativi registrati da EXCON e ciò che resta da verificare. La conclusione della demo non implica che l’incendio sia spento.",
         "objective": "Ricostruire decisioni ed esiti verificabili per il debrief.",
         "event": "Incendio delle Fonti",
-        "actions": []
+        "actions": [
+          {
+            "id": "SV-R4",
+            "title": "Quadro finale",
+            "reveal": {
+              "kind": "exact",
+              "zones": "burning_and_adjacent",
+              "layers": [
+                "fire",
+                "roads",
+                "lines",
+                "units"
+              ]
+            },
+            "offset_s": 0,
+            "note": "Quadro completo delle zone interessate per il coordinamento."
+          }
+        ]
       }
     ],
-    
     "turn_minutes": 60
   },
   "run": {

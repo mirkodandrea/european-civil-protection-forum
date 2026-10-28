@@ -60,6 +60,15 @@ pub enum Command {
     DeployEngine {
         at: Loc,
     },
+    /// Send the monitoring drone over zones of the evacuation grid. Once on
+    /// station it keeps the owner's map of those zones updated. A zone entry is
+    /// a code (`"F3"`) or a rectangle of zones (`"F3-G4"`).
+    MonitorArea {
+        zones: Vec<String>,
+        /// Owner of the drone when EXCON tasks it directly; players always use their own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
     /// Evacuate every occupied building in a zone of the evacuation grid.
     EvacuateZone {
         zone: String,
@@ -156,6 +165,7 @@ pub const ALL_KINDS: &[&str] = &[
     "CutFireLine",
     "WaterDrop",
     "DeployEngine",
+    "MonitorArea",
     "EvacuateZone",
     "EvacuateBuilding",
     "IssueWarning",
@@ -179,6 +189,7 @@ impl Command {
             Command::CutFireLine { .. } => "CutFireLine",
             Command::WaterDrop { .. } => "WaterDrop",
             Command::DeployEngine { .. } => "DeployEngine",
+            Command::MonitorArea { .. } => "MonitorArea",
             Command::EvacuateZone { .. } => "EvacuateZone",
             Command::EvacuateBuilding { .. } => "EvacuateBuilding",
             Command::IssueWarning { .. } => "IssueWarning",
@@ -218,6 +229,7 @@ impl Command {
                 _ => "Cut fire line (incomplete)".into(),
             },
             Command::DeployEngine { at } => format!("Deploy engine at {}", loc(at)),
+            Command::MonitorArea { zones, .. } => format!("Drone monitoring {}", zones.join(", ")),
             Command::WaterDrop { at } => format!("Water drop on {}", loc(at)),
             Command::EvacuateZone { zone, destination } => {
                 format!(
@@ -373,6 +385,10 @@ pub fn catalogue(allowed: &[String]) -> String {
             r#"{"type":"DeployEngine","at":LOC} — deploy a road engine (operational model only); with local autonomy, at is the approved sector centre and local moves are bounded by the scenario tactical policy."#,
         ),
         (
+            "MonitorArea",
+            r#"{"type":"MonitorArea","zones":["F3-G4"]}  — send the monitoring drone over grid zones (codes like "F3", or a rectangle "F3-G4"; at most 4 zones in all). It flies from the staging base, then keeps the map of those zones updated every few minutes until its battery ends, and returns to recharge."#,
+        ),
+        (
             "AdvanceTime",
             r#"{"type":"AdvanceTime","minutes":60}  — skip simulated time."#,
         ),
@@ -423,6 +439,7 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
     swap("Pine Hill", place);
     swap("fire_commander", crew_role);
     swap("F3:S", zone.clone().map(|z| format!("{z}:S")));
+    swap("F3-G4", zone.clone().map(|z| format!("{z}")));
     swap("F4", zone.clone());
     swap("F3", zone);
     doc
@@ -484,6 +501,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 18);
+        assert_eq!(ALL_KINDS.len(), 19);
     }
 }

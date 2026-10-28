@@ -33,6 +33,7 @@ pub fn command_name(s: &str) -> &str {
         "CutFireLine" => crate::i18n::ex("Creare una linea tagliafuoco"),
         "WaterDrop" => crate::i18n::ex("Effettuare un lancio d’acqua"),
         "DeployEngine" => crate::i18n::ex("Inviare un’autobotte"),
+        "MonitorArea" => crate::i18n::ex("Inviare il drone di monitoraggio"),
         "RequestReinforcement" => crate::i18n::ex("Richiedere rinforzi"),
         "Ignite" => crate::i18n::ex("Innescare un incendio"),
         "Extinguish" => crate::i18n::ex("Spegnere un’area"),

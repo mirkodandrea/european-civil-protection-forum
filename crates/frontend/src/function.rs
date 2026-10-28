@@ -96,8 +96,15 @@ impl App {
                         let resource_id = text(&task["resource"]);
                         let resource = list(&self.stat["resource_types"]).iter().find(|r| text(&r["id"]) == resource_id);
                         let resource_name = resource.map(|r| text(&r["name"]).to_string()).unwrap_or_else(|| resource_id.to_string());
+                        let drone = resource.is_some_and(|r| r["drone"].is_object() || resource_id == "drones");
+                        let status = match (drone, text(&task["status"])) {
+                            (true, "en_route") => i18n::t(&lang,"mission_drone_en_route"),
+                            (true, "working") => i18n::t(&lang,"mission_drone_on_station"),
+                            (true, "refilling") => i18n::t(&lang,"mission_drone_recharging"),
+                            (_, other) => i18n::mission_status(&lang,other),
+                        };
                         html! {<li key={task["id"].to_string()}>
-                            <div class="function-mission-heading"><strong>{resource_name}</strong><span class="pill">{i18n::mission_status(&lang,text(&task["status"]))}</span></div>
+                            <div class="function-mission-heading"><strong>{resource_name}</strong><span class="pill">{status}</span></div>
                             if task["qty"].is_number() {<p>{i18n::tf(&lang,"function_mission_quantity",&[&number_or_text(&task["qty"])])}</p>}
                             if !text(&task["detail"]).is_empty() {<p>{text(&task["detail"])}</p>}
                         </li>}
