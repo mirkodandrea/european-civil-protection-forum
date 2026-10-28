@@ -14,7 +14,9 @@ mod i18n;
 mod i18n_excon;
 mod i18n_function;
 mod i18n_lang;
+mod label_layout;
 mod map;
+mod map_legend;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
