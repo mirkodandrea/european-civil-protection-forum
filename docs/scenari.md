@@ -166,7 +166,9 @@ TTX_SNAPSHOT="$PWD/runs/editor.png" TTX_SCALE=1 target/release/scenario-editor
 
 ## Tool WebMCP per agenti (ChatGPT Atlas, Chrome)
 
-`crates/frontend/src/webmcp.rs` espone su `navigator.modelContext` (WebMCP) i tool per modificare uno scenario, nell'app server e nello standalone (stesse chiamate dell'editor, `api::request`). **I tool esistono solo mentre uno scenario è aperto nell'editor** (registrati all'apertura, `unregisterTool` alla chiusura o uscendo dalla vista) e lavorano sulla bozza che l'utente ha davanti, anche una copia non ancora salvata (per crearne uno nuovo: «Duplica» o «Personalizza», poi l'agente lo modifica). Mentre l'editor è aperto sono chiamabili anche come `window.ttxWebMcp.call(nome, args)`.
+`crates/frontend/src/webmcp.rs` espone su `document.modelContext` (WebMCP), con compatibilità per la precedente API `navigator.modelContext`, i tool per modificare uno scenario, nell'app server e nello standalone (stesse chiamate dell'editor, `api::request`). **I tool esistono solo mentre uno scenario è aperto nell'editor** (registrati all'apertura, `unregisterTool` alla chiusura o uscendo dalla vista) e lavorano sulla bozza che l'utente ha davanti, anche una copia non ancora salvata (per crearne uno nuovo: «Duplica» o «Personalizza», poi l'agente lo modifica). Mentre l'editor è aperto sono chiamabili anche come `window.ttxWebMcp.call(nome, args)`.
+
+La registrazione preferisce `document.modelContext.registerTool` e riprova per circa un minuto se il contesto viene iniettato dopo il caricamento. Se i tentativi si esauriscono, la console segnala il problema. Il fallback `window.ttxWebMcp` resta disponibile, ma non sostituisce la registrazione WebMCP del browser.
 
 | Tool | Cosa fa |
 |---|---|

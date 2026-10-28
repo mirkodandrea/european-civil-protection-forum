@@ -1,6 +1,6 @@
 //! WebMCP tools for editing scenarios: an agent in the browser (ChatGPT Atlas,
 //! Chrome with WebMCP, …) works on the scenario open in the Scenario editor
-//! through `navigator.modelContext`.
+//! through `document.modelContext` (or the earlier `navigator.modelContext`).
 //!
 //! The tools exist only while a scenario is open in the editor: the editor
 //! calls `attach` when one opens and `detach` when it closes, which registers
@@ -9,7 +9,7 @@
 //! stored only by `save_open_scenario`. Nothing touches the running exercise.
 //! Same code for the server app and the standalone app (`api::request`).
 //!
-//! Without `navigator.modelContext` the tools are reachable while attached as
+//! Without a browser model context the tools are reachable while attached as
 //! `window.ttxWebMcp.call(name, args)` (tests, bookmarklets, other agents).
 use crate::scenario_editor::call;
 use futures::{future::LocalBoxFuture, FutureExt};
@@ -340,8 +340,19 @@ fn all_tools() -> &'static [Tool] {
 }
 
 fn model_context() -> Option<JsValue> {
-    let context = Reflect::get(&crate::api::window().navigator(), &"modelContext".into()).ok()?;
-    (!context.is_undefined() && !context.is_null()).then_some(context)
+    let window = crate::api::window();
+    // Current WebMCP (including ChatGPT's built-in browser) is document-scoped.
+    // Keep the navigator surface for browsers implementing the earlier draft.
+    let owners = [JsValue::from(window.document()?), JsValue::from(window.navigator())];
+    owners.into_iter().find_map(|owner| {
+        let context = Reflect::get(&owner, &"modelContext".into()).ok()?;
+        if context.is_undefined() || context.is_null() {
+            return None;
+        }
+        ["registerTool", "provideContext"].into_iter().any(|method| {
+            Reflect::get(&context, &method.into()).is_ok_and(|f| f.is_function())
+        }).then_some(context)
+    })
 }
 
 /// A scenario was opened in the editor: expose the tools. Called again with
@@ -365,6 +376,7 @@ pub fn attach(editor: Editor) {
                 return;
             }
         }
+        web_sys::console::warn_1(&"WebMCP: registration retries exhausted; expected document.modelContext.registerTool (or legacy navigator.modelContext). Tools remain available via window.ttxWebMcp.".into());
     });
 }
 
