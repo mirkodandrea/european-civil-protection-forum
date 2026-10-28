@@ -134,7 +134,8 @@ async fn players_see_personas_and_never_excon_across_the_response_flow() {
     assert_eq!(outcome["persona"], "Prefettura");
     assert!(!outcome["effects"].as_array().unwrap().is_empty());
     assert_eq!(outcome["text"], "Team sent by Sala operativa");
-    assert_eq!(mine["proposals"][0]["decision"]["persona"], "112 Dispatch");
+    // The Italian player reads the scenario sender in Italian.
+    assert_eq!(mine["proposals"][0]["decision"]["persona"], "Centrale 112");
     let feedback = mine["inbox"]
         .as_array()
         .unwrap()
