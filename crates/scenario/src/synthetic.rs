@@ -623,8 +623,31 @@ fn msel() -> Vec<InjectTemplate> {
         id: "A-01".into(),
         title: "Innesco Pine Hill".into(),
         command: serde_json::json!({"type": "Ignite", "at": {"x": IGNITION[0], "y": IGNITION[1]}, "radius_m": IGNITION_RADIUS_M}),
+        reveal: None,
         offset_s: 0,
         note: "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01.".into(),
+    });
+    // Fog of war: the 112 call gives an unverified estimate; the fire
+    // operations room reports the zones in and around the fire.
+    msel[0].actions.push(InjectAction {
+        id: "A-02".into(),
+        title: "Stima dell'incendio (112)".into(),
+        command: serde_json::Value::Null,
+        reveal: Some(RevealSpec::Approximate { position_error_m: 400.0, area_error_frac: 0.3, source: None }),
+        offset_s: 0,
+        note: "I ruoli vedono sulla mappa una stima non verificata della posizione e dell'estensione.".into(),
+    });
+    msel[2].actions.push(InjectAction {
+        id: "A-03".into(),
+        title: "Mappa del fuoco (sala operativa)".into(),
+        command: serde_json::Value::Null,
+        reveal: Some(RevealSpec::Exact {
+            zones: RevealZones::Rule(ZoneRule::BurningAndAdjacent),
+            layers: vec!["fire".into(), "roads".into()],
+            source: None,
+        }),
+        offset_s: 0,
+        note: "Il comandante vede il fuoco e le strade nelle zone interessate.".into(),
     });
     msel
 }

@@ -280,6 +280,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/knowledge/refresh") => {
+            post_knowledge_refresh(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/master/references") => {
             post_references(
                 principal.clone(),
@@ -707,6 +715,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/access"),
     ("GET", "/api/master/access"),
     ("POST", "/api/master/knowledge"),
+    ("POST", "/api/master/knowledge/refresh"),
     ("POST", "/api/master/references"),
     ("GET", "/api/evaluator"),
     ("GET", "/api/state"),

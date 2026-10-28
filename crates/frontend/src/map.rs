@@ -1440,6 +1440,39 @@ fn draw(
         ctx.stroke();
         label(crate::i18n::t(lang, "map_reported"), x, y, 0);
     }
+    // Unverified fire estimates: a dashed uncertainty circle, the spread direction and who said it.
+    for e in list(&v["estimates"]).iter().filter(|_| on(L_FIRE)) {
+        let (x, y, r) = (n(&e["at"][0]) * k, (h - n(&e["at"][1])) * k, (n(&e["radius_m"]) * k).max(14. * s));
+        ctx.set_stroke_style_str("#e33");
+        ctx.set_line_width(2.5 * s);
+        ctx.set_line_dash(&js_sys::Array::of2(&(9. * s).into(), &(6. * s).into()))?;
+        ctx.begin_path();
+        ctx.arc(x, y, r, 0., std::f64::consts::TAU)?;
+        ctx.stroke();
+        ctx.set_line_dash(&js_sys::Array::new())?;
+        if let Some(bearing) = e["spread_toward_deg"].as_f64().map(f64::to_radians) {
+            let (dx, dy) = (bearing.sin(), -bearing.cos());
+            let len = (r * 0.8).max(26. * s);
+            let (tx, ty) = (x + dx * len, y + dy * len);
+            ctx.begin_path();
+            ctx.move_to(x, y);
+            ctx.line_to(tx, ty);
+            for side in [-0.45f64, 0.45] {
+                let (c, sn) = (side.cos(), side.sin());
+                ctx.move_to(tx, ty);
+                ctx.line_to(tx - (dx * c - dy * sn) * 11. * s, ty - (dx * sn + dy * c) * 11. * s);
+            }
+            ctx.stroke();
+        }
+        let area = n(&e["area_ha"]);
+        label(
+            &ctx,
+            &format!("{} · ~{} ha", crate::i18n::tf(lang, "map_estimate", &[text(&e["source"]), text(&e["clock"])]), if area < 10. { format!("{area:.1}") } else { format!("{area:.0}") }),
+            x + 12. * u,
+            y - r - 4. * u,
+            &mut labels,
+        );
+    }
     if let Some(forecast) = list(&v["forecast_products"])
         .last()
         .filter(|_| on(L_FORECAST))

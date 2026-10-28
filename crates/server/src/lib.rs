@@ -283,6 +283,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_access,
                 get_access_links,
                 post_knowledge,
+                post_knowledge_refresh,
                 forecast::compute,
                 forecast::publish,
                 situation::get_impact,
@@ -571,6 +572,7 @@ struct KnowledgeBody {
 )]
 async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBody>) -> ApiResult {
     let Json(b) = b;
+    let mut disclosed_layers = Vec::new();
     let observation = {
         let ex = s.lock();
         if !ex.players.contains_key(&b.role)
@@ -593,7 +595,9 @@ async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBod
             } else {
                 b.layers.clone()
             };
-            ex.zone_observation(&b.zones, &layers)?
+            let o = ex.zone_observation(&b.zones, &layers)?;
+            disclosed_layers = layers;
+            o
         } else if b.current_perimeter {
             ex.current_perimeter()
         } else {
@@ -604,13 +608,36 @@ async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBod
     };
     let text = Exercise::map_information_text(&b.source);
     let translations = flow::translations(&s, std::slice::from_ref(&b.role), &text).await;
-    let id = s.lock().acquire_map(
+    let id = s.lock().acquire_map_layers(
         &b.role,
         &b.source,
         observation,
         translations.get(&b.role).map(String::as_str),
+        disclosed_layers,
     )?;
     Ok(Json(json!({"message":id})))
+}
+
+#[derive(Deserialize, Default)]
+struct RefreshBody {
+    /// Source shown to the players (default: the scenario's operations-room persona).
+    #[serde(default)]
+    source: Option<String>,
+}
+/// Manual only: re-reveals to every role that received a zone reveal the same
+/// zones and layers as a fresh snapshot. The roles it would update are listed in
+/// `role_knowledge[role].refresh`.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/knowledge/refresh", data = "<b>")
+)]
+async fn post_knowledge_refresh(_principal: Principal, s: AppState, b: Json<RefreshBody>) -> ApiResult {
+    let source = b.0.source.filter(|x| !x.trim().is_empty());
+    let roles: Vec<String> = s.lock().refresh_plan().iter().filter_map(|p| p["role"].as_str().map(String::from)).collect();
+    let text = Exercise::map_information_text(source.as_deref().unwrap_or("the operations room"));
+    let translations = flow::translations(&s, &roles, &text).await;
+    let done = s.lock().refresh_role_maps(source.as_deref(), &translations)?;
+    Ok(Json(json!({"updated": done.iter().map(|(r, m)| json!({"role":r,"message":m})).collect::<Vec<_>>()})))
 }
 
 #[derive(Deserialize)]

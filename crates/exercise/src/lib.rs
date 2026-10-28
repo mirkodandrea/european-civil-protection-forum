@@ -1241,6 +1241,9 @@ impl Exercise {
         if inject_id.is_none() && actions.custom.iter().any(|a| a.offset_s < 0) {
             bail!("a custom inject has no planned time: its actions cannot come before it");
         }
+        for a in &actions.custom {
+            self.world.scn.check_action(a)?;
+        }
         let mut to = self.recipients(recipients)?;
         // Roles that already received this MSEL inject are skipped silently.
         if let Some(id) = inject_id {
@@ -1283,7 +1286,7 @@ impl Exercise {
             self.skipped_injects.remove(id);
         }
         self.record("inject_sent", MASTER, json!({"inject_id": delivery_id, "msel_id": inject_id, "title": title, "sender": sender, "recipients": to, "messages": ids}));
-        self.register_inject_actions(delivery_id, inject_id, actions, first);
+        self.register_inject_actions(delivery_id, inject_id, actions, first, sender, &to);
         Ok(ids)
     }
 

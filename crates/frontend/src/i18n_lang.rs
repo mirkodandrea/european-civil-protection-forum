@@ -1,5 +1,5 @@
 //! Generated player-UI catalogues for languages beyond Italian/English; indexed like `i18n::en`.
-pub const KEYS: [&str; 122] = [
+pub const KEYS: [&str; 126] = [
     "st_pending",
     "st_parsing",
     "st_needs_clarification",
@@ -122,8 +122,12 @@ pub const KEYS: [&str; 122] = [
     "advance_turn",
     "tools_link",
     "map_road_cut",
+    "map_updated",
+    "map_age",
+    "no_map_data",
+    "map_estimate",
 ];
-const FR: [&str; 122] = [
+const FR: [&str; 126] = [
     "À examiner",
     "L’IA interprète…",
     "Précision requise",
@@ -246,8 +250,12 @@ const FR: [&str; 122] = [
     "Avancer le tour →",
     "Outils avancés ↗",
     "× Route coupée par l’incendie",
+    "Carte mise à jour à {} · source : {}",
+    " · il y a {} min",
+    "Aucune donnée cartographique reçue · les signalements sont dans les messages",
+    "{} · {} · estimation non vérifiée",
 ];
-const DE: [&str; 122] = [
+const DE: [&str; 126] = [
     "Zu prüfen",
     "KI interpretiert…",
     "Rückfrage nötig",
@@ -370,8 +378,12 @@ const DE: [&str; 122] = [
     "Runde vorrücken →",
     "Erweiterte Werkzeuge ↗",
     "× Straße durch Feuer unterbrochen",
+    "Karte aktualisiert um {} · Quelle: {}",
+    " · vor {} Min.",
+    "Keine Kartendaten erhalten · Meldungen stehen in den Nachrichten",
+    "{} · {} · nicht verifizierte Schätzung",
 ];
-const ES: [&str; 122] = [
+const ES: [&str; 126] = [
     "Por revisar",
     "La IA está interpretando…",
     "Se necesita una aclaración",
@@ -494,8 +506,12 @@ const ES: [&str; 122] = [
     "Avanzar turno →",
     "Herramientas avanzadas ↗",
     "× Carretera cortada por el incendio",
+    "Mapa actualizado a las {} · fuente: {}",
+    " · hace {} min",
+    "No se han recibido datos cartográficos · los avisos están en los mensajes",
+    "{} · {} · estimación no verificada",
 ];
-const PT: [&str; 122] = [
+const PT: [&str; 126] = [
     "A rever",
     "IA a interpretar…",
     "Esclarecimento necessário",
@@ -618,8 +634,12 @@ const PT: [&str; 122] = [
     "Avançar turno →",
     "Ferramentas avançadas ↗",
     "× Estrada cortada pelo incêndio",
+    "Mapa atualizado às {} · fonte: {}",
+    " · há {} min",
+    "Nenhum dado cartográfico recebido · os avisos estão nas mensagens",
+    "{} · {} · estimativa não verificada",
 ];
-const RO: [&str; 122] = [
+const RO: [&str; 126] = [
     "De revizuit",
     "IA interpretează…",
     "Este necesară o clarificare",
@@ -742,8 +762,12 @@ const RO: [&str; 122] = [
     "Avansează tura →",
     "Instrumente avansate ↗",
     "× Drum întrerupt de incendiu",
+    "Hartă actualizată la {} · sursa: {}",
+    " · acum {} min",
+    "Nu s-au primit date cartografice · semnalările sunt în mesaje",
+    "{} · {} · estimare neverificată",
 ];
-const EL: [&str; 122] = [
+const EL: [&str; 126] = [
     "Προς έλεγχο",
     "Η ΤΝ ερμηνεύει…",
     "Απαιτείται διευκρίνιση",
@@ -866,8 +890,12 @@ const EL: [&str; 122] = [
     "Προώθηση γύρου →",
     "Προχωρημένα εργαλεία ↗",
     "× Δρόμος αποκλεισμένος από τη φωτιά",
+    "Χάρτης ενημερωμένος στις {} · πηγή: {}",
+    " · πριν από {} λεπτά",
+    "Δεν ελήφθησαν χαρτογραφικά δεδομένα · οι αναφορές βρίσκονται στα μηνύματα",
+    "{} · {} · μη επαληθευμένη εκτίμηση",
 ];
-const UK: [&str; 122] = [
+const UK: [&str; 126] = [
     "На перевірку",
     "ШІ інтерпретує…",
     "Потрібне уточнення",
@@ -990,8 +1018,12 @@ const UK: [&str; 122] = [
     "Наступний раунд →",
     "Розширені інструменти ↗",
     "× Дорогу перекрито пожежею",
+    "Карту оновлено о {} · джерело: {}",
+    " · {} хв тому",
+    "Картографічних даних не отримано · повідомлення — у листуванні",
+    "{} · {} · неперевірена оцінка",
 ];
-const HY: [&str; 122] = [
+const HY: [&str; 126] = [
     "Ստուգման",
     "ԱԲ-ն մեկնաբանում է…",
     "Անհրաժեշտ է հստակեցում",
@@ -1114,8 +1146,12 @@ const HY: [&str; 122] = [
     "Առաջ տանել փուլը →",
     "Ընդլայնված գործիքներ ↗",
     "× Ճանապարհը փակվել է հրդեհից",
+    "Քարտեզը թարմացվել է {}-ին · աղբյուր՝ {}",
+    " · {} րոպե առաջ",
+    "Քարտեզագրական տվյալներ չեն ստացվել · հաղորդումները հաղորդագրություններում են",
+    "{} · {} · չստուգված գնահատական",
 ];
-const KA: [&str; 122] = [
+const KA: [&str; 126] = [
     "გადასახედი",
     "ხელოვნური ინტელექტი განმარტავს…",
     "საჭიროა დაზუსტება",
@@ -1238,8 +1274,12 @@ const KA: [&str; 122] = [
     "ტურის წინ წაწევა →",
     "გაფართოებული ინსტრუმენტები ↗",
     "× გზა ხანძრით არის გადაკეტილი",
+    "რუკა განახლდა {}-ზე · წყარო: {}",
+    " · {} წთ-ის წინ",
+    "რუკის მონაცემები არ მიღებულა · ინფორმაცია შეტყობინებებშია",
+    "{} · {} · გადაუმოწმებელი შეფასება",
 ];
-const AZ: [&str; 122] = [
+const AZ: [&str; 126] = [
     "Yoxlanılmalıdır",
     "Sİ şərh edir…",
     "Aydınlaşdırma lazımdır",
@@ -1362,9 +1402,13 @@ const AZ: [&str; 122] = [
     "Turu irəli çək →",
     "Qabaqcıl alətlər ↗",
     "× Yol yanğınla bağlanıb",
+    "Xəritə saat {} üçün yeniləndi · mənbə: {}",
+    " · {} dəq əvvəl",
+    "Xəritə məlumatı alınmayıb · bildirişlər mesajlardadır",
+    "{} · {} · yoxlanılmamış təxmin",
 ];
 pub fn lookup(lang: &str, key: &str) -> Option<&'static str> {
-    let table: &[&str; 122] = match lang {
+    let table: &[&str; 126] = match lang {
         "fr" => &FR,
         "de" => &DE,
         "es" => &ES,

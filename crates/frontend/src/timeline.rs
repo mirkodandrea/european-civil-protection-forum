@@ -646,6 +646,7 @@ struct TurnPanelProps {
     state: Value,
     /// Scripted actions with their runs, for the last-advance summary.
     actions: Vec<Value>,
+    roles: Vec<Value>,
     /// Report returned by the last advance, when this console ran it.
     report: Value,
     busy: bool,
@@ -702,6 +703,28 @@ fn last_advance_summary(state: &Value, actions: &[Value], report: &Value, origin
     let line = if parts.is_empty() { crate::i18n::ex("nessuna azione eseguita").to_string() } else { parts.join(" · ") };
     html! {<span class={classes!("tp-last",bad.then_some("bad"))} data-last-advance="" title={line.clone()}>
         <b>{crate::exfmt!("Ultimo avanzamento {} → {}:","Last advance {} → {}:",hhmm(origin,from),hhmm(origin,to))}</b>{" "}{line}</span>}
+}
+
+/// Roles that received a zone reveal and the zones a refresh would repeat for
+/// each: `(role name, zones, layers)`.
+pub fn refresh_plan(state: &Value, roles: &[Value]) -> Vec<(String, Vec<String>, Vec<String>)> {
+    let strings = |v: &Value| list(v).iter().map(|x| text(x).to_string()).collect::<Vec<_>>();
+    state["role_knowledge"].as_object().into_iter().flatten().filter(|(_, k)| k["refresh"].is_object()).map(|(r, k)| (role_name(roles, r), strings(&k["refresh"]["zones"]), strings(&k["refresh"]["layers"]))).collect()
+}
+
+/// «Update role maps»: manual, one click. Each role that received a zone
+/// reveal gets the same zones and layers again as a fresh snapshot. Compact:
+/// the roles and zones it will touch are listed before the click.
+fn refresh_maps(state: &Value, roles: &[Value], disabled: bool, action: &Callback<Action>) -> Html {
+    let plan = refresh_plan(state, roles);
+    if plan.is_empty() {
+        return Html::default();
+    }
+    let zones = |z: &[String]| if z.len() > 6 { format!("{}…", z[..6].join(" ")) } else { z.join(" ") };
+    let list_text = plan.iter().map(|(r, z, _)| format!("{r} ({})", zones(z))).collect::<Vec<_>>().join(" · ");
+    let title = plan.iter().map(|(r, z, l)| format!("{r}: {} [{}]", z.join(" "), l.join(", "))).collect::<Vec<_>>().join("\n");
+    let action = action.clone();
+    html! {<span class="tp-refresh"><button id="refresh-role-maps" disabled={disabled} title={title} onclick={Callback::from(move |_| action.emit(Action::post("/api/master/knowledge/refresh", json!({}))))}>{crate::exfmt!("Aggiorna mappe dei ruoli ({})","Update role maps ({})",plan.len())}</button>{" "}<small class="muted" data-refresh-roles="">{list_text}</small></span>}
 }
 
 /// The single owner of status and time on the Timeline page: the open turn as
@@ -821,6 +844,7 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
             else{<span class="tp-attention none muted" id="tp-attention">{crate::i18n::ex("Nulla da gestire ora")}</span>}
             <crate::situation::SuggestionBadge generation={props.state["generation"].as_u64().unwrap_or(0)} onopen={{let v=props.onview.clone();Callback::from(move |_|v.emit("situazione".into()))}}/>
             {if resolving{Html::default()}else{last_advance_summary(&props.state,&props.actions,&props.report,origin)}}
+            {if resolving{Html::default()}else{refresh_maps(&props.state,&props.roles,props.busy||!orders,&props.action)}}
             <div class="grow"/>
             <button class="primary" id="advance-next" disabled={ctl_off||to_next.is_none()} title={primary.as_ref().map(|(t,_,closes)|if *closes{crate::exfmt!("Porta il tempo alle {} e chiude il turno {}: si apre il turno {}","Moves time to {} and closes turn {}: turn {} opens",hhmm(origin,*t),a["turn"],a["turn"].as_u64().unwrap_or(1)+1)}else{crate::exfmt!("Porta il tempo a {} e lascia il turno aperto: l’EXCON decide poi se inviare l’inject","Moves time to {} and keeps the turn open: you then decide whether to send the inject",clock_at(origin,*t))})} onclick={go(to_next)}>{advance_label(a)}</button>
             <span class="tp-step">{crate::i18n::ex("Avanza di")}<input aria-label={crate::i18n::ex("Minuti di avanzamento")} id="advance-step" type="number" min="1" max="1440" value={(*step).clone()} oninput={{let s=step.clone();Callback::from(move |e|s.set(crate::api::input(e)))}}/>{"min"}
@@ -979,7 +1003,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             {subs(&post)}</li>}
     };
     let panel = (!agenda.is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving")).then(|| {
-        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()}/>}
+        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} roles={roles.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()}/>}
     });
     // The selected inject in full, in the side column on wide screens (inline below it otherwise).
     let detail = current_key.as_ref().and_then(|k| all_items.iter().find(|i| item_key(i) == *k)).map(|i| {

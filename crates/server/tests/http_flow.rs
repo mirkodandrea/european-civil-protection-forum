@@ -3380,6 +3380,7 @@ fn gust(id: &str, offset_s: i64) -> scenario::InjectAction {
         id: id.into(),
         title: "Gust front".into(),
         command: json!({"type": "SetWeather", "wind_speed_kmh": 55.0}),
+        reveal: None,
         offset_s,
         note: String::new(),
     }
@@ -3618,4 +3619,43 @@ async fn partial_approval_acknowledgement_and_review_states_over_http() {
     let reviews: Vec<_> = row["decided_proposals"].as_array().unwrap().iter().map(|d| d["review"].as_str().unwrap().to_string()).collect();
     assert_eq!(reviews, ["partially_approved", "acknowledged"]);
     assert!(row["pending_proposals"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn msel_reveal_gives_recipients_map_knowledge_and_refresh_updates_it() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    for (n, i) in scn.msel.iter_mut().enumerate() {
+        i.at_s = Some(100_000 + n as i64 * 60);
+    }
+    let ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    let app = build(Arc::new(Mutex::new(ex)), mock_llm(), None, access()).await.0;
+    call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+    // Default pack: I-01 ignites and gives an approximate estimate; I-03 an exact map.
+    let (st, rep) = call(&app, "POST", "/api/master/msel/I-01/send", Some(json!({"recipients": ["mayor"]}))).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert!(mayor["map"]["estimates"].as_array().is_some_and(|e| !e.is_empty()), "{mayor}");
+    assert_eq!(mayor["map"]["estimates"][0]["source"], "112 Dispatch");
+    assert!(mayor["map"]["last_observation_clock"].is_string());
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    let a02 = master["inject_actions"].as_array().unwrap().iter().find(|a| a["id"] == "A-02").unwrap().clone();
+    assert_eq!(a02["status"], "done", "{a02}");
+    assert!(a02["summary"].as_str().unwrap().contains("approximate"));
+
+    let (st, rep) = call(&app, "POST", "/api/master/msel/I-03/send", Some(json!({}))).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    let (_, fire) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(!fire["map"]["cells"].as_array().unwrap().is_empty());
+    assert!(!fire["map"]["known_zones"].as_array().unwrap().is_empty());
+    let (_, master) = call(&app, "GET", "/api/master", None).await;
+    assert_eq!(master["role_knowledge"]["fire_commander"]["refresh"]["layers"], json!(["fire", "roads"]));
+    assert!(master["role_knowledge"]["mayor"]["refresh"].is_null());
+
+    let (st, rep) = call(&app, "POST", "/api/master/knowledge/refresh", Some(json!({}))).await;
+    assert_eq!(st, Status::Ok, "{rep}");
+    assert_eq!(rep["updated"].as_array().unwrap().len(), 1);
+    let (_, fire) = call_key(&app, "GET", "/api/player/fire_commander", None, Some("test-fire")).await;
+    assert!(matches!(fire["map"]["last_observation_source"].as_str(), Some("Sala operativa" | "Operations room")), "default persona: {}", fire["map"]["last_observation_source"]);
+    // Players cannot refresh.
+    assert_eq!(call_key(&app, "POST", "/api/master/knowledge/refresh", Some(json!({})), Some("test-mayor")).await.0, Status::Forbidden);
 }

@@ -288,6 +288,21 @@ impl ZoneGrid {
             .collect()
     }
 
+    /// The given zones plus their eight neighbours inside the grid (sorted,
+    /// no duplicates); unknown names are ignored.
+    pub fn with_neighbours(&self, names: &[String]) -> Vec<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for (c, r) in names.iter().filter_map(|n| self.parse(n)) {
+            for (dc, dr) in (-1i64..=1).flat_map(|dc| (-1i64..=1).map(move |dr| (dc, dr))) {
+                let (c, r) = (c as i64 + dc, r as i64 + dr);
+                if (0..self.cols as i64).contains(&c) && (0..self.rows as i64).contains(&r) {
+                    out.insert(self.name(c as usize, r as usize));
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
     /// The zone containing `p`, if inside the grid.
     pub fn zone_of(&self, p: Pos, height_m: f32) -> Option<String> {
         if p[0] < 0.0 || p[1] < 0.0 {
@@ -495,12 +510,124 @@ pub struct InjectAction {
     pub id: String,
     pub title: String,
     /// An EXCON `sim::Command` as JSON; validated when the exercise loads.
+    /// `null` for a `reveal` action (exactly one of the two is set).
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub command: serde_json::Value,
-    /// Seconds after the inject is sent; negative: before its planned time.
+    /// Map knowledge disclosed to the inject's recipients instead of a world
+    /// change (fog of war is not world state: run by the exercise, never by
+    /// `World::apply`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal: Option<RevealSpec>,
+    /// Seconds after the inject is sent; negative: before its planned time
+    /// (never for a `reveal`).
     #[serde(default, alias = "delay_s")]
     pub offset_s: i64,
     #[serde(default)]
     pub note: String,
+}
+
+/// Layers EXCON may disclose for a set of zones.
+pub const ZONE_LAYERS: [&str; 5] = ["fire", "buildings", "roads", "lines", "units"];
+
+/// Which zones an exact reveal covers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RevealZones {
+    /// Computed when the action runs.
+    Rule(ZoneRule),
+    List(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneRule {
+    /// Zones with burning cells.
+    Burning,
+    /// Burning zones and their eight neighbours.
+    BurningAndAdjacent,
+}
+
+/// Map knowledge an inject discloses to its recipients (`source` defaults to
+/// the inject's sender).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RevealSpec {
+    /// The truth in the chosen zones and layers, as of delivery.
+    Exact {
+        zones: RevealZones,
+        #[serde(default = "default_reveal_layers")]
+        layers: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
+    /// An unverified estimate of the actual fire (centroid, area, direction
+    /// of spread) with a deliberate, deterministic error.
+    Approximate {
+        /// Largest position error, metres.
+        #[serde(default = "default_position_error")]
+        position_error_m: f32,
+        /// Largest relative area error (0.25 = ±25 %).
+        #[serde(default = "default_area_error")]
+        area_error_frac: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
+}
+
+fn default_reveal_layers() -> Vec<String> {
+    vec!["fire".into()]
+}
+fn default_position_error() -> f32 {
+    300.0
+}
+fn default_area_error() -> f32 {
+    0.25
+}
+
+impl RevealSpec {
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::Exact { source, .. } | Self::Approximate { source, .. } => source.as_deref(),
+        }
+    }
+}
+
+impl Scenario {
+    /// Checks one inject action: exactly one of command / reveal, a reveal
+    /// never before its inject, known layers and zones.
+    pub fn check_action(&self, a: &InjectAction) -> Result<()> {
+        match &a.reveal {
+            None => anyhow::ensure!(a.command.is_object(), "action {} command must be a JSON object", a.id),
+            Some(r) => {
+                anyhow::ensure!(
+                    a.command.is_null(),
+                    "action {} has both a command and a reveal: choose one",
+                    a.id
+                );
+                anyhow::ensure!(a.offset_s >= 0, "reveal action {} cannot come before its inject", a.id);
+                match r {
+                    RevealSpec::Exact { zones, layers, .. } => {
+                        anyhow::ensure!(!layers.is_empty(), "reveal action {} needs at least one layer", a.id);
+                        if let Some(l) = layers.iter().find(|l| !ZONE_LAYERS.contains(&l.as_str())) {
+                            anyhow::bail!("reveal action {}: unknown layer {l}", a.id);
+                        }
+                        if let RevealZones::List(z) = zones {
+                            anyhow::ensure!(!z.is_empty(), "reveal action {} needs at least one zone", a.id);
+                            if let Some(z) = z.iter().find(|z| self.zone_bounds(&z.to_uppercase()).is_none()) {
+                                anyhow::bail!("reveal action {}: unknown zone {z}", a.id);
+                            }
+                        }
+                    }
+                    RevealSpec::Approximate { position_error_m, area_error_frac, .. } => anyhow::ensure!(
+                        (0.0..=5000.0).contains(position_error_m) && (0.0..=1.0).contains(area_error_frac),
+                        "reveal action {}: position_error_m must be 0..5000 and area_error_frac 0..1",
+                        a.id
+                    ),
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Legacy standalone timeline action, still read from old packs and converted
@@ -806,11 +933,7 @@ impl Scenario {
                     i.id
                 );
                 anyhow::ensure!(seen.insert(a.id.as_str()), "duplicate action id {}", a.id);
-                anyhow::ensure!(
-                    a.command.is_object(),
-                    "action {} command must be a JSON object",
-                    a.id
-                );
+                self.check_action(a)?;
             }
         }
         Ok(())
@@ -850,6 +973,7 @@ impl Scenario {
                 id: a.id,
                 title: a.title,
                 command: a.command,
+                reveal: None,
                 offset_s: a.at_s - planned[idx],
                 note: a.note,
             });
@@ -1078,7 +1202,7 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("timeline").is_none());
         let again: Scenario = serde_json::from_value(v).unwrap();
-        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 4);
+        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 6);
     }
 
     #[test]

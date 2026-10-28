@@ -12,6 +12,7 @@ fn act(id: &str, offset_s: i64, wind: f64) -> scenario::InjectAction {
         id: id.into(),
         title: format!("Action {id}"),
         command: json!({"type": "SetWeather", "wind_dir_deg": wind}),
+        reveal: None,
         offset_s,
         note: String::new(),
     }

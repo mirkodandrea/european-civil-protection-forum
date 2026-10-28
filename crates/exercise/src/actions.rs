@@ -9,7 +9,8 @@
 //! actions twice.
 use crate::{Exercise, MASTER};
 use anyhow::Result;
-use scenario::InjectAction;
+use crate::knowledge::{KnowledgeSource, MapObservation};
+use scenario::{InjectAction, RevealSpec};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sim::Command;
@@ -58,6 +59,12 @@ pub struct ActionRun {
     pub inject: Option<String>,
     pub title: String,
     pub command: Value,
+    /// Map knowledge disclosed instead of a world change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reveal: Option<RevealSpec>,
+    /// Sender of the inject and roles it went to (what a reveal needs).
+    pub sender: String,
+    pub roles: Vec<String>,
     pub offset_s: i64,
     pub status: ActionStatus,
     /// Simulated time when the inject was sent.
@@ -85,6 +92,8 @@ impl Exercise {
         inject_id: Option<&str>,
         selection: &SendActions,
         first: bool,
+        sender: &str,
+        roles: &[String],
     ) {
         let mut items: Vec<(InjectAction, bool)> = Vec::new();
         match inject_id {
@@ -124,6 +133,9 @@ impl Exercise {
                     inject: inject_id.map(String::from),
                     title: a.title.clone(),
                     command: a.command.clone(),
+                    reveal: a.reveal.clone(),
+                    sender: sender.to_string(),
+                    roles: roles.to_vec(),
                     offset_s: a.offset_s,
                     status,
                     decided_s: now,
@@ -152,13 +164,39 @@ impl Exercise {
             .map(|r| {
                 json!({
                     "id": r.action, "delivery": r.delivery, "inject": r.inject, "title": r.title,
-                    "command": r.command, "summary": Self::describe_command(&r.command),
+                    "command": r.command, "reveal": r.reveal, "summary": Self::describe_run(&r.command, r.reveal.as_ref()),
                     "offset_s": r.offset_s, "status": r.status,
                     "run_at_s": r.run_at_s, "run_at_clock": r.run_at_s.map(|t| scenario::format_clock(start + t)),
                     "executed_s": r.executed_s, "result": r.result,
                 })
             })
             .collect()
+    }
+
+    /// Readable summary of an action: its command or its reveal.
+    pub(crate) fn describe_run(command: &Value, reveal: Option<&RevealSpec>) -> String {
+        match reveal {
+            Some(r) => Self::describe_reveal(r),
+            None => Self::describe_command(command),
+        }
+    }
+
+    fn describe_reveal(r: &RevealSpec) -> String {
+        use scenario::{RevealZones, ZoneRule};
+        match r {
+            RevealSpec::Exact { zones, layers, .. } => {
+                let z = match zones {
+                    RevealZones::Rule(ZoneRule::Burning) => "burning zones".to_string(),
+                    RevealZones::Rule(ZoneRule::BurningAndAdjacent) => "burning zones and neighbours".to_string(),
+                    RevealZones::List(l) => l.join(", "),
+                };
+                format!("Reveal on the map (exact): {z}, layers {}", layers.join(", "))
+            }
+            RevealSpec::Approximate { position_error_m, area_error_frac, .. } => format!(
+                "Reveal on the map (approximate): unverified fire estimate, position error up to {position_error_m:.0} m, area ±{:.0}%",
+                area_error_frac * 100.0
+            ),
+        }
     }
 
     fn describe_command(command: &Value) -> String {
@@ -253,8 +291,8 @@ impl Exercise {
                     None => None,
                 };
                 json!({
-                    "id": a.id, "title": a.title, "note": a.note, "command": a.command,
-                    "summary": Self::describe_command(&a.command), "offset_s": a.offset_s,
+                    "id": a.id, "title": a.title, "note": a.note, "command": a.command, "reveal": a.reveal,
+                    "summary": Self::describe_run(&a.command, a.reveal.as_ref()), "offset_s": a.offset_s,
                     "pre": pre, "enabled": enabled,
                     "instant_s": instant,
                     "instant_clock": instant.map(|t| scenario::format_clock(start + t)),
@@ -292,6 +330,9 @@ impl Exercise {
                     inject: Some(inject.clone()),
                     title: a.title.clone(),
                     command: a.command.clone(),
+                    reveal: a.reveal.clone(),
+                    sender: String::new(),
+                    roles: Vec::new(),
                     offset_s: a.offset_s,
                     status: ActionStatus::Approved,
                     decided_s: now,
@@ -317,9 +358,12 @@ impl Exercise {
         due.sort();
         for (_, key) in due {
             let Some(run) = self.action_runs.get(&key).cloned() else { continue };
-            let outcome: Result<Vec<String>> = serde_json::from_value::<Command>(run.command.clone())
-                .map_err(|e| anyhow::anyhow!("invalid command: {e}"))
-                .and_then(|cmd| self.direct_command(&cmd));
+            let outcome: Result<Vec<String>> = match &run.reveal {
+                Some(spec) => self.execute_reveal(&run, spec),
+                None => serde_json::from_value::<Command>(run.command.clone())
+                    .map_err(|e| anyhow::anyhow!("invalid command: {e}"))
+                    .and_then(|cmd| self.direct_command(&cmd)),
+            };
             let (status, result) = match outcome {
                 Ok(notes) => (ActionStatus::Done, notes.join("; ")),
                 Err(e) => (ActionStatus::Failed, e.to_string()),
@@ -336,6 +380,51 @@ impl Exercise {
                     "status": status, "result": result, "t_s": now}),
             );
         }
+    }
+
+    /// Disclose map knowledge to the recipients of the inject. Offset 0 rides
+    /// the delivered messages; later, each recipient gets a Situation message.
+    /// Fog of war is not world state: nothing here goes through `World::apply`.
+    fn execute_reveal(&mut self, run: &ActionRun, spec: &RevealSpec) -> Result<Vec<String>> {
+        let source = spec.source().map(String::from).unwrap_or_else(|| run.sender.clone());
+        let inject = run.inject.clone().unwrap_or_else(|| format!("delivery-{}", run.delivery));
+        let exact = match spec {
+            RevealSpec::Exact { zones, layers, .. } => {
+                let zones = self.reveal_zones(zones)?;
+                Some((self.zone_observation(&zones, layers)?, layers.clone()))
+            }
+            RevealSpec::Approximate { .. } => None,
+        };
+        let (mut notes, mut errors) = (Vec::new(), Vec::new());
+        for role in &run.roles {
+            let (observation, layers) = match (&exact, spec) {
+                (Some((o, l)), _) => (o.clone(), l.clone()),
+                (None, RevealSpec::Approximate { position_error_m, area_error_frac, .. }) => {
+                    let key = format!("{inject}:{}:{role}", run.action);
+                    let estimate = self.fire_estimate(&key, *position_error_m, *area_error_frac)?;
+                    (MapObservation { estimates: vec![estimate], ..Default::default() }, Vec::new())
+                }
+                (None, _) => unreachable!("exact reveals always carry an observation"),
+            };
+            let delivered = (run.offset_s == 0)
+                .then(|| self.messages.iter().find(|m| m.inject_id == Some(run.delivery) && &m.to == role).map(|m| m.id))
+                .flatten();
+            let done = match delivered {
+                Some(mid) => self
+                    .attach_map_observation_named(mid, observation, KnowledgeSource::Delivered, Some(source.clone()), layers)
+                    .map(|_| mid),
+                None => self.acquire_map_layers(role, &source, observation, None, layers),
+            };
+            match done {
+                Ok(mid) => notes.push(format!("{role}: message {mid}")),
+                Err(e) => errors.push(format!("{role}: {e}")),
+            }
+        }
+        if notes.is_empty() {
+            anyhow::bail!("{}", if errors.is_empty() { "no recipient".to_string() } else { errors.join("; ") });
+        }
+        notes.extend(errors);
+        Ok(notes)
     }
 
     /// Seconds until the next approved action, so a step can stop exactly there.

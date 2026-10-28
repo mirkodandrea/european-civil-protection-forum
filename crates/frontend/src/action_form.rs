@@ -49,6 +49,7 @@ pub fn new_action(taken: &[String], prefix: &str) -> InjectAction {
         id: format!("{prefix}-{k:02}"),
         title: String::new(),
         command: json!({"type": "SetWeather", "wind_speed_kmh": 30.0}),
+        reveal: None,
         offset_s: 0,
         note: String::new(),
     }
@@ -127,6 +128,22 @@ pub fn action_editor(p: &ActionEditorProps) -> Html {
             raw.set(Some(t));
         })
     };
+    // A reveal action (map knowledge instead of a world change) is edited as JSON.
+    let revealing = a.reveal.is_some();
+    let on_reveal = {
+        let (a, onchange, raw_json) = (a.clone(), p.onchange.clone(), raw_json.clone());
+        Callback::from(move |e: InputEvent| {
+            let t = api::input(e);
+            if let Ok(r) = serde_json::from_str::<scenario::RevealSpec>(&t) {
+                let mut n = a.clone();
+                n.reveal = Some(r);
+                onchange.emit(n);
+            }
+            raw_json.set(Some(t));
+        })
+    };
+    let shown_reveal = (*raw_json).clone().unwrap_or_else(|| serde_json::to_string_pretty(&a.reveal).unwrap_or_default());
+    let reveal_ok = serde_json::from_str::<scenario::RevealSpec>(&shown_reveal).is_ok();
     let shown_json = (*raw_json).clone().unwrap_or_else(|| serde_json::to_string_pretty(&a.command).unwrap_or_default());
     let json_ok = serde_json::from_str::<Value>(&shown_json).is_ok_and(|v| v.is_object());
     let shown_offset = (*raw_offset).clone().filter(|t| parse_offset(t, p.allow_pre).is_some_and(|s| s == a.offset_s)).unwrap_or_else(|| offset_text(a.offset_s));
@@ -149,6 +166,9 @@ pub fn action_editor(p: &ActionEditorProps) -> Html {
                 <input type="number" step="1" min={if p.allow_pre {None} else {Some("0")}} value={shown_offset} oninput={on_offset}/></label>
             <small class="hint action-when">{offset_label(a.offset_s)}</small>
         </div>
+        if revealing {<label class="wide" title={ex("Rivelazione di conoscenza sulla mappa ai destinatari dell’inject (nebbia di guerra): non cambia il mondo.")}>{ex("Rivelazione sulla mappa (JSON)")}
+            <textarea rows="6" value={shown_reveal} oninput={on_reveal}/>
+            <small class="hint">{if reveal_ok { ex("kind: exact (zones: elenco o \"burning\" / \"burning_and_adjacent\", layers) oppure approximate (position_error_m, area_error_frac); source facoltativa.") } else { ex("JSON non valido: l’ultima versione valida resta salvata.") }}</small></label>} else {<>
         <div class="inject-recipients" title={ex("Gli stessi strumenti del Controllo EXCON: costruiscono il comando dell’azione.")}>
             <span class="label">{ex("Imposta con lo strumento")}</span>
             <div class="chips">{for controllo::TOOLS.iter().filter(|t| TOOL_IDS.contains(&t.id)).map(|t| {
@@ -161,7 +181,7 @@ pub fn action_editor(p: &ActionEditorProps) -> Html {
         <label class="wide" title={ex("Comando EXCON in JSON, ad esempio SetWeather, Ignite, CloseRoad, SetBuildingStatus, AdjustResource.")}>{ex("Avanzate: comando (JSON)")}
             <textarea rows="5" value={shown_json} oninput={on_json}/>
             <small class="hint">{if json_ok { ex("JSON valido: i campi sono controllati all’esecuzione. Esempio: {\"type\":\"SetWeather\",\"wind_dir_deg\":270}") } else { ex("JSON non valido: l’ultima versione valida resta salvata.") }}</small>
-        </label>
+        </label></>}
         <label class="wide" title={ex("Appunto per l’EXCON, mostrato accanto all’azione nella timeline.")}>{ex("Nota")}<textarea rows="2" value={a.note.clone()} oninput={change(|x, v| x.note = v).reform(api::input)}/></label>
         <div class="inject-actions"><button type="button" class="danger" onclick={{let d=p.ondelete.clone();Callback::from(move |_| d.emit(()))}}>{ex("Elimina azione")}</button></div>
     </div>}

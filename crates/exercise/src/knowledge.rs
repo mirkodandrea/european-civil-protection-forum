@@ -53,8 +53,25 @@ pub struct UnitObs {
     pub target: Option<[f32; 2]>,
 }
 
-/// Layers EXCON may disclose for a set of zones.
-pub const ZONE_LAYERS: [&str; 5] = ["fire", "buildings", "roads", "lines", "units"];
+pub use scenario::ZONE_LAYERS;
+
+/// An unverified report of where the fire is: a circle with a spread
+/// direction, deliberately inexact (see [`Exercise::fire_estimate`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FireEstimate {
+    /// Reported centre, metres (x east, y north).
+    pub at: [f32; 2],
+    /// Radius of the area where the fire is said to be: reported extent plus the position error.
+    pub radius_m: f32,
+    pub area_ha: f32,
+    /// Bearing the fire spreads toward, degrees clockwise from north.
+    #[serde(default)]
+    pub spread_toward_deg: Option<f32>,
+    /// Largest position error the report may carry, metres.
+    #[serde(default)]
+    pub error_m: f32,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +95,9 @@ pub struct MapObservation {
     pub cells: Vec<FireCell>,
     #[serde(default)]
     pub forecast_products: Vec<fire::forecast::Forecast>,
+    /// Unverified fire estimates; the latest one a role received is shown.
+    #[serde(default)]
+    pub estimates: Vec<FireEstimate>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -97,6 +117,10 @@ pub struct KnowledgeEvent {
     pub source: KnowledgeSource,
     pub observation: MapObservation,
     pub timeline: usize,
+    /// Who the information comes from, as the player sees it.
+    pub source_name: Option<String>,
+    /// Layers of a zone reveal (empty for other observations): a refresh repeats them.
+    pub layers: Vec<String>,
 }
 
 impl Exercise {
@@ -131,6 +155,21 @@ impl Exercise {
         {
             bail!("invalid reported fire cell");
         }
+        if o.estimates.len() > 4
+            || o.estimates.iter().any(|e| {
+                !e.at.iter().all(|v| v.is_finite())
+                    || e.at[0] < 0.0
+                    || e.at[1] < 0.0
+                    || e.at[0] > g.cols as f32 * g.cellsize
+                    || e.at[1] > g.rows as f32 * g.cellsize
+                    || !(0.0..=100_000.0).contains(&e.radius_m)
+                    || !(0.0..=10_000_000.0).contains(&e.area_ha)
+                    || !(0.0..=100_000.0).contains(&e.error_m)
+                    || e.spread_toward_deg.is_some_and(|d| !(0.0..360.0).contains(&d))
+            })
+        {
+            bail!("invalid fire estimate");
+        }
         if o.zones.len() > 676
             || o.zones.iter().any(|z| self.world.scn.zone_bounds(z).is_none())
         {
@@ -157,6 +196,19 @@ impl Exercise {
         observation: MapObservation,
         source: KnowledgeSource,
     ) -> Result<()> {
+        self.attach_map_observation_named(mid, observation, source, None, Vec::new())
+    }
+
+    /// As [`Self::attach_map_observation`], recording who the information comes
+    /// from (default: the message sender) and the layers of a zone reveal.
+    pub fn attach_map_observation_named(
+        &mut self,
+        mid: u64,
+        observation: MapObservation,
+        source: KnowledgeSource,
+        source_name: Option<String>,
+        layers: Vec<String>,
+    ) -> Result<()> {
         self.validate_observation(&observation)?;
         let m = self
             .messages
@@ -174,6 +226,7 @@ impl Exercise {
         if self.knowledge_events.iter().any(|e| e.message == mid) {
             bail!("message already has a map observation");
         }
+        let source_name = source_name.or_else(|| (m.from != MASTER).then(|| m.from.clone()));
         let event = KnowledgeEvent {
             role: m.to.clone(),
             message: mid,
@@ -183,6 +236,8 @@ impl Exercise {
             source,
             observation,
             timeline: self.log.iter().filter(|e| e.kind == "rollback").count(),
+            source_name,
+            layers,
         };
         self.record("map_information_acquired", MASTER, json!(&event));
         self.knowledge_events.push(event);
@@ -195,6 +250,19 @@ impl Exercise {
         source: &str,
         observation: MapObservation,
         translated: Option<&str>,
+    ) -> Result<u64> {
+        self.acquire_map_layers(role, source, observation, translated, Vec::new())
+    }
+
+    /// As [`Self::acquire_map`] for a zone reveal: `layers` are remembered so a
+    /// refresh can repeat it.
+    pub fn acquire_map_layers(
+        &mut self,
+        role: &str,
+        source: &str,
+        observation: MapObservation,
+        translated: Option<&str>,
+        layers: Vec<String>,
     ) -> Result<u64> {
         if self.phase == crate::Phase::Debrief {
             bail!("the exercise has ended");
@@ -235,7 +303,13 @@ impl Exercise {
         // The information source is who the player hears it from.
         let persona = self.persona_for(Some(source), None);
         self.set_message_persona(mid, persona);
-        self.attach_map_observation(mid, observation, KnowledgeSource::Acquired)?;
+        self.attach_map_observation_named(
+            mid,
+            observation,
+            KnowledgeSource::Acquired,
+            Some(source.to_string()),
+            layers,
+        )?;
         Ok(mid)
     }
 
@@ -381,6 +455,153 @@ impl Exercise {
         Ok(o)
     }
 
+    /// Zones an exact reveal covers, resolved now.
+    pub fn reveal_zones(&self, zones: &scenario::RevealZones) -> Result<Vec<String>> {
+        use scenario::{RevealZones, ZoneRule};
+        let burning = || -> Result<Vec<String>> {
+            let b = self.world.burning_zones();
+            if b.is_empty() {
+                bail!("no zone is burning");
+            }
+            Ok(b)
+        };
+        Ok(match zones {
+            RevealZones::List(z) => z.iter().map(|z| z.to_uppercase()).collect(),
+            RevealZones::Rule(ZoneRule::Burning) => burning()?,
+            RevealZones::Rule(ZoneRule::BurningAndAdjacent) => self.world.scn.zones.with_neighbours(&burning()?),
+        })
+    }
+
+    /// The actual fire (cells burning or burnt, which is what the fire raster
+    /// shows): centroid in metres, area in hectares and the bearing it spreads
+    /// toward. The bearing is the direction from the centroid of the burnt
+    /// cells (where the fire has been) to that of the burning cells (the
+    /// front), a proxy for the fastest-advancing front; when the two are less
+    /// than one cell apart (fire just started, or all still burning) it is the
+    /// wind blowing toward, i.e. the wind direction (given FROM) plus 180°.
+    pub fn actual_fire(&self) -> Option<([f32; 2], f64, f32)> {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(self.world.fire_raster_b64()).ok()?;
+        let g = &self.world.scn.grid;
+        let (mut all, mut burning, mut burnt) = (([0f64; 2], 0usize), ([0f64; 2], 0usize), ([0f64; 2], 0usize));
+        for (i, state) in bytes.into_iter().enumerate() {
+            let slot = match state {
+                sim::digest::cell_code::BURNING => &mut burning,
+                sim::digest::cell_code::BURNT => &mut burnt,
+                _ => continue,
+            };
+            let (row, col) = (i / g.cols, i % g.cols);
+            let p = [(col as f64 + 0.5) * g.cellsize as f64, g.height_m() as f64 - (row as f64 + 0.5) * g.cellsize as f64];
+            for s in [&mut all, slot] {
+                s.0[0] += p[0];
+                s.0[1] += p[1];
+                s.1 += 1;
+            }
+        }
+        if all.1 == 0 {
+            return None;
+        }
+        let mean = |s: &([f64; 2], usize)| [s.0[0] / s.1 as f64, s.0[1] / s.1 as f64];
+        let centroid = mean(&all);
+        let area_ha = all.1 as f64 * (g.cellsize as f64).powi(2) / 10_000.0;
+        let bearing = |dx: f64, dy: f64| dx.atan2(dy).to_degrees().rem_euclid(360.0) as f32;
+        let front = (burning.1 > 0 && burnt.1 > 0).then(|| {
+            let (a, b) = (mean(&burnt), mean(&burning));
+            (b[0] - a[0], b[1] - a[1])
+        });
+        let spread = match front.filter(|(dx, dy)| dx.hypot(*dy) > g.cellsize as f64) {
+            Some((dx, dy)) => bearing(dx, dy),
+            None => (self.world.fire.weather().wind_dir_deg + 180.0).rem_euclid(360.0) as f32,
+        };
+        Some(([centroid[0] as f32, centroid[1] as f32], area_ha, spread))
+    }
+
+    /// A deliberately wrong report of the actual fire. The error is a pure
+    /// function of the scenario seed and `key` (inject, action and role), so a
+    /// replay or a second recipient with the same key reads the same thing:
+    /// position within `position_error_m` of the true centroid, area within
+    /// ±`area_error_frac` and rounded to two significant digits, direction
+    /// within ±10° and rounded to 5°.
+    pub fn fire_estimate(&self, key: &str, position_error_m: f32, area_error_frac: f32) -> Result<FireEstimate> {
+        let Some((centroid, area_ha, spread)) = self.actual_fire() else {
+            bail!("there is no fire to report");
+        };
+        // FNV-1a over seed and key, then splitmix64 for each draw.
+        let mut state = 0xcbf29ce484222325u64;
+        for b in self.world.seed.to_le_bytes().iter().chain(key.as_bytes()) {
+            state = (state ^ *b as u64).wrapping_mul(0x100000001b3);
+        }
+        let mut draw = move || {
+            state = state.wrapping_add(0x9e3779b97f4a7c15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+            ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let g = &self.world.scn.grid;
+        let dist = position_error_m as f64 * draw().sqrt();
+        let angle = std::f64::consts::TAU * draw();
+        let at = [
+            (centroid[0] + (dist * angle.cos()) as f32).clamp(0.0, g.cols as f32 * g.cellsize - 0.01),
+            (centroid[1] + (dist * angle.sin()) as f32).clamp(0.0, g.rows as f32 * g.cellsize - 0.01),
+        ];
+        let raw = (area_ha * (1.0 + area_error_frac as f64 * (2.0 * draw() - 1.0))).max(0.1);
+        let step = 10f64.powf(raw.log10().floor() - 1.0);
+        let area = ((raw / step).round() * step).max(0.1);
+        let spread = ((spread as f64 + (2.0 * draw() - 1.0) * 10.0) / 5.0).round() * 5.0;
+        Ok(FireEstimate {
+            at,
+            radius_m: ((area * 10_000.0 / std::f64::consts::PI).sqrt() + position_error_m as f64) as f32,
+            area_ha: area as f32,
+            spread_toward_deg: Some(spread.rem_euclid(360.0) as f32),
+            error_m: position_error_m,
+        })
+    }
+
+    /// Roles whose latest zone reveal a refresh would repeat, with its zones and layers.
+    pub fn refresh_plan(&self) -> Vec<Value> {
+        let timeline = self.log.iter().filter(|e| e.kind == "rollback").count();
+        self.players
+            .keys()
+            .filter_map(|role| {
+                let e = self.knowledge_events.iter().rev().find(|e| {
+                    &e.role == role && e.timeline == timeline && !e.layers.is_empty() && !e.observation.zones.is_empty()
+                })?;
+                Some(json!({"role":role,"zones":e.observation.zones,"layers":e.layers,"clock":e.clock,"source":e.source_name}))
+            })
+            .collect()
+    }
+
+    /// Re-reveal to each role that received a zone reveal the same zones and
+    /// layers as a fresh snapshot of the world now. `source` is who the players
+    /// hear it from (default: the scenario's operations-room persona in the
+    /// role's language); `translations` maps role → message text in its
+    /// language. Returns `(role, message)` per update.
+    pub fn refresh_role_maps(
+        &mut self,
+        source: Option<&str>,
+        translations: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Vec<(String, u64)>> {
+        if self.phase == crate::Phase::Debrief {
+            bail!("the exercise has ended");
+        }
+        let mut out = Vec::new();
+        for item in self.refresh_plan() {
+            let role = item["role"].as_str().unwrap_or_default().to_string();
+            let strings = |k: &str| -> Vec<String> {
+                item[k].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect()
+            };
+            let (zones, layers) = (strings("zones"), strings("layers"));
+            let observation = self.zone_observation(&zones, &layers)?;
+            let source = source.map(String::from).unwrap_or_else(|| self.persona_name(None, &self.language_of(&role)));
+            let mid = self.acquire_map_layers(&role, &source, observation, translations.get(&role).map(String::as_str), layers)?;
+            out.push((role, mid));
+        }
+        if out.is_empty() {
+            bail!("no role has received a zone reveal yet");
+        }
+        Ok(out)
+    }
+
     /// Zones explicitly disclosed to a role. Point observations do not reveal a whole zone.
     pub fn known_zones(&self, role: &str) -> Vec<String> {
         let mut out = std::collections::BTreeSet::new();
@@ -399,7 +620,8 @@ impl Exercise {
                     let last = self.knowledge_events.iter().rev().find(|e| &e.role == role);
                     (
                         role.clone(),
-                        json!({"zones":self.known_zones(role),"last_clock":last.map(|e| &e.clock),"events":self.knowledge_events.iter().filter(|e| &e.role == role).count()}),
+                        json!({"zones":self.known_zones(role),"last_clock":last.map(|e| &e.clock),"events":self.knowledge_events.iter().filter(|e| &e.role == role).count(),
+                            "refresh":self.refresh_plan().into_iter().find(|p| p["role"] == role.as_str())}),
                     )
                 })
                 .collect(),
@@ -457,6 +679,10 @@ impl Exercise {
             "known_zones":self.known_zones(role), "observed_units":units,
             "roads":roads, "lines":lines, "drops":drops, "warned":[], "burning_zones":[],
             "buildings":(0..self.world.scn.buildings.len()).map(|i| buildings.get(&i).cloned().unwrap_or(Value::Null)).collect::<Vec<_>>(),
+            "estimates":self.knowledge_events.iter().rev().find(|e| e.role == role && !e.observation.estimates.is_empty())
+                .map(|e| e.observation.estimates.iter().map(|x| json!({"at":x.at,"radius_m":x.radius_m,"area_ha":x.area_ha,"spread_toward_deg":x.spread_toward_deg,"error_m":x.error_m,"source":e.source_name,"clock":e.clock,"t_s":e.t_s})).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            "last_observation_source":self.knowledge_events.iter().rev().find(|e| e.role == role).map(|e| &e.source_name),
             "last_observation_s":self.knowledge_events.iter().rev().find(|e| e.role == role).map(|e| e.t_s),
             "last_observation_clock":self.knowledge_events.iter().rev().find(|e| e.role == role).map(|e| &e.clock)}),
         )
