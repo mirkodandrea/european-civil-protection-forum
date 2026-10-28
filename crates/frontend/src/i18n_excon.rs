@@ -946,7 +946,6 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Riformula la bozza con il modello linguistico; senza AI il testo resta com’è" => "Rephrases the draft with the language model; without AI the text stays as it is",
         "Riscrivi con AI" => "Rewrite with AI",
         "Riscrivi con la voce di" => "Rewrite in the voice of",
-        "Sala operativa" => "Operations room",
         "Scarta" => "Dismiss",
         "Simulazione identica a quella dell’avanzamento a fine turno, con le stesse decisioni già prese: se nessuno fa altro, accade questo. Non invia né pianifica nulla." => "Same simulation as the advance to the end of the turn, with the decisions already taken: if nobody does anything else, this is what happens. It sends and plans nothing.",
         "Situazione" => "Situation",
