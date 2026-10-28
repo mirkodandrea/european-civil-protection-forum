@@ -6,6 +6,37 @@ use crate::{
 };
 use serde_json::{json, Value};
 use yew::prelude::*;
+/// Letters and digits only, lower case: "Pineta Primary-School" == "pineta primary school".
+fn norm(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+}
+
+/// What kind of place an action takes: a grid zone, a building, a road, a point.
+fn place_kind(action: &str) -> &'static str {
+    match action {
+        "IssueWarning" | "EvacuateZone" => "zone",
+        "EvacuateBuilding" | "OpenShelter" => "building",
+        "CloseRoad" | "ReopenRoad" => "road",
+        _ => "point",
+    }
+}
+
+/// `F4`-style code inside the scenario grid.
+fn is_zone_code(stat: &Value, s: &str) -> bool {
+    let s: String = s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
+    let (cols, rows) = (stat["zones"]["cols"].as_u64().unwrap_or(0), stat["zones"]["rows"].as_u64().unwrap_or(0));
+    let mut it = s.chars();
+    let (Some(letter), Ok(row)) = (it.next(), it.as_str().parse::<u64>()) else { return false };
+    letter.is_ascii_uppercase() && ((letter as u8 - b'A') as u64) < cols && (1..=rows).contains(&row)
+}
+
+/// The facility called `name` (case and punctuation ignored), if any.
+fn building_named(stat: &Value, name: &str) -> Option<String> {
+    let k = norm(name);
+    (!k.is_empty()).then_some(())?;
+    list(&stat["buildings"]).iter().map(|b| text(&b["name"])).find(|n| norm(n) == k).map(str::to_string)
+}
+
 impl App {
     pub fn view_tactical(&self, ctx: &Context<Self>) -> Html {
         let own = self.own.clone();
@@ -170,6 +201,41 @@ impl App {
         let respond_missing = if self.state["phase"] != "orders" { Some("work_need_orders") } else if !has_narrative && staged.is_empty() { Some("work_need_response") } else if has_narrative && !answers_inject { Some("work_need_inject") } else { None };
         // What the disabled "add action" button is waiting for.
         let work_missing = if work_allowed.is_empty() { Some("work_need_action") } else if work_action != "RequestReinforcement" && work_location.trim().is_empty() { Some("work_need_place") } else if work_action == "CutFireLine" && work_destination.trim().is_empty() { Some("work_need_second") } else { None };
+        // Zone-type actions take a grid code (or a named place); a building typed
+        // there switches the action to the building one instead of being refused later.
+        let zone_options: Vec<String> = if place_kind(&work_action) == "zone" {
+            let (cols, rows) = (self.stat["zones"]["cols"].as_u64().unwrap_or(0) as u8, self.stat["zones"]["rows"].as_u64().unwrap_or(0) as u8);
+            (1..=rows).flat_map(|r| (0..cols).map(move |c| format!("{}{}", (b'A' + c) as char, r)))
+                .chain(list(&self.stat["places"]).iter().map(|p| text(&p["name"]).to_string()).filter(|n| !n.is_empty()))
+                .collect()
+        } else { Vec::new() };
+        let zone_input = {
+            let (stat, action) = (self.stat.clone(), work_action.clone());
+            let building_allowed = work_allowed.iter().any(|a| text(a) == "EvacuateBuilding");
+            ctx.link().batch_callback(move |e: InputEvent| {
+                let v = api::input(e);
+                match building_named(&stat, &v) {
+                    Some(name) if action == "EvacuateZone" && building_allowed => vec![
+                        Msg::Field("work:action".into(), "EvacuateBuilding".into()),
+                        Msg::Field("work:location".into(), name.clone()),
+                        Msg::Field("work:notice".into(), name),
+                    ],
+                    _ => vec![Msg::Field("work:notice".into(), String::new()), Msg::Field("work:location".into(), v)],
+                }
+            })
+        };
+        let notice = self.field("work:notice", "");
+        let zone_notice = if !notice.is_empty() && place_kind(&work_action) == "building" {
+            i18n::tf(l, "place_switched", &[&notice, i18n::action(l, "EvacuateBuilding")])
+        } else if place_kind(&work_action) == "zone" && !work_location.trim().is_empty() && !is_zone_code(&self.stat, &work_location) {
+            if building_named(&self.stat, &work_location).is_some() {
+                i18n::tf(l, "place_is_building", &[work_location.trim()])
+            } else if zone_options.iter().any(|o| norm(o) == norm(&work_location)) {
+                String::new()
+            } else {
+                i18n::tf(l, "place_not_zone", &[work_location.trim()])
+            }
+        } else { String::new() };
         let respond = {
             let own = own.clone();
             let narrative = narrative_text.clone();
@@ -196,7 +262,7 @@ impl App {
             </div>
             <details class="work-add" open=true><summary>{i18n::t(l,"add_action_title")}</summary>
             <label for="work-action">{i18n::t(l,"action_type")}</label>
-            <select id="work-action" value={work_action.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:action".into(),api::select(e)))}>
+            <select id="work-action" value={work_action.clone()} onchange={{let old=work_action.clone();let loc=work_location.clone();ctx.link().batch_callback(move |e|{let new=api::select(e);let mut m=vec![Msg::Field("work:notice".into(),String::new())];if place_kind(&new)!=place_kind(&old)&&!loc.is_empty(){m.push(Msg::Field("work:location".into(),String::new()));}m.push(Msg::Field("work:action".into(),new));m})}}>
                 {for work_allowed.iter().map(|v|html!{<option value={text(v).to_string()} selected={text(v)==work_action}>{i18n::action(l,text(v))}</option>})}
             </select>
             <label for="work-location">{format!("{} *",i18n::t(l,"place"))}</label>
@@ -204,9 +270,13 @@ impl App {
                 <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["roads"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_location}>{text(&r["name"])}</option>})}</select>
             } else if work_action=="EvacuateBuilding"||work_action=="OpenShelter" {
                 <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["buildings"].as_array().into_iter().flatten().map(|b|{let id=b["id"].as_u64().unwrap_or(0);let name=text(&b["name"]);let value=if name.is_empty(){format!("#{id}")}else{name.to_string()};html!{<option value={value.clone()} selected={value==work_location}>{if name.is_empty(){value}else{name.to_string()}}</option>}})}</select>
+            } else if place_kind(&work_action)=="zone" {
+                <input id="work-location" list="work-zone-options" required=true aria-required="true" placeholder="F4" value={work_location.clone()} oninput={zone_input}/>
+                <datalist id="work-zone-options">{for zone_options.iter().map(|z|html!{<option value={z.clone()}/>})}</datalist>
             } else {
                 <input id="work-location" required=true aria-required="true" value={work_location.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:location".into(),api::input(e)))}/>
             }
+            if !zone_notice.is_empty() {<small class="muted work-hint" role="status" data-place-notice="">{zone_notice.clone()}</small>}
             if work_action=="CutFireLine" {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
             if !work_clarifying && work_conversation.is_none() {<label for="work-reply-to">{i18n::t(l,"reply_to")}</label>}
             if !work_clarifying && work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
@@ -352,5 +422,21 @@ impl App {
                     <SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} lang={l.to_string()}/></div><div class="work-modal-form">{work_editor}</div></div>
             </section></crate::inject_panel::ModalShell>}
         </>}
+    }
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::*;
+
+    #[test]
+    fn building_names_are_not_zone_codes() {
+        let stat = json!({"zones":{"cols":8,"rows":8},"buildings":[{"id":1,"name":"Pineta Primary School"},{"id":2,"name":""}]});
+        assert!(is_zone_code(&stat, "f4") && is_zone_code(&stat, "F 4") && !is_zone_code(&stat, "I1") && !is_zone_code(&stat, "F9"));
+        assert!(!is_zone_code(&stat, "Pineta Primary School") && !is_zone_code(&stat, "Pineta"));
+        assert_eq!(building_named(&stat, "pineta primary-school").as_deref(), Some("Pineta Primary School"));
+        assert_eq!(building_named(&stat, "Pineta"), None);
+        assert_eq!(building_named(&stat, ""), None);
+        assert_ne!(place_kind("EvacuateZone"), place_kind("EvacuateBuilding"));
     }
 }

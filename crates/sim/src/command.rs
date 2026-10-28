@@ -317,15 +317,15 @@ pub fn catalogue(allowed: &[String]) -> String {
         ),
         (
             "EvacuateZone",
-            r#"{"type":"EvacuateZone","zone":"F4","destination":"Valverde Sports Centre"}  — evacuate all occupied buildings of a grid zone. destination optional (an open shelter). Schools/hospitals need buses (50 seats each)."#,
+            r#"{"type":"EvacuateZone","zone":"F4","destination":"Valverde Sports Centre"}  — evacuate all occupied buildings of a grid zone. "zone" is ALWAYS a grid code such as F4, never a building or place name: to evacuate one named facility (a school, hospital, ...) use EvacuateBuilding. destination optional (an open shelter). Schools/hospitals need buses (50 seats each)."#,
         ),
         (
             "EvacuateBuilding",
-            r#"{"type":"EvacuateBuilding","building":"Pineta Primary School","destination":"Valverde Sports Centre"}  — evacuate one named facility. Schools/hospitals need buses."#,
+            r#"{"type":"EvacuateBuilding","building":"Pineta Primary School","destination":"Valverde Sports Centre"}  — evacuate one named facility ("building" is its exact name from the gazetteer, never a zone code). Schools/hospitals need buses."#,
         ),
         (
             "IssueWarning",
-            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone; later evacuations there are faster."#,
+            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone (grid code, never a building name); later evacuations there are faster."#,
         ),
         (
             "CloseRoad",

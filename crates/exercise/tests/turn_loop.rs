@@ -1094,3 +1094,20 @@ fn live_turn_length_does_not_move_implied_inject_times() {
     ex.turn_minutes = 45;
     assert_eq!(due(&ex), 2 * 20 * 60);
 }
+
+#[test]
+fn building_or_place_written_as_a_zone_is_adapted_in_the_proposal() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    for (name, building) in [("Pineta Primary School", true), ("Pineta", false)] {
+        let pid = reply(&mut ex, "mayor", "evacuate").unwrap();
+        ex.attach_parse(pid, parsed(json!([{"type":"EvacuateZone","zone":name}]))).unwrap();
+        let p = ex.proposal(pid).unwrap();
+        assert_eq!(matches!(p.commands[0], Command::EvacuateBuilding { .. }), building, "{name}: {:?}", p.commands);
+        let reasons = format!("{:?}", p.verdicts);
+        assert!(!reasons.contains("unknown zone"), "{name}: {reasons}");
+        if let sim::Verdict::Ok { notes } = &p.verdicts[0] {
+            assert!(notes[0].contains(name), "{notes:?}");
+        }
+    }
+}

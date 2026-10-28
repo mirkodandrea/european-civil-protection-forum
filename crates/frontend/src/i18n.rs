@@ -7,6 +7,7 @@ pub fn t(lang: &str, key: &'static str) -> &'static str {
     } else {
         crate::i18n_lang::lookup(lang, key)
             .or_else(|| crate::i18n_function::lookup(lang, key))
+            .or_else(|| crate::i18n_place::lookup(lang, key))
             .unwrap_or_else(|| en(key))
     }
 }
@@ -331,6 +332,9 @@ fn it(key: &'static str) -> &'static str {
         "work_need_orders" => "Gli ordini non sono aperti: attendi la fase ordini.",
         "work_need_action" => "Nessuna azione consentita per il tuo ruolo.",
         "work_need_place" => "Indica una zona o un luogo (clic sulla mappa o scrivilo).",
+        "place_switched" => "«{}» è un edificio: l’azione è passata a «{}».",
+        "place_is_building" => "«{}» è un edificio, non una zona: scegli l’azione su edificio o scrivi un codice di zona (es. F4).",
+        "place_not_zone" => "«{}» non è un codice di zona (es. F4) né un luogo noto: scegli dall’elenco.",
         "work_need_second" => "Indica anche il secondo punto della linea.",
         "narrative_optional" => "Narrazione (facoltativa)",
         "narrative_placeholder" => "Racconta cosa fai e perché, con parole tue.",
@@ -598,6 +602,9 @@ fn en(key: &'static str) -> &'static str {
         "work_need_orders" => "Orders are not open: wait for the orders phase.",
         "work_need_action" => "No action is allowed for your role.",
         "work_need_place" => "Enter a zone or a place (click the map or type it).",
+        "place_switched" => "«{}» is a building: the action was changed to «{}».",
+        "place_is_building" => "«{}» is a building, not a zone: choose the building action or type a zone code (e.g. F4).",
+        "place_not_zone" => "«{}» is neither a zone code (e.g. F4) nor a known place: pick from the list.",
         "work_need_second" => "Also enter the second point of the line.",
         "narrative_optional" => "Narrative (optional)",
         "narrative_placeholder" => "Say in your own words what you do and why.",

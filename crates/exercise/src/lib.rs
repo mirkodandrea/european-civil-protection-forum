@@ -1794,8 +1794,17 @@ impl Exercise {
             .source
             .actor();
         let prior = self.prior(pid);
+        // A place of another kind than the action expects (a building given
+        // as a zone) is adapted when unambiguous; the verdict says so.
+        let (commands, adapted): (Vec<Command>, Vec<Option<String>>) =
+            commands.iter().map(|c| self.world.reconcile_command(c)).unzip();
         let mut verdicts = self.world.validate_batch(&prior, &commands, &actor);
         self.check_limit_batch(pid, &commands, &actor, &mut verdicts);
+        for (v, note) in verdicts.iter_mut().zip(adapted) {
+            if let (Verdict::Ok { notes }, Some(n)) = (v, note) {
+                notes.insert(0, n);
+            }
+        }
         let p = self.proposal_mut(pid)?;
         p.descriptions = commands.iter().map(|c| c.describe()).collect();
         p.commands = commands;

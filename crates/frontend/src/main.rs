@@ -13,6 +13,7 @@ mod inject_panel;
 mod i18n;
 mod i18n_excon;
 mod i18n_function;
+mod i18n_place;
 mod i18n_lang;
 mod map;
 #[cfg(not(feature = "standalone"))]
