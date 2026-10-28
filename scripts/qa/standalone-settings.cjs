@@ -3,6 +3,13 @@ const {chromium} = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
+
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
 const storageKey = 'ttx.standalone.openrouter-key';
 const token = 'fixture-key-not-a-secret';
 const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new Date().toISOString().replace(/[:.]/g, '-'));
@@ -29,7 +36,7 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
   const settings = page.locator('.standalone-settings');
   try {
     await page.context().setOffline(true);
-    await page.goto('file://' + path.resolve(process.env.TTX_STANDALONE_FILE || 'web/standalone/ttx.html'));
+    await page.goto('file://' + path.resolve(process.env.TTX_STANDALONE_FILE || 'web/standalone/ttx.html')); await launch(page);
     await ready();
     assert.equal(await page.getByLabel('Simulazione', {exact: true}).isChecked(), false);
     assert(await page.locator('.standalone-simulation').isHidden());
@@ -41,7 +48,7 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
     await page.locator('#configure-ai').click();
     assert.equal(await page.evaluate(key => localStorage.getItem(key), storageKey), token);
     assert.equal(await page.locator('#openrouter-key').inputValue(), '');
-    await page.reload();
+    await page.reload(); await launch(page);
     await ready();
     assert.match(await settings.innerText(), /AI configurata · chiave salvata nel browser/);
     // Prove the restored token configures real browser AI, rather than just the notice.
@@ -67,7 +74,7 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
     await settings.locator('summary').click();
     await page.locator('#clear-ai').click();
     assert.equal(await page.evaluate(key => localStorage.getItem(key), storageKey), null);
-    await page.reload();
+    await page.reload(); await launch(page);
     await ready();
     assert.match(await settings.innerText(), /AI disattivata/);
     // The optional renderer still works and can be hidden and re-enabled.
@@ -84,7 +91,7 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
     assert.equal(await page.evaluate(() => window.webglStarts), starts, 'toggle reuses renderer');
     // Browsers that deny local storage must retain a usable manual UI.
     await page.addInitScript(() => Object.defineProperty(window, 'localStorage', {get() {throw new DOMException('Blocked', 'SecurityError');}}));
-    await page.reload();
+    await page.reload(); await launch(page);
     await ready();
     await settings.locator('summary').click();
     await page.locator('#openrouter-key').fill(token);

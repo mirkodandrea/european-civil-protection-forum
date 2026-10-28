@@ -17,7 +17,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   const mayor=links.players.find(p=>p.role==='mayor');assert(mayor);
   const fire=links.players.find(p=>p.role==='fire_commander');assert(fire);
   const token=new URL(base+mayor.url).searchParams.get('token');
-  await api('/api/master/start',{});
+  await api('/api/master/start',{force:true});
   await api('/api/player/mayor/language',{language:'en'},token);
   browser=await chromium.launch({headless:true,channel:'chrome'});
   const master=await browser.newPage({viewport:{width:1440,height:1000}});

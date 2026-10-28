@@ -10,6 +10,7 @@ pub const PACKS_KEY: &str = "ttx.standalone.packs";
 pub const ACTIVE_KEY: &str = "ttx.standalone.active";
 pub const API_KEY: &str = "ttx.standalone.openrouter-key";
 const NOTICE_KEY: &str = "ttx.standalone.notice";
+const AUTOSTART_KEY: &str = "ttx.standalone.autostart";
 const FORMAT: u32 = 2;
 
 /// Everything needed to play a session again from the start: the scenario it
@@ -89,11 +90,32 @@ fn store_packs(packs: &BTreeMap<String, scenario::ScenarioPack>) -> Result<(), S
     )
 }
 
-/// Start the next exercise from `id`: forget the session, remember the choice, reload.
+/// Start the next exercise from `id`: forget the session, remember the choice,
+/// reload straight into the exercise (the choice was made in the app).
 pub fn activate(id: &str) -> Result<(), String> {
     set(ACTIVE_KEY, id)?;
+    if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+        let _ = s.set_item(AUTOSTART_KEY, "1");
+    }
     restart(&[SESSION_KEY]);
     Ok(())
+}
+
+/// Chosen in the launcher: the next exercise starts from `id`, without the saved session.
+pub fn choose(id: &str) -> Result<(), String> {
+    set(ACTIVE_KEY, id)?;
+    remove(SESSION_KEY);
+    Ok(())
+}
+
+/// Once after [`activate`]: skip the launcher.
+pub fn take_autostart() -> bool {
+    let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) else {
+        return false;
+    };
+    let set = s.get_item(AUTOSTART_KEY).ok().flatten().is_some();
+    let _ = s.remove_item(AUTOSTART_KEY);
+    set
 }
 
 /// Complete authored territories, shared by the 3D editor and exercise library.

@@ -23,7 +23,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     let ready = false;
     for (let i = 0; i < 100; i++) { try { await api('master', '/api/state'); ready = true; break; } catch { if (child.exitCode !== null) throw Error(log); await wait(200); } }
     assert(ready, log);
-    await api('master', '/api/master/start', {});
+    await api('master', '/api/master/start', { force: true });
     await api('master', '/api/player/mayor/language', { language: 'en' });
     await api('master', '/api/master/inject', { title: 'Support for evacuated families', sender: '112', recipients: ['mayor'], text: 'Families at the shelter request psychological support. Coordinate assistance.' });
     const before = (await api('master', '/api/state')).world;

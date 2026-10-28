@@ -25,7 +25,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
  try{
   await ready;
   const api=async(route,body)=>{const response=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));return result;};
-  await api('/api/master/start',{});await api('/api/player/mayor/language',{language:'it'});
+  await api('/api/master/start',{force:true});await api('/api/player/mayor/language',{language:'it'});
   await api('/api/master/inject',{title:'Segnalazione dal territorio',sender:'112 Dispatch',recipients:['mayor'],text:'Smoke reported near Pineta.'});
   const links=await api('/api/master/access'),mayor=links.players.find(role=>role.role==='mayor');
   const before=(await api('/api/state')).world;

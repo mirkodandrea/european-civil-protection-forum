@@ -1,6 +1,13 @@
 // Two real embedded maps, their editor references, activation and saved-session replay.
 const {chromium}=require('../record/node_modules/playwright');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
 (async()=>{
  const out=process.env.TTX_QA_OUT || 'runs/territories-qa';fs.mkdirSync(out,{recursive:true});
  const browser=await chromium.launch({headless:true,channel:'chrome'});
@@ -12,7 +19,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
  const activate=async(id)=>{const row=page.locator(`[data-scenario="${id}"]`);await row.getByRole('button',{name:'Avvia',exact:true}).click();await row.getByRole('button',{name:'Conferma: Avvia',exact:true}).click();await ready()};
  try{
   await page.context().setOffline(true);
-  await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE || '/tmp/ttx-territory-standalone/ttx.html'));await ready();
+  await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE || '/tmp/ttx-territory-standalone/ttx.html')); await launch(page);await ready();
   await scenarios();assert.equal(await page.locator('#scenario-territory').inputValue(),'');assert.equal(await page.locator('[data-scenario="selvariva_festival"]').count(),1);
   await page.locator('#scenario-territory').selectOption('selvariva_basin');
   assert.equal(await page.locator('.scenario-list tbody tr').count(),2);
@@ -22,20 +29,20 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.locator('[data-tab="team"]').click();
   await page.screenshot({path:path.join(out,'territory-editor.png')});
   assert.match(await page.locator('#scenario-form').innerText(),/Selvariva/);
-  await page.reload();await ready();await scenarios();await activate('selvariva_festival');
+  await page.reload(); await launch(page);await ready();await scenarios();await activate('selvariva_festival');
   assert.equal(await page.locator('[data-panel="volunteer_coordinator"]').count(),1);
   await scenarios();await page.locator('[data-scenario="selvariva_festival"] .edit-scenario').click();
   await page.locator('[data-tab="general"]').click();
   const form=page.locator('#scenario-form');
   assert.equal(await form.locator('input[disabled]').first().inputValue(),'selvariva_basin');
-  await page.reload();await ready();
+  await page.reload(); await launch(page);await ready();
   await master.locator('#start').click();await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor();
   // Autosave must bind the journal to this map, even across a full reload.
   await page.waitForFunction(()=>JSON.parse(localStorage.getItem('ttx.standalone.session')||'null')?.pack.base==='selvariva_basin');
   let session=await page.evaluate(()=>JSON.parse(localStorage.getItem('ttx.standalone.session')));
   assert.match(session.territory_fingerprint,/^selvariva_basin:/);
   await page.screenshot({path:path.join(out,'selvariva-session.png')});
-  await page.reload();await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor({timeout:60000});
+  await page.reload(); await launch(page);await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor({timeout:60000});
   await scenarios();await page.locator('#scenario-territory').selectOption('valverde_factory');await activate('valverde_factory');
   assert.equal(await page.locator('[data-panel="volunteer_coordinator"]').count(),0);
   await scenarios();assert.equal(await page.locator('#scenario-territory').inputValue(),'');await page.screenshot({path:path.join(out,'valverde-return.png')});

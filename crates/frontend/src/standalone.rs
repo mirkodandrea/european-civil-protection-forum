@@ -79,8 +79,142 @@ fn initialize() -> Result<server::AppState, String> {
     Ok(state)
 }
 
+/// Opening screen: pick the scenario (or resume the saved session) and set
+/// the options before the exercise and its interface are built. Role
+/// languages are the scenario's; only the EXCON console language is chosen.
 #[function_component(Standalone)]
 pub fn standalone() -> Html {
+    let launched = use_state(crate::store::take_autostart);
+    if *launched {
+        return html! {<Session/>};
+    }
+    let onlaunch = {
+        let launched = launched.clone();
+        Callback::from(move |()| launched.set(true))
+    };
+    html! {<Launcher {onlaunch}/>}
+}
+
+#[derive(Properties, PartialEq)]
+struct LauncherProps {
+    onlaunch: Callback<()>,
+}
+
+const EXCON_LANG_KEY: &str = "ttx_excon_lang";
+
+#[function_component(Launcher)]
+fn launcher(props: &LauncherProps) -> Html {
+    use server::library::ScenarioLibrary;
+    let library = crate::store::BrowserLibrary;
+    let packs = use_memo((), |_| crate::store::BrowserLibrary.list());
+    let saved = use_memo((), |_| {
+        crate::store::get(crate::store::SESSION_KEY)
+            .is_some()
+            .then(crate::store::load_session)
+            .flatten()
+            .map(|s| (s.pack.name.clone(), s.journal.len()))
+    });
+    let selected = use_state(|| {
+        library
+            .active()
+            .unwrap_or_else(|| scenario::embedded::DEFAULT_TERRITORY.to_string())
+    });
+    let excon_lang = use_state(|| {
+        crate::store::get(EXCON_LANG_KEY)
+            .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+            .unwrap_or_else(|| "it".into())
+    });
+    let key = use_state(String::new);
+    let key_notice = use_state(|| {
+        if saved_key().is_some() {
+            "Chiave salvata nel browser"
+        } else if option_env!("OPENROUTER_API_KEY").is_some_and(|k| !k.trim().is_empty()) {
+            "Chiave da .env"
+        } else {
+            "Nessuna chiave · AI disattivata, flusso manuale EXCON"
+        }
+        .to_string()
+    });
+    let notice = use_state(crate::store::take_notice);
+    let error = use_state(String::new);
+    let resume = {
+        let onlaunch = props.onlaunch.clone();
+        Callback::from(move |_| onlaunch.emit(()))
+    };
+    let start = {
+        let (onlaunch, selected, error) = (props.onlaunch.clone(), selected.clone(), error.clone());
+        Callback::from(move |_| match crate::store::choose(&selected) {
+            Ok(()) => onlaunch.emit(()),
+            Err(e) => error.set(e),
+        })
+    };
+    let pick_lang = |id: &'static str| {
+        let excon_lang = excon_lang.clone();
+        Callback::from(move |_| {
+            let _ = crate::store::set(EXCON_LANG_KEY, id);
+            excon_lang.set(id.to_string());
+        })
+    };
+    let save_key = {
+        let (key, notice) = (key.clone(), key_notice.clone());
+        Callback::from(move |_| {
+            notice.set(
+                match (persist_key(&key), key.trim().is_empty()) {
+                    (Err(()), _) => "Archiviazione browser non disponibile",
+                    (Ok(()), true) => "Chiave rimossa · AI disattivata",
+                    (Ok(()), false) => "Chiave salvata nel browser",
+                }
+                .into(),
+            );
+            key.set(String::new());
+        })
+    };
+    let clear_key = {
+        let (key, notice) = (key.clone(), key_notice.clone());
+        Callback::from(move |_| {
+            let _ = persist_key("");
+            key.set(String::new());
+            notice.set("Chiave rimossa · AI disattivata".into());
+        })
+    };
+    html! {
+      <div class="standalone launcher">
+        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{"Scegli lo scenario e le opzioni, poi avvia."}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span></header>
+        if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
+        if !error.is_empty() {<p class="error" role="alert">{&*error}</p>}
+        <main class="page launcher-page">
+          if let Some((name, steps)) = &*saved {
+            <section class="card" id="launch-resume"><h2>{"Sessione salvata"}</h2>
+              <p>{format!("{name} · {steps} passi registrati")}</p>
+              <button id="resume-session" class="primary" onclick={resume}>{"Riprendi sessione"}</button>
+            </section>
+          }
+          <section class="card" id="launch-scenario"><h2>{"Nuova esercitazione"}</h2>
+            <div class="launcher-scenarios" role="radiogroup" aria-label="Scenario">{for packs.iter().map(|p| {
+              let id = p.id.clone();
+              html!{<label class={classes!("launcher-scenario",(*selected==p.id).then_some("active"))}><input type="radio" name="launch-scenario" value={p.id.clone()} checked={*selected==p.id} onchange={{let selected=selected.clone();Callback::from(move |_|selected.set(id.clone()))}}/><span><strong>{&p.name}</strong>if !p.description.is_empty(){<br/><span class="muted">{&p.description}</span>}</span></label>}
+            })}</div>
+            <p class="muted">{"Le lingue dei partecipanti sono quelle assegnate ai ruoli nello scenario."}if saved.is_some(){{" La sessione salvata verrà eliminata."}}</p>
+            <button id="start-session" class={classes!(saved.is_none().then_some("primary"))} onclick={start}>{"Avvia nuova esercitazione"}</button>
+          </section>
+          <section class="card" id="launch-options"><h2>{"Opzioni"}</h2>
+            <h3>{"Lingua della console EXCON"}</h3>
+            <div class="row" id="launch-excon-lang">{for api::EXCON_LANGUAGES.iter().map(|(id,name)| html!{<button data-lang={*id} class={classes!((*excon_lang==*id).then_some("primary"))} onclick={pick_lang(id)}>{*name}</button>})}</div>
+            <h3>{"AI (OpenRouter)"}</h3>
+            <p class="muted">{&*key_notice}</p>
+            <div class="settings-fields"><label>{"Chiave API"}<input id="launch-openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
+              <button id="launch-save-key" onclick={save_key}>{"Salva chiave"}</button><button id="launch-clear-key" onclick={clear_key}>{"Rimuovi chiave"}</button></div>
+            <p class="muted">{"Modelli e provider si regolano in Impostazioni dopo l’avvio."}</p>
+            <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={None::<String>} reset_note="Elimina sessione, scenari salvati e chiave API di questo browser." backend={crate::store::backend()} revision={0}/>
+          </section>
+        </main>
+      </div>
+    }
+}
+
+/// The exercise and its interface, built once launched.
+#[function_component(Session)]
+fn session() -> Html {
     let initialized = use_state(initialize);
     let selected = use_state(|| "master".to_string());
     let show_map = use_state(|| false);

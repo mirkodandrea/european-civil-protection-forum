@@ -332,6 +332,36 @@ async fn master_player_llm_round_trip() {
 }
 
 #[tokio::test]
+async fn start_waits_for_every_language_unless_forced() {
+    let scn = Arc::new(scenario::synthetic::generate(
+        scenario::synthetic::DEFAULT_SEED,
+    ));
+    let ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap()).with_language_choice();
+    let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
+        .await
+        .0;
+    let (_, p) = call(&app, "GET", "/api/player/mayor", None).await;
+    assert_eq!(p["player"]["language_confirmed"], false);
+    // The scenario's language stays as the proposal.
+    assert_eq!(p["player"]["language"], "it");
+    let (s, e) = call(&app, "POST", "/api/master/start", Some(json!({}))).await;
+    assert_eq!(s, Status::BadRequest);
+    assert!(e.to_string().contains("mayor"), "{e}");
+    for role in ["mayor", "fire_commander"] {
+        let (s, _) = call(&app, "POST", &format!("/api/player/{role}/language"), Some(json!({"language": "en"}))).await;
+        assert_eq!(s, Status::Ok);
+    }
+    let (_, st) = call(&app, "GET", "/api/state", None).await;
+    let waiting: Vec<_> = st["players"].as_object().unwrap().values().filter(|p| p["language_confirmed"] == false).collect();
+    assert_eq!(waiting.len(), 1, "regional_cp still choosing");
+    assert_eq!(call(&app, "POST", "/api/master/start", None).await.0, Status::BadRequest);
+    assert_eq!(
+        call(&app, "POST", "/api/master/start", Some(json!({"force": true}))).await.0,
+        Status::Ok
+    );
+}
+
+#[tokio::test]
 async fn works_without_llm() {
     let scn = Arc::new(scenario::synthetic::generate(
         scenario::synthetic::DEFAULT_SEED,

@@ -16,6 +16,7 @@ mod i18n_function;
 mod i18n_help;
 mod i18n_place;
 mod i18n_lang;
+mod i18n_lobby;
 mod label_layout;
 mod i18n_review;
 mod i18n_reply;
@@ -423,7 +424,10 @@ impl Component for App {
         #[cfg(not(feature = "standalone"))]
         let token = ctx.props().token.clone().unwrap_or_else(api::token);
         let key = token.clone();
-        let lang_chosen = session_flag(&format!("ttx_lang_ok_{token}"));
+        // Standalone roles keep the scenario's languages and the EXCON picks its
+        // own in the launcher. On the server the EXCON choice is per browser
+        // session; players confirm theirs on the server (`language_confirmed`).
+        let lang_chosen = cfg!(feature = "standalone") || session_flag(&format!("ttx_lang_ok_{token}"));
         ctx.link().send_future(async move {
             let result = async {
                 let access = api::request(&key, "/api/access", None).await?;
@@ -591,6 +595,11 @@ impl Component for App {
                     Ok((state, master)) => {
                         self.update_notifications(ctx, &state, &master);
                         self.state = state;
+                        // From now on the server's `language_confirmed` decides the gate
+                        // (a deleted session asks again).
+                        if !self.is_master() {
+                            self.lang_chosen = false;
+                        }
                         self.master = master;
                         if !self.is_master() && !self.is_evaluator() {
                             let revision = self.state["clock_control"]["revision"].clone();
@@ -1152,7 +1161,11 @@ impl Component for App {
         let l = self.lang();
         let l = l.as_str();
         let href = |path: &str| path.to_string();
-        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button></div>};
+        // Participants still choosing a language hold the start; the EXCON may override.
+        let waiting: Vec<String> = self.state["players"].as_object().map(|players| players.values().filter(|p| p["language_confirmed"] == false).map(|p| self.name(text(&p["role"]))).collect()).unwrap_or_default();
+        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy||!waiting.is_empty()} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button>
+            if phase=="briefing"&&!waiting.is_empty(){<span id="language-waiting" class="muted" role="status">{crate::exfmt!("In attesa della lingua: {}","Waiting for the language of: {}",waiting.join(", "))}</span><button id="start-anyway" disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({"force":true}))))}>{crate::i18n::ex("Avvia comunque")}</button>}
+        </div>};
         let running = phase == "resolving" || self.state["clock_control"]["running"] == true;
         // On the Timeline the turn panel owns status and time: the header keeps one indicator.
         let compact = self.is_master() && !self.is_evaluator() && self.page == "chat" && self.active == "timeline" && phase != "briefing";
@@ -1163,11 +1176,18 @@ impl Component for App {
         } else {
             html! {<span class="pill sim-state paused" id="sim-state" role="status">{i18n::t(l,if phase=="orders"{"sim_paused_orders"}else{"sim_paused"})}</span>}
         };
-        if !self.lang_chosen && !self.own.is_empty() && !self.is_evaluator() && self.page != "lobby" && self.page != "advanced" {
+        let lang_gate = if self.is_master() {
+            !self.lang_chosen
+        } else {
+            !self.lang_chosen && !self.state.is_null() && self.state["player"]["language_confirmed"] == false
+        };
+        if lang_gate && !self.own.is_empty() && !self.is_evaluator() && self.page != "lobby" && self.page != "advanced" {
             let options = if self.is_master() { api::EXCON_LANGUAGES } else { api::LANGUAGES };
+            // The scenario's language for this role is the proposed one.
+            let proposed = if self.is_master() { self.excon_lang.clone() } else { text(&self.state["player"]["language"]).to_string() };
             return html! {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="lang-gate-title">
                 <h2 id="lang-gate-title">{"Language / Lingua"}</h2>
-                <div class="row" id="language-gate">{for options.iter().map(|(id, name)| { let id = id.to_string(); html!{<button class="primary" data-lang={id.clone()} onclick={ctx.link().callback(move |_| Msg::PickLang(id.clone()))}>{*name}</button>} })}</div>
+                <div class="row" id="language-gate">{for options.iter().map(|(id, name)| { let id = id.to_string(); html!{<button class={classes!((id==proposed).then_some("primary"))} data-lang={id.clone()} onclick={ctx.link().callback(move |_| Msg::PickLang(id.clone()))}>{*name}</button>} })}</div>
             </section></div>};
         }
         html! {<>
@@ -1194,6 +1214,7 @@ impl Component for App {
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
             else if self.is_master()&&self.active=="situazione"{<situation::Situation stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()}/>}
             else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte token={self.token.clone()} master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
+            else if !self.is_master()&&phase=="briefing"{<main class="page"><section class="card" id="await-start"><h2>{i18n::t(l,"await_start")}</h2><p>{i18n::t(l,"await_start_note")}</p><p class="muted">{api::LANGUAGES.iter().find(|(id,_)|*id==l).map(|(_,name)|*name).unwrap_or(l)}</p></section></main>}
             else{{self.view_chat(ctx)}}
             if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} pending={self.pending.clone()} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject personalizzato").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}

@@ -13,6 +13,13 @@
 // on <out>/marks.json. The OpenRouter key from .env is typed into the (collapsed) settings before
 // the recording starts and never appears on screen.
 const { chromium } = require('../node_modules/playwright');
+
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -61,7 +68,7 @@ const POINTER = `
   await context.addInitScript(POINTER);
   const page = await context.newPage();
   page.on('pageerror', e => { if (!/control flow/.test(e.message)) log('PAGEERROR', e.message.slice(0, 200)); });
-  await page.goto('file://' + FILE);
+  await page.goto('file://' + FILE); await launch(page);
 
   const M = page.locator('[data-panel="master"]');
   const P = role => page.locator(`[data-panel="${role}"]`);

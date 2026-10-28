@@ -1334,10 +1334,26 @@ async fn post_execute(_principal: Principal, s: AppState, id: u64) -> ApiResult 
     Ok(Json(json!({"results":results})))
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/start"))]
-async fn post_start(_principal: Principal, s: AppState) -> ApiResult {
-    s.lock().start()?;
+#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/start", data = "<b>"))]
+async fn post_start(_principal: Principal, s: AppState, b: Option<Json<StartBody>>) -> ApiResult {
+    let force = b.is_some_and(|b| b.force);
+    let mut ex = s.lock();
+    let pending = ex.pending_languages();
+    if !force && !pending.is_empty() {
+        return Err(bad(format!(
+            "waiting for the language of: {}",
+            pending.join(", ")
+        )));
+    }
+    ex.start()?;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize, Default)]
+struct StartBody {
+    /// Start even if some participants have not chosen a language.
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Deserialize)]

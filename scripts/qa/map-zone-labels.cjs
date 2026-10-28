@@ -5,6 +5,13 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(cwd, 'runs/map-zone-labels-review'));
 const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
@@ -87,7 +94,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
   });
 
   try {
-    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.goto(base, { waitUntil: 'domcontentloaded' }); await launch(page);
     await master.locator('#start').waitFor({ timeout: 30000 });
     await page.locator('.standalone-settings summary').click();
     await page.locator('#openrouter-key').fill('qa-fixture-only');

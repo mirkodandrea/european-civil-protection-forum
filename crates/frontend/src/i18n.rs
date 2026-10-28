@@ -4,6 +4,8 @@ pub use crate::i18n_excon::{ex, is_en, set_ui_lang_if_visible, with_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
     if let Some(s) = crate::i18n_review::lookup(lang, key) {
         s
+    } else if let Some(s) = crate::i18n_lobby::lookup(lang, key) {
+        s
     } else if let Some(text) = crate::i18n_reply::lookup(lang, key) {
         text
     } else if lang == "it" {

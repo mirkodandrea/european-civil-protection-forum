@@ -694,6 +694,25 @@ impl Exercise {
         ex
     }
 
+    /// Every participant confirms a language before the exercise starts: the
+    /// scenario's languages become proposals (multi-device server). Without
+    /// this, as in the standalone app, the scenario's languages hold.
+    pub fn with_language_choice(mut self) -> Exercise {
+        for p in self.players.values_mut() {
+            p.language_confirmed = false;
+        }
+        self
+    }
+
+    /// Roles whose participant has not confirmed a language yet.
+    pub fn pending_languages(&self) -> Vec<String> {
+        self.players
+            .values()
+            .filter(|p| !p.language_confirmed)
+            .map(|p| p.role.clone())
+            .collect()
+    }
+
     /// Also append every log entry as a JSON line to `path`.
     pub fn with_log_file(mut self, path: PathBuf) -> Exercise {
         if let Some(dir) = path.parent() {

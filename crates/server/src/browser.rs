@@ -479,7 +479,9 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/master/start") => post_start(principal.clone(), s.clone()).await,
+        ("POST", "/api/master/start") => {
+            post_start(principal.clone(), s.clone(), body.clone().map(decode).transpose()?).await
+        }
         ("POST", "/api/master/inject") => {
             post_inject(
                 principal.clone(),

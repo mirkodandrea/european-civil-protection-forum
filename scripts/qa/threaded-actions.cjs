@@ -6,6 +6,13 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
+
 /** The start-of-session language gate; a no-op when this session already answered it. */
 async function pickLanguage(scope, lang) {
   const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
@@ -63,7 +70,7 @@ const supportedText = 'Issue a warning for the selected zone';
   };
 
   try {
-    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.goto(base, { waitUntil: 'domcontentloaded' }); await launch(page);
     const master = panel('master');
     await master.locator('#start').waitFor({ timeout: 30000 });
 

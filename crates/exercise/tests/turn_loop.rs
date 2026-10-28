@@ -442,6 +442,7 @@ fn default_language_needs_no_confirmation_and_evidence_is_validated_before_recor
     ex.start().unwrap();
     let mid = ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap()[0];
     assert!(ex.players["mayor"].language_confirmed);
+    assert!(ex.pending_languages().is_empty());
     assert!(!ex.players["mayor"].language.is_empty());
     assert!(ex.set_language("mayor", "invented-language").is_err());
     ex.set_language("mayor", "it").unwrap();
@@ -1111,4 +1112,16 @@ fn building_or_place_written_as_a_zone_is_adapted_in_the_proposal() {
             assert!(notes[0].contains(name), "{notes:?}");
         }
     }
+}
+
+#[test]
+fn language_choice_keeps_the_scenario_language_as_proposal() {
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let mut ex = Exercise::new(World::new(scn, 1).unwrap()).with_language_choice();
+    let mut pending = ex.pending_languages();
+    pending.sort();
+    assert_eq!(pending, ["fire_commander", "mayor", "regional_cp"]);
+    assert_eq!(ex.players["mayor"].language, "it");
+    ex.set_language("mayor", "it").unwrap();
+    assert!(!ex.pending_languages().contains(&"mayor".to_string()));
 }

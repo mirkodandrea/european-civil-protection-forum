@@ -2,6 +2,13 @@
 const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),{execFileSync}=require('child_process');
 
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
+
 /** The start-of-session language gate; a no-op when this session already answered it. */
 async function pickLanguage(scope, lang) {
   const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
@@ -32,12 +39,12 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
  const download=async name=>{await select('advanced');const pending=page.waitForEvent('download');await advanced.locator('#debriefdownload').click();const d=await pending;await d.saveAs(path.join(out,name));return JSON.parse(fs.readFileSync(path.join(out,name),'utf8'));};
  try {
   await page.context().setOffline(true);
-  await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE||'web/standalone/ttx.html'));
+  await page.goto('file://'+path.resolve(process.env.TTX_STANDALONE_FILE||'web/standalone/ttx.html')); await launch(page);
   await master.locator('#start').waitFor({timeout:30000});
   assert.equal(await page.getByLabel('Simulazione',{exact:true}).isChecked(),false,'simulation view starts disabled');
   assert(await page.locator('.standalone-simulation').isHidden());
   await page.screenshot({path:path.join(out,'desktop.png')});
-  await master.locator('#start').click();await master.locator('#turn').filter({hasText:'orders'}).waitFor();
+  await master.locator('#start').click();await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor();
   await select('mayor');await pickLanguage(mayor, 'en');await mayor.locator('[data-view="chat"]').click();assert.equal(await mayor.locator('[data-contact="master"]').count(),0,'players have no exercise-control chat contact');await mayor.locator('[data-view="map"]').click();await page.screenshot({path:path.join(out,'player-work.png')});
   await select('master');await master.locator('[data-view="timeline"]').click();
   await master.locator('[data-inject-role="mayor"]').click();let modal=page.getByRole('dialog');await modal.locator('#inject-title').fill('Mayor fixture');await modal.locator('#text').fill('Issue the warning for F4 and coordinate with the fire commander.');await page.screenshot({path:path.join(out,'inject-modal-targeted.png')});await modal.getByRole('button',{name:'Chiudi modale inject'}).click();await master.locator('[data-inject-role="mayor"]').click();modal=page.getByRole('dialog');assert.equal(await modal.locator('#inject-title').inputValue(),'Mayor fixture','closing an inject draft preserves its fields');await modal.locator('#send').click();await modal.waitFor({state:'hidden'});await master.locator('#excon-timeline').getByText('Mayor fixture').waitFor();

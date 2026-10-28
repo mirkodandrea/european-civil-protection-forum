@@ -20,7 +20,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   await page.locator('#clock').filter({hasText:'Day'}).waitFor();
   assert(requests.some(url=>url.endsWith('.wasm')),'browser loads the compiled Rust module');
   assert(!requests.some(url=>/\/(common|interface|forecast|injects|player-preparation)\.js/.test(url)),'no legacy application JavaScript');
-  await page.locator('#start').click();await page.locator('#turn').filter({hasText:'orders'}).waitFor();
+  await page.locator('#start-anyway').click();await page.locator('#turn').filter({hasText:'orders'}).waitFor();
   const initial=(await api('/api/state')).world;
   await page.getByRole('button',{name:'Innesco',exact:true}).click();
   await page.locator('#map').click({position:{x:270,y:180}});

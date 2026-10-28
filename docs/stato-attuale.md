@@ -80,8 +80,13 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    congelato al momento dell’invio. Le altre conversazioni restano private.
    L’AI traduce letteralmente i messaggi senza interpretarli come azioni. Un
    filtro lessicale blocca insulti e volgarità prima di tradurre o consegnare il
-   testo, lasciando la bozza modificabile al mittente. Non è richiesta conferma
-   della lingua predefinita, che resta modificabile dal menu. La scheda iniziale
+   testo, lasciando la bozza modificabile al mittente. Con il server ogni
+   partecipante conferma la lingua all’apertura (quella del ruolo nello scenario
+   è proposta; `Exercise::with_language_choice`) e attende poi l’avvio. L’EXCON
+   vede chi manca accanto ad “Avvia esercitazione”, che resta disabilitato
+   finché tutti hanno scelto; “Avvia comunque” (`POST /api/master/start
+   {force:true}`) parte senza attendere. Nello standalone valgono le lingue
+   dello scenario, senza richiesta. La scheda iniziale
    “Funzione” è in sola lettura: descrive ruolo, capacità e
    asset, distingue risorse disponibili, prenotate e impiegate e raccoglie i
    riepiloghi AI dei turni conclusi. La tab Conversazioni conta i messaggi non
