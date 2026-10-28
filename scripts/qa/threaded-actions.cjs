@@ -34,20 +34,16 @@ const supportedText = 'Issue a warning for the selected zone';
   await page.route('https://openrouter.ai/api/v1/chat/completions', async route => {
     const request = route.request().postDataJSON();
     const system = request.messages?.[0]?.content || '';
-    const preparing = system.includes('BEFORE sending');
+    const suggesting = system.includes('ONLY what this role knows');
     const user = request.messages?.at(-1)?.content || '';
-    modelTasks.push(preparing ? 'prepare_decision' : 'translate');
+    modelTasks.push(suggesting ? 'suggest_actions' : 'translate');
     let content;
-    if (preparing) {
+    if (suggesting) {
       const supported = user.includes(supportedText);
       content = JSON.stringify({
-        message: supported ? supportedText : unsupportedText,
-        detected_language: 'en',
-        translation_en: supported ? supportedText : unsupportedText,
-        summary: supported ? 'Issue a warning for the selected zone' : 'Acknowledgment only',
         actions: supported ? [{ type: 'IssueWarning', zone: 'F4' }] : [],
-        clarification: null,
-        messages: [],
+        reasons: supported ? ['The narrative warns the zone'] : [],
+        summary: supported ? 'Issue a warning for the selected zone' : 'Acknowledgment only',
       });
     } else {
       content = user;
@@ -183,35 +179,29 @@ const supportedText = 'Issue a warning for the selected zone';
     await page.waitForFunction(() => document.querySelectorAll('[data-panel="master"] .proposal-inline[data-proposal]').length >= 3);
     const proposalCountBeforeAi = await priorProposals.count();
 
-    // Unsupported mock result is explicitly blocked and remains private.
+    // A narrative with nothing actionable gets no suggestion and proposes nothing.
     await choose('mayor');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#new-player-action').click();
     await work.waitFor();
-    await work.locator('.work-ai summary').click();
-    await work.locator('#work-free-text').fill(unsupportedText);
-    await work.getByRole('button', { name: /prepare AI draft|prepara bozza AI/i }).click();
-    await work.getByText(/no verifiable operational actions|non contiene azioni operative verificabili/i).waitFor();
-    const confirm = work.locator('[data-stage-draft]');
-    assert(await confirm.isDisabled(), 'unsupported AI draft cannot be added to the response');
+    await work.locator('#response-narrative').fill(unsupportedText);
+    await work.locator('[data-work-suggestions="none"]').waitFor({ timeout: 15000 });
     assert.equal(await master.locator('.proposal-inline[data-proposal]').count(), proposalCountBeforeAi,
-      'unsupported AI draft creates no EXCON proposal while its modal remains open');
+      'suggesting creates no EXCON proposal');
 
-    // A valid coded action becomes reviewable but stays private until explicit
-    // confirmation. The gateway returns an action only for this exact request.
-    await work.locator('#work-free-text').fill(supportedText);
-    await work.getByRole('button', { name: /prepare AI draft|prepara bozza AI/i }).click();
-    await work.getByText(supportedText).waitFor();
-    assert(!(await confirm.isDisabled()), 'coded AI action enables the explicit confirmation');
-    assert.equal(await master.locator('.proposal-inline[data-proposal]').count(), proposalCountBeforeAi,
-      'AI interpretation is not sent before confirmation while its modal remains open');
-    await confirm.click();
+    // A narrative that maps to a coded action gets it suggested automatically
+    // (no button); it is added to the response only by an explicit click.
+    await work.locator('#response-narrative').fill(supportedText);
+    const add = work.locator('[data-add-suggestion="0"]');
+    await add.waitFor({ timeout: 15000 });
+    assert.equal(await work.locator('[data-staged-action]').count(), 0, 'suggestions are not staged by themselves');
+    await add.click();
     await work.locator('[data-staged-action]').waitFor();
     await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });
     await choose('master');
     await page.waitForFunction(count => document.querySelectorAll('[data-panel="master"] .proposal-inline[data-proposal]').length > count, proposalCountBeforeAi);
-    assert(modelTasks.includes('prepare_decision'), 'AI drafts used the intercepted mock gateway');
+    assert(modelTasks.includes('suggest_actions'), 'AI suggestions used the intercepted mock gateway');
     await page.screenshot({ path: path.join(out, 'excon-confirmed-ai-action.png'), fullPage: true });
 
     // Fire commander can place a line using two separate map clicks. Verify the

@@ -399,7 +399,7 @@ impl Llm {
                     json!({"only": providers, "allow_fallbacks": false, "require_parameters": true, "data_collection": "deny"})
                 };
                 // Reasoning only where the answer is a set of candidate commands.
-                if matches!(task, "parse_reply" | "prepare_decision") {
+                if matches!(task, "parse_reply" | "suggest_actions") {
                     body["reasoning"] = json!({"enabled": true});
                 }
                 if json_mode {
@@ -755,7 +755,7 @@ mod translation_routing_tests {
         )
         .with_translation_model("small-translator");
         assert_eq!(llm.model_for("translate"), "small-translator");
-        assert_eq!(llm.model_for("prepare_decision"), "general-model");
+        assert_eq!(llm.model_for("suggest_actions"), "general-model");
         assert_eq!(llm.model_for("parse_reply"), "general-model");
         assert_eq!(llm.model_for("master_prompt"), "general-model");
     }

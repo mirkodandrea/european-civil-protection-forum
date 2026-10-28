@@ -283,11 +283,15 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let p = &props.proposal;
     // A pure narrative initiative has no actions; a response may carry both.
     let has_narrative = p["narrative"] == true;
-    let narrative = has_narrative && p["carries_actions"] != true;
     let outcome_text = use_state(String::new);
     let persona = use_state(String::new);
     let staged = use_state(Vec::<Value>::new);
     let commands = use_state(|| list(&p["commands"]).to_vec());
+    // A pure initiative until the EXCON adds actions to review (e.g. AI suggestions).
+    let narrative = has_narrative && p["carries_actions"] != true && commands.is_empty();
+    // AI action suggestions the EXCON asked for (full state, all conversations).
+    let suggestions = use_state(|| Value::Null);
+    let suggesting = use_state(|| false);
     // Last commands known from the server; local edits that differ from it are never overwritten.
     let synced = use_mut_ref(|| p["commands"].clone());
     {
@@ -418,6 +422,34 @@ pub fn proposal(props: &ProposalProps) -> Html {
             excluded.set(Excluded::new());
         })
     };
+    let outcome_stage = has_narrative && (p["status"]=="approved"||(!narrative&&(p["status"]=="applied"||p["status"]=="failed")));
+    let can_suggest = has_narrative && props.common.is_some() && p["source"]["kind"]=="player" && (editable||outcome_stage);
+    let suggest = {
+        let suggestions = suggestions.clone();
+        let suggesting = suggesting.clone();
+        Callback::from(move |_| {
+            let suggestions = suggestions.clone();
+            let suggesting = suggesting.clone();
+            suggesting.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = api::request(&excon_token(), &format!("/api/master/proposals/{id}/suggest-actions"), Some(json!({}))).await;
+                suggestions.set(result.unwrap_or_else(|e| json!({"status":"ai_unavailable","actions":[],"failure":e})));
+                suggesting.set(false);
+            });
+        })
+    };
+    // Suggestions go to the reviewed actions while the proposal is open, else to the outcome interventions.
+    let add_suggested = {
+        let commands = commands.clone();
+        let staged = staged.clone();
+        Callback::from(move |picked: Vec<Value>| {
+            let target = if editable { &commands } else { &staged };
+            let mut next = (**target).clone();
+            next.extend(picked.into_iter().filter(|c| !target.contains(c)));
+            target.set(next);
+        })
+    };
+    let open_suggestions = list(&suggestions["actions"]).iter().filter(|a| !commands.contains(&a["command"]) && !staged.contains(&a["command"])).cloned().collect::<Vec<_>>();
     let carries_other=!list(&p["inject_drafts"]).is_empty()||!list(&p["communication_drafts"]).is_empty()||!p["resource_limit_draft"].is_null();
     // Nothing to execute: approving acknowledges the reply (the note is the answer).
     let no_actions=editable&&!narrative&&commands.is_empty()&&!carries_other;
@@ -451,6 +483,22 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 })}}>{crate::i18n::ex("Registra esito narrativo")}</button>
             }
         }
+        if can_suggest {<div class="excon-suggestions" data-excon-suggestions={text(&suggestions["status"]).to_string()}>
+            <button type="button" data-suggest-actions={id.to_string()} disabled={props.busy||*suggesting} title={crate::i18n::ex("L’AI legge lo stato completo e tutte le conversazioni collegate e propone azioni del ruolo da rivedere.")} onclick={suggest}>{if *suggesting{crate::i18n::ex("Suggerimento in corso…")}else{crate::i18n::ex("Suggerisci azioni")}}</button>
+            if suggestions["status"]=="ai_unavailable"{<p class="muted">{crate::i18n::ex("Suggerimenti AI non disponibili.")}if !text(&suggestions["failure"]).is_empty(){<small>{format!(" {}",text(&suggestions["failure"]))}</small>}</p>}
+            else if !suggestions.is_null()&&open_suggestions.is_empty(){<p class="muted">{crate::i18n::ex("Nessuna nuova azione suggerita.")}</p>}
+            if !open_suggestions.is_empty(){
+                if !text(&suggestions["summary"]).is_empty(){<p class="muted">{text(&suggestions["summary"])}</p>}
+                <p class="muted">{if editable{crate::i18n::ex("Bozze AI: aggiungile alle azioni da approvare, poi rivedile e approva.")}else{crate::i18n::ex("Bozze AI: aggiungile agli interventi dell’esito narrativo, poi registralo.")}}</p>
+                <ol class="suggested-actions">{for open_suggestions.iter().enumerate().map(|(i,a)|{let cmd=a["command"].clone();let add=add_suggested.clone();html!{<li key={i} data-excon-suggested-action={i.to_string()}>
+                    <span>{command_summary(if crate::i18n_excon::is_en(){"en"}else{"it"},&cmd)}</span>
+                    if !text(&a["reason"]).is_empty(){<small class="muted">{format!(" · {}",text(&a["reason"]))}</small>}
+                    if a["verdict"]["verdict"]=="rejected"{<small class="danger">{format!(" · {}",text(&a["verdict"]["reason"]))}</small>}
+                    <button type="button" data-add-excon-suggestion={i.to_string()} disabled={props.busy} onclick={Callback::from(move |_|add.emit(vec![cmd.clone()]))}>{crate::i18n::ex("Aggiungi")}</button>
+                </li>}})}</ol>
+                if open_suggestions.len()>1{<button type="button" data-add-excon-suggestions="" disabled={props.busy} onclick={{let add=add_suggested.clone();let all=open_suggestions.iter().map(|a|a["command"].clone()).collect::<Vec<_>>();Callback::from(move |_|add.emit(all.clone()))}}>{crate::i18n::ex("Aggiungi tutte")}</button>}
+            }
+        </div>}
         <div class="command-list">{for commands.iter().enumerate().map(|(i,cmd)|{
             let left_out=excluded.get(&i).cloned();
             let toggle={let excluded=excluded.clone();Callback::from(move |e:Event|{use yew::TargetCast;let on=e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();let mut next=(*excluded).clone();if on{next.remove(&i);}else{next.insert(i,String::new());}excluded.set(next);})};

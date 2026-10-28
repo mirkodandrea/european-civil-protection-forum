@@ -57,17 +57,15 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
     await page.route('https://openrouter.ai/api/v1/chat/completions', async route => {
       assert.equal(route.request().headers().authorization, 'Bearer ' + token);
       requests++;
-      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({choices: [{message: {content: JSON.stringify({message:'Issue a warning for F4.', detected_language:'en', translation_en:'Issue a warning for F4.', actions:[{type:'IssueWarning', zone:'F4'}], messages:[], clarification:null, summary:'Warning for F4'})}}]})});
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({choices: [{message: {content: JSON.stringify({actions:[{type:'IssueWarning', zone:'F4'}], reasons:['warn F4'], summary:'Warning for F4'})}}]})});
     });
     await page.locator('[data-panel="master"] #start').click();
     await page.locator('.role-tabs [data-role="mayor"]').click();
     const mayor = page.locator('[data-panel="mayor"]');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#new-player-action').click();
-    await mayor.getByRole('tab', {name: 'Assistente AI', exact: true}).click();
-    await mayor.locator('#work-free-text').fill('Issue a warning for F4.');
-    await mayor.getByRole('button', {name: 'Prepara bozza AI →'}).click();
-    await mayor.locator('.proposal-preview').filter({hasText: 'Warning for F4'}).waitFor();
+    await mayor.locator('#response-narrative').fill('We issue a warning for F4 now.');
+    await mayor.locator('[data-add-suggestion="0"]').waitFor({timeout: 15000});
     assert(requests > 0);
     await page.getByRole('dialog').locator('header button').click();
     await page.getByRole('dialog').waitFor({state: 'hidden'});

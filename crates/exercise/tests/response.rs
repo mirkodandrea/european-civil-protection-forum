@@ -368,3 +368,48 @@ fn the_quote_falls_back_to_the_english_copy_when_languages_differ() {
     let m = ex.messages.iter().find(|m| m.id == parent).unwrap();
     assert_eq!(guest[0]["quote"]["text"], m.text_en);
 }
+
+#[test]
+fn excon_can_add_suggested_actions_to_a_narrative_and_take_them_back() {
+    let (mut ex, parent) = fixture();
+    let p = ex
+        .player_response("mayor", narrative("Alert the village", parent))
+        .unwrap();
+    ex.revalidate_proposal(p, Some(vec![warn()])).unwrap();
+    let prop = ex.proposal(p).unwrap();
+    assert!(prop.carries_actions && prop.excon_actions && !prop.pure_narrative());
+    assert!(ex.log.iter().any(|l| l.kind == "narrative_actions_added"));
+    ex.revalidate_proposal(p, Some(vec![])).unwrap();
+    let prop = ex.proposal(p).unwrap();
+    assert!(prop.pure_narrative() && !prop.excon_actions, "removing them restores the initiative");
+}
+
+#[test]
+fn suggestions_keep_only_new_allowed_commands_and_scope_the_context() {
+    let (ex, parent) = fixture();
+    let raw = vec![
+        json!({"type":"IssueWarning","zone":"F4"}),
+        json!({"type":"IssueWarning","zone":"F4"}),
+        json!({"type":"SetWeather","wind_speed_kmh":60}),
+        json!({"type":"Nope"}),
+        json!({"type":"IssueWarning","zone":"G5"}),
+    ];
+    let check = ex.check_suggestions("mayor", &raw, &["a".into(), "b".into()], &[Command::IssueWarning { zone: "G5".into() }]);
+    assert_eq!(check.actions.len(), 1, "{check:?}");
+    assert_eq!(check.actions[0].reason, "a");
+    assert_eq!(check.dropped, 4, "repeat, EXCON-only, unknown and already staged");
+    // The player context never carries another role's inject; EXCON's does.
+    let mut ex = ex;
+    let other = ex
+        .send_inject(None, "Secret", "112", &["fire_commander".into()], "Hidden tanker route", &BTreeMap::new())
+        .unwrap()[0];
+    let mine = ex.player_suggestion_context("mayor", "We alert", Some(parent), None, &[]).unwrap();
+    let all = format!("{}{}", mine.digest, mine.conversations);
+    assert!(all.contains("Smoke over the village") && !all.contains("Hidden tanker route"));
+    assert!(ex.player_suggestion_context("mayor", "x", Some(other), None, &[]).is_err());
+    assert!(ex.player_suggestion_context("mayor", " ", None, None, &[]).is_err());
+    let p = ex.player_response("mayor", narrative("We alert", parent)).unwrap();
+    let full = ex.excon_suggestion_context(p).unwrap();
+    assert!(full.digest.to_string().contains("training_design"));
+    assert_eq!(full.role, "mayor");
+}

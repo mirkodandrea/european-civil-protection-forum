@@ -26,7 +26,7 @@ pub mod chat_policy;
 pub mod timing;
 pub use timing::{ClockControl, ExercisePhase, PhaseEntry, ScheduleStatus, ScheduledInject};
 pub mod design;
-pub mod drafts;
+pub mod action_suggestions;
 pub mod files;
 pub use files::{FileRef, PdfUpload};
 pub mod evaluation;
@@ -381,6 +381,9 @@ pub struct Proposal {
     /// The response also declared simulator actions (`narrative` + `commands`).
     /// A narrative without this flag is a pure narrative initiative.
     pub carries_actions: bool,
+    /// The EXCON added simulator actions to a narrative-only response while
+    /// reviewing it (e.g. from AI suggestions); `carries_actions` follows them.
+    pub excon_actions: bool,
     /// Linked conversation (see [`conversations`]) the response came out of.
     /// It is the only way a player who never received the inject can answer it.
     pub via_conversation: Option<u64>,
@@ -550,7 +553,6 @@ pub struct TurnWindow {
 
 pub struct Exercise {
     pub(crate) turn_summaries: Vec<summaries::TurnSummary>,
-    player_drafts: BTreeMap<u64, drafts::PlayerDraft>,
     /// Player conversations about an inject (see [`conversations`]).
     pub linked_conversations: Vec<conversations::LinkedConversation>,
     pub training_design: design::TrainingDesign,
@@ -637,7 +639,6 @@ impl Exercise {
         let turn_minutes = world.scn.turn_minutes.clamp(1, 24 * 60);
         let mut ex = Exercise {
             turn_summaries: Vec::new(),
-            player_drafts: BTreeMap::new(),
             linked_conversations: Vec::new(),
             training_design: Default::default(),
             current_path: None,
@@ -1054,7 +1055,6 @@ impl Exercise {
         self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
         self.rollback_narrative_outcomes(turn);
-        self.player_drafts.clear();
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
         self.restore_epoch += 1;
@@ -1101,7 +1101,6 @@ impl Exercise {
             bail!("a turn is being resolved; wait for it to finish");
         }
         self.stop_clock("Exercise ended");
-        self.player_drafts.clear();
         self.phase = Phase::Debrief;
         self.record(
             "exercise_ended",
@@ -1479,6 +1478,7 @@ impl Exercise {
         self.proposals.push(Proposal {
             narrative: false,
             carries_actions: false,
+            excon_actions: false,
             via_conversation: None,
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
@@ -1649,6 +1649,7 @@ impl Exercise {
         self.proposals.push(Proposal {
             narrative: false,
             carries_actions: false,
+            excon_actions: false,
             via_conversation: None,
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
@@ -1895,8 +1896,21 @@ impl Exercise {
     }
 
     fn set_commands(&mut self, pid: u64, commands: Vec<Command>) -> Result<()> {
-        if self.proposal(pid).is_some_and(|p| p.pure_narrative()) && !commands.is_empty() {
-            bail!("narrative initiatives cannot contain simulated commands; submit a separate operational proposal");
+        // Only the EXCON review (revalidate/decide) reaches a narrative proposal
+        // here: the actions it adds turn the initiative into a response that
+        // carries actions; removing all of them again restores it.
+        if let Some((pure, excon)) = self.proposal(pid).filter(|p| p.narrative).map(|p| (p.pure_narrative(), p.excon_actions)) {
+            let added = !commands.is_empty();
+            if pure && added {
+                let p = self.proposal_mut(pid)?;
+                p.carries_actions = true;
+                p.excon_actions = true;
+                self.record("narrative_actions_added", MASTER, json!({"proposal": pid, "commands": commands}));
+            } else if excon && !added {
+                let p = self.proposal_mut(pid)?;
+                p.carries_actions = false;
+                p.excon_actions = false;
+            }
         }
         let actor = self
             .proposal(pid)

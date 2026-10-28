@@ -94,8 +94,6 @@ impl App {
             };
             Msg::Field(field.into(), value)
         });
-        let work_draft = self.drafts.get("master").cloned().unwrap_or_default();
-        let work_private = &work_draft.private;
         let work_allowed = list(&self.state["role"]["allowed_actions"]);
         let work_action = self.field(
             "work:action",
@@ -137,37 +135,10 @@ impl App {
                 .unwrap_or("ground_crews"),
         );
         let work_qty = self.field("work:qty", "1");
-        let work_free_text = self.field("work:free_text", "");
         let work_reply_to = self.field("work:reply_to", "");
         let staged = self.staged();
         let work_conversation = self.field("work:conversation", "").parse::<u64>().ok();
-        let work_reply = self.field("work:reply", "");
         let narrative_text = self.field("work:narrative", "");
-        let work_clarifying = work_private["status"] == "needs_clarification";
-        let work_draft_id = work_private["id"].clone();
-        let work_revision = work_private["revision"].clone();
-        let work_submit = {
-            let parent = work_reply_to.parse::<u64>().ok();
-            let own = own.clone();
-            let clarification = work_clarifying;
-            let reply = if work_clarifying {
-                work_reply.clone()
-            } else {
-                work_free_text.clone()
-            };
-            let draft_id = work_draft_id.clone();
-            let revision = work_revision.clone();
-            ctx.link().callback(move |_| {
-                let mut body = json!({"to":"master","text":reply,"reply_to":parent});
-                if clarification {
-                    body["draft"] = draft_id.clone();
-                    body["revision"] = revision.clone();
-                }
-                let mut request = Action::post(format!("/api/player/{own}/draft"), body);
-                request.kind = ActionKind::Prepare("master".into());
-                Msg::Action(request)
-            })
-        };
         let work_command = {
             let action = work_action.clone();
             let location = work_location.clone();
@@ -346,6 +317,7 @@ impl App {
                 <p class="work-help" data-narrative-help="">{i18n::t(l,"narr_help")}</p>
                 <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
                 <small class="muted">{i18n::t(l,"narrative_optional")}</small>
+                {self.view_suggestions(ctx, l, &staged)}
             </div>
             <div class="work-block" data-work-block="actions">
             <h4 class="work-section">{i18n::t(l,"step_actions")}</h4>
@@ -369,30 +341,11 @@ impl App {
             }
             if !zone_notice.is_empty() {<small class="muted work-hint" role="status" data-place-notice="">{zone_notice.clone()}</small>}
             if work_action=="CutFireLine" {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
-            if !work_clarifying && work_conversation.is_none() {<label for="work-reply-to">{i18n::t(l,"reply_to")}</label>}
-            if !work_clarifying && work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
+            if work_conversation.is_none() {<label for="work-reply-to">{i18n::t(l,"reply_to")}</label>}
+            if work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
             if work_action=="RequestReinforcement" {<label for="work-resource">{i18n::t(l,"resource_req")}</label><select id="work-resource" value={work_resource.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:resource".into(),api::select(e)))}>{for self.stat["resource_types"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_resource}>{text(&r["name"])}</option>})}</select><label for="work-qty">{i18n::t(l,"quantity")}</label><input id="work-qty" type="number" min="1" value={work_qty} oninput={ctx.link().callback(|e|Msg::Field("work:qty".into(),api::input(e)))}/>}
             <button data-add-action="" disabled={self.busy||work_missing.is_some()} onclick={work_command}>{i18n::t(l,"add_action")}</button>
             if let Some(missing)=work_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}
-            </details>
-            <details class="work-ai"><summary>{i18n::t(l,"ai_title")}</summary>
-            <p class="muted">{i18n::t(l,"ai_helper_hint")}</p>
-            if work_clarifying {<label for="work-reply">{i18n::t(l,"reply_clarif")}</label><textarea id="work-reply" value={work_reply.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:reply".into(),api::input(e)))}/>}else{<label for="work-free-text">{i18n::t(l,"describe")}</label><textarea id="work-free-text" value={work_free_text.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:free_text".into(),api::input(e)))}/>}
-            <button disabled={self.busy||self.state["phase"]!="orders"||(work_clarifying&&work_reply.trim().is_empty())||(!work_clarifying&&work_free_text.trim().is_empty())} onclick={work_submit}>{if work_clarifying{i18n::t(l,"send_clarif")}else{i18n::t(l,"prepare_ai")}}</button>
-            if !work_private.is_null() {
-                <div class="proposal-preview">
-                    <b>{if work_private["status"]=="needs_clarification"{i18n::t(l,"clarif_needed")}else if work_private["status"]=="ai_unavailable"{i18n::t(l,"ai_unavailable")}else{i18n::t(l,"private_draft")}}</b>
-                    if work_private["status"]=="needs_clarification" {<p>{text(&work_private["question"])}</p>}
-                    else {<p>{text(&work_private["message"])}</p>}
-                    if work_private["status"]=="unsupported" || work_private["status"]=="ready" && list(&work_private["actions"]).is_empty() {<p class="error" role="alert">{i18n::t(l,"unsupported_draft")}</p>}
-                    if work_private["status"]=="unsupported" {<button disabled={self.busy} onclick={ctx.link().callback({let text=work_free_text.clone();move |_|Msg::NarrativeFromDraft(text.clone())})}>{i18n::t(l,"use_as_narrative")}</button>}
-                    if work_private["status"]=="ai_unavailable" {<p class="error" role="alert">{if l=="it"{"Verifica AI non riuscita: riprova o aggiungi un’azione dal modulo. Nulla è stato inviato."}else{"AI validation failed: retry or add an action from the form. Nothing has been submitted."}}</p>}
-                    if work_private["status"]=="ai_unavailable" && !text(&work_private["failure"]).is_empty() {<p class="muted">{format!("{}: {}",i18n::t(l,"reason"),text(&work_private["failure"]))}</p>}
-                    {for {let lines:Vec<String>=if list(&work_private["actions"]).is_empty(){list(&work_private["action_descriptions"]).iter().map(|d|text(d).to_string()).collect()}else{list(&work_private["actions"]).iter().map(|c|widgets::command_summary(l,c)).collect()};lines}.into_iter().map(|l|html!{<p>{l}</p>})}
-                    <button data-stage-draft="" disabled={self.busy||!(work_private["status"]=="ready"&&!list(&work_private["actions"]).is_empty())} onclick={ctx.link().callback({let actions=list(&work_private["actions"]).to_vec();move |_|Msg::StageActions(actions.clone())})}>{i18n::t(l,"ai_add")}</button>
-                    <button disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Discard)}>{i18n::t(l,"discard")}</button>
-                </div>
-            }
             </details>
             </div>
             <div class="work-submit-bar">
@@ -521,6 +474,45 @@ impl App {
     }
 }
 
+impl App {
+    /// Actions the AI suggests from the narrative being written (player-known
+    /// context only; see `/api/player/<role>/suggest-actions`), to add by hand.
+    fn view_suggestions(&self, ctx: &Context<Self>, l: &str, staged: &[Value]) -> Html {
+        let working = !self.field("work:sugg_busy", "").is_empty();
+        let result: Value = serde_json::from_str(&self.field("work:sugg", "null")).unwrap_or_default();
+        let stale = !result.is_null() && self.field("work:sugg_for", "") != self.field("work:narrative", "");
+        if !working && result.is_null() {
+            return html! {};
+        }
+        let open = fresh_suggestions(&result, staged);
+        let all = open.iter().map(|a| a["command"].clone()).collect::<Vec<_>>();
+        html! {<div class={classes!("work-suggestions",stale.then_some("is-stale"))} data-work-suggestions={text(&result["status"]).to_string()} aria-live="polite">
+            <b>{i18n::t(l,"sugg_title")}</b>
+            if working {<p class="muted" data-suggestions-working="">{i18n::t(l,"sugg_working")}</p>}
+            if result["status"]=="ai_unavailable" {<p class="muted">{i18n::t(l,"sugg_unavailable")}</p>}
+            else if !result.is_null() && open.is_empty() && !working {<p class="muted">{i18n::t(l,"sugg_none")}</p>}
+            if !open.is_empty() {
+                <p class="work-help">{i18n::t(l,"sugg_hint")}</p>
+                <ol class="suggested-actions">{for open.iter().enumerate().map(|(i,a)|{
+                    let cmd=a["command"].clone();
+                    html!{<li data-suggested-action={i.to_string()}>
+                        <span>{widgets::command_summary(l,&cmd)}</span>
+                        if !text(&a["reason"]).is_empty(){<small class="muted">{text(&a["reason"])}</small>}
+                        if a["verdict"]["verdict"]=="rejected"{<small class="danger">{i18n::tf(l,"sugg_check",&[text(&a["verdict"]["reason"])])}</small>}
+                        <button type="button" data-add-suggestion={i.to_string()} disabled={self.busy} onclick={ctx.link().callback(move |_|Msg::StageActions(vec![cmd.clone()]))}>{i18n::t(l,"sugg_add")}</button>
+                    </li>}
+                })}</ol>
+                if open.len()>1 {<button type="button" data-add-suggestions="" disabled={self.busy} onclick={ctx.link().callback(move |_|Msg::StageActions(all.clone()))}>{i18n::t(l,"sugg_add_all")}</button>}
+            }
+        </div>}
+    }
+}
+
+/// Suggested actions not already in the response being composed.
+fn fresh_suggestions(result: &Value, staged: &[Value]) -> Vec<Value> {
+    list(&result["actions"]).iter().filter(|a| !staged.contains(&a["command"])).cloned().collect()
+}
+
 #[cfg(test)]
 mod place_tests {
     use super::*;
@@ -534,5 +526,16 @@ mod place_tests {
         assert_eq!(building_named(&stat, "Pineta"), None);
         assert_eq!(building_named(&stat, ""), None);
         assert_ne!(place_kind("EvacuateZone"), place_kind("EvacuateBuilding"));
+    }
+
+    #[test]
+    fn staged_suggestions_are_not_offered_again() {
+        let warn = json!({"type":"IssueWarning","zone":"F4"});
+        let close = json!({"type":"CloseRoad","road":"r1"});
+        let result = json!({"status":"ready","actions":[{"command":warn},{"command":close}]});
+        let open = fresh_suggestions(&result, &[warn.clone()]);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0]["command"], close);
+        assert!(fresh_suggestions(&Value::Null, &[]).is_empty());
     }
 }

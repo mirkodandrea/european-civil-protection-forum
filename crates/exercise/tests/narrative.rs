@@ -127,9 +127,13 @@ fn explicit_narrative_path_cannot_bypass_operational_validation_or_role_visibili
         .is_err());
     let p = submit(&mut ex, parent);
     let command = sim::Command::IssueWarning { zone: "F4".into() };
-    assert!(ex
-        .revalidate_proposal(p, Some(vec![command.clone()]))
-        .is_err());
+    // Only the EXCON review may add actions to a narrative (e.g. AI suggestions):
+    // they get verdicts and still need approval and execution.
+    ex.revalidate_proposal(p, Some(vec![command.clone()])).unwrap();
+    let reviewed = ex.proposal(p).unwrap();
+    assert!(reviewed.carries_actions && reviewed.excon_actions);
+    assert_eq!(reviewed.verdicts.len(), 1);
+    assert_eq!(reviewed.status, ProposalStatus::Pending);
     assert!(ex
         .attach_parse(
             p,

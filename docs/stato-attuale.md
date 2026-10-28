@@ -102,10 +102,12 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    conversazioni collegate e due azioni: **Rispondi** e **Nuova conversazione**.
    Rispondi apre un modale quasi a schermo intero con mappa e modulo: una risposta
    è una **narrazione facoltativa** più **zero o più azioni** (almeno una delle due).
-   Le azioni si aggiungono dal modulo strutturato oppure descrivendole all’assistente
-   AI, che propone una bozza da rivedere (nessuna azione codificata: la bozza non è
-   aggiungibile); il pulsante **Rispondi** invia tutto in una sola volta. Ogni
-   inject può ricevere più risposte.
+   Le azioni si aggiungono dal modulo strutturato oppure dai **suggerimenti AI**:
+   quando il player smette di scrivere la narrazione (pausa di 2,5 s, almeno 20
+   caratteri, una richiesta alla volta, nessun pulsante), l’AI la legge e propone
+   azioni del suo ruolo da aggiungere una per una o tutte insieme (vedi «Azioni
+   suggerite dall’AI» sotto). Il pulsante **Rispondi** invia tutto in una sola
+   volta. Ogni inject può ricevere più risposte.
 3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
    destinatario, badge delle approvazioni), ne controlla la fattibilità e decide:
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta con i suoi comandi; la
@@ -262,6 +264,42 @@ riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell
   pdf.js (`pdfjs-dist@4.10.38`, copiato in `crates/frontend/assets/vendor/pdfjs` e incluso
   nel WASM con `include_str!`: nessun CDN, funziona offline e nel `ttx.html` a file unico).
   Resta anche il link a un blob per aprire/scaricare con il visualizzatore del browser.
+### Azioni suggerite dall’AI sulle narrazioni
+
+Il vecchio assistente «Descrivi le azioni con l’assistente AI» (bozza privata
+`POST /api/player/<role>/draft` + `/draft/submit`, task LLM `prepare_decision`,
+`exercise::drafts`) è stato rimosso. Al suo posto un solo task LLM,
+`suggest_actions` (`llm::tasks::SuggestScope`), con due ambiti; il modello
+risponde `{actions, reasons, summary}` in JSON, l’esercitazione lo valida
+(`Exercise::check_suggestions`: solo `Command` validi del ruolo autore, niente
+doppioni né azioni già nella risposta/proposta, verdetto di fattibilità dopo le
+proposte approvate) e **nulla cambia**: i suggerimenti sono bozze che un umano
+aggiunge. Il contesto si raccoglie sotto il mutex, il modello gira fuori; se
+l’AI manca la risposta è `status: ai_unavailable` e l’interfaccia lo dice.
+
+- **Player, automatico**: `POST /api/player/<role>/suggest-actions {narrative,
+  reply_to?, conversation?, staged?}` (solo il player stesso; fase ordini). Il
+  contesto è solo ciò che il ruolo sa (`Exercise::player_suggestion_context`):
+  mappa del ruolo (`player_map`), risorse, schieramenti e proposte proprie del
+  turno, thread visibile dell’inject (`thread_evidence`), conversazioni collegate
+  a cui partecipa, chat con gli altri ruoli e la sua conversazione continua con
+  l’AI. Il modale di risposta mostra «Azioni suggerite dall’AI» sotto la
+  narrazione (`tactical.rs`, `data-work-suggestions`), con il motivo e l’eventuale
+  esito negativo della verifica; «Aggiungi»/«Aggiungi tutte» le mette tra le
+  azioni della risposta, che segue la normale approvazione EXCON.
+- **EXCON, su richiesta**: nella revisione (Risposte, widget `Proposal`) una
+  risposta con narrazione ha il pulsante **Suggerisci azioni**
+  (`POST /api/master/proposals/<id>/suggest-actions`). Qui l’AI legge lo stato
+  completo (mondo, schieramenti, design, contabilità risorse, mappa del player) e
+  tutte le conversazioni (thread dell’inject per tutti i destinatari, conversazioni
+  collegate all’inject o con il ruolo, chat del ruolo, conversazione AI del
+  ruolo). Mentre la proposta è aperta le bozze si aggiungono alle azioni da
+  approvare (ricontrollate da `/revalidate`, poi approvazione anche parziale);
+  dopo l’approvazione vanno agli interventi dell’esito narrativo. Aggiungere
+  azioni a una narrazione pura la trasforma in risposta con azioni
+  (`carries_actions`, `excon_actions = true`, evento `narrative_actions_added`);
+  togliendole tutte torna pura.
+
 - Persistenza: il body completo delle POST è ora scritto nel journal (`server/src/body.rs`;
   prima `Data::peek` lo troncava a 512 byte e i corpi lunghi non si rigiocavano). Limite
   corpo 15 MiB. Nel salvataggio del browser standalone (localStorage, ~5 MB) i PDF oltre
@@ -341,7 +379,7 @@ Fixture: `scripts/visual-fixtures/suppression.json` (autobotte a 8 min, lancio a
 
 - MSEL unificato (redesign EXCON): `InjectTemplate.event` (default vuoto) raggruppa gli inject. `GET /api/master` e `/api/state` espongono `planned_injects` (cronologico: `id_inject`, `title`, `event`, `scenario_time`, `scenario_time_s`, `recipients_planned`, `sent_to`, `not_yet_sent_to`); `GET /api/master` espone anche `inject_responses` (per consegna e ruolo: `replies`, `pending_proposals`). `POST /api/master/msel/<id>/send` accetta `{"recipients":[ruoli]}` (default: destinatari pianificati); i ruoli che hanno già ricevuto l’inject sono saltati in silenzio.
 - Azioni pianificate (`Scenario.timeline`, `exercise::actions`): world changes sulla timeline MSEL, indipendenti dagli inject. A ogni avanzamento del tempo EXCON decide Esegui/Salta/Rinvia per quelle che cadono nella finestra; la durata del turno è una proprietà dello scenario (`turn_minutes`) e la scheda Timeline dell'editor mostra inject e azioni su un'unica asse oraria con fasce di turno e trascinamento; vedi `docs/scenari.md`.
-- Proposte: `POST /api/master/proposals/<id>/clarify {note}` porta una proposta del player in `needs_clarification` e consegna la domanda nello stesso thread; `POST /api/master/proposals/<id>/revalidate {commands?}` ricalcola descrizioni e verdetti senza decidere; la risposta del player a un chiarimento (`POST /api/player/<role>/reply` con `reply_to` = messaggio di domanda) e un messaggio `reply` nello stesso thread: solo traduzione in inglese, nessuna interpretazione AI, nessuna nuova proposta e nessuna sostituzione; la proposta torna `pending` con i comandi originali (per cambiare azione il player ne crea una nuova; `/actions` e `/draft` con `reply_to` = domanda aperta sono rifiutati con errore esplicito). `superseded`/`supersedes` restano nei tipi ma non vengono piu prodotti. Il flag `edited` della decisione è vero solo se i comandi cambiano davvero.
+- Proposte: `POST /api/master/proposals/<id>/clarify {note}` porta una proposta del player in `needs_clarification` e consegna la domanda nello stesso thread; `POST /api/master/proposals/<id>/revalidate {commands?}` ricalcola descrizioni e verdetti senza decidere; la risposta del player a un chiarimento (`POST /api/player/<role>/reply` con `reply_to` = messaggio di domanda) e un messaggio `reply` nello stesso thread: solo traduzione in inglese, nessuna interpretazione AI, nessuna nuova proposta e nessuna sostituzione; la proposta torna `pending` con i comandi originali (per cambiare azione il player ne crea una nuova; `/actions` con `reply_to` = domanda aperta è rifiutato con errore esplicito). `superseded`/`supersedes` restano nei tipi ma non vengono piu prodotti. Il flag `edited` della decisione è vero solo se i comandi cambiano davvero.
 - Thread di chiarimento: la conversazione testuale EXCON-player su una dichiarazione e una vista derivata (`exercise::threads`), non una copia dei dati. Mette in fila la proposta (e l'eventuale catena storica `supersedes`/`superseded_by`), i messaggi `clarification` di EXCON e le risposte del player; l'id del thread e quello della proposta d'origine. Stato: `awaiting_player` (ultima voce di EXCON), `awaiting_excon`, `closed` (chiuso da EXCON con `POST /api/master/clarifications/<id>/close`, oppure proposta decisa). Chiudere ritira una domanda senza risposta (la proposta torna `pending`); un nuovo `clarify` riapre. EXCON fa domande di follow-up con lo stesso `clarify` sulla proposta corrente (`current_proposal`); il player risponde in testo, piu volte, con `POST /api/player/<role>/reply` con `reply_to` = ultimo messaggio di EXCON (si puo rispondere a un chiarimento anche senza inject). Esposto come `clarification_threads` in `/api/master` (con testo inglese), `/api/player/<role>` (senza `text_en`) e nel debrief; ogni riga di `inject_responses` ha `clarification_threads` e i messaggi del suo `thread` portano `clarification_thread`, cosi la scheda Risposte mostra le stesse voci con stato e pulsante "Chiudi chiarimento". Lato player la chat compare nella timeline tattica (`crates/frontend/src/clarify.rs`). I thread non modificano il mondo: solo `World::apply` da proposte approvate.
 - Rendering dei dati: `render.rs` mostra comandi, meteo, esecuzioni, eventi e dati generici come elenchi leggibili (il JSON grezzo resta in un blocco richiudibile “dati grezzi” solo dove serve al debug); `event_label`/`role_label` danno nomi leggibili a eventi e ruoli.
 - LLM: `chat()` ritenta fino a 2 volte su errori di rete, corpo illeggibile o troncato, 429/5xx e risposta 2xx senza contenuto (mai sui 4xx).

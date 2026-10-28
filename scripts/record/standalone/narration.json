@@ -46,12 +46,12 @@
   {
    "id": "mayor_ai",
    "who": "Sindaco",
-   "text": "Per agire, scrive in linguaggio libero. L'intelligenza artificiale prepara una bozza fatta solo di comandi che il simulatore conosce, e il sindaco la conferma prima di inviarla."
+   "text": "Per agire, scrive la risposta in linguaggio libero. Mentre scrive, l'intelligenza artificiale legge la narrazione e suggerisce azioni che il simulatore conosce, usando solo ciò che il sindaco sa."
   },
   {
    "id": "ai_draft",
    "who": "Sindaco",
-   "text": "La bozza mostra cosa il simulatore eseguirebbe: evacuare la scuola verso il centro sportivo e avvisare la zona di Pineta. Solo dopo la conferma del sindaco arriva a EXCON."
+   "text": "I suggerimenti mostrano cosa il simulatore eseguirebbe: evacuare la scuola verso il centro sportivo e avvisare la zona di Pineta. Il sindaco li aggiunge alla risposta, che arriva a EXCON per l'approvazione."
   },
   {
    "id": "fire_action",

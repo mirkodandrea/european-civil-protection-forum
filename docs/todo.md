@@ -24,10 +24,11 @@ scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](
 - ~~Focus sul titolo del modale inject~~, ~~ordine dei campi del modale~~,
   ~~bozza AI in inglese~~, ~~concatenazione richiesta/chiarimento~~ e
   ~~motivo del rifiuto visibile al player~~ (risolti).
-- "AI non disponibile" dopo un chiarimento: ora il motivo è salvato (`failure`) e
-  mostrato; la causa probabile (azione costruita dal testo libero, non valida come
-  `Command`) è da confermare con `TTX_LIVE_LLM=1`. Possibile seguito: un nuovo
-  tentativo automatico che rimandi all'AI l'errore di validazione.
+- ~~"AI non disponibile" dopo un chiarimento~~: la bozza privata AI è stata
+  sostituita dai suggerimenti automatici sulla narrazione (`suggest_actions`).
+  Da provare con `TTX_LIVE_LLM=1` la qualità dei suggerimenti nei due ambiti
+  (player / EXCON) e valutare se ripetere la richiesta quando cambiano le azioni
+  già aggiunte.
 
 ## Esito QA multi-agente (2026-10-23)
 

@@ -60,8 +60,6 @@ pub enum ActionKind {
     ConvSend,
     Store(String),
     Send(String, String),
-    Prepare(String),
-    Submit(String),
     Download,
     /// Remove this form field once the request succeeded.
     ClearField(String),
@@ -114,9 +112,6 @@ pub struct Draft {
     pub recipients: String,
     /// Actions of a custom inject (run when it is sent).
     pub actions: Vec<scenario::InjectAction>,
-    pub private: Value,
-    pub dirty: bool,
-    pub clock_revision: Value,
 }
 impl Default for Draft {
     fn default() -> Self {
@@ -131,12 +126,13 @@ impl Default for Draft {
             scope: "conversation".into(),
             recipients: String::new(),
             actions: Vec::new(),
-            private: Value::Null,
-            dirty: false,
-            clock_revision: Value::Null,
         }
     }
 }
+/// Pause in typing after which the narrative is read for action suggestions.
+const SUGGEST_PAUSE_MS: u32 = 2500;
+/// Shorter narratives are not worth a suggestion request.
+const SUGGEST_MIN_CHARS: usize = 20;
 pub struct Bootstrap {
     access: Value,
     stat: Value,
@@ -174,7 +170,8 @@ pub struct App {
     lang_chosen: bool,
     refresh_again: bool,
     drafts: BTreeMap<String, Draft>,
-    dismissed: BTreeSet<u64>,
+    /// Debounce of the automatic action suggestions on the narrative.
+    suggest_timer: Option<gloo_timers::callback::Timeout>,
     seen: BTreeMap<String, u64>,
     fields: BTreeMap<String, String>,
     responses: BTreeMap<String, Value>,
@@ -236,11 +233,13 @@ pub enum Msg {
     /// Add commands to the response being composed.
     StageActions(Vec<Value>),
     Unstage(usize),
-    NarrativeFromDraft(String),
+    /// The narrative stopped changing: ask for action suggestions.
+    Suggest,
+    /// Suggestions for the narrative `.0` (see `/api/player/<role>/suggest-actions`).
+    Suggested(String, Result<Value, String>),
     CloseInject,
     View(String),
     Field(String, String),
-    Discard,
     Filter(String),
     ClearError,
     PresenceCheck,
@@ -276,6 +275,13 @@ impl App {
         } else {
             self.fields.insert("work:staged".into(), Value::Array(staged).to_string());
         }
+    }
+    /// (Re)start the pause after which the narrative gets action suggestions.
+    fn schedule_suggest(&mut self, ctx: &Context<Self>) {
+        let link = ctx.link().clone();
+        self.suggest_timer = Some(gloo_timers::callback::Timeout::new(SUGGEST_PAUSE_MS, move || {
+            link.send_message(Msg::Suggest)
+        }));
     }
     fn field(&self, key: &str, default: &str) -> String {
         self.fields
@@ -502,7 +508,7 @@ impl Component for App {
             lang_chosen,
             refresh_again: false,
             drafts: BTreeMap::new(),
-            dismissed: BTreeSet::new(),
+            suggest_timer: None,
             seen: BTreeMap::new(),
             fields: BTreeMap::new(),
             responses: BTreeMap::new(),
@@ -601,38 +607,6 @@ impl Component for App {
                             self.lang_chosen = false;
                         }
                         self.master = master;
-                        if !self.is_master() && !self.is_evaluator() {
-                            let revision = self.state["clock_control"]["revision"].clone();
-                            if !self.busy {
-                                for draft in self.drafts.values_mut() {
-                                    if !draft.private.is_null()
-                                        && (draft.private["turn"] != self.state["turn"]
-                                            || draft.clock_revision != revision)
-                                    {
-                                        draft.private = Value::Null;
-                                    }
-                                }
-                            }
-                            for private in list(&self.state["drafts"]) {
-                                let id = private["id"].as_u64().unwrap_or(0);
-                                let to = text(&private["to"]);
-                                if self.dismissed.contains(&id)
-                                    || private["status"] == "interpreting"
-                                {
-                                    continue;
-                                }
-                                let d = self.drafts.entry(to.into()).or_default();
-                                if d.private.is_null() && private["turn"] == self.state["turn"] {
-                                    d.private = private.clone();
-                                    d.clock_revision = revision.clone();
-                                    d.text = if private["status"] == "needs_clarification" {
-                                        String::new()
-                                    } else {
-                                        text(&private["message"]).into()
-                                    };
-                                }
-                            }
-                        }
                         self.mark_seen();
                     }
                     Err(e) => self.error = e,
@@ -665,10 +639,7 @@ impl Component for App {
                     }
                     self.busy = true;
                     self.notice = match &action.kind {
-                        ActionKind::Prepare(_) => {
-                            crate::i18n::ex("L’AI sta analizzando il messaggio…")
-                        }
-                        ActionKind::Submit(_) | ActionKind::Send(_, _) => {
+                        ActionKind::Send(_, _) => {
                             crate::i18n::ex("Traduzione e invio in corso…")
                         }
                         _ => crate::i18n::ex("Elaborazione…"),
@@ -763,35 +734,6 @@ impl Component for App {
                                 .into();
                                 self.responses.insert(key, value);
                             }
-                            ActionKind::Prepare(to) => {
-                                let d = self.drafts.entry(to.clone()).or_default();
-                                d.private = value["draft"].clone();
-                                d.dirty = false;
-                                d.clock_revision = self.state["clock_control"]["revision"].clone();
-                                d.text = if d.private["status"] == "needs_clarification" {
-                                    String::new()
-                                } else {
-                                    text(&d.private["message"]).into()
-                                };
-                                let needs_clarification =
-                                    d.private["status"] == "needs_clarification";
-                                if to == "master" && !needs_clarification {
-                                    self.fields.insert("work:free_text".into(), d.text.clone());
-                                }
-                                self.notice = if needs_clarification {
-                                    crate::i18n::ex("Serve un chiarimento prima dell’invio").into()
-                                } else if d.private["status"] == "unsupported"
-                                    || list(&d.private["actions"]).is_empty()
-                                        && d.private["status"] == "ready"
-                                {
-                                    if self.lang() == "it" {"Richiesta non inviabile: non contiene azioni supportate dal simulatore."} else {"Cannot send: this request contains no actions supported by the simulator."}.into()
-                                } else if d.private["status"] == "ai_unavailable" {
-                                    if self.lang() == "it" {"Verifica AI non riuscita: riprova oppure scegli un’azione dal modulo."} else {"AI validation failed: retry or choose a supported action in the form."}.into()
-                                } else {
-                                    crate::i18n::ex("Azioni individuate · controlla la bozza")
-                                        .into()
-                                };
-                            }
                             ActionKind::Send(to, sent) => {
                                 self.notice = if value["translation_failed"] == true {
                                     crate::i18n::ex("Inviato · traduzione non disponibile")
@@ -804,24 +746,6 @@ impl Component for App {
                                     *d = Draft::default();
                                 }
                             }
-                            ActionKind::Submit(to) => {
-                                if to == "master" && !self.is_master() {
-                                    self.fields.insert("work:open".into(), "false".into());
-                                    self.fields.remove("work:clarify");
-                                }
-                                self.notice = if value["translation_failed"] == true {
-                                    crate::i18n::ex("Inviato · traduzione non disponibile").into()
-                                } else if value["proposal"].is_null() {
-                                    crate::i18n::ex("Messaggio tradotto inviato").into()
-                                } else {
-                                    crate::i18n::ex("Decisione inviata per la revisione").into()
-                                };
-                                if let Some(d) = self.drafts.remove(&to) {
-                                    if let Some(id) = d.private["id"].as_u64() {
-                                        self.dismissed.insert(id);
-                                    }
-                                }
-                            }
                             ActionKind::Download => {
                                 if let Err(e) = api::download(&value) {
                                     self.error = e
@@ -829,14 +753,10 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:free_text", "work:reply", "work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error"] {
+                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error", "work:sugg", "work:sugg_for", "work:sugg_busy"] {
                                     self.fields.remove(key);
                                 }
-                                if let Some(draft) = self.drafts.remove("master") {
-                                    if let Some(id) = draft.private["id"].as_u64() {
-                                        self.dismissed.insert(id);
-                                    }
-                                }
+                                self.suggest_timer = None;
                                 self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
                             }
                             ActionKind::ConvStart => {
@@ -862,27 +782,52 @@ impl Component for App {
                 }
                 self.request_refresh(ctx);
             }
-            Msg::NarrativeFromDraft(text) => {
-                self.fields.insert("work:narrative".into(), text);
-                if let Some(draft) = self.drafts.remove("master") {
-                    if let Some(id) = draft.private["id"].as_u64() {
-                        self.dismissed.insert(id);
-                    }
+            Msg::Suggest => {
+                self.suggest_timer = None;
+                let narrative = self.field("work:narrative", "");
+                if self.is_master()
+                    || self.state["phase"] != "orders"
+                    || self.field("work:open", "false") != "true"
+                    || narrative.trim().chars().count() < SUGGEST_MIN_CHARS
+                    || narrative == self.field("work:sugg_for", "")
+                    || !self.field("work:sugg_busy", "").is_empty()
+                {
+                    return false;
                 }
+                self.fields.insert("work:sugg_busy".into(), "1".into());
+                let body = json!({
+                    "narrative": narrative,
+                    "reply_to": self.field("work:reply_to", "").parse::<u64>().ok(),
+                    "conversation": self.field("work:conversation", "").parse::<u64>().ok(),
+                    "staged": self.staged(),
+                });
+                let (token, path) = (self.token.clone(), format!("/api/player/{}/suggest-actions", self.own));
+                ctx.link().send_future(async move {
+                    Msg::Suggested(narrative, api::request(&token, &path, Some(body)).await)
+                });
+            }
+            Msg::Suggested(narrative, result) => {
+                self.fields.remove("work:sugg_busy");
+                if self.field("work:open", "false") != "true" {
+                    return false;
+                }
+                if narrative != self.field("work:narrative", "") {
+                    // The player kept writing: suggest for the newer text.
+                    self.schedule_suggest(ctx);
+                    return false;
+                }
+                let value = result.unwrap_or_else(|e| json!({"status": "ai_unavailable", "actions": [], "failure": e}));
+                self.fields.insert("work:sugg".into(), value.to_string());
+                self.fields.insert("work:sugg_for".into(), narrative);
             }
             Msg::StageActions(commands) => {
                 let mut staged = self.staged();
                 staged.extend(commands);
                 staged.truncate(32);
                 self.set_staged(staged);
-                // The form (or the AI draft) has been turned into a staged action.
-                for key in ["work:location", "work:destination", "work:free_text", "work:reply"] {
+                // The form (or an AI suggestion) has been turned into a staged action.
+                for key in ["work:location", "work:destination"] {
                     self.fields.remove(key);
-                }
-                if let Some(draft) = self.drafts.remove("master") {
-                    if let Some(id) = draft.private["id"].as_u64() {
-                        self.dismissed.insert(id);
-                    }
                 }
             }
             Msg::Unstage(index) => {
@@ -905,16 +850,10 @@ impl Component for App {
                 if self.field("work:reply_to", "") != parent {
                     self.fields.remove("work:staged");
                     self.fields.remove("work:narrative");
-                    for key in ["work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error"] {
+                    for key in ["work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error", "work:sugg", "work:sugg_for"] {
                         self.fields.remove(key);
                     }
-                    if let Some(draft) = self.drafts.remove("master") {
-                        if let Some(id) = draft.private["id"].as_u64() {
-                            self.dismissed.insert(id);
-                        }
-                    }
-                    self.fields.remove("work:free_text");
-                    self.fields.remove("work:reply");
+                    self.suggest_timer = None;
                     self.fields.remove("work:location");
                     self.fields.remove("work:destination");
                 }
@@ -1036,17 +975,8 @@ impl Component for App {
                 self.mark_seen();
             }
             Msg::Field(key, value) => {
-                if ["work:free_text", "work:reply_to"].contains(&key.as_str())
-                    && self.fields.get(&key) != Some(&value)
-                {
-                    if let Some(draft) = self.drafts.remove("master") {
-                        if let Some(id) = draft.private["id"].as_u64() {
-                            self.dismissed.insert(id);
-                        }
-                    }
-                    if key == "work:reply_to" {
-                        self.fields.remove("work:reply");
-                    }
+                if key == "work:narrative" && !self.is_master() && self.fields.get(&key) != Some(&value) {
+                    self.schedule_suggest(ctx);
                 }
                 if key.starts_with("draft:") {
                     let selected = self.selected.clone();
@@ -1056,10 +986,6 @@ impl Component for App {
                     match key.as_str() {
                         "draft:text" => {
                             d.text = value;
-                            if !d.private.is_null() && d.private["status"] != "needs_clarification"
-                            {
-                                d.dirty = d.text != text(&d.private["message"]);
-                            }
                             if player_chat {
                                 let token = self.token.clone();
                                 let path = format!("/api/player/{own}/presence");
@@ -1098,20 +1024,6 @@ impl Component for App {
                     }
                 } else {
                     self.fields.insert(key, value);
-                }
-            }
-            Msg::Discard => {
-                let key = if (self.active == "map" || self.field("work:open", "false") == "true")
-                    && !self.is_master()
-                {
-                    "master"
-                } else {
-                    &self.selected
-                };
-                if let Some(d) = self.drafts.remove(key) {
-                    if let Some(id) = d.private["id"].as_u64() {
-                        self.dismissed.insert(id);
-                    }
                 }
             }
             Msg::Filter(query) => {

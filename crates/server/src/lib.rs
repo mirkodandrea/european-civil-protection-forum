@@ -50,7 +50,7 @@ mod conversations;
 pub mod persist;
 #[cfg(not(target_arch = "wasm32"))]
 mod body;
-mod decision_drafts;
+mod action_suggestions;
 pub mod flow;
 mod forecast;
 mod situation;
@@ -308,8 +308,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_attachment,
                 post_presence,
                 get_presence,
-                decision_drafts::prepare,
-                decision_drafts::submit,
+                action_suggestions::player,
+                action_suggestions::excon,
                 post_player_chat,
                 post_master_chat,
                 post_reply,
@@ -836,7 +836,6 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "clock": ex.world.clock(),
         "time_s":ex.world.time_s(),
         "inbox": inbox,
-        "drafts": ex.player_drafts(&role),
         "turn_summaries": ex.player_turn_summaries(&role),
         "resources": ex.world.d.pools.get(&role),
         "resource_accounting": ex.resource_accounting(Some(&role))[&role],

@@ -632,8 +632,8 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/player/<role>/draft") => {
-            decision_drafts::prepare(
+        ("POST", "/api/player/<role>/suggest-actions") => {
+            action_suggestions::player(
                 principal.clone(),
                 s.clone(),
                 captures["role"].to_string(),
@@ -641,12 +641,11 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/player/<role>/draft/submit") => {
-            decision_drafts::submit(
+        ("POST", "/api/master/proposals/<id>/suggest-actions") => {
+            action_suggestions::excon(
                 principal.clone(),
                 s.clone(),
-                captures["role"].to_string(),
-                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+                captures["id"].parse().map_err(|_| bad("invalid id"))?,
             )
             .await
         }
@@ -772,8 +771,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/rollback"),
     ("POST", "/api/master/end"),
     ("POST", "/api/master/settings"),
-    ("POST", "/api/player/<role>/draft"),
-    ("POST", "/api/player/<role>/draft/submit"),
+    ("POST", "/api/player/<role>/suggest-actions"),
+    ("POST", "/api/master/proposals/<id>/suggest-actions"),
     ("POST", "/api/master/forecast"),
     ("POST", "/api/master/forecast/publish"),
     ("GET", "/api/master/impact"),

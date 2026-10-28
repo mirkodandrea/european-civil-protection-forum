@@ -218,21 +218,20 @@ const POINTER = `
       await click(P('mayor').locator('#new-player-action'));
       await W.waitFor();
       if (captionId) await caption(captionId);
-      await click(W.locator('.work-ai summary'));
-      await type(W.locator('#work-free-text'), 'Evacuare la scuola primaria di Pineta verso il centro sportivo di Valverde e avvisare la popolazione di Pineta.');
+      // The narrative alone is enough: the AI reads it and suggests actions to add.
+      await type(W.locator('#response-narrative'), 'Evacuare la scuola primaria di Pineta verso il centro sportivo di Valverde e avvisare la popolazione di Pineta.');
       let ai = false;
       if (key) {
-        await click(W.getByRole('button', { name: /Prepara bozza AI/ }));
-        const confirm = W.locator('[data-stage-draft]');
+        const add = W.locator('[data-add-suggestions], [data-add-suggestion="0"]').first();
         let quiet = null;
         for (let i = 0; i < 90 && !ai; i++) {
-          await sleep(500); ai = await confirm.isEnabled().catch(() => false);
+          await sleep(500); ai = await add.isEnabled().catch(() => false);
           if (quiet === null && Date.now() > speechEnds) quiet = Date.now() - t0;
         }
         // The wait for the model after the voice has finished is shown sped up (compose.py).
         if (!DRY && quiet !== null && Date.now() - t0 - quiet > 2500) speedups.push({ from: quiet + 600, to: Date.now() - t0 - 400, factor: 8 });
-        log('AI draft usable:', ai);
-        if (ai) { waitEnd = Date.now(); if (followUp) await caption(followUp); await beat(1500); await shot('ai_draft'); await click(confirm, { pause: 900 }); await click(W.locator('[data-respond]'), { pause: 900 }); }
+        log('AI suggestions usable:', ai);
+        if (ai) { waitEnd = Date.now(); if (followUp) await caption(followUp); await beat(1500); await shot('ai_draft'); await click(add, { pause: 900 }); await click(W.locator('[data-respond]'), { pause: 900 }); }
       }
       if (!ai) {
         // Fallback: the structured form (same command the AI would have produced).
