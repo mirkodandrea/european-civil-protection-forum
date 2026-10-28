@@ -701,7 +701,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
                 } else { message.text.clone() };
                 Some(visible)
             }).collect::<Vec<_>>();
-            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "review": p.review, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "review":d.review, "rejected_actions":d.rejected_actions, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
         })
         .collect();
     let inbox = ex
@@ -1381,11 +1381,16 @@ struct DecideBody {
     approve: bool,
     #[serde(default)]
     commands: Option<Vec<Value>>,
-    #[serde(default)]
+    /// Note for the player; `reason` is accepted as the same field.
+    #[serde(default, alias = "reason")]
     note: Option<String>,
     /// Persona EXCON speaks as in the note and the feedback.
     #[serde(default)]
     persona: Option<String>,
+    /// Partial approval: actions (indices into `commands`, else the
+    /// proposal's) the EXCON does not approve, each with an optional reason.
+    #[serde(default)]
+    rejected_actions: Vec<exercise::ActionRejection>,
 }
 
 #[cfg_attr(
@@ -1426,6 +1431,7 @@ async fn post_decide(
                 commands,
                 note: b.note,
                 persona: b.persona,
+                rejected_actions: b.rejected_actions,
             },
         )?;
         let p = ex.proposal(id).unwrap();

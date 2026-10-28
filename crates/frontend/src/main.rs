@@ -14,6 +14,7 @@ mod i18n;
 mod i18n_excon;
 mod i18n_function;
 mod i18n_lang;
+mod i18n_review;
 mod map;
 #[cfg(not(feature = "standalone"))]
 mod maptest;

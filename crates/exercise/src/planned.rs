@@ -103,6 +103,23 @@ impl Exercise {
                         "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation)})
                     })
                     .collect();
+                // Latest EXCON verdict on this recipient's responses (newest last).
+                let decided: Vec<Value> = self
+                    .proposals
+                    .iter()
+                    .filter(|p| {
+                        p.inject_id == Some(delivery)
+                            && (p.source.label() == m.to || via(Some(p.id)))
+                            && p.decision.is_some()
+                    })
+                    .map(|p| {
+                        let d = p.decision.as_ref().unwrap();
+                        json!({"id": p.id, "status": p.status, "review": p.review,
+                        "note": d.note, "t_s": d.t_s,
+                        "approved": d.effective_commands.len(),
+                        "rejected": d.rejected_actions.len()})
+                    })
+                    .collect();
                 let pending: Vec<Value> = self
                     .proposals
                     .iter()
@@ -117,7 +134,7 @@ impl Exercise {
                             )
                     })
                     .map(|p| {
-                        json!({"id": p.id, "status": p.status, "summary": p.summary,
+                        json!({"id": p.id, "status": p.status, "review": p.review, "summary": p.summary,
                         "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
                         "role": p.source.label(), "conversation": p.via_conversation,
                         "narrative": p.narrative, "carries_actions": p.carries_actions,
@@ -173,6 +190,7 @@ impl Exercise {
                     "id_inject": self.delivery_msel.get(&delivery),
                     "title": m.title, "role": m.to, "clock": m.clock, "t_s": m.t_s,
                     "inject_text": m.text_en, "replies": replies, "pending_proposals": pending,
+                    "decided_proposals": decided,
                 })
             })
             .collect()

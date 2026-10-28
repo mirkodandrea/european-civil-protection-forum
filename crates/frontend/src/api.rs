@@ -155,6 +155,10 @@ pub const LANGUAGES: &[(&str, &str)] = &[
 pub fn status(s: &str) -> &str {
     crate::i18n::status("it", s)
 }
+/// Console label of a proposal, including partial approval and acknowledgement.
+pub fn proposal_status(p: &Value) -> &str {
+    crate::i18n::proposal_status(if crate::i18n_excon::is_en() { "en" } else { "it" }, p)
+}
 
 #[cfg(feature = "standalone")]
 pub async fn request(role: &str, path: &str, body: Option<Value>) -> Result<Value, String> {

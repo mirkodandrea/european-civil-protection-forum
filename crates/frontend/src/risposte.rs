@@ -13,10 +13,30 @@ use yew::prelude::*;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ReplyState {
     None,
+    /// Replies without any EXCON decision (e.g. superseded or informational).
     Replied,
     /// Every open proposal waits for the player's answer to an EXCON question.
     Clarifying,
     Pending,
+    /// Nothing open: the EXCON verdict on the latest decided response.
+    Decided(Verdict),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Verdict {
+    Approved,
+    Partial,
+    Rejected,
+    Acknowledged,
+}
+
+fn verdict(review: &str) -> Verdict {
+    match review {
+        "partially_approved" => Verdict::Partial,
+        "rejected" => Verdict::Rejected,
+        "acknowledged" => Verdict::Acknowledged,
+        _ => Verdict::Approved,
+    }
 }
 
 /// Proposals replaced by a newer player reply are history, never pending.
@@ -36,6 +56,8 @@ pub fn reply_state(r: &Value) -> ReplyState {
         ReplyState::Pending
     } else if !open.is_empty() {
         ReplyState::Clarifying
+    } else if let Some(d) = list(&r["decided_proposals"]).last() {
+        ReplyState::Decided(verdict(text(&d["review"])))
     } else if !list(&r["replies"]).is_empty() {
         ReplyState::Replied
     } else {
@@ -49,6 +71,21 @@ fn state_label(s: ReplyState) -> &'static str {
         ReplyState::Replied => crate::i18n::ex("risposta ricevuta"),
         ReplyState::Clarifying => crate::i18n::ex("in attesa di chiarimento"),
         ReplyState::Pending => crate::i18n::ex("in attesa di approvazione"),
+        ReplyState::Decided(Verdict::Approved) => crate::i18n::ex("approvata"),
+        ReplyState::Decided(Verdict::Partial) => crate::i18n::ex("approvata in parte"),
+        ReplyState::Decided(Verdict::Rejected) => crate::i18n::ex("rifiutata"),
+        ReplyState::Decided(Verdict::Acknowledged) => crate::i18n::ex("presa visione"),
+    }
+}
+
+/// CSS tone of a reply state pill.
+fn state_tone(s: ReplyState) -> &'static str {
+    match s {
+        ReplyState::Pending | ReplyState::Clarifying => "pending",
+        ReplyState::Replied | ReplyState::Decided(Verdict::Approved | Verdict::Acknowledged) => "sent",
+        ReplyState::Decided(Verdict::Partial) => "partial",
+        ReplyState::Decided(Verdict::Rejected) => "rejected",
+        ReplyState::None => "todo",
     }
 }
 
@@ -110,10 +147,10 @@ pub fn risposte(props: &RisposteProps) -> Html {
             let st=reply_state(r);
             let k=key(r);
             let onclick={let opened=opened.clone();let k=k.clone();Callback::from(move |_|opened.set(Some(k.clone())))};
-            html!{<li key={format!("{}:{}",k.0,k.1)} data-response={format!("{}:{}",k.0,k.1)}><button class={classes!("response-row",match st{ReplyState::Pending=>"is-pending",ReplyState::Replied=>"is-replied",ReplyState::Clarifying=>"is-pending",ReplyState::None=>"is-none"})} {onclick}>
+            html!{<li key={format!("{}:{}",k.0,k.1)} data-response={format!("{}:{}",k.0,k.1)}><button class={classes!("response-row",match st{ReplyState::Pending=>"is-pending",ReplyState::Replied|ReplyState::Decided(_)=>"is-replied",ReplyState::Clarifying=>"is-pending",ReplyState::None=>"is-none"})} {onclick}>
                 <span class="planned-times"><b>{text(&r["clock"])}</b><small>{format_offset(r["t_s"].as_i64().unwrap_or(0))}</small></span>
                 <span class="planned-body"><b>{if text(&r["title"]).is_empty(){crate::i18n::ex("Inject")}else{text(&r["title"])}}</b><span class="planned-text">{text(&r["inject_text"])}</span></span>
-                <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span><span class={classes!("pill","reply-state",match st{ReplyState::Pending|ReplyState::Clarifying=>"pending",ReplyState::Replied=>"sent",ReplyState::None=>"todo"})}>{state_label(st)}</span></span>
+                <span class="response-who"><span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span><span class={classes!("pill","reply-state",state_tone(st))} data-reply-state={format!("{st:?}")}>{state_label(st)}</span></span>
             </button></li>}
         })}</ol>
         if let Some(r)=selected{{dialog(props,&r,&roles,{let o=opened.clone();Callback::from(move |_|o.set(None))})}}
@@ -144,6 +181,7 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
         <div class="row"><h2 id="response-dialog-title">{format!("{} · {}",text(&r["title"]),role_name(roles,text(&r["role"])))}</h2><div class="grow"/><button onclick={Callback::from(move |_|onclose.emit(()))}>{crate::i18n::ex("Chiudi")}</button></div>
         <p class="muted">{format!("{} · {}",text(&r["clock"]),state_label(st))}</p>
         {thread_view(props,r,roles)}
+        {decisions_view(r)}
         {for list(&props.master["proposals"]).iter().filter(|p|p["narrative"]==true&&["approved","applied","failed"].contains(&text(&p["status"]))&&p["inject_id"]==r["delivery_id"]&&(p["source"]["role"]==r["role"]||(p["via_conversation"].is_number()&&p["reply_to"]==r["inject_message_id"]))).map(|p|html!{<>
             {via_conversation(r,p,roles)}
             <Proposal key={p["id"].to_string()} proposal={p.clone()} generation={props.state["generation"].clone()} preview={Value::Null} busy={props.busy} action={props.action.clone()} roles={roles.to_vec()} common={Some(common(props))}/>
@@ -158,6 +196,21 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], onclose: Callback<(
             }
         })}
     </section></crate::inject_panel::ModalShell>}
+}
+
+/// The EXCON verdicts already given on this recipient's responses, newest last.
+fn decisions_view(r: &Value) -> Html {
+    let decided = list(&r["decided_proposals"]);
+    if decided.is_empty() {
+        return html! {};
+    }
+    html! {<div class="response-decisions"><h3>{crate::i18n::ex("Decisioni EXCON")}</h3><ul>{for decided.iter().map(|d|{
+        let st=ReplyState::Decided(verdict(text(&d["review"])));
+        html!{<li key={d["id"].to_string()} data-decided-proposal={d["id"].to_string()}><span class={classes!("pill","reply-state",state_tone(st))}>{state_label(st)}</span>
+            {format!(" #{}",d["id"])}
+            if d["rejected"].as_u64().unwrap_or(0)>0{<small>{crate::exfmt!(" · {} approvate, {} non approvate"," · {} approved, {} not approved",d["approved"],d["rejected"])}</small>}
+            if !text(&d["note"]).is_empty(){<small class="muted">{format!(" · {}",text(&d["note"]))}</small>}</li>}
+    })}</ul></div>}
 }
 
 /// Who answered through which player conversation, when it is not the inject's recipient.
@@ -254,6 +307,15 @@ mod tests {
         assert_eq!(reply_state(&mixed), ReplyState::Pending);
         let old = json!({"replies":[{}],"pending_proposals":[{"id":1,"status":"superseded"}]});
         assert_eq!(reply_state(&old), ReplyState::Replied);
+        // After a decision the row shows the verdict, not just "reply received".
+        let decided = |review: &str| json!({"replies":[{}],"pending_proposals":[],"decided_proposals":[{"id":1,"review":"approved"},{"id":2,"review":review}]});
+        assert_eq!(reply_state(&decided("rejected")), ReplyState::Decided(Verdict::Rejected));
+        assert_eq!(reply_state(&decided("partially_approved")), ReplyState::Decided(Verdict::Partial));
+        assert_eq!(reply_state(&decided("acknowledged")), ReplyState::Decided(Verdict::Acknowledged));
+        assert_eq!(state_label(reply_state(&decided("rejected"))), "rifiutata");
+        // An open proposal still comes first.
+        let reopened = json!({"replies":[{}],"pending_proposals":[{"id":3}],"decided_proposals":[{"id":2,"review":"rejected"}]});
+        assert_eq!(reply_state(&reopened), ReplyState::Pending);
         assert_eq!(pending_count(&json!({"inject_responses":[old]})), 0);
     }
     #[test]

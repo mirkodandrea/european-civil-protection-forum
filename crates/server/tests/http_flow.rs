@@ -3557,3 +3557,65 @@ async fn clarification_answer_is_translated_not_interpreted_and_proposal_stays_a
     let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{p1}/decide"), Some(json!({"approve": true}))).await;
     assert_eq!(s, Status::Ok, "{out}");
 }
+
+#[tokio::test]
+async fn partial_approval_acknowledgement_and_review_states_over_http() {
+    let scn = Arc::new(scenario::synthetic::generate(1));
+    let mut ex = exercise::Exercise::new(sim::World::new(scn, 1).unwrap());
+    ex.start().unwrap();
+    let parent = ex
+        .send_inject(None, "Task", "EXCON", &["mayor".into()], "Protect Pineta", &Default::default())
+        .unwrap()[0];
+    let shared = Arc::new(Mutex::new(ex));
+    let app = build(shared.clone(), llm::Llm::off(), None, access()).await.0;
+    // Two actions: EXCON approves the first and rejects the second with a reason.
+    let body = json!({"text":"Warn F4 and G4", "reply_to": parent,
+        "commands":[{"type":"IssueWarning","zone":"F4"},{"type":"IssueWarning","zone":"G4"}]});
+    let (_, sent) = call_key(&app, "POST", "/api/player/mayor/actions", Some(body), Some("test-mayor")).await;
+    let pid = sent["proposal"].as_u64().unwrap();
+    let uri = format!("/api/master/proposals/{pid}/decide");
+    let (s, _) = call(&app, "POST", &uri, Some(json!({"approve":true,"rejected_actions":[{"index":5}]}))).await;
+    assert_eq!(s, Status::BadRequest, "unknown action index");
+    let (s, out) = call(&app, "POST", &uri, Some(json!({"approve":true,
+        "reason":"Only F4 for now",
+        "rejected_actions":[{"index":1,"reason":"G4 is not threatened yet"}]}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
+    assert!(out["facts_en"].as_str().unwrap().contains("NOT APPROVED: Issue warning to zone G4"));
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
+    assert_eq!((p["status"].as_str(), p["review"].as_str()), (Some("approved"), Some("partially_approved")));
+    assert_eq!(p["commands"].as_array().unwrap().len(), 1);
+    assert_eq!(p["decision"]["note"], "Only F4 for now", "`reason` is the same field as `note`");
+    // The player sees the verdict per action and receives the reasons.
+    let player = eventually(&app, "/api/player/mayor", |v| {
+        v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "feedback")
+    })
+    .await;
+    let mine = player["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
+    assert_eq!(mine["review"], "partially_approved");
+    assert_eq!(mine["decision"]["rejected_actions"][0]["note"], "G4 is not threatened yet");
+    assert_eq!(mine["decision"]["rejected_actions"][0]["command"]["zone"], "G4");
+    let feedback = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "feedback").unwrap();
+    assert!(feedback["text"].as_str().unwrap().contains("G4 is not threatened yet"), "{feedback}");
+    // The AI conversation of the player knows what was approved and what not.
+    let context = shared.lock().unwrap().conversation("mayor");
+    let last = context.iter().rev().find(|t| t.content.contains("FEEDBACK")).unwrap();
+    assert!(last.content.contains("APPROVED: Issue warning to zone F4"), "{}", last.content);
+    assert!(last.content.contains("NOT APPROVED: Issue warning to zone G4"), "{}", last.content);
+
+    // A reply with no actions (AI off: nothing interpreted) is acknowledged.
+    let (_, r) = call_key(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"How many buses do we have?","reply_to":parent,
+        "evidence":{"basis":{"kind":"operational_judgment","reference":"question"}}})), Some("test-mayor")).await;
+    let q = r["proposal"].as_u64().unwrap();
+    eventually(&app, "/api/master", |m| m["proposals"].as_array().unwrap().iter().any(|p| p["id"] == q && p["status"] == "pending")).await;
+    let (s, out) = call(&app, "POST", &format!("/api/master/proposals/{q}/decide"), Some(json!({"approve":true,"note":"Three buses"}))).await;
+    assert_eq!(s, Status::Ok, "{out}");
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == q).unwrap();
+    assert_eq!((p["status"].as_str(), p["review"].as_str()), (Some("acknowledged"), Some("acknowledged")));
+    // The EXCON list shows each verdict, not just "reply received".
+    let row = m["inject_responses"].as_array().unwrap().iter().find(|r| r["inject_message_id"] == parent).unwrap();
+    let reviews: Vec<_> = row["decided_proposals"].as_array().unwrap().iter().map(|d| d["review"].as_str().unwrap().to_string()).collect();
+    assert_eq!(reviews, ["partially_approved", "acknowledged"]);
+    assert!(row["pending_proposals"].as_array().unwrap().is_empty());
+}

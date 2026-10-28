@@ -52,6 +52,11 @@ fn outcome(l: &str, it: &Item) -> Outcome {
     if latest["narrative"] == true && latest["carries_actions"] != true && latest["status"] == "approved" {
         return o(if list(&latest["narrative_outcomes"]).is_empty() {"narrative_approved"} else {"narrative_resolved"}, "done", false);
     }
+    match (text(&latest["review"]), text(&latest["status"])) {
+        ("acknowledged", _) => return o("st_acknowledged", "done", false),
+        ("partially_approved", "approved" | "applied") => return o("st_partially_approved", "partial", false),
+        _ => {}
+    }
     match text(&latest["status"]) {
         "rejected" => o("st_rejected", "bad", true),
         "failed" => o("st_failed", "bad", false),
@@ -86,8 +91,9 @@ struct Ev {
     /// Proposal status (proposals only).
     status: String,
     executions: Value,
-    /// Actions declared next to a narrative (a plain action response is its own text).
-    actions: Vec<String>,
+    /// Actions declared next to a narrative (a plain action response is its own
+    /// text), or each action's verdict after a partial approval (`false` = not approved).
+    actions: Vec<(String, bool)>,
 }
 
 /// The conversation of an inject in order: each proposal is followed by
@@ -110,8 +116,23 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         let status = text(&p["status"]);
         // The player's answers are proposals too: take their time from the thread.
         let when = entries.iter().find(|e| e["author"] == "player" && e["proposal"] == p["id"]).map(|e| text(&e["clock"]).to_string()).unwrap_or_else(|| format_offset(p["t_s"].as_i64().unwrap_or(0)));
-        let actions = if p["carries_actions"] == true { list(&p["commands"]).iter().map(|c| crate::widgets::command_summary(l, c)).collect() } else { Vec::new() };
-        out.push(Ev { status: if p["narrative"]==true && p["carries_actions"]!=true && status=="approved" {if list(&p["narrative_outcomes"]).is_empty(){"narrative_approved"}else{"narrative_resolved"}}else{status}.to_string(), executions: p["executions"].clone(), actions, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
+        let rejected = list(&p["decision"]["rejected_actions"]);
+        let partial = p["review"] == "partially_approved";
+        let mut actions: Vec<(String, bool)> = if p["carries_actions"] == true || partial {
+            list(&p["commands"]).iter().map(|c| {
+                let s = crate::widgets::command_summary(l, c);
+                (if partial { format!("✓ {s} · {}", i18n::t(l, "act_approved")) } else { s }, true)
+            }).collect()
+        } else { Vec::new() };
+        // Which actions were not approved, and why (a whole rejection has the reason below).
+        if partial {
+            actions.extend(rejected.iter().map(|r| {
+                let note = text(&r["note"]);
+                (format!("✗ {} · {}{}", crate::widgets::command_summary(l, &r["command"]), i18n::t(l, "act_not_approved"), if note.is_empty() { String::new() } else { format!(": {note}") }), false)
+            }));
+        }
+        let shown = if p["narrative"]==true && p["carries_actions"]!=true && status=="approved" {if list(&p["narrative_outcomes"]).is_empty(){"narrative_approved"}else{"narrative_resolved"}} else if p["review"]=="acknowledged" {"acknowledged"} else if partial && status=="approved" {"partially_approved"} else {status};
+        out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
         let note = text(&p["decision"]["note"]);
         if !note.is_empty() {
             let kind = if status == "rejected" { Kind::Reason } else { Kind::Decision };
@@ -310,7 +331,7 @@ impl App {
                 html! {<li class={classes!("inj-msg",if mine{"mine"}else{"theirs"},cls)}>
                     <small><b>{e.who}</b>{format!(" · {}",e.clock)}{tag}</small>
                     if !e.text.is_empty(){<p>{e.text}</p>}
-                    if !e.actions.is_empty(){<ul class="inj-actions">{for e.actions.iter().map(|a|html!{<li>{a}</li>})}</ul>}
+                    if !e.actions.is_empty(){<ul class="inj-actions">{for e.actions.iter().map(|(a,ok)|html!{<li class={classes!((!*ok).then_some("not-approved"))}>{a}</li>})}</ul>}
                     {extra}</li>}
             })
             .collect();
@@ -500,6 +521,23 @@ mod tests {
         assert!(outcome("it", &item(vec![&pending], vec![&asked])).action);
         assert!(!outcome("it", &item(vec![&pending], vec![])).action);
         assert_eq!(outcome("it", &item(vec![&pending], vec![&closed])).tone, "wait");
+    }
+    #[test]
+    fn verdicts_are_explicit_and_per_action() {
+        let partial = json!({"id":4,"status":"approved","review":"partially_approved","original":"warn F4, G4","t_s":0,
+            "commands":[{"type":"IssueWarning","zone":"F4"}],
+            "decision":{"review":"partially_approved","t_s":0,"rejected_actions":[{"index":1,"command":{"type":"IssueWarning","zone":"G4"},"note":"not threatened"}]}});
+        let ack = json!({"id":5,"status":"acknowledged","review":"acknowledged","original":"how many buses?","t_s":0});
+        let o = outcome("it", &item(vec![&partial], vec![]));
+        assert_eq!((o.label, o.tone, o.action), ("Approvata in parte", "partial", false));
+        assert_eq!(outcome("en", &item(vec![&ack], vec![])).label, "Acknowledged · nothing to execute");
+        let name = |id: &str| id.to_string();
+        let ev = events("it", &item(vec![&partial], vec![]), &name);
+        assert_eq!(ev[0].status, "partially_approved");
+        assert_eq!(ev[0].actions.len(), 2);
+        assert!(ev[0].actions[0].1 && ev[0].actions[0].0.contains("Approvata"));
+        assert!(!ev[0].actions[1].1 && ev[0].actions[1].0.contains("not threatened"), "{:?}", ev[0].actions);
+        assert_eq!(i18n::status("fr", "partially_approved"), "Approuvée en partie");
     }
     #[test]
     fn last_line_names_the_last_event() {
