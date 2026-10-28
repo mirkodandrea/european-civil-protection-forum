@@ -1,0 +1,444 @@
+{
+  "id": "selvariva_crisi_integrata",
+  "name": "Selvariva — crisi coordinata in cinque turni",
+  "base": "selvariva_basin",
+  "description": "TTX su Selvariva: 3 ruoli, 5 turni da 30 minuti (16:00–18:30) e 10 inject. Coordinamento civile, direzione dei soccorsi e sala operativa affrontano festival e scolaresca, accessi, risorse limitate, rinforzi e informazione pubblica. Ogni ruolo vede sulla mappa solo ciò che gli viene comunicato: stime dalle chiamate, rilievi sul campo, il drone della direzione dei soccorsi e ciò che gli altri ruoli condividono. Tempi, dotazioni e quantità sono ipotesi di esercitazione; gli esiti dipendono dalle decisioni e dal modello.",
+  "edits": {
+    "name": "Selvariva — crisi coordinata in cinque turni",
+    "description": "TTX su Selvariva: 3 ruoli, 5 turni da 30 minuti (16:00–18:30) e 10 inject. Coordinamento civile, direzione dei soccorsi e sala operativa affrontano festival e scolaresca, accessi, risorse limitate, rinforzi e informazione pubblica. Ogni ruolo vede sulla mappa solo ciò che gli viene comunicato: stime dalle chiamate, rilievi sul campo, il drone della direzione dei soccorsi e ciò che gli altri ruoli condividono. Tempi, dotazioni e quantità sono ipotesi di esercitazione; gli esiti dipendono dalle decisioni e dal modello.",
+    "start_clock_s": 57600,
+    "turn_minutes": 30,
+    "weather": {
+      "wind_dir_deg": 315.0,
+      "wind_speed_kmh": 24.0,
+      "moisture_pct": 10.0
+    },
+    "default_persona": "Direzione esercitazione — conca delle Due Valli",
+    "excon_roles": [
+      "Servizio meteo regionale",
+      "Centrale 112",
+      "Referenti locali",
+      "Centro di mobilitazione regionale",
+      "Squadre sul campo",
+      "Referente sanitario e sportello famiglie",
+      "Ufficio di coordinamento nazionale",
+      "Redazione del Corriere della Conca",
+      "Sala operativa — personale subentrante"
+    ],
+    "resource_types": [
+      {
+        "id": "ground_crews",
+        "name": "Squadre AIB a terra",
+        "description": "Squadre per linee di controllo. Ogni unità opera entro il limite di lavoro del modello; l’effetto inizia dopo il trasferimento. Presidio, ricognizione a piedi e bonifica manuale restano iniziative narrative EXCON.",
+        "speed_mps": 2.0
+      },
+      {
+        "id": "engines",
+        "name": "Autobotti VVF",
+        "description": "Unità operative del modello: 2.500 L, manichetta di 60 m, accesso stradale e rifornimento alla base. Non sono ambulanze né mezzi di pattugliamento.",
+        "speed_mps": 8.0
+      },
+      {
+        "id": "air_tankers",
+        "name": "Mezzo aereo antincendio",
+        "description": "Un’unità abilita WaterDrop secondo il modello; non simula sortite, visibilità, effemeridi o distanze dalle linee elettriche. EXCON verifica narrativamente la disponibilità prima di approvare.",
+        "speed_mps": 70.0
+      },
+      {
+        "id": "drones",
+        "name": "Drone di monitoraggio",
+        "description": "Tiene aggiornata la mappa della direzione dei soccorsi su al massimo 4 zone contigue (un rettangolo della griglia), con un rilievo ogni 5 minuti per 40 minuti in posizione; poi rientra a Pianalto e si ricarica per 15 minuti. Non vola con vento oltre 45 km/h. Gli altri ruoli vedono i rilievi solo se vengono condivisi.",
+        "speed_mps": 20.0,
+        "drone": {
+          "max_zones": 4,
+          "endurance_s": 2400,
+          "turnaround_s": 900,
+          "update_interval_s": 300,
+          "wind_limit_kmh": 45.0
+        }
+      },
+      {
+        "id": "buses",
+        "name": "Autobus per evacuazione assistita",
+        "description": "50 posti per unità nel modello. Scuole e presidio sanitario richiedono mezzi; gli autobus non garantiscono trasporto sanitario o accessibilità e non effettuano navette automatiche. L’assistenza specifica è narrativa.",
+        "speed_mps": 6.0
+      },
+      {
+        "id": "police_patrols",
+        "name": "Pattuglie per viabilità",
+        "description": "Ogni pattuglia può presidiare una chiusura stradale secondo le regole del modello. Riaperture motivate sulla situazione corrente; verifica sul posto e presidio pedonale sono narrativi.",
+        "speed_mps": 10.0
+      }
+    ],
+    "roles": [
+      {
+        "id": "coordinamento_civile",
+        "name": "Coordinamento civile e assistenza",
+        "level": "local",
+        "language": "it",
+        "description": "Accorpa Comune, polizia locale, assistenza e comunicazione pubblica. Decide priorità di allerta ed evacuazione, apre accoglienza e coordina i percorsi con la direzione dei soccorsi. Dispone di 4 autobus e 3 pattuglie. Rifugio (40), scuola (80), presidio sanitario (28) e festival (360) sono gruppi distinti; verifica destinazione, capienza, accesso e missioni già attive prima di proporre nuovi ordini. La tua mappa mostra solo ciò che ti viene comunicato, con l’ora del dato: chiedi alla direzione dei soccorsi i rilievi del drone prima di scegliere i percorsi. Trasporto sanitario/accessibilità, assistenza specifica, ricongiungimenti e comunicati sono iniziative narrative con esito EXCON, non capacità automatiche degli autobus. Non diffonde dati nominativi.",
+        "allowed_actions": [
+          "IssueWarning",
+          "OpenShelter",
+          "EvacuateZone",
+          "EvacuateBuilding",
+          "CloseRoad",
+          "ReopenRoad"
+        ],
+        "resources": {
+          "buses": 4,
+          "police_patrols": 3
+        }
+      },
+      {
+        "id": "direzione_soccorso",
+        "name": "Direzione dei soccorsi AIB e VVF",
+        "level": "local",
+        "language": "it",
+        "description": "Accorpa DOS, squadre AIB e VVF. Dispone di 4 squadre a terra, 2 autobotti e 1 drone di monitoraggio; nessun mezzo aereo all’inizio. Il drone (MonitorArea) aggiorna la tua mappa su fino a 4 zone contigue mentre è in posizione: scegli dove serve e quando, perché poi deve rientrare e ricaricarsi. Motiva priorità tra bosco e strutture, accesso, acqua, rifornimento e ritorno delle unità. Richiede rinforzi alla sala indicando capacità, luogo e ultimo orario utile. I VVF non svolgono pattugliamento. Ricognizione a terra, gestori elettrico/idrico, bonifica e limiti reali del volo sono gestiti narrativamente da EXCON; la propagazione e le missioni fisiche si leggono dal modello.",
+        "allowed_actions": [
+          "CutFireLine",
+          "DeployEngine",
+          "WaterDrop",
+          "MonitorArea"
+        ],
+        "resources": {
+          "ground_crews": 4,
+          "engines": 2,
+          "air_tankers": 0,
+          "drones": 1
+        }
+      },
+      {
+        "id": "sala_operativa",
+        "name": "Sala operativa e previsione",
+        "level": "regional",
+        "language": "it",
+        "description": "Accorpa coordinamento regionale, raccordo nazionale e cellula meteo. Condivide previsioni e limiti, consolida il quadro comune e propone RequestReinforcement sulla base dei bisogni degli altri due ruoli. Non ha osservatori propri: la tua mappa si aggiorna con le stime ricevute e con ciò che gli altri ruoli condividono, quindi indica sempre fonte e ora dei dati che riporti. Distingue richiesta, approvazione, arrivo e impiego. Prepara il SITREP e rappresenta il raccordo con ERCC simulato; aiuti internazionali e contatti esterni sono solo narrativi e non garantiscono unità. Non modifica meteo o fuoco e non inventa danni o persone evacuate.",
+        "allowed_actions": [
+          "RequestReinforcement"
+        ],
+        "resources": {}
+      }
+    ],
+    "reinforcements": [
+      {
+        "resource": "ground_crews",
+        "max_qty": 2,
+        "delay_min": 35,
+        "source": "Colonna regionale AIB — attesa simulata",
+        "assigned_to": "direzione_soccorso"
+      },
+      {
+        "resource": "buses",
+        "max_qty": 2,
+        "delay_min": 30,
+        "source": "Trasporto regionale — attesa simulata",
+        "assigned_to": "coordinamento_civile"
+      },
+      {
+        "resource": "air_tankers",
+        "max_qty": 1,
+        "delay_min": 45,
+        "source": "Sala aerea regionale — disponibilità di esercitazione da confermare",
+        "assigned_to": "direzione_soccorso"
+      }
+    ],
+    "msel": [
+      {
+        "id": "SCS-01",
+        "at_s": 0,
+        "turn": 1,
+        "title": "Bollettino di pericolo incendi",
+        "sender": "Servizio meteo regionale",
+        "recipients": [
+          "all"
+        ],
+        "text": "Bollettino delle 16:00. Dopo un periodo asciutto, il vento nella conca delle Due Valli proviene da nord-ovest a 24 km/h; l’umidità stimata del combustibile fine è del 10%. È possibile un rinforzo del vento nel corso del pomeriggio, ma intensità e orario restano incerti. Al momento non risultano segnalazioni confermate di incendio nella conca.",
+        "objective": "Valutare se il bollettino viene condiviso e tradotto in misure preventive motivate. Nota EXCON: osservare destinatari, presa in carico e tempi del primo aggiornamento senza suggerire le decisioni nel messaggio. Non c’è ancora fuoco: nessuna rivelazione di mappa.",
+        "event": "Preallerta e primo intervento",
+        "actions": []
+      },
+      {
+        "id": "SCS-02",
+        "at_s": 900,
+        "turn": 1,
+        "title": "Segnalazione di due focolai alle Fonti",
+        "sender": "Centrale 112",
+        "recipients": [
+          "all"
+        ],
+        "text": "Ore 16:15. Più chiamanti riferiscono un boato vicino all’Area festival delle Fonti e fumo nel bosco sovrastante. Gli osservatori confermano due focolai nel Bosco delle Fonti; la causa non è stata accertata e non sono pervenute notizie verificate di feriti. La posizione riportata sulla mappa è ricavata dalle chiamate ed è solo indicativa. Le prime squadre in avvicinamento chiedono il riferimento per il coordinamento sul posto.",
+        "objective": "Osservare come vengono concordati coordinamento, priorità e primi impieghi, e se la stima incerta viene verificata (drone, osservatori) prima di impegnare risorse. Nota EXCON: lasciare selezionati i due inneschi prima della stima, che li legge dal modello; se si disattivano gli inneschi disattivare anche la stima. Non suggerire una ripartizione obbligata dei compiti.",
+        "event": "Preallerta e primo intervento",
+        "actions": [
+          {
+            "id": "SCS-A01",
+            "title": "Innesco principale delle Fonti",
+            "command": {
+              "type": "Ignite",
+              "at": {
+                "x": 1730,
+                "y": 4050
+              },
+              "radius_m": 80
+            },
+            "offset_s": 0,
+            "note": "Focolaio fisico nel Bosco delle Fonti (zona C3). Selezionabile da EXCON all’invio."
+          },
+          {
+            "id": "SCS-A02",
+            "title": "Secondo focolaio sul versante",
+            "command": {
+              "type": "Ignite",
+              "at": {
+                "x": 2050,
+                "y": 4160
+              },
+              "radius_m": 60
+            },
+            "offset_s": 0,
+            "note": "Secondo focolaio fisico; non rappresenta una simulazione di esplosione. Selezionabile da EXCON all’invio."
+          },
+          {
+            "id": "SCS-R01",
+            "title": "Stima dalle chiamate al 112",
+            "reveal": {
+              "kind": "approximate",
+              "position_error_m": 500.0,
+              "area_error_frac": 0.4
+            },
+            "offset_s": 0,
+            "note": "Solo fumo visto da lontano: posizione ed estensione molto incerte, diverse per ruolo. Richiede gli inneschi già eseguiti."
+          }
+        ]
+      },
+      {
+        "id": "SCS-03",
+        "at_s": 2100,
+        "turn": 2,
+        "title": "Aggiornamento da festival, rifugio e strutture",
+        "sender": "Referenti locali",
+        "recipients": [
+          "coordinamento_civile",
+          "direzione_soccorso"
+        ],
+        "text": "L’insegnante del Rifugio della scolaresca è stata ricontattata dopo l’interruzione della chiamata: il registro del gruppo comprende 37 bambini e 3 accompagnatori. Gli organizzatori del festival, con 360 partecipanti registrati, chiedono indicazioni per i visitatori che vogliono recuperare le auto. La scuola di Roverechiare comunica 80 presenze nel proprio registro e il presidio sanitario 28. Le schede comunali indicano capienze nominali di 800 posti a Pianalto, 400 ai Prati e 120 nella piazza di Roverechiare. La polizia locale ha verificato strade ed edifici tra le Fonti e Roverechiare: il rilievo è sulla mappa con l’ora in cui è stato fatto.",
+        "objective": "Valutare priorità, scelta delle destinazioni e compatibilità tra trasporto, accessi e accoglienza. Nota EXCON: le consistenze si riferiscono a gruppi distinti e non attestano la posizione corrente delle persone. Il rilievo copre le zone C3, C4, D3, D4 (strade ed edifici, non il fuoco) e invecchia: osservare se i ruoli lo aggiornano prima di muovere autobus. I posti nominali non certificano sicurezza o accessibilità.",
+        "event": "Protezione delle persone e impiego risorse",
+        "actions": [
+          {
+            "id": "SCS-R02",
+            "title": "Rilievo di strade ed edifici tra le Fonti e Roverechiare",
+            "reveal": {
+              "kind": "exact",
+              "zones": [
+                "C3",
+                "C4",
+                "D3",
+                "D4"
+              ],
+              "layers": [
+                "roads",
+                "buildings"
+              ],
+              "source": "Polizia locale"
+            },
+            "offset_s": 0,
+            "note": "Area festival, rifugio, Bosco delle Fonti e Roverechiare. Stato di strade ed edifici all’invio, senza fuoco."
+          }
+        ]
+      },
+      {
+        "id": "SCS-04",
+        "at_s": 3000,
+        "turn": 2,
+        "title": "Disponibilità di rinforzi regionali",
+        "sender": "Centro di mobilitazione regionale",
+        "recipients": [
+          "all"
+        ],
+        "text": "Possiamo mettere a disposizione due squadre AIB, due autobus e un mezzo aereo antincendio. Dalla conferma della mobilitazione stimiamo rispettivamente 35, 30 e 45 minuti per l’arrivo. Per predisporre l’invio ci servono capacità e quantità richieste, destinazione, referente sul posto e orario entro cui il supporto risulta ancora utile. Le condizioni di impiego del mezzo aereo saranno aggiornate dalla sala aerea.",
+        "objective": "Valutare tempestività e motivazione delle richieste, distinguendo disponibilità, mobilitazione, arrivo e impiego. Nota EXCON: l’inject non concede risorse; RequestReinforcement resta una proposta della sala operativa. Squadre e mezzo aereo sono assegnati alla direzione dei soccorsi, autobus al coordinamento civile. Verificare separatamente l’impiegabilità aerea narrativa.",
+        "event": "Protezione delle persone e impiego risorse",
+        "actions": []
+      },
+      {
+        "id": "SCS-05",
+        "at_s": 3900,
+        "turn": 3,
+        "title": "Aggiornamento meteo delle 17:05",
+        "sender": "Servizio meteo regionale",
+        "recipients": [
+          "all"
+        ],
+        "text": "Aggiornamento delle 17:05. Il vento proviene ora da ovest-nord-ovest a 38 km/h; l’umidità stimata del combustibile fine è scesa all’8%. Le nuove condizioni possono modificare la direzione e la rapidità di propagazione sui versanti. Non è ancora disponibile una stima aggiornata dell’evoluzione locale dell’incendio.",
+        "objective": "Osservare come viene aggiornato il piano e condiviso il cambiamento delle condizioni. Nota EXCON: il cambio meteo è l’azione associata all’inject; allineare il testo ai valori realmente applicati se l’azione viene modificata o disattivata. A 38 km/h il drone resta in volo (limite 45 km/h); oltre il limite viene richiamato e non decolla. Eventuali prodotti di previsione devono riportare ipotesi, ora di riferimento e limiti.",
+        "event": "Cambio delle condizioni e accessi",
+        "actions": [
+          {
+            "id": "SCS-A03",
+            "title": "Vento da ONO più intenso",
+            "command": {
+              "type": "SetWeather",
+              "wind_dir_deg": 290,
+              "wind_speed_kmh": 38,
+              "moisture_pct": 8
+            },
+            "offset_s": 0,
+            "note": "Variazione fisica di esercitazione. EXCON seleziona all’invio."
+          }
+        ]
+      },
+      {
+        "id": "SCS-06",
+        "at_s": 4800,
+        "turn": 3,
+        "title": "Fumo lungo la Strada delle Fonti e richieste dai soccorritori",
+        "sender": "Squadre sul campo",
+        "recipients": [
+          "all"
+        ],
+        "text": "Le squadre segnalano fumo presso la Strada delle Fonti e in prossimità del Deposito delle Fornaci, il cui registro iniziale riporta 16 addetti. Hanno trasmesso lo stato di strade e strutture nelle zone intorno al fuoco: il rilievo è sulla mappa con l’ora in cui è stato fatto e non sostituisce una verifica prima di ogni trasferimento. Un caposquadra chiede conferma dell’approvvigionamento idrico e dello stato di una linea elettrica nel settore di lavoro; le risposte dei gestori non sono ancora pervenute.",
+        "objective": "Valutare il raccordo tra viabilità, protezione delle strutture e richieste ai gestori. Nota EXCON: il rilievo copre le zone in fiamme e quelle vicine (strade ed edifici) e fallisce se nessuna zona è in fiamme. Reti elettriche/idriche e sostanze pericolose non hanno una fisica dedicata; trattare i riscontri dei gestori narrativamente senza inventare guasti o effetti automatici. Restano fisici acqua, gittata, viaggio e rifornimento delle autobotti.",
+        "event": "Cambio delle condizioni e accessi",
+        "actions": [
+          {
+            "id": "SCS-R03",
+            "title": "Rilievo di accessi e strutture intorno al fuoco",
+            "reveal": {
+              "kind": "exact",
+              "zones": "burning_and_adjacent",
+              "layers": [
+                "roads",
+                "buildings"
+              ]
+            },
+            "offset_s": 0,
+            "note": "Strade ed edifici nelle zone in fiamme e adiacenti; il fronte non è incluso."
+          }
+        ]
+      },
+      {
+        "id": "SCS-07",
+        "at_s": 5700,
+        "turn": 4,
+        "title": "Bisogni di assistenza e richieste di contatto",
+        "sender": "Referente sanitario e sportello famiglie",
+        "recipients": [
+          "coordinamento_civile",
+          "sala_operativa"
+        ],
+        "text": "Il referente del presidio sanitario segnala che, tra le 28 persone del registro iniziale, cinque hanno ridotta mobilità e due sono in gravidanza. Chiede conferma delle soluzioni di accompagnamento e assistenza disponibili in caso di trasferimento. Lo sportello famiglie ha ricevuto tre richieste di contatto relative a persone registrate nei gruppi del festival e del rifugio; nessuna scomparsa è stata accertata.",
+        "objective": "Osservare come vengono consolidati bisogni e dati sulle persone. Nota EXCON: i bisogni specifici sono sottoinsiemi delle presenze iniziali; le richieste di contatto non aggiungono persone né confermano dispersi. Assistenza clinica, accessibilità, ricongiungimenti e supporto psicosociale sono esiti narrativi, distinti dagli effetti fisici dell’evacuazione.",
+        "event": "Assistenza e richiesta di supporto",
+        "actions": []
+      },
+      {
+        "id": "SCS-08",
+        "at_s": 6600,
+        "turn": 4,
+        "title": "Richiesta di aggiornamento per il coordinamento nazionale",
+        "sender": "Ufficio di coordinamento nazionale",
+        "recipients": [
+          "all"
+        ],
+        "text": "Per il punto di situazione delle 18:00 vi chiediamo un aggiornamento sintetico su persone e strutture esposte, missioni in corso, capacità disponibili e principali difficoltà di accesso. Riportate l’ora dei dati e gli eventuali fabbisogni aggiuntivi, con destinazione e orario utile. Vi trasmettiamo l’ultimo rilevamento termico da satellite: la posizione è indicativa e non distingue il fronte attivo dall’area già percorsa. ERCC ha segnalato la possibilità di esaminare richieste di assistenza; altre emergenze stanno impegnando le capacità regionali e nessuna disponibilità internazionale è stata ancora confermata.",
+        "objective": "Valutare coerenza del quadro comune e utilità delle richieste di supporto. Nota EXCON: la stima satellitare è approssimata; osservare se i ruoli la confrontano con i rilievi più recenti (drone, squadre) e ne dichiarano la fonte. Rappresentare il raccordo nazionale ed ERCC senza contatti esterni o concessioni automatiche di risorse. Non prescrivere ai partecipanti come raccogliere i riscontri degli altri ruoli.",
+        "event": "Assistenza e richiesta di supporto",
+        "actions": [
+          {
+            "id": "SCS-R04",
+            "title": "Rilevamento termico da satellite",
+            "reveal": {
+              "kind": "approximate",
+              "position_error_m": 300.0,
+              "area_error_frac": 0.3,
+              "source": "Rilevamento satellitare"
+            },
+            "offset_s": 0,
+            "note": "Stima indipendente dell’incendio, utile soprattutto alla sala operativa che non ha osservatori propri."
+          }
+        ]
+      },
+      {
+        "id": "SCS-09",
+        "at_s": 7500,
+        "turn": 5,
+        "title": "Domande della stampa e richieste di rientro",
+        "sender": "Redazione del Corriere della Conca",
+        "recipients": [
+          "all"
+        ],
+        "text": "Sui social circolano affermazioni secondo cui il boato sarebbe stato causato da una bomba e alcuni soccorritori sarebbero rimasti inattivi. Abbiamo inoltre ricevuto domande di residenti e visitatori che vogliono rientrare o recuperare le auto. Quali informazioni potete confermare? Quali indicazioni deve seguire la popolazione e quando sarà disponibile il prossimo aggiornamento?",
+        "objective": "Osservare comunicazione dell’incertezza e motivazione delle condizioni di riapertura. Nota EXCON: le affermazioni riportate sono voci, non fatti acquisiti. Verificare la coerenza dei comunicati con gli esiti disponibili e con l’ora dei dati di mappa su cui si basano. Il rientro degli evacuati non è un comando fisico automatico; i comunicati restano nell’esercitazione.",
+        "event": "Quadro finale e consegne",
+        "actions": []
+      },
+      {
+        "id": "SCS-10",
+        "at_s": 8400,
+        "turn": 5,
+        "title": "Richiesta di consegne per il turno subentrante",
+        "sender": "Sala operativa — personale subentrante",
+        "recipients": [
+          "all"
+        ],
+        "text": "Il personale che subentrerà alle 18:30 richiede le consegne aggiornate: situazione dei fronti, missioni in corso, risorse disponibili, accessi interdetti e persone ancora in attesa di trasferimento o assistenza. Indicate le richieste pendenti, i referenti da ricontattare e gli orari dei prossimi riscontri. Servono anche le informazioni già confermate da condividere con popolazione e autorità. Sulla mappa trovate il quadro consolidato delle zone interessate.",
+        "objective": "Valutare completezza delle consegne e tracciabilità delle decisioni. Nota EXCON: il quadro consolidato rende comune la mappa delle zone interessate; confrontarlo in debrief con ciò che ciascun ruolo credeva prima. La fine della traccia non equivale a incendio spento. Non presentare la griglia di valutazione come messaggio operativo.",
+        "event": "Quadro finale e consegne",
+        "actions": [
+          {
+            "id": "SCS-R05",
+            "title": "Quadro consolidato per le consegne",
+            "reveal": {
+              "kind": "exact",
+              "zones": "burning_and_adjacent",
+              "layers": [
+                "fire",
+                "buildings",
+                "roads",
+                "lines",
+                "units"
+              ],
+              "source": "Sala operativa"
+            },
+            "offset_s": 0,
+            "note": "Tutti i livelli sulle zone in fiamme e adiacenti, per tutti i ruoli."
+          }
+        ]
+      }
+    ],
+    "tactical_policy": {
+      "version": "ttx-local-v1",
+      "sector_radius_m": 300.0,
+      "reassess_s": 60,
+      "regroup_s": 60,
+      "work_danger": 0.35,
+      "parking_danger": 0.1,
+      "wet_limit_pts": 30.0,
+      "hose_reach_m": 60.0,
+      "share_work": true,
+      "resume_after_withdrawal": true
+    },
+    "operations": {
+      "road_routing": true,
+      "progressive_suppression": true,
+      "traffic": true,
+      "intensity_exposure": true,
+      "spotting": false,
+      "segment_fire_closures": true,
+      "terrain_travel": true,
+      "emergency_congestion": true,
+      "local_autonomy": true
+    },
+    "staging_base": "Centro operativo di Pianalto",
+    "operational_grants": []
+  },
+  "run": {
+    "seed": 17,
+    "realizations": 32,
+    "cutoff": 0.5,
+    "operational_model": true
+  }
+}

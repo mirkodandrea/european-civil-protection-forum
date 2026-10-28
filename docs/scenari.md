@@ -15,13 +15,13 @@ Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Gene
 | Standalone (WASM) | `localStorage` (`ttx.standalone.packs`) più i pack incorporati | `ttx.standalone.active` |
 
 La sessione salvata contiene il pack da cui è partita: al riavvio si ricostruisce lo stesso scenario anche se la libreria è cambiata.
-Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km) e **Selvariva** (`selvariva_basin`, 6 × 6 km), con i pack `valverde_night_wind` e `selvariva_festival`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
+Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km) e **Selvariva** (`selvariva_basin`, 6 × 6 km), con i pack `valverde_night_wind` e `selvariva_crisi_integrata`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
 
 I salvataggi browser nuovi registrano anche l’identità dei dati del territorio: un replay su una mappa modificata viene scartato con avviso. I salvataggi precedenti senza impronta restano leggibili. Il 3D locale ricostruisce la scena quando cambia scenario; il viewer remoto scarica la nuova scena fuori dal ciclo di rendering quando cambia territorio.
 
 Per aggiungere un territorio al server basta un nuovo `<id>.json` valido nella libreria; per includerlo anche nello standalone aggiungerlo a `crates/scenario/src/embedded.rs`, con eventuali pack, e ricostruire il browser. La feature `scenario/embedded` evita di incorporare i raster negli strumenti headless che non ne hanno bisogno.
 
-La traccia di conduzione da un’ora, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md).
+La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md).
 
 ## Da riga di comando
 
@@ -112,7 +112,7 @@ Un'azione può, invece di un `command`, rivelare **conoscenza sulla mappa** ai d
 
 ## Drone di monitoraggio (`drones`, `MonitorArea`)
 
-Una risorsa che, finché è in posizione, tiene aggiornata la mappa del ruolo che la possiede. Gli aggiornamenti continui si guadagnano impegnando la risorsa: non sono gratuiti. Nei territori forniti (`synthetic_valley`/Valverde, `valverde_factory`, `selvariva_basin`) il `fire_commander` ha 1 drone e l'azione `MonitorArea`; i pack (`edits`) non ridefiniscono risorse e ruoli, quindi lo ereditano dalla base.
+Una risorsa che, finché è in posizione, tiene aggiornata la mappa del ruolo che la possiede. Gli aggiornamenti continui si guadagnano impegnando la risorsa: non sono gratuiti. Nei territori forniti (`synthetic_valley`/Valverde, `valverde_factory`, `selvariva_basin`) il `fire_commander` ha 1 drone e l'azione `MonitorArea`; un pack che non ridefinisce risorse e ruoli lo eredita dalla base. Il pack `selvariva_crisi_integrata` ridefinisce i ruoli e assegna il drone (limite di vento 45 km/h) a `direzione_soccorso`.
 
 Risorsa (in `resource_types`; un id `drones` senza `drone` usa i valori predefiniti):
 

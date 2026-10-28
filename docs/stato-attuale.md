@@ -6,7 +6,7 @@ dettagli implementativi restano nel codice.
 
 ## Territori alternativi
 
-Disponibili Valverde (4 × 4 km) e Selvariva (6 × 6 km), con catalogo delle basi nello standalone, filtro nell’editor e caricamento della base dichiarata da ciascun pack. Il cambio scenario ricostruisce la scena 3D locale; il viewer remoto riceve l’identità del territorio e carica la mappa corrispondente. Il pack `selvariva_festival` propone otto inject per una demo facilitata di un’ora: festival, scolaresca, due abitati, rotazione del vento e assistenza narrativa. Territorio, nomi e quantità sono sintetici. Vedi [traccia e validazione](scenario-selvariva.md).
+Disponibili Valverde (4 × 4 km) e Selvariva (6 × 6 km), con catalogo delle basi nello standalone, filtro nell’editor e caricamento della base dichiarata da ciascun pack. Il cambio scenario ricostruisce la scena 3D locale; il viewer remoto riceve l’identità del territorio e carica la mappa corrispondente. Il pack `selvariva_crisi_integrata` (sostituisce `selvariva_festival`) propone 3 ruoli, cinque turni da 30 minuti e dieci inject: festival e scolaresca, accessi, rinforzi, vento, assistenza, stampa e consegne; il drone è della direzione dei soccorsi e cinque inject rivelano la mappa (stime approssimate e rilievi esatti). Territorio, nomi e quantità sono sintetici. Vedi [traccia e validazione](scenario-selvariva.md).
 
 ## Authoring 3D degli scenari
 

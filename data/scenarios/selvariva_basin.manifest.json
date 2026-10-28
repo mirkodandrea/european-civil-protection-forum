@@ -75,5 +75,5 @@
   "provenance": "Existing TTX Factory kernels, adapted from propagator_abm under EUPL-1.2; all geography and demographic counts synthetic.",
   "scenario_sha256": "5dcb876766b084704b69b56b671d398f77bd1f96b0488154749c68db8aa1196d",
   "template_sha256": "b2acc39f6926eb9e122bd096b3495377ea580ac86195f49cdbac2882eb6f7156",
-  "pack_sha256": "dd453605a3a1dcecac176dd88fa5f154edc2392bf3a2f747bf194aaeacc8acd8"
+  "pack_sha256": "92ff6d72899e538cd192c393274d2c8b3a546edd2569fe004addce80e01373f3"
 }

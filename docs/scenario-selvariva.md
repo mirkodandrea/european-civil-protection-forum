@@ -1,64 +1,76 @@
-# Selvariva — il festival e i due abitati
+# Selvariva — crisi coordinata in cinque turni
 
-Scenario alternativo per **60 minuti reali**, con tre ore simulate (14:00–17:00), tre turni da 60 minuti simulati e otto inject. Tutti i nomi, la geografia e i quantitativi sono di fantasia. Non ricostruisce alcun paese reale.
+Pack `selvariva_crisi_integrata`: **3 ruoli**, cinque turni da 30 minuti simulati (16:00–18:30) e dieci inject. Tutti i nomi, la geografia e i quantitativi sono di fantasia; tempi e dotazioni sono ipotesi di esercitazione. Sostituisce il precedente pack `selvariva_festival`.
 
 ## Avvio
 
-Nella vista **Scenario**, filtra **Selvariva** e avvia **Selvariva — il festival e i due abitati**. Funziona nel server e nello standalone ricostruito; Valverde rimane disponibile. Da terminale:
+Nella vista **Scenario**, filtra **Selvariva** e avvia **Selvariva — crisi coordinata in cinque turni**. Funziona nel server e nello standalone ricostruito; Valverde rimane disponibile. Da terminale:
 
 ```sh
-cargo run --release -p app -- --scenario data/scenarios/selvariva_festival.pack.json
+cargo run --release -p app -- --scenario data/scenarios/selvariva_crisi_integrata.pack.json
 ```
 
-La base `selvariva_basin` è un territorio senza incendio e senza MSEL. Il pack aggiunge la traccia dell’esercitazione. Avvia l’esercitazione e invia **SV-01**, lasciando selezionati i due inneschi: il fuoco nasce all’invio, non al caricamento. Il cambio meteo parte quando invii **SV-04**. Gli altri inject non impongono danni, interruzioni o risultati. Usa «Avanza al prossimo inject» e fermati per le decisioni; 60 minuti reali non sono un timer automatico. Evita di far trascorrere tutta la simulazione durante la discussione.
+La base `selvariva_basin` è un territorio senza incendio e senza MSEL. Il pack ridefinisce ruoli, risorse, rinforzi e traccia. Il primo inject (SCS-01, 16:00) è solo il bollettino: il fuoco nasce all’invio di **SCS-02** (16:15), lasciando selezionati i due inneschi. Il cambio meteo parte con **SCS-05**. Gli altri inject non impongono danni, interruzioni o risultati. Usa «Avanza al prossimo inject» e fermati per le decisioni.
 
 ## Territorio e posta in gioco
 
-Conca boscata di **6 × 6 km**: griglia fisica 300 × 300 a 20 m, terreno visuale a 10 m derivato dallo stesso DEM; quote circa 155–570 m. Vegetazione EU12, radure e versanti diversi, 172 edifici con **1.102 occupanti iniziali**, 27 strade/accessi. Le strade non sono tagliafuoco impliciti.
+Conca boscata di **6 × 6 km**: griglia fisica 300 × 300 a 20 m, terreno visuale a 10 m derivato dallo stesso DEM; quote circa 155–570 m. Vegetazione EU12, radure e versanti diversi, 172 edifici con **1.102 occupanti iniziali**, 27 strade/accessi. Le strade non sono tagliafuoco impliciti. Griglia delle zone 8 × 8 da 750 m.
 
-- **Roverechiare**, nella parte alta, è vicino al Bosco delle Fonti e a Montebruno. Vi si trovano scuola, deposito, piazza di attesa e cascina.
-- **Selvariva**, nel fondovalle, ospita municipio e presidio sanitario.
-- **Area festival delle Fonti**: 360 occupanti aggregati. Il boato iniziale è una segnalazione narrativa; non esiste una seconda fisica delle esplosioni.
-- **Rifugio della scolaresca**: 40 occupanti (37 bambini e 3 accompagnatori), modellato come struttura scolastica, separata dalla scuola del borgo (80 persone). La duplicazione non rappresenta gli stessi individui.
-- **Pianalto**, a est, offre accoglienza per 800 persone e la base operativa; il polo dei **Prati**, a sud di Selvariva, offre altri 400 posti. Entrambi vanno aperti. La piazza di Roverechiare ha 120 posti di attesa, ma è vicina al fronte: la capienza non la rende sicura.
-- La **Strada delle Fonti** collega festival e borgo al fondovalle; il **Belvedere** offre un’alternativa verso est. Tre uscite raggiungono i margini ovest, est e sud; il sentiero di Montebruno è pedonale.
-
-I collegamenti delle strutture e le uscite sono verificati con il vero grafo di routing. Le chiusure da fuoco e polizia possono cambiare i percorsi durante l’incendio; non promettere un’uscita sempre aperta. Nel laboratorio Pianalto resta una destinazione utilizzabile, ma EXCON deve verificarne stato, capienza e accessi nella sessione corrente.
+- **Roverechiare** (zona D4), nella parte alta, è vicino al Bosco delle Fonti e a Montebruno (C3). Vi si trovano scuola, deposito, piazza di attesa e cascina.
+- **Selvariva** (E5), nel fondovalle, ospita municipio e presidio sanitario (28 persone).
+- **Area festival delle Fonti** (C3): 360 occupanti aggregati. Il boato iniziale è una segnalazione narrativa; non esiste una fisica delle esplosioni.
+- **Rifugio della scolaresca** (C4): 40 occupanti (37 bambini e 3 accompagnatori), separato dalla scuola del borgo (80 persone).
+- **Pianalto** (G5), a est, offre accoglienza per 800 persone e la base operativa da cui partono tutte le risorse; il polo dei **Prati** (E6) offre altri 400 posti. Entrambi vanno aperti. La piazza di Roverechiare ha 120 posti di attesa, ma è vicina al fronte.
+- La **Strada delle Fonti** collega festival e borgo al fondovalle; il **Belvedere** offre un’alternativa verso est.
 
 ## Ruoli e risorse
 
 | Ruolo | Risorse iniziali | Decisioni |
 |---|---|---|
-| Coordinamento comunale | 4 autobus, 3 pattuglie | Avvisi, apertura accoglienza, evacuazione e viabilità |
-| Direzione antincendio | 4 squadre, 2 autobotti, 1 mezzo aereo | Priorità di difesa, linee e lanci, tempi di trasferimento |
-| Sala di coordinamento | Richiesta di rinforzi | Quadro comune, aiuti esterni e comunicazione |
-| Coordinamento assistenza | Iniziative narrative | Famiglie, bisogni specifici, ricongiungimenti e assistenza |
+| Coordinamento civile e assistenza (`coordinamento_civile`) | 4 autobus, 3 pattuglie | Avvisi, accoglienza, evacuazione, viabilità, assistenza e comunicati (narrativi) |
+| Direzione dei soccorsi AIB e VVF (`direzione_soccorso`) | 4 squadre, 2 autobotti, **1 drone**, nessun mezzo aereo | Linee, autobotti, lanci (dopo rinforzo), monitoraggio con il drone |
+| Sala operativa e previsione (`sala_operativa`) | — | Richiesta rinforzi, quadro comune, SITREP, raccordo nazionale/ERCC (narrativo) |
 
-Rinforzi disponibili: 2 autobus in 35 minuti, 2 squadre in 45, 1 autobotte in 50, 1 mezzo aereo in 75, dopo approvazione. Sono tempi simulati, non reali. Il modello non riusa automaticamente gli autobus in navette; scuola e presidio sanitario richiedono mezzi, mentre l’area festival usa il normale modello aggregato di evacuazione. Le esigenze individuali di mobilità e sanitarie restano narrative.
+Rinforzi, dopo approvazione della richiesta della sala: 2 squadre in 35 minuti e 1 mezzo aereo in 45 (alla direzione dei soccorsi), 2 autobus in 30 (al coordinamento civile).
 
-## Conduzione in un’ora
+**Drone** (`MonitorArea`): fino a 4 zone contigue, un rilievo ogni 5 minuti per 40 minuti in posizione, poi 15 minuti di rientro e ricarica a Pianalto; limite di vento 45 km/h, quindi resta operativo con il vento di SCS-05 (38 km/h) e viene richiamato solo se EXCON alza il vento oltre il limite. I rilievi aggiornano solo la mappa della direzione dei soccorsi: gli altri ruoli li vedono se vengono condivisi.
 
-| Minuti reali indicativi | Tempo simulato / inject | Consegna e decisione |
+## Visibilità della mappa
+
+Nessun ruolo vede il fuoco all’inizio. Le informazioni arrivano dagli inject (azioni `reveal`), dal drone e da ciò che i ruoli si scambiano:
+
+| Inject | Destinatari | Rivelazione |
 |---|---|---|
-| 0–5 | 14:00, prima di SV-01 | Orientamento sulla mappa, ruoli, risorse, distinzione tra stato fisico e narrazione |
-| 5–12 | 14:00, SV-01 | Due inneschi dopo il boato: quadro iniziale, allerta e prime priorità |
-| 12–18 | 14:15, SV-02 | Ricognizione narrativa, lettura del fronte e richiesta di informazioni; primi ordini approvati |
-| 18–26 | 14:35, SV-03 | Scolaresca, festival e bisogni specifici: destinazione, autobus e assistenza |
-| 26–34 | 15:00, SV-04 | Rotazione e rinforzo del vento: rivedere accessi, impieghi e difesa del borgo |
-| 34–41 | 15:25, SV-05 | Verificare entrambe le strade e il deposito usando lo stato corrente |
-| 41–47 | 15:50, SV-06 | Assistenza, responsabilità e rinforzi con tempi residui |
-| 47–52 | 16:20, SV-07 | Comunicato pubblico: fatti, notizie non confermate e prossimo aggiornamento |
-| 52–60 | 16:50, SV-08; fino alle 17:00 se utile | Passaggio di consegne e debrief di decisioni ed esiti |
+| SCS-02 (16:15, 112) | tutti | stima approssimata del fuoco, ±500 m, area ±40 % |
+| SCS-03 (16:35, polizia locale) | civile, soccorsi | strade ed edifici esatti in C3, C4, D3, D4 (senza fuoco) |
+| SCS-06 (17:20, squadre) | tutti | strade ed edifici delle zone in fiamme e adiacenti |
+| SCS-08 (17:50, satellite) | tutti | stima approssimata, ±300 m, area ±30 % |
+| SCS-10 (18:20, sala) | tutti | quadro consolidato: fuoco, edifici, strade, linee, unità delle zone in fiamme e adiacenti |
 
-La scaletta è flessibile: accorcia la discussione o salta un inject narrativo se serve. Il debrief ha priorità rispetto all’arrivo alle 17:00. Il modello non dichiara spento il fuoco alla conclusione della demo.
+Tra 16:15 e 17:20 il fronte si conosce solo dalla stima iniziale, dal drone e dalle condivisioni: è voluto. Il pulsante «Aggiorna mappe dei ruoli» resta uno strumento manuale di EXCON. Le stime approssimate leggono il fuoco reale: se EXCON disattiva gli inneschi di SCS-02 deve disattivare anche la stima, e le rivelazioni «zone in fiamme» falliscono se non c’è fuoco.
+
+## Conduzione
+
+| Ora simulata / inject | Consegna e decisione |
+|---|---|
+| 16:00, SCS-01 | Bollettino di pericolo: misure preventive, destinatari, primo aggiornamento |
+| 16:15, SCS-02 | Due focolai, stima incerta: coordinamento sul posto, prime priorità, uso del drone |
+| 16:35, SCS-03 | Festival, rifugio, scuola, presidio: destinazioni, autobus, accessi |
+| 16:50, SCS-04 | Rinforzi disponibili: richieste motivate con luogo e orario utile |
+| 17:05, SCS-05 | Vento da ONO a 38 km/h: rivedere piano, accessi e copertura del drone |
+| 17:20, SCS-06 | Fumo sulla Strada delle Fonti e al deposito: viabilità, strutture, gestori (narrativi) |
+| 17:35, SCS-07 | Bisogni specifici e richieste di contatto (narrativi) |
+| 17:50, SCS-08 | Punto di situazione nazionale, rilevamento satellitare, ERCC |
+| 18:05, SCS-09 | Stampa e voci: comunicare incertezza e condizioni di rientro |
+| 18:20, SCS-10 | Consegne al turno subentrante, quadro consolidato |
+
+La fine della traccia non equivale a incendio spento. Per il debrief: quali informazioni (e di che ora) hanno cambiato una decisione? Quando è stato usato il drone e chi ha ricevuto i suoi rilievi? Quali destinazioni erano aperte e raggiungibili? Quali interventi erano solo richiesti e quali arrivati?
 
 ## Simulazione e narrazione
 
-Sono fisici: propagazione ensemble, meteo approvato, esposizione di edifici, percorsi e segmenti interrotti, viaggio e lavoro delle risorse, acqua, traffico aggregato, occupanti evacuati/in viaggio/arrivati e capienza. Gli ordini dei player richiedono approvazione EXCON.
+Sono fisici: propagazione ensemble, meteo approvato, esposizione di edifici, percorsi e segmenti interrotti, viaggio e lavoro delle risorse, drone, acqua, traffico aggregato, occupanti evacuati/in viaggio/arrivati e capienza. Gli ordini dei player richiedono approvazione EXCON.
 
-Restano nella narrazione: causa del boato, ricerca di dispersi, droni e sopralluoghi, triage e assistenza individuale, pasti, sostegno psicologico, ricongiungimenti, contenuto pericoloso del deposito, voci e gestione dei media. I player inviano iniziative narrative e EXCON ne registra l’esito. Un esito narrativo non sposta persone o mezzi nel modello.
-
-Per il debrief chiedi: quali informazioni hanno cambiato una decisione? Quali destinazioni erano effettivamente aperte e raggiungibili? Chi era ancora in viaggio? Quali interventi erano solo richiesti, quali arrivati? Quali bisogni sono stati gestiti nella narrazione e con quali responsabilità?
+Restano nella narrazione: causa del boato, ricerca di dispersi, sopralluoghi a terra, gestori elettrico/idrico, triage e assistenza individuale, ricongiungimenti, contenuto del deposito, voci e media, raccordo nazionale ed ERCC.
 
 ## Riproduzione e controlli
 
@@ -66,17 +78,18 @@ Per il debrief chiedi: quali informazioni hanno cambiato una decisione? Quali de
 OPENBLAS_NUM_THREADS=1 python3 scripts/scenario_factory.py selvariva
 scripts/lab/run.sh scripts/lab/selvariva.json runs/selvariva-nuova-prova
 cargo test --release -p sim --test selvariva
+cargo test --release -p exercise --test selvariva_crisi
 cargo test --release -p scenario --features embedded
 ```
 
-La ricetta è `scripts/factory/selvariva.py`, seme 33; usa i kernel Factory già presenti, con provenienza EUPL-1.2 conservata in `scripts/factory/provenance.json`. Non importa geodati. Il manifest registra ricetta, parametri, quote, pendenze e hash di template, territorio e pack. Il grading della rete ora accetta la dimensione della cella e ricava l’altezza del territorio, mantenendo i valori predefiniti di Valverde.
+La ricetta è `scripts/factory/selvariva.py`, seme 33; genera solo il territorio (il pack è scritto a mano e il manifest ne registra l’hash); usa i kernel Factory già presenti, con provenienza EUPL-1.2 conservata in `scripts/factory/provenance.json`. Non importa geodati. Il manifest registra ricetta, parametri, quote, pendenze e hash di template, territorio e pack. Il grading della rete ora accetta la dimensione della cella e ricava l’altezza del territorio, mantenendo i valori predefiniti di Valverde.
 
 Il laboratorio applica gli stessi inneschi e lo stesso meteo in entrambi i bracci. Confronta nessun intervento con una risposta dopo 10–20 minuti simulati: apertura Pianalto, allerta, evacuazione festival/rifugio/scuola, lancio, autobotte e linea. Usa veri ordini di ruolo, risorse limitate e tempi di viaggio; non modifica direttamente danni o popolazione. È una verifica tecnica di fattibilità, non il piano obbligatorio per i partecipanti. Non combinare un’evacuazione di zona con strutture già assegnate a missioni ancora attive: il modello rifiuta la sovrapposizione. Un’autobotte deve raggiungere un bersaglio compatibile con la strada e la lunghezza della manichetta; una casa vicina a una strada disegnata non garantisce che il percorso scelto termini abbastanza vicino.
 
 Le fixture in `scripts/fixtures/selvariva.json` e `scripts/qa/territories.cjs` verificano rispettivamente il 3D invisibile con ordini approvati e la libreria offline con cambio di territorio e ripristino. I test sul territorio controllano strutture/uscite raggiungibili, ingombri, combustibile nelle celle degli edifici, arrivo degli evacuati e rollback.
 
 
-### Esito della verifica del 27 ottobre 2026
+### Esito della verifica del 27 ottobre 2026 (pack precedente)
 
 Ensemble di 32 realizzazioni, soglia 0,5, semi appaiati 1/2/3, orizzonte 180 minuti. Territorio SHA-256 `5dcb876766b084704b69b56b671d398f77bd1f96b0488154749c68db8aa1196d`.
 

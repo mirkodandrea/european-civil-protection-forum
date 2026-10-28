@@ -198,44 +198,6 @@ def generate(template, seed=33):
         max_drivable_grade=max(grades),provenance='Existing TTX Factory kernels, adapted from propagator_abm under EUPL-1.2; all geography and demographic counts synthetic.')
 
 
-def exercise_pack():
-    def action(id,title,command):return dict(id=id,title=title,command=command,offset_s=0,note='Intervento EXCON selezionabile all’invio dell’inject.')
-    rows=[
-        (0,'SV-01','Fumo sopra l’area festival','Centrale segnalazioni',['all'],
-         'È un pomeriggio secco nella conca delle Due Valli. All’area festival delle Fonti sono presenti 360 persone. Dopo un boato vengono segnalati due focolai nel bosco sovrastante; la causa non è confermata. Al Rifugio della scolaresca sono registrati 37 bambini e 3 accompagnatori. Concordate il primo quadro di situazione e le priorità.',
-         'Condividere la situazione e decidere primi impieghi e avvisi.',[
-             action('SV-A1','Innesco nel Bosco delle Fonti',dict(type='Ignite',at=dict(x=1730,y=4050),radius_m=80)),
-             action('SV-A2','Secondo focolaio sul versante',dict(type='Ignite',at=dict(x=2050,y=4160),radius_m=60))]),
-        (15,'SV-02','Richiesta di ricognizione e allerta','Osservatori sul territorio',['fire_commander','regional_cp'],
-         'Gli osservatori chiedono un quadro aggiornato del fuoco e dei possibili effetti su Roverechiare e sulla Strada delle Fonti. Richiedete a EXCON osservazioni o una previsione, condividete le informazioni utili e motivate dove intervenire. Il drone di monitoraggio della direzione antincendio può tenere aggiornata la mappa di alcune zone; gli altri sopralluoghi restano nella narrazione.',
-         'Usare informazioni disponibili e incertezza per coordinare gli interventi.',[]),
-        (35,'SV-03','Scolaresca e persone con bisogno di assistenza','Gestione festival',['mayor','volunteer_coordinator'],
-         'Gli organizzatori chiedono dove trasferire il gruppo del Rifugio della scolaresca e come assistere le famiglie del festival. Sono segnalate persone con mobilità ridotta: organizzate supporto e destinazioni. Nel modello il gruppo del rifugio è un aggregato di 40 occupanti che richiede un autobus; le esigenze individuali sono gestite narrativamente da EXCON.',
-         'Distinguere evacuazione simulata, capienza, mezzi disponibili e assistenza narrativa.',[]),
-        (60,'SV-04','Rotazione del vento','Servizio meteo delle Due Valli',['all'],
-         'Il vento ruota da nord-ovest a ovest-nord-ovest e aumenta. Rivalutate l’esposizione di Roverechiare e gli accessi verso il fondovalle. Le segnalazioni precedenti non sostituiscono una nuova verifica delle strade.',
-         'Rivedere priorità e percorsi dopo un cambiamento annunciato.',[
-             action('SV-A3','Vento più forte da ovest-nord-ovest',dict(type='SetWeather',wind_dir_deg=290,wind_speed_kmh=42,moisture_pct=6))]),
-        (85,'SV-05','Verifica degli accessi e dei servizi','Osservatori sul territorio',['mayor','fire_commander'],
-         'Si segnala fumo presso il Deposito delle Fornaci. Verificate la situazione effettiva della Strada delle Fonti e dell’alternativa del Belvedere prima di scegliere i trasferimenti. Le strade si interrompono nel modello soltanto se il fuoco le rende impraticabili; il contenuto del deposito e gli eventuali effetti sanitari restano valutazioni narrative di EXCON.',
-         'Separare segnalazioni, stato osservato e decisioni di viabilità.',[]),
-        (110,'SV-06','Assistenza alle famiglie e richiesta di rinforzi','Rete di assistenza',['regional_cp','volunteer_coordinator','mayor'],
-         'La rete di assistenza richiede un punto di coordinamento per pasti, beni essenziali, supporto psicologico e ricongiungimenti. Raccogliete i bisogni effettivi, concordate un responsabile e inviate le iniziative narrative a EXCON. Valutate separatamente eventuali rinforzi fisici e i loro tempi di arrivo.',
-         'Coordinare assistenza narrativa e disponibilità fisiche senza confonderne gli esiti.',[]),
-        (140,'SV-07','Domande dalla popolazione','Redazione del Corriere della Conca',['regional_cp','mayor'],
-         'Circola la voce di un’esplosione dolosa e di un’interruzione dell’acqua. Nessuna delle due notizie è confermata. Preparate una comunicazione narrativa: cosa è noto, cosa si sta verificando, indicazioni alla popolazione e prossimo aggiornamento. Non presentate come conclusi interventi ancora in viaggio.',
-         'Comunicare fatti, incertezza e prossimi passi.',[]),
-        (170,'SV-08','Quadro finale per il coordinamento','Centrale segnalazioni',['all'],
-         'Preparate un breve passaggio di consegne usando lo stato corrente: fuoco, abitati esposti, persone ancora dentro/in transito/arrivate, destinazioni aperte, missioni e risorse residue. Indicate separatamente gli esiti narrativi registrati da EXCON e ciò che resta da verificare. La conclusione della demo non implica che l’incendio sia spento.',
-         'Ricostruire decisioni ed esiti verificabili per il debrief.',[])]
-    msel=[dict(at_s=m*60,turn=m//60+1,id=id,title=title,sender=sender,recipients=to,text=text,objective=obj,event='Incendio delle Fonti',actions=acts)
-          for m,id,title,sender,to,text,obj,acts in rows]
-    return dict(id='selvariva_festival',name='Selvariva — il festival e i due abitati',base=ID,
-        description='Demo interattiva di circa 1 ora reale su tre ore simulate: incendio vicino al festival, evacuazione della scolaresca e del borgo, cambiamento del vento e coordinamento dell’assistenza. Tutti i nomi e i luoghi sono di fantasia.',
-        edits=dict(name='Selvariva — il festival e i due abitati',msel=msel,turn_minutes=60),
-        run=dict(seed=1,realizations=32,cutoff=.5,operational_model=True))
-
-
 def landscape(args):
     template=json.loads(args.template.read_text())
     if args.output.resolve()==args.template.resolve():raise ValueError('Output must differ from template')
@@ -243,8 +205,8 @@ def landscape(args):
     args.output.parent.mkdir(parents=True,exist_ok=True)
     manifest['scenario_sha256']=write(args.output,s,compact=True)
     manifest['template_sha256']=hashlib.sha256(args.template.read_bytes()).hexdigest()
-    write(args.output.with_suffix('.manifest.json'),manifest)
-    pack=args.output.parent/'selvariva_festival.pack.json'
-    manifest['pack_sha256']=write(pack,exercise_pack())
+    # The exercise pack is authored by hand; the manifest only records its hash.
+    pack=args.output.parent/'selvariva_crisi_integrata.pack.json'
+    if pack.exists():manifest['pack_sha256']=hashlib.sha256(pack.read_bytes()).hexdigest()
     write(args.output.with_suffix('.manifest.json'),manifest)
     print(json.dumps(manifest,indent=2,ensure_ascii=False))
