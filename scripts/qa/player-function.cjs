@@ -5,6 +5,12 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 
+/** The start-of-session language gate; a no-op when this session already answered it. */
+async function pickLanguage(scope, lang) {
+  const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
+  if (await choice.count()) await choice.click();
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(cwd, 'runs/player-function-review'));
 const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
@@ -72,7 +78,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
     await modal.waitFor({ state: 'hidden' });
 
     await choose('mayor');
-    await mayor.locator('#language').selectOption('it');
+    await pickLanguage(mayor, 'it');
     await mayor.locator('[data-view="function"]').click();
     const functionView = mayor.locator('#function-view');
     await functionView.waitFor();

@@ -1,6 +1,12 @@
 // Invisible fixture. One file:// app, real WASM model, no server or external AI.
 const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),{execFileSync}=require('child_process');
+
+/** The start-of-session language gate; a no-op when this session already answered it. */
+async function pickLanguage(scope, lang) {
+  const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
+  if (await choice.count()) await choice.click();
+}
 const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().toISOString().replace(/[:.]/g,'-'));
 (async()=>{
  fs.mkdirSync(out,{recursive:true});
@@ -32,7 +38,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   assert(await page.locator('.standalone-simulation').isHidden());
   await page.screenshot({path:path.join(out,'desktop.png')});
   await master.locator('#start').click();await master.locator('#turn').filter({hasText:'orders'}).waitFor();
-  await select('mayor');await mayor.locator('#language').selectOption('en');await mayor.locator('[data-view="chat"]').click();assert.equal(await mayor.locator('[data-contact="master"]').count(),0,'players have no exercise-control chat contact');await mayor.locator('[data-view="map"]').click();await page.screenshot({path:path.join(out,'player-work.png')});
+  await select('mayor');await pickLanguage(mayor, 'en');await mayor.locator('[data-view="chat"]').click();assert.equal(await mayor.locator('[data-contact="master"]').count(),0,'players have no exercise-control chat contact');await mayor.locator('[data-view="map"]').click();await page.screenshot({path:path.join(out,'player-work.png')});
   await select('master');await master.locator('[data-view="timeline"]').click();
   await master.locator('[data-inject-role="mayor"]').click();let modal=page.getByRole('dialog');await modal.locator('#inject-title').fill('Mayor fixture');await modal.locator('#text').fill('Issue the warning for F4 and coordinate with the fire commander.');await page.screenshot({path:path.join(out,'inject-modal-targeted.png')});await modal.getByRole('button',{name:'Chiudi modale inject'}).click();await master.locator('[data-inject-role="mayor"]').click();modal=page.getByRole('dialog');assert.equal(await modal.locator('#inject-title').inputValue(),'Mayor fixture','closing an inject draft preserves its fields');await modal.locator('#send').click();await modal.waitFor({state:'hidden'});await master.locator('#excon-timeline').getByText('Mayor fixture').waitFor();
   await master.locator('[data-inject-all]').click();modal=page.getByRole('dialog');await modal.locator('#inject-title').fill('Broadcast fixture');await modal.locator('#text').fill('All roles: coordinate on the F4 warning.');await page.screenshot({path:path.join(out,'inject-modal-all.png')});await modal.locator('#send').click();await modal.waitFor({state:'hidden'});assert.equal(await master.locator('#excon-timeline').getByText('Broadcast fixture').count(),3,'broadcast inject appears once in each recipient column');
@@ -44,7 +50,7 @@ const out=process.env.TTX_QA_OUT||path.join('runs/standalone-review',new Date().
   console.log('approved');await page.screenshot({path:path.join(out,'timeline-populated.png')});await master.locator('#minutes').fill('1');await master.locator('#resolve').click();await master.locator('#turn').filter({hasText:'Turno 2 · orders'}).waitFor({timeout:30000});
   await page.screenshot({path:path.join(out,'approved-turn.png')});
   console.log('turn resolved');const resolved=await download('resolved.json');assert.equal(resolved.turns,2);assert.deepEqual(resolved.physical_state,reference.resolved,'paired native and WASM commands produce the same physical state');
-  await select('regional_cp');const regional=page.locator('[data-panel="regional_cp"]'),regionalWork=regional.locator('#player-work');await regional.locator('#language').selectOption('en');await regional.locator('[data-view="map"]').click();await regionalWork.locator('#work-action').selectOption('RequestReinforcement');await regionalWork.locator('#work-resource').selectOption('ground_crews');await regionalWork.locator('#work-qty').fill('1');await regionalWork.getByRole('button',{name:'Invia proposta operativa a EXCON →'}).click();await select('master');await master.locator('[data-view="timeline"]').click();await master.locator('[data-proposal]').filter({hasText:'RequestReinforcement'}).waitFor();
+  await select('regional_cp');const regional=page.locator('[data-panel="regional_cp"]'),regionalWork=regional.locator('#player-work');await pickLanguage(regional, 'en');await regional.locator('[data-view="map"]').click();await regionalWork.locator('#work-action').selectOption('RequestReinforcement');await regionalWork.locator('#work-resource').selectOption('ground_crews');await regionalWork.locator('#work-qty').fill('1');await regionalWork.getByRole('button',{name:'Invia proposta operativa a EXCON →'}).click();await select('master');await master.locator('[data-view="timeline"]').click();await master.locator('[data-proposal]').filter({hasText:'RequestReinforcement'}).waitFor();
   // Exercise the independent EXCON clock control, then stop it before rollback.
   await select('master');await master.locator('[data-view="timeline"]').click();await master.locator('#timeline-clock-toggle').click();await master.locator('#timeline-clock-toggle').filter({hasText:'Ferma clock'}).waitFor();await master.locator('#timeline-clock-toggle').click();await master.locator('#timeline-clock-toggle').filter({hasText:'Avvia clock'}).waitFor();await select('advanced');
   // Real forecast capture/compute/review/publication in WASM.

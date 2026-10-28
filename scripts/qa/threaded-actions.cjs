@@ -6,6 +6,12 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 
+/** The start-of-session language gate; a no-op when this session already answered it. */
+async function pickLanguage(scope, lang) {
+  const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
+  if (await choice.count()) await choice.click();
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(cwd, 'runs/threaded-actions-review'));
 const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
@@ -91,7 +97,7 @@ const supportedText = 'Issue a warning for the selected zone';
     const mayor = panel('mayor');
     const fire = panel('fire_commander');
     await choose('mayor');
-    await mayor.locator('#language').selectOption('en');
+    await pickLanguage(mayor, 'en');
     await mayor.locator('[data-view="chat"]').click();
     const injectReference = mayor.locator('#chat-inject-reference-mayor');
     await injectReference.waitFor();
@@ -115,7 +121,7 @@ const supportedText = 'Issue a warning for the selected zone';
     // Fire replies to the mayor message. The mayor then proposes an action from
     // that received peer bubble, using the same map-backed work modal.
     await choose('fire_commander');
-    await fire.locator('#language').selectOption('en');
+    await pickLanguage(fire, 'en');
     await fire.locator('[data-view="chat"]').click();
     await fire.locator('[data-contact="mayor"]').click();
     const fireIncoming = fire.locator(`#messages [data-chat-message="${mayorMessageId}"]`);

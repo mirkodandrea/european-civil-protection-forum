@@ -17,6 +17,12 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+/** The start-of-session language gate; a no-op when this session already answered it. */
+async function pickLanguage(scope, lang) {
+  const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
+  if (await choice.count()) await choice.click();
+}
+
 const ROOT = path.resolve(__dirname, '../../..');
 const OUT = path.resolve(process.argv[2] || './out');
 const NARRATION = new Map(JSON.parse(fs.readFileSync(process.argv[3] || path.join(OUT, 'narration.json'), 'utf8')).lines.map(l => [l.id, l]));
@@ -193,7 +199,7 @@ const POINTER = `
 
     // ------------------------------------------------------------ mayor
     await click(tab('mayor'), { pause: 400 });
-    await P('mayor').locator('#language').selectOption('it');
+    await pickLanguage(P('mayor'), 'it');
     await caption('mayor_role');
     await beat(5000);
     await click(P('mayor').locator('[data-view="map"]'));
@@ -273,7 +279,7 @@ const POINTER = `
     // ------------------------------------------------------------ regional CP: extra bus
     await caption('bus_request');
     await click(tab('regional_cp'));
-    await P('regional_cp').locator('#language').selectOption('hy');
+    await pickLanguage(P('regional_cp'), 'hy');
     await click(P('regional_cp').locator('[data-view="map"]'));
     await click(P('regional_cp').locator('#new-player-action'));
     const R = P('regional_cp').locator('.work-modal');

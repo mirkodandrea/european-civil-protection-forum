@@ -5,6 +5,12 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 
+/** The start-of-session language gate; a no-op when this session already answered it. */
+async function pickLanguage(scope, lang) {
+  const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
+  if (await choice.count()) await choice.click();
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(cwd, 'runs/player-conversations-review'));
 const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
@@ -75,7 +81,7 @@ const exceptionMessage = "Using exceptions for control flow, don't mind me. This
     await master.locator('#excon-timeline').getByText('Municipal coordination').waitFor();
 
     await choose('mayor');
-    await mayor.locator('#language').selectOption('it');
+    await pickLanguage(mayor, 'it');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#player-timeline').getByText('Municipal coordination').waitFor();
     const bell = mayor.locator('[data-notification-bell]');
@@ -93,7 +99,7 @@ const exceptionMessage = "Using exceptions for control flow, don't mind me. This
 
     // A peer message creates its own notification and a per-conversation unread count.
     await choose('fire_commander');
-    await fire.locator('#language').selectOption('en');
+    await pickLanguage(fire, 'en');
     await fire.locator('[data-view="chat"]').click();
     await fire.locator('[data-contact="mayor"]').click();
     await fire.locator('#text').fill('I confirm receipt, thank you.');
