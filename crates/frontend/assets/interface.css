@@ -877,3 +877,24 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 .sit-rcpt{border:1px solid var(--line);border-radius:6px;padding:4px 8px;display:flex;flex-wrap:wrap;gap:4px 14px}.sit-rcpt legend{font-size:12px;color:var(--muted)}.sit-voice{align-items:end}.sit-voice input{flex:1;min-width:140px}.sit-time{width:64px}
 .tp-suggest{display:inline-flex;align-items:baseline;gap:4px;padding:5px 12px;border:1px solid #c4554e;border-radius:8px;background:#fbeceb;color:#8a2520}.turn-panel .tp-suggest{padding:4px 10px;font-size:13px;white-space:nowrap}
 @media(max-width:1500px){.sit-grid{grid-template-columns:minmax(320px,1fr) minmax(420px,1.3fr)}.sit-sugg{grid-column:1/-1;max-height:none}}
+
+/* Map legend with shapes and textures (colour-blind safe); mirrors map.rs drawing. */
+.map-legend-sym{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--ink)}
+.map-legend-sym li{display:inline-flex;align-items:center;gap:5px;line-height:1.2}
+.lg-sw{display:inline-block;width:22px;height:14px;border:1px solid #122b2c;border-radius:2px;flex:none}
+.lg-fire{background:radial-gradient(circle,#fff4aa 1.5px,transparent 2px) 0 0/7px 7px,#ff4614}
+.lg-burnt{background:repeating-linear-gradient(135deg,transparent 0 3px,rgba(255,255,255,.55) 3px 4.5px),#231e1c}
+.lg-possible{background:#ff9628;opacity:.45}
+.lg-water{background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.85) 3px 4.5px),#3c96ff}
+.lg-line{height:0;border:0;border-top:3px dashed #ffe000;outline:1px solid #7a6a00;outline-offset:1px;background:none}
+.lg-forecast{height:0;border:0;border-top:3px dashed #713b72;background:none}
+.lg-cut{height:0;border:0;border-top:5px solid #b72e26;background:none}
+.lg-closure{height:0;border:0;border-top:5px dashed #b87512;background:none}
+.lg-unit{width:16px;height:11px;background:#ad6912;border-color:#112632}
+.lg-gl{display:inline-block;min-width:22px;text-align:center;font-weight:700;font-size:15px;line-height:1}
+.g-threat{color:#8a5200}.g-dmg{color:#b34700}.g-dest{color:#000}.g-evac{color:#00668f}.g-done{color:#1a45c8}.g-target{color:#ad6912}.g-rep{color:#e33}
+/* Keep the legend fully visible inside flex-sized map cards: the map yields, the legend does not. */
+.mapbox>.mapview{flex:0 1 auto;min-height:0}
+.mapbox>.map-legend,.mapbox>.map-legend-sym{flex:none;width:100%;max-width:none}
+.tactical-view .map-legend-sym{font-size:12px;gap:2px 10px}
+.tactical-map>.mapbox{overflow:visible}

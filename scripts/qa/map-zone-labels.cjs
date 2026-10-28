@@ -77,7 +77,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
   const waitPaint = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const assertFontSize = (records, stage) => {
     assert(records.length > 0, `${stage}: instrumented zone codes were drawn`);
-    for (const record of records) assert(Math.abs(record.fontCSS - 13) < 0.2, `${stage}: ${record.code} perceived font ${record.fontCSS.toFixed(2)} CSS px`);
+    for (const record of records) assert(Math.abs(record.fontCSS - 14) < 0.2, `${stage}: ${record.code} perceived font ${record.fontCSS.toFixed(2)} CSS px`);
   };
   const saveFontEvidence = records => ({
     count: records.length,

@@ -561,7 +561,7 @@ pub fn situation_map(props: &MapProps) -> Html {
         </div>}
         if !lines.is_empty() {<div class="map-probe" aria-live="polite">{for lines.iter().map(|l| html!{<div>{l.clone()}</div>})}if pinned.is_some() && hover.is_none() {<button type="button" aria-label={t("map_close_probe")} onclick={clear_pin}>{"✕"}</button>}</div>}
         if current.z > 1. {<div class="map-zoom-badge">{format!("×{:.1}", current.z)}</div>}
-    </div><p class="map-legend">{t("map_legend")}</p><p class="map-legend map-keys">{t("map_controls")}</p></div>}
+    </div><crate::map_legend::MapLegend lang={props.lang.clone()}/><p class="map-legend map-keys">{t("map_controls")}</p></div>}
 }
 fn onpointerup_cancel(drag: &Rc<RefCell<Drag>>) -> Callback<PointerEvent> {
     let drag = drag.clone();
@@ -882,6 +882,235 @@ fn trace(ctx: &CanvasRenderingContext2d, points: &[Value], k: f64, h: f64) {
         }
     }
 }
+/// Fill the cells in `state` with a screen-constant texture (see `map_legend` swatches).
+fn texture(
+    ctx: &CanvasRenderingContext2d,
+    states: &[u8],
+    state: u8,
+    cols: usize,
+    rows: usize,
+    width: f64,
+    height: f64,
+    u: f64,
+) -> Result<(), wasm_bindgen::JsValue> {
+    if !states.contains(&state) {
+        return Ok(());
+    }
+    let doc = window().document().unwrap();
+    let new_canvas = |w: u32, h: u32| -> Result<(HtmlCanvasElement, CanvasRenderingContext2d), wasm_bindgen::JsValue> {
+        let c = doc.create_element("canvas")?.dyn_into::<HtmlCanvasElement>()?;
+        c.set_width(w);
+        c.set_height(h);
+        let x = c.get_context("2d")?.unwrap().dyn_into::<CanvasRenderingContext2d>()?;
+        Ok((c, x))
+    };
+    let tile = (10. * u).round().max(2.);
+    let (tc, tx) = new_canvas(tile as u32, tile as u32)?;
+    let lw = (1.6 * u).max(1.);
+    tx.set_line_width(lw);
+    match state {
+        1 => {
+            tx.set_fill_style_str("rgba(255,244,170,.95)");
+            tx.begin_path();
+            tx.arc(tile / 2., tile / 2., (1.8 * u).max(1.), 0., std::f64::consts::TAU)?;
+            tx.fill();
+        }
+        2 => {
+            tx.set_stroke_style_str("rgba(255,255,255,.5)");
+            tx.begin_path();
+            tx.move_to(0., tile);
+            tx.line_to(tile, 0.);
+            tx.stroke();
+        }
+        _ => {
+            tx.set_stroke_style_str("rgba(255,255,255,.8)");
+            tx.begin_path();
+            tx.move_to(0., tile / 2.);
+            tx.line_to(tile, tile / 2.);
+            tx.stroke();
+        }
+    }
+    let (mc, mx) = new_canvas(cols as u32, rows as u32)?;
+    let mut mask = vec![0u8; cols * rows * 4];
+    for (i, st) in states.iter().enumerate().take(cols * rows) {
+        if *st == state {
+            mask[i * 4 + 3] = 255;
+        }
+    }
+    mx.put_image_data(
+        &web_sys::ImageData::new_with_u8_clamped_array_and_sh(Clamped(&mask), cols as u32, rows as u32)?,
+        0.,
+        0.,
+    )?;
+    let (oc, ox) = new_canvas(width as u32, height as u32)?;
+    if let Some(pattern) = ox.create_pattern_with_html_canvas_element(&tc, "repeat")? {
+        ox.set_fill_style_canvas_pattern(&pattern);
+        ox.fill_rect(0., 0., width, height);
+    }
+    ox.set_image_smoothing_enabled(false);
+    ox.set_global_composite_operation("destination-in")?;
+    ox.draw_image_with_html_canvas_element_and_dw_and_dh(&mc, 0., 0., width, height)?;
+    ctx.draw_image_with_html_canvas_element(&oc, 0., 0.)?;
+    Ok(())
+}
+/// A label collected during the world pass; `x`/`y` are bitmap-space anchor coordinates.
+struct LabelReq {
+    text: String,
+    x: f64,
+    y: f64,
+    /// 0 critical (school, hospital, reported fire, affected buildings), 1 other named
+    /// buildings, closures and units, 2 places. Zone codes are priority 3 and always drawn.
+    prio: u8,
+}
+/// Shape badge (not colour alone) marking a building status; bitmap-space centre.
+struct Badge {
+    x: f64,
+    y: f64,
+    glyph: &'static str,
+    color: &'static str,
+}
+/// Label font size in CSS pixels: readable at 75% browser zoom, growing gently with map zoom.
+fn label_font_px(zoom: f64) -> f64 {
+    (14.5 + 1.4 * zoom.max(1.).ln()).min(18.)
+}
+/// Draw badges, labels (collision-free, by priority) and zone codes in CSS-pixel space.
+fn draw_labels(
+    ctx: &CanvasRenderingContext2d,
+    canvas: &HtmlCanvasElement,
+    vw: View,
+    zsize: f64,
+    (zcols, zrows): (u64, u64),
+    reqs: &[LabelReq],
+    badges: &[Badge],
+) -> Result<(), wasm_bindgen::JsValue> {
+    use crate::label_layout::{place, Item, Rect};
+    let rect = canvas.get_bounding_client_rect();
+    if rect.width() <= 0. || rect.height() <= 0. {
+        return Ok(());
+    }
+    let (cw, ch) = (rect.width(), rect.height());
+    let sx = canvas.width() as f64 / cw;
+    let sy = canvas.height() as f64 / ch;
+    ctx.set_transform(sx, 0., 0., sy, 0., 0.)?;
+    let to_screen = |x: f64, y: f64| ((x - vw.ox) * vw.z / sx, (y - vw.oy) * vw.z / sy);
+    let visible = |p: (f64, f64)| p.0 >= 0. && p.1 >= 0. && p.0 <= cw && p.1 <= ch;
+    let fs = label_font_px(vw.z);
+    let h = fs + 8.;
+    let mut items: Vec<Item> = Vec::new();
+    let mut texts: Vec<(String, bool)> = Vec::new();
+    let mut markers: Vec<Rect> = vec![Rect { x: cw - 200., y: ch - 46., w: 200., h: 46. }];
+    for b in badges {
+        let p = to_screen(b.x, b.y);
+        if visible(p) {
+            markers.push(Rect { x: p.0 - 8., y: p.1 - 8., w: 16., h: 16. });
+        }
+    }
+    let mut seen: Vec<(String, (f64, f64))> = Vec::new();
+    for r in reqs {
+        let p = to_screen(r.x, r.y);
+        if !visible(p) {
+            continue;
+        }
+        // A place and a building with the same name at the same spot are one label.
+        let key = r.text.to_lowercase();
+        if seen
+            .iter()
+            .any(|(t, q)| *t == key && (q.0 - p.0).abs() < 40. && (q.1 - p.1).abs() < 40.)
+        {
+            continue;
+        }
+        seen.push((key, p));
+        ctx.set_font(&format!("{} {fs}px system-ui", if r.prio == 0 { 700 } else { 500 }));
+        let w = ctx.measure_text(&r.text)?.width() + 10.;
+        markers.push(Rect { x: p.0 - 5., y: p.1 - 5., w: 10., h: 10. });
+        items.push(Item { w, h, anchor: p, prio: r.prio, forced: false, cands: vec![] });
+        texts.push((r.text.clone(), r.prio == 0));
+    }
+    let n_named = items.len();
+    // Zone codes: centred in the visible part of the zone, moving to a corner on collision.
+    ctx.set_font("600 14px system-ui");
+    let (zw, zh) = (ctx.measure_text("W8")?.width() + 8., 20.);
+    for row in 0..zrows {
+        for col in 0..zcols {
+            let (l, t) = to_screen(col as f64 * zsize, row as f64 * zsize);
+            let (r, b) = to_screen((col + 1) as f64 * zsize, (row + 1) as f64 * zsize);
+            let (l, t, r, b) = (l.max(0.), t.max(0.), r.min(cw), b.min(ch));
+            if r - l < zw || b - t < zh {
+                continue;
+            }
+            let (cx, cy) = ((l + r) / 2. - zw / 2., (t + b) / 2. - zh / 2.);
+            let cands = vec![
+                (cx, cy),
+                (l + 3., t + 3.),
+                (r - zw - 3., t + 3.),
+                (l + 3., b - zh - 3.),
+                (r - zw - 3., b - zh - 3.),
+            ];
+            items.push(Item { w: zw, h: zh, anchor: (cx, cy), prio: 3, forced: true, cands });
+            texts.push((format!("{}{}", (b'A' + col as u8) as char, row + 1), false));
+        }
+    }
+    let placed = place(&items, (cw, ch), &markers);
+    // Painting order: zone codes first (lowest), then labels by descending priority.
+    let mut order: Vec<usize> = (0..items.len()).filter(|&i| placed[i].is_some()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(items[i].prio));
+    ctx.set_text_align("left");
+    ctx.set_text_baseline("middle");
+    ctx.set_line_join("round");
+    for &i in &order {
+        let Some(pl) = placed[i] else { continue };
+        let (txt, strong) = (&texts[i].0, texts[i].1);
+        let rc = pl.rect;
+        if let Some((ax, ay)) = pl.leader {
+            let (nx, ny) = rc.nearest(ax, ay);
+            ctx.begin_path();
+            ctx.move_to(ax, ay);
+            ctx.line_to(nx, ny);
+            ctx.set_stroke_style_str("#122b2c");
+            ctx.set_line_width(1.5);
+            ctx.stroke();
+            ctx.begin_path();
+            ctx.arc(ax, ay, 2.5, 0., std::f64::consts::TAU)?;
+            ctx.set_fill_style_str("#122b2c");
+            ctx.fill();
+        }
+        let zone = i >= n_named;
+        ctx.set_fill_style_str(if zone {
+            "rgba(255,255,255,.82)"
+        } else {
+            "rgba(255,255,255,.95)"
+        });
+        ctx.fill_rect(rc.x, rc.y, rc.w, rc.h);
+        ctx.set_stroke_style_str(if strong { "#122b2c" } else { "rgba(18,43,44,.6)" });
+        ctx.set_line_width(if strong { 2. } else { 1. });
+        ctx.stroke_rect(rc.x, rc.y, rc.w, rc.h);
+        ctx.set_fill_style_str("#122b2c");
+        if zone {
+            ctx.set_font("600 14px system-ui");
+            ctx.set_text_align("center");
+            ctx.fill_text(txt, rc.x + rc.w / 2., rc.y + rc.h / 2.)?;
+            ctx.set_text_align("left");
+        } else {
+            ctx.set_font(&format!("{} {fs}px system-ui", if strong { 700 } else { 500 }));
+            ctx.fill_text(txt, rc.x + 5., rc.y + rc.h / 2.)?;
+        }
+    }
+    // Status badges on top, with a white halo.
+    ctx.set_font("700 15px system-ui");
+    ctx.set_text_align("center");
+    for b in badges {
+        let p = to_screen(b.x, b.y);
+        if visible(p) {
+            ctx.set_stroke_style_str("#fff");
+            ctx.set_line_width(4.);
+            ctx.stroke_text(b.glyph, p.0, p.1)?;
+            ctx.set_fill_style_str(b.color);
+            ctx.fill_text(b.glyph, p.0, p.1)?;
+        }
+    }
+    ctx.set_text_align("start");
+    Ok(())
+}
 fn draw(
     canvas: &HtmlCanvasElement,
     stat: &Value,
@@ -951,6 +1180,8 @@ fn draw(
         }
         rgba[i * 4 + 3] = 255;
     }
+    let mut states = fire.clone();
+    states.resize(cols * rows, 0);
     for obs in list(&v["cells"]).iter().filter(|_| on(L_FIRE)) {
         let i = (obs["row"].as_u64().unwrap_or(rows as u64) as usize * cols
             + obs["col"].as_u64().unwrap_or(cols as u64) as usize)
@@ -959,6 +1190,7 @@ fn draw(
             let fg = colour(obs["state"].as_u64().unwrap_or(0) as u8);
             if fg[3] > 0 {
                 rgba[i..i + 4].copy_from_slice(&fg);
+                states[i / 4] = obs["state"].as_u64().unwrap_or(0) as u8;
             }
         }
     }
@@ -973,39 +1205,25 @@ fn draw(
     )?;
     ctx.set_image_smoothing_enabled(false);
     ctx.draw_image_with_html_canvas_element_and_dw_and_dh(&raster, 0., 0., size, h * k)?;
-    ctx.set_font(&format!(
-        "{}px system-ui",
-        if simple { 19. } else { 16. } * u
-    ));
-    let mut labels: Vec<(f64, f64, f64, f64)> = Vec::new();
-    let label = |ctx: &CanvasRenderingContext2d,
-                 s: &str,
-                 x: f64,
-                 y: f64,
-                 labels: &mut Vec<(f64, f64, f64, f64)>| {
-        if !on(L_LABELS) {
-            return;
+    if on(L_FIRE) {
+        // Texture per fire state so the legend does not rely on colour alone:
+        // dots = active fire, diagonal hatch = burnt, horizontal lines = water/retardant.
+        for state in [1u8, 2, 4] {
+            texture(&ctx, &states, state, cols, rows, size, h * k, u)?;
         }
-        let width = (s.chars().count() as f64 * 8.5 + 8.) * u;
-        let x = x.clamp(3. * u, (size - width - 3. * u).max(3. * u));
-        let y = y.clamp(22. * u, h * k - 5. * u);
-        let candidate = [0., -24., 24., -48., 48.]
-            .into_iter()
-            .map(|dy| (x, y + (dy - 18.) * u, width, 23. * u))
-            .find(|b| {
-                b.1 >= 0.
-                    && b.1 + b.3 <= h * k
-                    && (!simple
-                        || !labels.iter().any(|a| {
-                            b.0 < a.0 + a.2 && b.0 + b.2 > a.0 && b.1 < a.1 + a.3 && b.1 + b.3 > a.1
-                        }))
+    }
+    // Labels are only collected here; they are placed in screen space after the world
+    // pass (see `crate::label_layout`) so they never overlap and keep a readable size.
+    let reqs = RefCell::new(Vec::<LabelReq>::new());
+    let badges = RefCell::new(Vec::<Badge>::new());
+    let label = |s: &str, x: f64, y: f64, prio: u8| {
+        if on(L_LABELS) {
+            reqs.borrow_mut().push(LabelReq {
+                text: s.to_string(),
+                x,
+                y,
+                prio,
             });
-        if let Some(b) = candidate {
-            labels.push(b);
-            ctx.set_fill_style_str("rgba(255,255,255,.85)");
-            ctx.fill_rect(b.0, b.1, b.2, b.3);
-            ctx.set_fill_style_str("#122b2c");
-            let _ = ctx.fill_text(s, b.0 + 3. * u, b.1 + 18. * u);
         }
     };
     let z = &stat["zones"];
@@ -1121,19 +1339,18 @@ fn draw(
             ctx.set_line_dash(&js_sys::Array::new())?;
             if !marked {
                 label(
-                    &ctx,
                     &format!(
                         "{}: {}",
                         if cut {
                             crate::i18n::t(lang, "map_road_cut")
                         } else {
-                            "— Chiusura polizia"
+                            crate::map_legend::lg(lang, "police_closure")
                         },
                         text(&road["name"])
                     ),
                     n(&segment["from"][0]) * k,
-                    (h - n(&segment["from"][1])) * k - 6. * u,
-                    &mut labels,
+                    (h - n(&segment["from"][1])) * k,
+                    1,
                 );
                 marked = true;
             }
@@ -1163,24 +1380,34 @@ fn draw(
         };
         ctx.set_fill_style_str(fill);
         ctx.fill_rect(x - bw / 2., y - bh / 2., bw, bh);
-        if state["damage"] == 2 {
-            ctx.begin_path();
-            ctx.move_to(x - bw / 2., y - bh / 2.);
-            ctx.line_to(x + bw / 2., y + bh / 2.);
-            ctx.move_to(x + bw / 2., y - bh / 2.);
-            ctx.line_to(x - bw / 2., y + bh / 2.);
-            ctx.set_stroke_style_str("#f33");
-            ctx.set_line_width(2. * s);
-            ctx.stroke();
+        // Shape badges (drawn in screen space) repeat the status without relying on colour.
+        let glyph = if state["damage"] == 2 {
+            Some(("✕", "#000"))
+        } else if state["damage"] == 1 {
+            Some(("◆", "#b34700"))
+        } else if state["evacuating"] == true {
+            Some(("➜", "#00668f"))
+        } else if state["threatened"] == true {
+            Some(("▲", "#8a5200"))
+        } else if fill == "#2e6bff" {
+            Some(("○", "#1a45c8"))
+        } else {
+            None
+        };
+        if let Some((glyph, color)) = glyph {
+            badges.borrow_mut().push(Badge { x, y, glyph, color });
         }
         if state["threatened"] == true {
             ctx.set_stroke_style_str("#ffb000");
+            ctx.set_line_width(2. * s);
+            ctx.set_line_dash(&js_sys::Array::of2(&(4. * s).into(), &(3. * s).into()))?;
             ctx.stroke_rect(
                 x - bw / 2. - 2. * s,
                 y - bh / 2. - 2. * s,
                 bw + 4. * s,
                 bh + 4. * s,
             );
+            ctx.set_line_dash(&js_sys::Array::new())?;
         }
     }
     for line in list(&v["lines"]) {
@@ -1211,13 +1438,7 @@ fn draw(
         ctx.arc(x, y, 9. * s, 0., std::f64::consts::TAU)?;
         ctx.set_stroke_style_str("#e33");
         ctx.stroke();
-        label(
-            &ctx,
-            crate::i18n::t(lang, "map_reported"),
-            x + 12. * u,
-            y,
-            &mut labels,
-        );
+        label(crate::i18n::t(lang, "map_reported"), x, y, 0);
     }
     if let Some(forecast) = list(&v["forecast_products"])
         .last()
@@ -1317,22 +1538,22 @@ fn draw(
             ctx.set_stroke_style_str(color);
             ctx.stroke();
         }
-        label(
-            &ctx,
-            &format!("#{} {}", t["id"], text(&t["status"])),
-            x + 10. * u,
-            y - 5. * u,
-            &mut labels,
-        );
+        label(&format!("#{} {}", t["id"], text(&t["status"])), x, y, 1);
     }
-    for b in list(&stat["buildings"]) {
+    for (i, b) in list(&stat["buildings"]).iter().enumerate() {
         if let Some(name) = b["name"].as_str().filter(|s| !s.is_empty()) {
+            let st = &v["buildings"][i];
+            let critical = matches!(
+                text(&b["kind"]),
+                "school" | "hospital" | "fuel_station" | "town_hall"
+            ) || st["damage"].as_u64().unwrap_or(0) > 0
+                || st["threatened"] == true
+                || st["evacuating"] == true;
             label(
-                &ctx,
                 name,
-                n(&b["pos"][0]) * k + 8. * u,
-                (h - n(&b["pos"][1])) * k - 6. * u,
-                &mut labels,
+                n(&b["pos"][0]) * k,
+                (h - n(&b["pos"][1])) * k,
+                if critical { 0 } else { 1 },
             );
         }
     }
@@ -1340,11 +1561,10 @@ fn draw(
         let name = text(&place["name"]);
         if !name.contains(" edge") && !name.contains("junction") {
             label(
-                &ctx,
                 name,
                 n(&place["pos"][0]) * k,
                 (h - n(&place["pos"][1])) * k,
-                &mut labels,
+                2,
             );
         }
     }
@@ -1380,53 +1600,15 @@ fn draw(
         ctx.fill();
     }
     scale_bar(&ctx, k * vw.z, h * k, size)?;
-    // Zone identifiers are public geography. Draw them last in CSS-pixel space,
-    // independent of the optional grid/labels layers and the map zoom.
-    let rect = canvas.get_bounding_client_rect();
-    if rect.width() > 0. && rect.height() > 0. && zsize > 0. {
-        let sx = canvas.width() as f64 / rect.width();
-        let sy = canvas.height() as f64 / rect.height();
-        ctx.set_transform(sx, 0., 0., sy, 0., 0.)?;
-        ctx.set_font("600 13px system-ui");
-        ctx.set_text_align("center");
-        ctx.set_text_baseline("middle");
-        for row in 0..zrows {
-            for col in 0..zcols {
-                let x0 = col as f64 * zsize;
-                let y0 = row as f64 * zsize;
-                let left = (x0 - vw.ox) * vw.z / sx;
-                let top = (y0 - vw.oy) * vw.z / sy;
-                let right = (x0 + zsize - vw.ox) * vw.z / sx;
-                let bottom = (y0 + zsize - vw.oy) * vw.z / sy;
-                let (iw, ih) = (
-                    right.min(rect.width()) - left.max(0.),
-                    bottom.min(rect.height()) - top.max(0.),
-                );
-                if iw <= 0. || ih <= 0. {
-                    continue;
-                }
-                let label = format!("{}{}", (b'A' + col as u8) as char, row + 1);
-                let box_w: f64 = label.chars().count() as f64 * 8. + 8.;
-                let box_h: f64 = 19.;
-                let cx = ((left + right) / 2.).clamp(
-                    left.max(0.) + box_w / 2.,
-                    (right.min(rect.width()) - box_w / 2.).max(left.max(0.) + box_w / 2.0),
-                );
-                let cy = ((top + bottom) / 2.).clamp(
-                    top.max(0.) + box_h / 2.,
-                    (bottom.min(rect.height()) - box_h / 2.).max(top.max(0.) + box_h / 2.0),
-                );
-                ctx.set_fill_style_str("rgba(255,255,255,.88)");
-                ctx.fill_rect(cx - box_w / 2., cy - box_h / 2., box_w, box_h);
-                ctx.set_stroke_style_str("rgba(18,43,44,.65)");
-                ctx.set_line_width(1.);
-                ctx.stroke_rect(cx - box_w / 2., cy - box_h / 2., box_w, box_h);
-                ctx.set_fill_style_str("#122b2c");
-                ctx.fill_text(&label, cx, cy)?;
-            }
-        }
-    }
-    Ok(())
+    draw_labels(
+        &ctx,
+        canvas,
+        vw,
+        zsize,
+        (zcols, zrows),
+        &reqs.into_inner(),
+        &badges.into_inner(),
+    )
 }
 /// Metric scale bar in screen space (bitmap pixels), drawn after the world transform is reset.
 fn scale_bar(
