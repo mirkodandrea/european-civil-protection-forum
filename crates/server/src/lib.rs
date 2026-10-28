@@ -23,7 +23,7 @@ use rocket::http::Status;
 #[cfg(not(target_arch = "wasm32"))]
 use rocket::response::{self, Responder};
 #[cfg(not(target_arch = "wasm32"))]
-use rocket::serde::json::Json;
+use body::Json;
 #[cfg(not(target_arch = "wasm32"))]
 use rocket::{Build, Request, Rocket};
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,6 +48,8 @@ mod narrative;
 mod conversations;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod persist;
+#[cfg(not(target_arch = "wasm32"))]
+mod body;
 mod decision_drafts;
 pub mod flow;
 mod forecast;
@@ -249,7 +251,7 @@ fn router_inner(
 pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Rocket<Build> {
     let config = rocket::Config::figment()
         .merge(("log_level", "off"))
-        .merge(("limits.json", 2 * 1024 * 1024));
+        .merge(("limits.json", MAX_BODY_BYTES));
     let mut app = rocket::custom(config)
         .manage(state.clone())
         .mount(
@@ -280,6 +282,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_state,
                 get_master,
                 get_player,
+                get_attachment,
                 post_presence,
                 get_presence,
                 decision_drafts::prepare,
@@ -481,6 +484,10 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+/// Largest request body: a 10 MB PDF in base64 plus the rest of the response.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_BODY_BYTES: usize = 15 * 1024 * 1024;
+
 type ApiResult = Result<Json<Value>, ApiError>;
 
 fn bad(msg: impl Into<String>) -> ApiError {
@@ -671,6 +678,24 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "digest": ex.world.digest(None),
         "conversations": std::collections::BTreeMap::from([(exercise::MASTER, ex.conversation(exercise::MASTER))]),
         "role_knowledge": ex.role_knowledge(),
+    })))
+}
+
+/// A PDF attached to a response: EXCON, and the role that attached it. Served
+/// as JSON (base64) so the in-process browser build can use the same route.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/attachments/<id>"))]
+async fn get_attachment(principal: Principal, s: AppState, id: u64) -> ApiResult {
+    use base64::Engine;
+    let ex = s.lock();
+    let file = match &principal {
+        Principal::Master => ex.file_for(None, id),
+        Principal::Player { role } => ex.file_for(Some(role), id),
+        Principal::Evaluator { .. } => return Err(bad("document not found")),
+    }?;
+    Ok(Json(json!({
+        "id": file.meta.id, "name": file.meta.name, "size": file.meta.size,
+        "content_type": file.content_type,
+        "data": base64::engine::general_purpose::STANDARD.encode(file.bytes.as_slice()),
     })))
 }
 

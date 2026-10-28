@@ -27,6 +27,8 @@ pub mod timing;
 pub use timing::{ClockControl, ExercisePhase, PhaseEntry, ScheduleStatus, ScheduledInject};
 pub mod design;
 pub mod drafts;
+pub mod files;
+pub use files::{FileRef, PdfUpload};
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
@@ -229,6 +231,8 @@ fn wall_ms() -> u128 {
 pub enum BasisKind {
     Procedure,
     Plan,
+    /// Laws and regulations.
+    Law,
     OperationalJudgment,
 }
 
@@ -533,6 +537,8 @@ pub struct Exercise {
     /// simulated minute per second); 0 = as fast as possible.
     pub speed: f32,
     snapshots: Vec<(u32, WorldSnapshot)>,
+    /// PDF documents attached to player responses (see [`files`]).
+    pub(crate) files: files::FileStore,
     log_file: Option<PathBuf>,
     next_id: u64,
 }
@@ -603,6 +609,7 @@ impl Exercise {
             conversations: BTreeMap::new(),
             speed: 0.0,
             snapshots: Vec::new(),
+            files: Default::default(),
             log_file: None,
             next_id: 1,
         };

@@ -190,8 +190,38 @@ In Risposte di EXCON la risposta compare sotto l’inject con il ruolo che rispo
 riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell’inject
 è rifiutato.
 
+### Base della risposta e allegato PDF
+
+- Il modale di risposta del player (`tactical.rs`) è in blocchi: **base della risposta**
+  (Piani / Leggi / Giudizi operativi, `basis` = `plan|law|operational_judgment`,
+  predefinito giudizio operativo), eventuale **PDF**, **narrazione** guidata dal formato
+  chi/cosa/come/dove/quando (testo di aiuto e placeholder localizzati in `i18n_reply.rs`,
+  tutte le 12 lingue), **azioni**. La base diventa `Proposal.evidence.basis.kind`
+  (`BasisKind::Law` è nuovo) e compare in `inject_responses[].replies[]`, in
+  `pending_proposals[]` e nei messaggi `reply` del `thread` come `basis` e `document`;
+  il contesto AI del player riceve la riga `[basis] plans|laws|operational judgement`
+  (+ nome del PDF).
+- `attachment {name, content_type: "application/pdf", data: base64}` è ammesso solo con
+  base piani/leggi. Il server controlla tipo dichiarato, firma `%PDF-` e dimensione
+  (max 10 MB, `exercise::files::MAX_PDF_BYTES`; max 20 file per ruolo, 100 totali) prima di
+  salvare qualunque cosa. I byte restano in memoria nell'`Exercise` (`exercise::files`), non
+  entrano in log, `/api/master` né nell'export della cronologia (solo `{id,name,size}`).
+  Un rollback segna le proposte come annullate ma conserva messaggi e documenti (storico).
+- `GET /api/attachments/<id>` (JSON con `data` base64, identico in server e standalone):
+  solo EXCON e il ruolo autore; valutatori 403, altri ruoli e id ignoti "document not found".
+- EXCON: il modale Risposte (`risposte.rs`) è orizzontale, conversazione a sinistra e
+  risposta da gestire a destra; il chip "PDF" apre `pdf_view.rs`, che disegna il file con
+  pdf.js (`pdfjs-dist@4.10.38` da jsDelivr, caricato al primo uso). Offline resta il link a
+  un blob per aprire/scaricare con il visualizzatore del browser.
+- Persistenza: il body completo delle POST è ora scritto nel journal (`server/src/body.rs`;
+  prima `Data::peek` lo troncava a 512 byte e i corpi lunghi non si rigiocavano). Limite
+  corpo 15 MiB. Nel salvataggio del browser standalone (localStorage, ~5 MB) i PDF oltre
+  ~384 KB sono sostituiti da un PDF segnaposto: dopo un ricaricamento restano nome e
+  riferimento ma il contenuto non è più disponibile.
+
+
 API: `POST /api/player/<role>/actions {narrative?, commands?, text?, reply_to?,
-conversation?}` (unica rotta di risposta; ricorda che serve almeno narrazione o un
+conversation?, basis?, attachment?}` (unica rotta di risposta; ricorda che serve almeno narrazione o un
 comando); `POST /api/player/<role>/narrative {text, reply_to}` resta per compatibilità
 (solo narrazione); `POST /api/player/<role>/conversations {delivery, participants,
 text}` e `POST /api/player/<role>/conversations/<id>/messages {text, reply_to?}`;

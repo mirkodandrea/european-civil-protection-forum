@@ -3,7 +3,7 @@
 use crate::browser::Json;
 use crate::{access::Principal, bad, ApiResult, AppState};
 #[cfg(not(target_arch = "wasm32"))]
-use rocket::serde::json::Json;
+use crate::body::Json;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -160,6 +160,38 @@ pub(crate) struct ResponseBody {
     /// Linked conversation the response comes out of.
     #[serde(default)]
     pub conversation: Option<u64>,
+    /// What the response is based on: plans, laws or operational judgement.
+    #[serde(default)]
+    pub basis: Option<exercise::BasisKind>,
+    /// PDF of the plan or law cited (plan/law basis only).
+    #[serde(default)]
+    pub attachment: Option<AttachmentBody>,
+}
+
+/// A file inside a JSON body: base64 data, checked before it is decoded.
+#[derive(Deserialize)]
+pub(crate) struct AttachmentBody {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    content_type: String,
+    data: String,
+}
+
+impl AttachmentBody {
+    fn decode(self) -> Result<exercise::PdfUpload, crate::ApiError> {
+        use base64::Engine;
+        if self.data.len() > exercise::files::MAX_PDF_BYTES / 3 * 4 + 8 {
+            return Err(bad(format!(
+                "the attached PDF exceeds {} MB",
+                exercise::files::MAX_PDF_BYTES / 1024 / 1024
+            )));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(self.data.trim())
+            .map_err(|_| bad("the attached file is not valid base64"))?;
+        Ok(exercise::PdfUpload { name: self.name, content_type: self.content_type, bytes })
+    }
 }
 
 /// One response, one proposal. The narrative (if any) is translated outside
@@ -171,6 +203,8 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
         commands: body.commands,
         reply_to: body.reply_to,
         conversation: body.conversation,
+        basis: body.basis,
+        document: body.attachment.map(AttachmentBody::decode).transpose()?,
         ..Default::default()
     };
     let (language, turn, revision) = {

@@ -5,6 +5,12 @@ use crate::{Exercise, MsgKind, ProposalStatus, MASTER};
 use serde_json::{json, Value};
 
 impl Exercise {
+    /// What the player said a response rests on, for EXCON views.
+    pub(crate) fn basis_of(&self, proposal: Option<u64>) -> Option<crate::BasisKind> {
+        let evidence = self.proposal(proposal?)?.evidence.as_ref()?;
+        Some(evidence.basis.kind)
+    }
+
     /// Planned time of an MSEL inject in simulated seconds from start: the live
     /// schedule if any, then the scenario's own `at_s`, otherwise the start of
     /// its suggested turn, counted with the scenario's turn length (not the
@@ -100,7 +106,8 @@ impl Exercise {
                         json!({"id": r.id, "reply_to": r.reply_to, "clock": r.clock,
                         "t_s": r.t_s, "text": r.text_excon.as_ref().unwrap_or(&r.text_en), "original": r.original,
                         "proposal": r.proposal, "from": r.from,
-                        "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation)})
+                        "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation),
+                        "basis": self.basis_of(r.proposal), "document": r.proposal.and_then(|pid| self.document_of(pid))})
                     })
                     .collect();
                 let pending: Vec<Value> = self
@@ -119,6 +126,7 @@ impl Exercise {
                     .map(|p| {
                         json!({"id": p.id, "status": p.status, "summary": p.summary,
                         "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
+                        "basis": self.basis_of(Some(p.id)), "document": self.document_of(p.id),
                         "role": p.source.label(), "conversation": p.via_conversation,
                         "narrative": p.narrative, "carries_actions": p.carries_actions,
                         "awaiting_clarification": p.status == ProposalStatus::NeedsClarification
@@ -152,7 +160,9 @@ impl Exercise {
                         json!({"id": t.id, "kind": t.kind, "from": t.from, "to": t.to,
                         "turn": t.turn, "clock": t.clock, "t_s": t.t_s, "title": t.title,
                         "text": if t.to != MASTER { &t.text_en } else if t.kind == MsgKind::Chat { t.text_excon.as_ref().unwrap_or(&t.text) } else { t.text_excon.as_ref().unwrap_or(&t.text_en) }, "original": original, "reply_to": t.reply_to,
-                        "clarification_thread": clarification})
+                        "clarification_thread": clarification,
+                        "basis": if t.kind == MsgKind::Reply { self.basis_of(t.proposal) } else { None },
+                        "document": if t.kind == MsgKind::Reply { t.proposal.and_then(|pid| self.document_of(pid)) } else { None }})
                     })
                     .collect();
                 // Status and open proposal of each clarification conversation of this delivery.

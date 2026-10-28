@@ -5,6 +5,9 @@ use crate::{
     widgets, Action, ActionKind, App, Msg,
 };
 use serde_json::{json, Value};
+
+/// Largest PDF the server accepts (`exercise::files::MAX_PDF_BYTES`).
+const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
 use yew::prelude::*;
 impl App {
     pub fn view_tactical(&self, ctx: &Context<Self>) -> Html {
@@ -170,30 +173,106 @@ impl App {
         let respond_missing = if self.state["phase"] != "orders" { Some("work_need_orders") } else if !has_narrative && staged.is_empty() { Some("work_need_response") } else if has_narrative && !answers_inject { Some("work_need_inject") } else { None };
         // What the disabled "add action" button is waiting for.
         let work_missing = if work_allowed.is_empty() { Some("work_need_action") } else if work_action != "RequestReinforcement" && work_location.trim().is_empty() { Some("work_need_place") } else if work_action == "CutFireLine" && work_destination.trim().is_empty() { Some("work_need_second") } else { None };
+        // What the response rests on; a PDF only goes with plans or laws.
+        let work_basis = self.field("work:basis", "operational_judgment");
+        let file_name = self.field("work:file_name", "");
+        let file_size = self.field("work:file_size", "0").parse::<usize>().unwrap_or(0);
+        let file_error = self.field("work:file_error", "");
+        let doc_allowed = work_basis != "operational_judgment";
+        let on_file = {
+            let link = ctx.link().clone();
+            Callback::from(move |e: Event| {
+                use yew::TargetCast;
+                let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                let Some(file) = input.files().and_then(|f| f.get(0)) else { return };
+                // Choosing the same file again must fire a change event.
+                input.set_value("");
+                let link = link.clone();
+                let set = move |k: &str, v: String| link.send_message(Msg::Field(k.into(), v));
+                wasm_bindgen_futures::spawn_local(async move {
+                    let name = file.name();
+                    let size = file.size() as usize;
+                    let error = if size > MAX_PDF_BYTES {
+                        Some("doc_too_big")
+                    } else if !(file.type_() == "application/pdf" || name.to_lowercase().ends_with(".pdf")) {
+                        Some("doc_not_pdf")
+                    } else {
+                        None
+                    };
+                    if let Some(error) = error {
+                        set("work:file_error", error.into());
+                        return;
+                    }
+                    match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                        Ok(buffer) => {
+                            use base64::Engine;
+                            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+                            set("work:file_data", base64::engine::general_purpose::STANDARD.encode(&bytes));
+                            set("work:file_name", name);
+                            set("work:file_size", bytes.len().to_string());
+                            set("work:file_error", String::new());
+                        }
+                        Err(_) => set("work:file_error", "doc_read_fail".into()),
+                    }
+                });
+            })
+        };
+        let drop_file = ctx.link().batch_callback(|_| {
+            ["work:file_data", "work:file_name", "work:file_size", "work:file_error"]
+                .into_iter()
+                .map(|k| Msg::Field(k.into(), String::new()))
+                .collect::<Vec<_>>()
+        });
         let respond = {
             let own = own.clone();
             let narrative = narrative_text.clone();
             let commands = staged.clone();
             let parent = work_reply_to.parse::<u64>().ok();
+            let basis = work_basis.clone();
+            let attachment = (doc_allowed && !file_name.is_empty()).then(|| {
+                json!({"name": file_name.clone(), "content_type": "application/pdf", "data": self.field("work:file_data", "")})
+            });
             let summary = staged.iter().map(|c| widgets::command_summary("en", c)).collect::<Vec<_>>().join("; ");
             ctx.link().callback(move |_| {
                 let mut body = json!({"commands":commands,"text":summary,"reply_to":parent,"conversation":work_conversation});
                 if !narrative.trim().is_empty() { body["narrative"] = json!(narrative); }
+                body["basis"] = json!(basis);
+                if let Some(attachment) = &attachment { body["attachment"] = attachment.clone(); }
                 let mut request = Action::post(format!("/api/player/{own}/actions"), body);
                 request.kind = ActionKind::WorkSubmit;
                 Msg::Action(request)
             })
         };
         let work_editor = html! {            <section class="card" id="player-work">
-            <label for="response-narrative">{i18n::t(l,"narrative_optional")}</label>
-            <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narrative_placeholder")} value={narrative_text.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
-            <h4 class="work-section">{i18n::t(l,"staged_actions")}</h4>
+            <div class="work-block" data-work-block="basis">
+                <h4 class="work-section">{i18n::t(l,"step_basis")}</h4>
+                <p class="work-help">{i18n::t(l,"basis_hint")}</p>
+                <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"step_basis")}>{for [("plan","basis_plan"),("law","basis_law"),("operational_judgment","basis_judgment")].into_iter().map(|(value,label)|html!{<label key={value} class={classes!("basis-option",(work_basis==value).then_some("is-selected"))}><input type="radio" name="work-basis" id={format!("basis-{value}")} value={value} checked={work_basis==value} onchange={ctx.link().callback(move |_|Msg::Field("work:basis".into(),value.into()))}/><span>{i18n::t(l,label)}</span></label>})}</div>
+                <div class="work-attach" data-work-attach="">
+                    <label for="work-pdf">{i18n::t(l,"doc_label")}</label>
+                    if doc_allowed {
+                        <p class="work-help">{i18n::t(l,"doc_hint")}</p>
+                        if file_name.is_empty() {
+                            <input id="work-pdf" type="file" accept="application/pdf,.pdf" disabled={self.busy} onchange={on_file}/>
+                        } else {
+                            <div class="work-file" data-work-file=""><span class="work-file-name">{file_name.clone()}</span><small class="muted">{if file_size<1_048_576{format!("{} KB",file_size.div_ceil(1024))}else{format!("{:.1} MB",file_size as f64/1_048_576.0)}}</small><button type="button" disabled={self.busy} onclick={drop_file}>{i18n::t(l,"doc_remove")}</button></div>
+                        }
+                    } else {
+                        <p class="work-help muted">{i18n::t(l,"doc_off")}</p>
+                    }
+                    if !file_error.is_empty() {<p class="error" role="alert">{i18n::t(l,match file_error.as_str(){"doc_too_big"=>"doc_too_big","doc_not_pdf"=>"doc_not_pdf",_=>"doc_read_fail"})}</p>}
+                </div>
+            </div>
+            <div class="work-block" data-work-block="narrative">
+                <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"step_narr")}</label></h4>
+                <p class="work-help" data-narrative-help="">{i18n::t(l,"narr_help")}</p>
+                <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
+                <small class="muted">{i18n::t(l,"narrative_optional")}</small>
+            </div>
+            <div class="work-block" data-work-block="actions">
+            <h4 class="work-section">{i18n::t(l,"step_actions")}</h4>
             if staged.is_empty() {<p class="muted" data-staged-empty="">{i18n::t(l,"staged_none")}</p>}
             <ol class="staged-actions">{for staged.iter().enumerate().map(|(i,c)|html!{<li data-staged-action=""><span>{widgets::command_summary(l,c)}</span><button type="button" aria-label={i18n::t(l,"remove")} disabled={self.busy} onclick={ctx.link().callback(move |_|Msg::Unstage(i))}>{"×"}</button></li>})}</ol>
-            <div class="work-submit-bar">
-                <button class="primary" id="respond-submit" data-respond="" disabled={self.busy||respond_missing.is_some()} onclick={respond}>{i18n::t(l,"respond")}</button>
-                if let Some(missing)=respond_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}else{<small class="muted work-hint">{i18n::t(l,"respond_hint")}</small>}
-            </div>
             <details class="work-add" open=true><summary>{i18n::t(l,"add_action_title")}</summary>
             <label for="work-action">{i18n::t(l,"action_type")}</label>
             <select id="work-action" value={work_action.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:action".into(),api::select(e)))}>
@@ -233,6 +312,11 @@ impl App {
                 </div>
             }
             </details>
+            </div>
+            <div class="work-submit-bar">
+                <button class="primary" id="respond-submit" data-respond="" disabled={self.busy||respond_missing.is_some()} onclick={respond}>{i18n::t(l,"respond")}</button>
+                if let Some(missing)=respond_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}else{<small class="muted work-hint">{i18n::t(l,"respond_hint")}</small>}
+            </div>
         </section>};
         let mut view = self.state["map"].clone();
         view["deployments"] = self.state["deployments"].clone();
