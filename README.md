@@ -12,7 +12,7 @@ A turn-based wildfire TTX for the Civil Protection Forum 2026:
 - a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread as a 32-run Monte Carlo ensemble (the fire is the set of cells reached by at least half of the runs), buildings with occupants, approved deployed teams travelling on the simulation clock, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, second by second;
 - an **EXCON** web console: injects (MSEL), turn control, approval of every player action, god-mode map tools, AI prompts, commands by code, rollback;
 - **player** web pages (tablets): role-specific inbox in the player's own language, free-text replies;
-- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash`) that translates injects, turns replies into candidate commands, drafts clarification questions when orders are vague, and translates recorded feedback and situation updates.
+- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash-1017`) that translates injects, turns replies into candidate commands, drafts clarification questions when orders are vague, and translates recorded feedback and situation updates.
 
 > Humans decide. Rules constrain. The model simulates. AI mediates. The EXCON approves.
 
@@ -53,7 +53,8 @@ cargo install trunk --locked
 
 # .env in the repo root
 OPENROUTER_API_KEY=sk-or-...
-# OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   (default)
+# OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash-1017   (default)
+# OPENROUTER_PROVIDERS=together   (default, only these hosts, no fallback; "auto" = OpenRouter chooses)
 
 cargo run --release -p app            # builds the browser UI if needed, then starts window + web server on :8080
 cargo run --release -p app -- --headless   # native server only (no window)

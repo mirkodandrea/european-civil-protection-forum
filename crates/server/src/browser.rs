@@ -135,7 +135,13 @@ pub fn new(ex: Exercise, scenarios: Option<Arc<library::Scenarios>>) -> AppState
 }
 
 /// Reconfiguration affects later requests; credentials never enter Exercise/logs.
-pub fn configure(state: &mut AppState, key: &str, model: &str, translator: &str) {
+pub fn configure(
+    state: &mut AppState,
+    key: &str,
+    model: &str,
+    translator: &str,
+    providers: &[String],
+) {
     let configured = if key.trim().is_empty() {
         Llm::off()
     } else {
@@ -144,7 +150,7 @@ pub fn configure(state: &mut AppState, key: &str, model: &str, translator: &str)
             model.trim().into(),
             llm::DEFAULT_BASE_URL.into(),
         )
-        .with_providers(vec![])
+        .with_providers(providers.to_vec())
         .with_translation_model(translator.trim())
     }
     .with_shared_cassette(tape());

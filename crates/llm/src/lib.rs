@@ -7,7 +7,7 @@
 //! Backends:
 //! - **OpenRouter** (`OPENROUTER_API_KEY`, optional `OPENROUTER_MODEL`,
 //!   default [`DEFAULT_MODEL`], optional `OPENROUTER_PROVIDERS`, a comma list
-//!   in preference order; default [`DEFAULT_PROVIDERS`], `auto` = OpenRouter's choice),
+//!   of the only hosts allowed (no fallbacks); default [`DEFAULT_PROVIDERS`], `auto` = OpenRouter's choice),
 //! - **Mock**, a closure answering by task name — used by the tests,
 //! - **Off**, every call fails fast so callers fall back to manual flow.
 
@@ -61,10 +61,9 @@ pub fn merge_consecutive(messages: &[ChatMessage]) -> Vec<ChatMessage> {
 }
 
 pub const DEFAULT_TRANSLATION_MODEL: &str = "google/gemini-3.1-flash-lite";
-pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash";
-/// Preferred hosts for [`DEFAULT_MODEL`], fastest first (OpenRouter P50 latency, Sep 2026:
-/// Together 0.4 s, CoreWeave 0.6 s, Modal 1.0 s). Others remain as fallbacks.
-pub const DEFAULT_PROVIDERS: &[&str] = &["Together", "CoreWeave", "Modal"];
+pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash-1017";
+/// Hosts allowed for [`DEFAULT_MODEL`], without fallbacks. An empty list lets OpenRouter choose.
+pub const DEFAULT_PROVIDERS: &[&str] = &["together"];
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// A mock answers `(task, system, user)` with the raw model text.
@@ -392,13 +391,17 @@ impl Llm {
                     "temperature": 0.2,
                     "messages": all,
                 });
-                // Preferred hosts first, but any other may serve if they fail; every
-                // host must honour `response_format`; no prompt retention.
+                // Listed hosts only, never a fallback; every host must honour
+                // `response_format`; no prompt retention.
                 body["provider"] = if providers.is_empty() {
                     json!({"require_parameters": true, "data_collection": "deny"})
                 } else {
-                    json!({"order": providers, "allow_fallbacks": true, "require_parameters": true, "data_collection": "deny"})
+                    json!({"only": providers, "allow_fallbacks": false, "require_parameters": true, "data_collection": "deny"})
                 };
+                // Reasoning only where the answer is a set of candidate commands.
+                if matches!(task, "parse_reply" | "prepare_decision") {
+                    body["reasoning"] = json!({"enabled": true});
+                }
                 if json_mode {
                     body["response_format"] = json!({"type": "json_object"});
                 }

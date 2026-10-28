@@ -19,7 +19,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
  });
  await new Promise(resolve=>gateway.listen(0,'127.0.0.1',resolve));
  const port=process.env.TTX_QA_PORT||'8096',base=`http://127.0.0.1:${port}`;
- const child=spawn(process.env.TTX_BINARY||path.join(cwd,'target/release/ttx'),['--headless','--port',port,'--realizations','1'],{cwd,env:{...process.env,OPENROUTER_API_KEY:'local-fixture-only',OPENROUTER_BASE_URL:`http://127.0.0.1:${gateway.address().port}/v1`,OPENROUTER_MODEL:'deepseek/deepseek-v4.1-flash',OPENROUTER_TRANSLATION_MODEL:'google/gemini-3.1-flash-lite',TTX_LLM_CASSETTE:''}});
+ const child=spawn(process.env.TTX_BINARY||path.join(cwd,'target/release/ttx'),['--headless','--port',port,'--realizations','1'],{cwd,env:{...process.env,OPENROUTER_API_KEY:'local-fixture-only',OPENROUTER_BASE_URL:`http://127.0.0.1:${gateway.address().port}/v1`,OPENROUTER_MODEL:'deepseek/deepseek-v4.1-flash-1017',OPENROUTER_TRANSLATION_MODEL:'google/gemini-3.1-flash-lite',TTX_LLM_CASSETTE:''}});
  let browser,key,log='';
  const ready=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('startup timeout '+log)),20000);const read=data=>{log+=data;const match=log.match(/EXCON access:.*token=([a-f0-9]+)/);if(match){key=match[1];clearTimeout(timer);resolve();}};child.stdout.on('data',read);child.stderr.on('data',read);child.on('exit',code=>{clearTimeout(timer);reject(Error(`server exited ${code}: ${log}`));});});
  try{
@@ -54,7 +54,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   assert.equal(requests.filter(request=>request.task==='prepare_decision').length,2,'confirmation reuses the reviewed interpretation');
   assert(requests.filter(request=>request.task==='translate').length>0);
   assert(requests.filter(request=>request.task==='translate').every(request=>request.model==='google/gemini-3.1-flash-lite'));
-  assert(requests.filter(request=>request.task==='prepare_decision').every(request=>request.model==='deepseek/deepseek-v4.1-flash'));
+  assert(requests.filter(request=>request.task==='prepare_decision').every(request=>request.model==='deepseek/deepseek-v4.1-flash-1017'));
   const excon=await browser.newPage({viewport:{width:1440,height:1000}});excon.on('pageerror',error=>errors.push(error.message));
   await excon.goto(base+'/master.html?token='+key);await excon.locator('#messages').filter({hasText:'Issue a warning for F4.'}).waitFor();
   await excon.screenshot({path:path.join(out,'excon-only-confirmed-decision.png')});

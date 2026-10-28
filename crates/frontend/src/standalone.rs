@@ -34,7 +34,16 @@ fn persist_key(key: &str) -> Result<(), ()> {
     .map_err(|_| ())
 }
 
-const STANDALONE_MODEL: &str = "openai/gpt-oss-120b";
+const STANDALONE_MODEL: &str = llm::DEFAULT_MODEL;
+
+/// Comma list from the settings field; empty lets OpenRouter choose the host.
+fn parse_providers(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .collect()
+}
 
 pub fn runtime() -> Result<server::AppState, String> {
     RUNTIME
@@ -59,7 +68,8 @@ fn initialize() -> Result<server::AppState, String> {
             .filter(|key| !key.trim().is_empty())
             .map(str::to_string)
     }) {
-        server::browser::configure(&mut state, &key, STANDALONE_MODEL, STANDALONE_MODEL);
+        let providers: Vec<String> = llm::DEFAULT_PROVIDERS.iter().map(|p| p.to_string()).collect();
+        server::browser::configure(&mut state, &key, STANDALONE_MODEL, STANDALONE_MODEL, &providers);
     }
     RUNTIME.with(|r| *r.borrow_mut() = Some(state.clone()));
     if let Some(s) = &session {
@@ -79,6 +89,7 @@ pub fn standalone() -> Html {
     let key = use_state(String::new);
     let model = use_state(|| STANDALONE_MODEL.to_string());
     let translator = use_state(|| STANDALONE_MODEL.to_string());
+    let providers = use_state(|| llm::DEFAULT_PROVIDERS.join(", "));
     let ai_notice = use_state(|| {
         if initialized
             .as_ref()
@@ -180,6 +191,7 @@ pub fn standalone() -> Html {
         let key = key.clone();
         let model = model.clone();
         let translator = translator.clone();
+        let providers = providers.clone();
         let notice = ai_notice.clone();
         Callback::from(move |_| {
             if model.trim().is_empty() || translator.trim().is_empty() {
@@ -187,7 +199,7 @@ pub fn standalone() -> Html {
                 return;
             }
             if let Ok(mut state) = runtime() {
-                server::browser::configure(&mut state, &key, &model, &translator);
+                server::browser::configure(&mut state, &key, &model, &translator, &parse_providers(&providers));
                 let saved = persist_key(&key).is_ok();
                 notice.set(
                     if !saved {
@@ -213,6 +225,7 @@ pub fn standalone() -> Html {
                     "",
                     llm::DEFAULT_MODEL,
                     llm::DEFAULT_TRANSLATION_MODEL,
+                    &[],
                 );
             }
             key.set(String::new());
@@ -236,6 +249,7 @@ pub fn standalone() -> Html {
           <div class="settings-fields"><label>{"Chiave API"}<input id="openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
           <label>{"Modello interpretazione"}<input id="openrouter-model" value={(*model).clone()} oninput={{let model=model.clone();Callback::from(move |e|model.set(api::input(e)))}}/></label>
           <label>{"Modello traduzione"}<input id="openrouter-translator" value={(*translator).clone()} oninput={{let translator=translator.clone();Callback::from(move |e|translator.set(api::input(e)))}}/></label>
+          <label>{"Provider OpenRouter (separati da virgola, vuoto = scelta automatica)"}<input id="openrouter-providers" value={(*providers).clone()} oninput={{let providers=providers.clone();Callback::from(move |e|providers.set(api::input(e)))}}/></label>
           <button id="configure-ai" onclick={onconfigure}>{"Applica"}</button><button id="clear-ai" onclick={onclear}>{"Rimuovi chiave"}</button></div>
           <p>{"L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente."}</p>
           <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={crate::store::save_error()} reset_note="Elimina sessione, scenari salvati e chiave API di questo browser." backend={(*backend).clone()} revision={*revision}/>

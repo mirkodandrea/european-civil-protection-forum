@@ -14,7 +14,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | People | Not modelled individually: buildings have occupant counts |
 | Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. |
 | Places | Named places, zone codes of an 8×8 grid (`F4`), zone edges (`F4:N`), or coordinates |
-| LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash`, key in `.env`; must degrade gracefully |
+| LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash-1017` (provider `together` only, reasoning on for `parse_reply`/`prepare_decision`), key in `.env`; must degrade gracefully |
 | Scenario | Synthetic "Valverde valley" territory + editable scenario packs (`docs/scenari.md`); EXCON edits roles, resources, ignitions, injects in the Scenario view |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
 | Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the EXCON sets a factor (e.g. 60× = 1 simulated min/s) |
