@@ -176,10 +176,14 @@ pub fn fields_body(fields: &[Field], values: &BTreeMap<String, String>, extra: &
     for f in fields {
         let raw = values.get(f.key).cloned().unwrap_or_else(|| f.init.clone());
         let v = match f.kind {
-            FieldKind::Number => json!(raw
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| format!("{}: {}", ex(f.label), ex("numero non valido")))?),
+            FieldKind::Number => {
+                let n = raw
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("{}: {}", ex(f.label), ex("numero non valido")))?;
+                // Whole numbers go out as integers: integer fields (AdvanceTime.minutes: u32) reject 40.0.
+                if n.fract() == 0.0 && n.abs() < 9e15 { json!(n as i64) } else { json!(n) }
+            }
             FieldKind::Check => json!(raw == "true"),
             FieldKind::Multi(_) => json!(raw.split(',').filter(|k| !k.is_empty()).collect::<Vec<_>>()),
             _ => json!(raw),
