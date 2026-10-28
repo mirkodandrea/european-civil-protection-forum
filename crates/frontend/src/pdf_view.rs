@@ -1,28 +1,28 @@
 //! EXCON viewer of the PDF a player attached to a response.
 //!
 //! The bytes come from `GET /api/attachments/<id>` (JSON, base64) in both the
-//! server and the standalone build. They are drawn with pdf.js, loaded on first
-//! use from a pinned version on jsDelivr; the viewer is a convenience, so when
-//! it cannot load (offline, blocked) the PDF stays reachable through a blob URL
-//! that the browser's own viewer opens or downloads.
+//! server and the standalone build. They are drawn with pdf.js, vendored in
+//! `assets/vendor/pdfjs` and embedded in the WASM (offline and single-file
+//! standalone included), turned into module/worker blob URLs on first use. The
+//! PDF also stays reachable through a blob URL that the browser's own viewer
+//! opens or downloads.
 use crate::api::{self, text};
 use base64::Engine;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use yew::prelude::*;
 
-/// Exact pdf.js release (pdfjs-dist on jsDelivr). Change it here only.
-pub const PDFJS_VERSION: &str = "4.10.38";
+/// Vendored pdfjs-dist 4.10.38 (see `assets/vendor/pdfjs/VERSION`).
+const PDFJS_LIB: &str = include_str!("../assets/vendor/pdfjs/pdf.min.mjs");
+const PDFJS_WORKER: &str = include_str!("../assets/vendor/pdfjs/pdf.worker.min.mjs");
 
 /// Draws `bytes` into `host`, one canvas per page (capped), with pdf.js.
 const RENDER_JS: &str = r#"
 return (async () => {
-  const base = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/`;
   window.__ttxPdfjs ??= (async () => {
-    const lib = await import(base + 'pdf.min.mjs');
-    // A cross-origin worker cannot be started directly: run it from a blob.
-    const code = await (await fetch(base + 'pdf.worker.min.mjs')).text();
-    lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+    const url = code => URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+    const lib = await import(url(libCode));
+    lib.GlobalWorkerOptions.workerSrc = url(workerCode);
     return lib;
   })();
   let lib;
@@ -49,10 +49,11 @@ return (async () => {
 "#;
 
 async fn render(host: &web_sys::Element, bytes: &[u8]) -> Result<(), String> {
-    let f = js_sys::Function::new_with_args("host, bytes, version", RENDER_JS);
+    let f = js_sys::Function::new_with_args("host, bytes, libCode, workerCode", RENDER_JS);
     let array = js_sys::Uint8Array::from(bytes);
+    let args = js_sys::Array::of4(host, &array, &JsValue::from_str(PDFJS_LIB), &JsValue::from_str(PDFJS_WORKER));
     let promise = f
-        .call3(&JsValue::NULL, host, &array, &JsValue::from_str(PDFJS_VERSION))
+        .apply(&JsValue::NULL, &args)
         .map_err(|e| format!("{e:?}"))?;
     JsFuture::from(js_sys::Promise::from(promise))
         .await

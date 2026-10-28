@@ -254,8 +254,9 @@ riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell
   solo EXCON e il ruolo autore; valutatori 403, altri ruoli e id ignoti "document not found".
 - EXCON: il modale Risposte (`risposte.rs`) è orizzontale, conversazione a sinistra e
   risposta da gestire a destra; il chip "PDF" apre `pdf_view.rs`, che disegna il file con
-  pdf.js (`pdfjs-dist@4.10.38` da jsDelivr, caricato al primo uso). Offline resta il link a
-  un blob per aprire/scaricare con il visualizzatore del browser.
+  pdf.js (`pdfjs-dist@4.10.38`, copiato in `crates/frontend/assets/vendor/pdfjs` e incluso
+  nel WASM con `include_str!`: nessun CDN, funziona offline e nel `ttx.html` a file unico).
+  Resta anche il link a un blob per aprire/scaricare con il visualizzatore del browser.
 - Persistenza: il body completo delle POST è ora scritto nel journal (`server/src/body.rs`;
   prima `Data::peek` lo troncava a 512 byte e i corpi lunghi non si rigiocavano). Limite
   corpo 15 MiB. Nel salvataggio del browser standalone (localStorage, ~5 MB) i PDF oltre
