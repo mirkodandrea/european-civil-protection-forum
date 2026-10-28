@@ -66,6 +66,10 @@ rebuild and browser refresh. It reads `OPENROUTER_API_KEY` from `.env` like
 `run_pages_local.sh`; the key is compiled into the browser app, so keep this
 local build private. Changes in `crates/frontend/` are picked up automatically.
 
+`./scripts/dev_bench.sh` serves the dev-only workflow test bench (EXCON and
+player screens side by side on a simulated server, no AI) at
+`http://127.0.0.1:8080/?bench=1`; see [docs/banco-di-prova.md](docs/banco-di-prova.md).
+
 Then open:
 
 | Who | URL |

@@ -2,7 +2,7 @@ use crate::{
     api::{self, list, text},
     i18n,
     map::SituationMap,
-    widgets, Action, ActionKind, App, Msg,
+    widgets, Action, ActionKind, Msg,
 };
 use serde_json::{json, Value};
 
@@ -40,8 +40,8 @@ fn building_named(stat: &Value, name: &str) -> Option<String> {
     list(&stat["buildings"]).iter().map(|b| text(&b["name"])).find(|n| norm(n) == k).map(str::to_string)
 }
 
-impl App {
-    pub fn view_tactical(&self, ctx: &Context<Self>) -> Html {
+impl crate::player_view::PlayerView {
+    pub fn view_tactical(&self) -> Html {
         let own = self.own.clone();
         let l = self.lang();
         let l = l.as_str();
@@ -54,7 +54,7 @@ impl App {
         );
         let click_field = self.field("work:target_field", "work:location");
         let monitor_zones = self.field("work:location", "");
-        let map_click = ctx.link().callback(move |point: Value| {
+        let map_click = self.cb(move |point: Value| {
             let (field, value) = match click_action.as_str() {
                 "CloseRoad" | "ReopenRoad" => ("work:location", text(&point["road"]).to_string()),
                 "EvacuateBuilding" | "OpenShelter" => {
@@ -145,7 +145,7 @@ impl App {
             let destination = work_destination.clone();
             let resource = work_resource.clone();
             let qty = work_qty.parse::<u32>().unwrap_or(1).max(1);
-            ctx.link().batch_callback(move |_| {
+            self.batch(move |_| {
                 let loc = |value: &str| -> Value {
                     let mut pair = value.split(',').filter_map(|part| part.parse::<f32>().ok());
                     match (pair.next(), pair.next()) {
@@ -198,7 +198,7 @@ impl App {
         let zone_input = {
             let (stat, action) = (self.stat.clone(), work_action.clone());
             let building_allowed = work_allowed.iter().any(|a| text(a) == "EvacuateBuilding");
-            ctx.link().batch_callback(move |e: InputEvent| {
+            self.batch(move |e: InputEvent| {
                 let v = api::input(e);
                 match building_named(&stat, &v) {
                     Some(name) if action == "EvacuateZone" && building_allowed => vec![
@@ -229,7 +229,7 @@ impl App {
         let file_error = self.field("work:file_error", "");
         let doc_allowed = work_basis != "operational_judgment";
         let on_file = {
-            let link = ctx.link().clone();
+            let link = self.link.clone();
             Callback::from(move |e: Event| {
                 use yew::TargetCast;
                 let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
@@ -237,7 +237,7 @@ impl App {
                 // Choosing the same file again must fire a change event.
                 input.set_value("");
                 let link = link.clone();
-                let set = move |k: &str, v: String| link.send_message(Msg::Field(k.into(), v));
+                let set = move |k: &str, v: String| link.emit(Msg::Field(k.into(), v));
                 wasm_bindgen_futures::spawn_local(async move {
                     let name = file.name();
                     let size = file.size() as usize;
@@ -266,7 +266,7 @@ impl App {
                 });
             })
         };
-        let drop_file = ctx.link().batch_callback(|_| {
+        let drop_file = self.batch(|_| {
             ["work:file_data", "work:file_name", "work:file_size", "work:file_error"]
                 .into_iter()
                 .map(|k| Msg::Field(k.into(), String::new()))
@@ -282,7 +282,7 @@ impl App {
                 json!({"name": file_name.clone(), "content_type": "application/pdf", "data": self.field("work:file_data", "")})
             });
             let summary = staged.iter().map(|c| widgets::command_summary("en", c)).collect::<Vec<_>>().join("; ");
-            ctx.link().callback(move |_| {
+            self.cb(move |_| {
                 let mut body = json!({"commands":commands,"text":summary,"reply_to":parent,"conversation":work_conversation});
                 if !narrative.trim().is_empty() { body["narrative"] = json!(narrative); }
                 body["basis"] = json!(basis);
@@ -296,7 +296,7 @@ impl App {
             <div class="work-block" data-work-block="basis">
                 <h4 class="work-section">{i18n::t(l,"step_basis")}</h4>
                 <p class="work-help">{i18n::t(l,"basis_hint")}</p>
-                <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"step_basis")}>{for [("plan","basis_plan"),("law","basis_law"),("operational_judgment","basis_judgment")].into_iter().map(|(value,label)|html!{<label key={value} class={classes!("basis-option",(work_basis==value).then_some("is-selected"))}><input type="radio" name="work-basis" id={format!("basis-{value}")} value={value} checked={work_basis==value} onchange={ctx.link().callback(move |_|Msg::Field("work:basis".into(),value.into()))}/><span>{i18n::t(l,label)}</span></label>})}</div>
+                <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"step_basis")}>{for [("plan","basis_plan"),("law","basis_law"),("operational_judgment","basis_judgment")].into_iter().map(|(value,label)|html!{<label key={value} class={classes!("basis-option",(work_basis==value).then_some("is-selected"))}><input type="radio" name="work-basis" id={format!("basis-{value}")} value={value} checked={work_basis==value} onchange={self.cb(move |_|Msg::Field("work:basis".into(),value.into()))}/><span>{i18n::t(l,label)}</span></label>})}</div>
                 <div class="work-attach" data-work-attach="">
                     <label for="work-pdf">{i18n::t(l,"doc_label")}</label>
                     if doc_allowed {
@@ -315,35 +315,35 @@ impl App {
             <div class="work-block" data-work-block="narrative">
                 <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"step_narr")}</label></h4>
                 <p class="work-help" data-narrative-help="">{i18n::t(l,"narr_help")}</p>
-                <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
+                <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={self.cb(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
                 <small class="muted">{i18n::t(l,"narrative_optional")}</small>
-                {self.view_suggestions(ctx, l, &staged)}
+                {self.view_suggestions(l, &staged)}
             </div>
             <div class="work-block" data-work-block="actions">
             <h4 class="work-section">{i18n::t(l,"step_actions")}</h4>
             if staged.is_empty() {<p class="muted" data-staged-empty="">{i18n::t(l,"staged_none")}</p>}
-            <ol class="staged-actions">{for staged.iter().enumerate().map(|(i,c)|html!{<li data-staged-action=""><span>{widgets::command_summary(l,c)}</span><button type="button" aria-label={i18n::t(l,"remove")} disabled={self.busy} onclick={ctx.link().callback(move |_|Msg::Unstage(i))}>{"×"}</button></li>})}</ol>
+            <ol class="staged-actions">{for staged.iter().enumerate().map(|(i,c)|html!{<li data-staged-action=""><span>{widgets::command_summary(l,c)}</span><button type="button" aria-label={i18n::t(l,"remove")} disabled={self.busy} onclick={self.cb(move |_|Msg::Unstage(i))}>{"×"}</button></li>})}</ol>
             <details class="work-add" open=true><summary>{i18n::t(l,"add_action_title")}</summary>
             <label for="work-action">{i18n::t(l,"action_type")}</label>
-            <select id="work-action" value={work_action.clone()} onchange={{let old=work_action.clone();let loc=work_location.clone();ctx.link().batch_callback(move |e|{let new=api::select(e);let mut m=vec![Msg::Field("work:notice".into(),String::new())];if place_kind(&new)!=place_kind(&old)&&!loc.is_empty(){m.push(Msg::Field("work:location".into(),String::new()));}m.push(Msg::Field("work:action".into(),new));m})}}>
+            <select id="work-action" value={work_action.clone()} onchange={{let old=work_action.clone();let loc=work_location.clone();self.batch(move |e|{let new=api::select(e);let mut m=vec![Msg::Field("work:notice".into(),String::new())];if place_kind(&new)!=place_kind(&old)&&!loc.is_empty(){m.push(Msg::Field("work:location".into(),String::new()));}m.push(Msg::Field("work:action".into(),new));m})}}>
                 {for work_allowed.iter().map(|v|html!{<option value={text(v).to_string()} selected={text(v)==work_action}>{i18n::action(l,text(v))}</option>})}
             </select>
             <label for="work-location">{format!("{} *",i18n::t(l,"place"))}</label>
             if work_action=="CloseRoad"||work_action=="ReopenRoad" {
-                <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["roads"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_location}>{text(&r["name"])}</option>})}</select>
+                <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={self.cb(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["roads"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_location}>{text(&r["name"])}</option>})}</select>
             } else if work_action=="EvacuateBuilding"||work_action=="OpenShelter" {
-                <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["buildings"].as_array().into_iter().flatten().map(|b|{let id=b["id"].as_u64().unwrap_or(0);let name=text(&b["name"]);let value=if name.is_empty(){format!("#{id}")}else{name.to_string()};html!{<option value={value.clone()} selected={value==work_location}>{if name.is_empty(){value}else{name.to_string()}}</option>}})}</select>
+                <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={self.cb(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["buildings"].as_array().into_iter().flatten().map(|b|{let id=b["id"].as_u64().unwrap_or(0);let name=text(&b["name"]);let value=if name.is_empty(){format!("#{id}")}else{name.to_string()};html!{<option value={value.clone()} selected={value==work_location}>{if name.is_empty(){value}else{name.to_string()}}</option>}})}</select>
             } else if place_kind(&work_action)=="zone" {
                 <input id="work-location" list="work-zone-options" required=true aria-required="true" placeholder="F4" value={work_location.clone()} oninput={zone_input}/>
                 <datalist id="work-zone-options">{for zone_options.iter().map(|z|html!{<option value={z.clone()}/>})}</datalist>
             } else {
-                <input id="work-location" required=true aria-required="true" value={work_location.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:location".into(),api::input(e)))}/>
+                <input id="work-location" required=true aria-required="true" value={work_location.clone()} oninput={self.cb(|e|Msg::Field("work:location".into(),api::input(e)))}/>
             }
             if !zone_notice.is_empty() {<small class="muted work-hint" role="status" data-place-notice="">{zone_notice.clone()}</small>}
-            if work_action=="CutFireLine" {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={ctx.link().callback(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
+            if work_action=="CutFireLine" {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={self.cb(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
             if work_conversation.is_none() {<label for="work-reply-to">{i18n::t(l,"reply_to")}</label>}
-            if work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
-            if work_action=="RequestReinforcement" {<label for="work-resource">{i18n::t(l,"resource_req")}</label><select id="work-resource" value={work_resource.clone()} onchange={ctx.link().callback(|e|Msg::Field("work:resource".into(),api::select(e)))}>{for self.stat["resource_types"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_resource}>{text(&r["name"])}</option>})}</select><label for="work-qty">{i18n::t(l,"quantity")}</label><input id="work-qty" type="number" min="1" value={work_qty} oninput={ctx.link().callback(|e|Msg::Field("work:qty".into(),api::input(e)))}/>}
+            if work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={self.cb(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
+            if work_action=="RequestReinforcement" {<label for="work-resource">{i18n::t(l,"resource_req")}</label><select id="work-resource" value={work_resource.clone()} onchange={self.cb(|e|Msg::Field("work:resource".into(),api::select(e)))}>{for self.stat["resource_types"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_resource}>{text(&r["name"])}</option>})}</select><label for="work-qty">{i18n::t(l,"quantity")}</label><input id="work-qty" type="number" min="1" value={work_qty} oninput={self.cb(|e|Msg::Field("work:qty".into(),api::input(e)))}/>}
             <button data-add-action="" disabled={self.busy||work_missing.is_some()} onclick={work_command}>{i18n::t(l,"add_action")}</button>
             if let Some(missing)=work_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}
             </details>
@@ -446,38 +446,38 @@ impl App {
                 .map(|r| text(&r["name"]).to_string())
                 .unwrap_or(id.into())
         };
-        let open = ctx.link().callback(Msg::OpenWork);
+        let open = self.cb(Msg::OpenWork);
         let can_act = self.state["phase"] == "orders" && !self.busy;
         html! {<>
         <main id="map-view" class="page tactical-view" hidden={self.active!="map"}>
             <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div><div class="grow"/><button class="primary" id="new-player-action" disabled={!can_act} onclick={{let open=open.clone();Callback::from(move |_|open.emit(None))}}>{i18n::t(l,"new_action")}</button></section>
             <section class="tactical-resources" id="resources" aria-label={i18n::t(l,"resources")}>{for self.state["resources"].as_object().into_iter().flatten().map(|(id,pool)|{let account=&self.state["resource_accounting"][id];html!{<div class="resource-token"><strong>{account["available"].to_string()}</strong><span>{resource_name(id)}<small>{i18n::tf(l,"res_of",&[&pool["total"].to_string(),&(account["committed"].as_u64().unwrap_or(0)+account["deployed"].as_u64().unwrap_or(0)).to_string()])}</small></span></div>}})}</section>
             <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
-                <SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} lang={l.to_string()}/><p class="map-instruction">{i18n::t(l,"map_hint")}</p>
+                if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint")}</p>
                 if !list(&self.state["map"]["forecast_products"]).is_empty(){<details><summary>{i18n::t(l,"forecasts")}</summary>{for list(&self.state["map"]["forecast_products"]).iter().map(|f|widgets::details(i18n::tf(l,"issued",&[&f["issued_s"].to_string()]),&json!({"assumptions":f["assumptions"],"horizons":f["horizons"]})))}</details>}
                 if !list(&self.state["deployments"]).is_empty(){<details open=true class="tactical-missions"><summary>{i18n::t(l,"missions")}</summary>{for list(&self.state["deployments"]).iter().map(|d|{let drone=list(&self.state["map"]["drones"]).iter().find(|x|x["task"]==d["task"]["id"]).cloned();let detail=match &drone{Some(x)=>i18n::tf(l,"mission_drone_detail",&[&list(&x["zones"]).iter().map(|z|text(z).to_string()).collect::<Vec<_>>().join(", ")]),None=>text(&d["task"]["detail"]).to_string()};html!{<p><b>{resource_name(text(&d["task"]["resource"]))}</b>{format!(" · {}",i18n::mission_status(l,text(&d["task"]["status"])))}<br/><small>{detail}</small></p>}})}</details>}
             </section>
-            <section class="tactical-timeline card" id="player-timeline"><header><div><h3>{i18n::t(l,"injects_replies")}</h3><small>{i18n::t(l,"own_events")}</small></div><label>{i18n::t(l,"turn_label")}<select aria-label={i18n::t(l,"player_turn")} value={turn} onchange={ctx.link().callback(|e|Msg::Field("work:turn".into(),api::select(e)))}>{for turns.iter().rev().map(|t|html!{<option value={t.to_string()} selected={*t==current_turn}>{t}</option>})}</select></label></header>
-                {self.view_inject_panel(ctx,can_act,current_turn)}
+            <section class="tactical-timeline card" id="player-timeline"><header><div><h3>{i18n::t(l,"injects_replies")}</h3><small>{i18n::t(l,"own_events")}</small></div><label>{i18n::t(l,"turn_label")}<select aria-label={i18n::t(l,"player_turn")} value={turn} onchange={self.cb(|e|Msg::Field("work:turn".into(),api::select(e)))}>{for turns.iter().rev().map(|t|html!{<option value={t.to_string()} selected={*t==current_turn}>{t}</option>})}</select></label></header>
+                {self.view_inject_panel(can_act,current_turn)}
             </section></div>
         </main>
-            if self.field("work:open","false")=="true"{<crate::inject_panel::ModalShell class={classes!("modal-backdrop","work-backdrop")} onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::Field("work:open".into(),"false".into()));}})}}><section class="work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title"><header><h2 id="work-modal-title">{if let Some(message)=selected_context{if message["kind"]=="inject"{i18n::t(l,"reply_inject_title")}else{i18n::t(l,"reply_chat_title")}}else{i18n::t(l,"new_action_title")}}</h2><button aria-label={i18n::t(l,"close_reply")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Field("work:open".into(),"false".into()))}>{i18n::t(l,"close")}</button></header>
+            if self.field("work:open","false")=="true"{<crate::inject_panel::ModalShell class={classes!("modal-backdrop","work-backdrop")} onkeydown={{let link=self.link.clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.emit(Msg::Field("work:open".into(),"false".into()));}})}}><section class="work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title"><header><h2 id="work-modal-title">{if let Some(message)=selected_context{if message["kind"]=="inject"{i18n::t(l,"reply_inject_title")}else{i18n::t(l,"reply_chat_title")}}else{i18n::t(l,"new_action_title")}}</h2><button aria-label={i18n::t(l,"close_reply")} disabled={self.busy} onclick={self.cb(|_|Msg::Field("work:open".into(),"false".into()))}>{i18n::t(l,"close")}</button></header>
                 if let Some(message)=selected_context{<div class="work-context"><strong>{if message["kind"]=="inject"{text(&message["title"]).to_string()}else{self.name(text(&message["from"]))}}</strong><small>{text(&message["clock"])}</small><p>{text(if message["from"]==own && message["original"].is_string(){&message["original"]}else{&message["text"]})}</p>if message["kind"]=="inject"{<small>{format!("{}: {}",i18n::t(l,"reply_count"),response_count)}</small>}</div>}
                 if let Some(question)=clarifying_proposal.as_ref().and_then(|p|p["clarification_request"].as_str()){<div class="work-clarification" role="note" data-work-clarification={clarifying_proposal.as_ref().map(|p|p["id"].to_string()).unwrap_or_default()}><b>{format!("{} · {}",asker,i18n::t(l,"clarif_needed"))}</b><p>{question}</p>if let Some(p)=clarifying_proposal.as_ref(){<small class="muted">{text(&p["original"])}</small>}</div>}
                 <p class="work-approval-note">{i18n::t(l,"response_note")}</p>
                 if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
                 <div class="work-modal-layout"><div class="work-modal-map"><p>{i18n::t(l,"select_map_target")}</p>
-                    if work_action=="CutFireLine" {<div class="endpoint-picker"><button aria-pressed={(self.field("work:target_field","work:location")=="work:location").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:target_field".into(),"work:location".into()))}>{i18n::t(l,"first_point")}</button><button aria-pressed={(self.field("work:target_field","work:location")=="work:destination").to_string()} onclick={ctx.link().callback(|_|Msg::Field("work:target_field".into(),"work:destination".into()))}>{i18n::t(l,"second_point")}</button></div>}
-                    <SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} lang={l.to_string()}/></div><div class="work-modal-form">{work_editor}</div></div>
+                    if work_action=="CutFireLine" {<div class="endpoint-picker"><button aria-pressed={(self.field("work:target_field","work:location")=="work:location").to_string()} onclick={self.cb(|_|Msg::Field("work:target_field".into(),"work:location".into()))}>{i18n::t(l,"first_point")}</button><button aria-pressed={(self.field("work:target_field","work:location")=="work:destination").to_string()} onclick={self.cb(|_|Msg::Field("work:target_field".into(),"work:destination".into()))}>{i18n::t(l,"second_point")}</button></div>}
+                    if self.maps{<SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} lang={l.to_string()}/>}</div><div class="work-modal-form">{work_editor}</div></div>
             </section></crate::inject_panel::ModalShell>}
         </>}
     }
 }
 
-impl App {
+impl crate::player_view::PlayerView {
     /// Actions the AI suggests from the narrative being written (player-known
     /// context only; see `/api/player/<role>/suggest-actions`), to add by hand.
-    fn view_suggestions(&self, ctx: &Context<Self>, l: &str, staged: &[Value]) -> Html {
+    fn view_suggestions(&self, l: &str, staged: &[Value]) -> Html {
         let working = !self.field("work:sugg_busy", "").is_empty();
         let result: Value = serde_json::from_str(&self.field("work:sugg", "null")).unwrap_or_default();
         let stale = !result.is_null() && self.field("work:sugg_for", "") != self.field("work:narrative", "");
@@ -499,10 +499,10 @@ impl App {
                         <span>{widgets::command_summary(l,&cmd)}</span>
                         if !text(&a["reason"]).is_empty(){<small class="muted">{text(&a["reason"])}</small>}
                         if a["verdict"]["verdict"]=="rejected"{<small class="danger">{i18n::tf(l,"sugg_check",&[text(&a["verdict"]["reason"])])}</small>}
-                        <button type="button" data-add-suggestion={i.to_string()} disabled={self.busy} onclick={ctx.link().callback(move |_|Msg::StageActions(vec![cmd.clone()]))}>{i18n::t(l,"sugg_add")}</button>
+                        <button type="button" data-add-suggestion={i.to_string()} disabled={self.busy} onclick={self.cb(move |_|Msg::StageActions(vec![cmd.clone()]))}>{i18n::t(l,"sugg_add")}</button>
                     </li>}
                 })}</ol>
-                if open.len()>1 {<button type="button" data-add-suggestions="" disabled={self.busy} onclick={ctx.link().callback(move |_|Msg::StageActions(all.clone()))}>{i18n::t(l,"sugg_add_all")}</button>}
+                if open.len()>1 {<button type="button" data-add-suggestions="" disabled={self.busy} onclick={self.cb(move |_|Msg::StageActions(all.clone()))}>{i18n::t(l,"sugg_add_all")}</button>}
             }
         </div>}
     }

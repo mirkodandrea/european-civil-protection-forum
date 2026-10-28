@@ -319,6 +319,17 @@ lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`
 {text, language?}` registra l’esito. Limite noto: i partecipanti si fissano alla
 creazione.
 
+## Banco di prova (sviluppo)
+
+Pagina solo di sviluppo (feature cargo `bench`, `?bench=1` nello standalone,
+`bench.html` sul server) che affianca le schermate EXCON e player di sei flussi
+brevi (inject e narrativa, suggerimenti AI al player e all’EXCON, chiarimento,
+conversazione tra player, decisione per azione) su un finto server in memoria,
+senza AI né simulatore. La schermata di lavoro del player (`tactical.rs`,
+`inject_panel.rs`, `clarify.rs`) è disegnata da `player_view::PlayerView`, che
+`App` costruisce dal proprio stato e il banco dal finto server. Dettagli e
+avvio: [banco-di-prova.md](banco-di-prova.md).
+
 ## Capacità modellate
 
 - Propagazione del fuoco influenzata da terreno, combustibile e meteo, calcolata

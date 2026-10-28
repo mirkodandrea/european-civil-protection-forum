@@ -11,7 +11,7 @@ use crate::{
     api::{list, text},
     i18n,
     timeline::format_offset,
-    App, Msg,
+    Msg,
 };
 use serde_json::Value;
 use yew::prelude::*;
@@ -200,7 +200,7 @@ pub fn modal_shell(props: &ModalShellProps) -> Html {
     html! {<div ref={node} class={props.class.clone()} tabindex="-1" onkeydown={props.onkeydown.clone()} onclick={props.onclick.clone()}>{props.children.clone()}</div>}
 }
 
-impl App {
+impl crate::player_view::PlayerView {
     /// Inject rows of a turn (most urgent first) and the live proposals they are built from.
     /// Injects the player never received but talks about in a conversation appear as guest rows.
     fn inject_items(&self, l: &str, turn: u64) -> (Vec<Item<'_>>, Vec<&Value>) {
@@ -249,7 +249,7 @@ impl App {
     /// The list of injects of the selected turn; a row opens the drill-down in
     /// place of the list (thread on the right, back to the list), like the
     /// conversations view.
-    pub fn view_inject_panel(&self, ctx: &Context<Self>, can_act: bool, turn: u64) -> Html {
+    pub fn view_inject_panel(&self, can_act: bool, turn: u64) -> Html {
         let l = self.lang();
         let l = l.as_str();
         let (items, _) = self.inject_items(l, turn);
@@ -260,14 +260,14 @@ impl App {
         // The open detail follows the live data: it is looked up by key on every render.
         let open_key = self.field("inj:open", "");
         if let Some(it) = items.iter().find(|it| it.key == open_key) {
-            return self.view_inject_detail(ctx, can_act, it);
+            return self.view_inject_detail(can_act, it);
         }
         let name = |id: &str| self.name(id);
         html! {<div class="inject-md">
             if todo>0{<p class="inj-count" role="status">{i18n::tf(l,"inj_todo_count",&[&todo.to_string()])}</p>}
             <ul class="inject-list">{for items.iter().map(|it|{
                 let o=outcome(l,it);
-                let pick={let key=it.key.clone();ctx.link().callback(move |_|Msg::OpenInjectDetail(key.clone()))};
+                let pick={let key=it.key.clone();self.cb(move |_|Msg::OpenInjectDetail(key.clone()))};
                 let (title,meta)=match it.msg{
                     Some(m)=>(text(&m["title"]).to_string(),format!("{} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&name(text(&m["from"]))]))),
                     None=>(i18n::t(l,"inj_free").to_string(),String::new()),
@@ -285,11 +285,11 @@ impl App {
     }
 
     /// The inject, its thread and its conversations; or one conversation; or the new-conversation form.
-    fn view_inject_detail(&self, ctx: &Context<Self>, can_act: bool, it: &Item) -> Html {
+    fn view_inject_detail(&self, can_act: bool, it: &Item) -> Html {
         let l = self.lang();
         let l = l.as_str();
         let o = outcome(l, it);
-        let back_to_list = ctx.link().callback(|_| Msg::OpenInjectDetail(String::new()));
+        let back_to_list = self.cb(|_| Msg::OpenInjectDetail(String::new()));
         let conv_open = self.field("inj:conv", "");
         let conv = it.convs.iter().find(|c| c["id"].to_string() == conv_open).copied();
         let creating = self.field("inj:newconv", "") == "true" && !it.guest && it.msg.is_some();
@@ -298,11 +298,11 @@ impl App {
             None => html! {<h3 id="inj-modal-title">{i18n::t(l,"inj_free")}</h3>},
         };
         let body = if let Some(c) = conv {
-            self.view_conversation(ctx, can_act, it, c)
+            self.view_conversation(can_act, it, c)
         } else if creating {
-            self.view_new_conversation(ctx, it)
+            self.view_new_conversation(it)
         } else {
-            self.view_inject_thread(ctx, can_act, it)
+            self.view_inject_thread(can_act, it)
         };
         let on_key = Callback::from(|_: KeyboardEvent| {});
         html! {<section class="inj-detail" role="region" aria-labelledby="inj-modal-title" data-inject-detail={it.key.clone()} onkeydown={on_key}>
@@ -311,7 +311,7 @@ impl App {
         </section>}
     }
 
-    fn view_inject_thread(&self, ctx: &Context<Self>, can_act: bool, it: &Item) -> Html {
+    fn view_inject_thread(&self, can_act: bool, it: &Item) -> Html {
         let l = self.lang();
         let l = l.as_str();
         let o = outcome(l, it);
@@ -345,7 +345,7 @@ impl App {
                 let id=c["id"].to_string();
                 let last=list(&c["messages"]).last();
                 let others=self.conv_names(c);
-                let open={let id=id.clone();ctx.link().callback(move |_|Msg::Field("inj:conv".into(),id.clone()))};
+                let open={let id=id.clone();self.cb(move |_|Msg::Field("inj:conv".into(),id.clone()))};
                 html!{<li><button class="conv-row" data-conv-row={id} onclick={open}><b>{others}</b>
                     if let Some(m)=last{<small>{format!("{}: {}",self.name(text(&m["from"])),excerpt(text(if m["from"]==self.own&&m["original"].is_string(){&m["original"]}else{&m["text"]})))}</small>}
                     <span class="pill">{list(&c["messages"]).len()}</span></button></li>}
@@ -353,15 +353,15 @@ impl App {
         };
         let composer = if let Some(t) = awaiting {
             // The answer is a plain message to the exercise controllers; a changed action is a new action.
-            html! {<footer class="inj-composer">{self.clarify_composer(ctx,can_act,t,html!{})}</footer>}
+            html! {<footer class="inj-composer">{self.clarify_composer(can_act,t,html!{})}</footer>}
         } else if let Some(m) = it.msg {
             let label = if o.tone == "bad" { "reply_again" } else if it.proposals.is_empty() { "reply" } else { "another_reply" };
-            let open = ctx.link().callback(Msg::OpenWork);
-            let open_via = ctx.link().callback(|(parent, conv): (String, String)| Msg::OpenWorkConv(parent, conv));
+            let open = self.cb(Msg::OpenWork);
+            let open_via = self.cb(|(parent, conv): (String, String)| Msg::OpenWorkConv(parent, conv));
             let id = m["id"].to_string();
             // A guest answers through a conversation; the most recent one carries the response.
             let via = if it.guest { it.convs.last().map(|c| (c["delivery"].to_string(), c["id"].to_string())) } else { None };
-            let start = ctx.link().callback(|_| Msg::Field("inj:newconv".into(), "true".into()));
+            let start = self.cb(|_| Msg::Field("inj:newconv".into(), "true".into()));
             html! {<footer class="inj-composer row">
                 if incoming{<small class="muted" role="status">{i18n::t(l,"thread_incoming")}</small>}
                 else if it.threads.iter().any(|t| has_status(t,"awaiting_excon")){<small class="muted" role="status">{i18n::t(l,"thread_wait")}</small>}
@@ -389,17 +389,17 @@ impl App {
             .join(", ")
     }
 
-    fn view_new_conversation(&self, ctx: &Context<Self>, it: &Item) -> Html {
+    fn view_new_conversation(&self, it: &Item) -> Html {
         let l = self.lang();
         let l = l.as_str();
         let people: Vec<String> = self.field("inj:conv_people", "").split(',').filter(|p| !p.is_empty()).map(String::from).collect();
         let message = self.field("inj:conv_text", "");
         let (delivery, own) = (it.msg.map(|m| m["id"].as_u64().unwrap_or(0)).unwrap_or(0), self.own.clone());
         let ready = !people.is_empty() && !message.trim().is_empty() && !self.busy;
-        let cancel = ctx.link().callback(|_| Msg::Field("inj:newconv".into(), String::new()));
+        let cancel = self.cb(|_| Msg::Field("inj:newconv".into(), String::new()));
         let send = {
             let (people, message) = (people.clone(), message.clone());
-            ctx.link().callback(move |_| {
+            self.cb(move |_| {
                 let mut a = crate::Action::post(format!("/api/player/{own}/conversations"), serde_json::json!({"delivery":delivery,"participants":people,"text":message}));
                 a.kind = crate::ActionKind::ConvStart;
                 Msg::Action(a)
@@ -412,13 +412,13 @@ impl App {
                     {for self.contacts().iter().filter(|r|r["id"]!="master").map(|r|{
                         let id=text(&r["id"]).to_string();
                         let on=people.contains(&id);
-                        let link=ctx.link().clone();
+                        let link=self.link.clone();
                         let (id2,people2)=(id.clone(),people.clone());
-                        html!{<label class="mt-check"><input type="checkbox" data-conv-person={id.clone()} checked={on} onchange={Callback::from(move |_|{let mut next:Vec<String>=people2.iter().filter(|p|**p!=id2).cloned().collect();if !on{next.push(id2.clone())};link.send_message(Msg::Field("inj:conv_people".into(),next.join(",")))})}/>{text(&r["name"]).to_string()}</label>}
+                        html!{<label class="mt-check"><input type="checkbox" data-conv-person={id.clone()} checked={on} onchange={Callback::from(move |_|{let mut next:Vec<String>=people2.iter().filter(|p|**p!=id2).cloned().collect();if !on{next.push(id2.clone())};link.emit(Msg::Field("inj:conv_people".into(),next.join(",")))})}/>{text(&r["name"]).to_string()}</label>}
                     })}
                 </fieldset>
                 <label for="conv-first">{i18n::t(l,"conv_first")}</label>
-                <textarea id="conv-first" maxlength="8000" value={message.clone()} oninput={ctx.link().callback(|e|Msg::Field("inj:conv_text".into(),crate::api::input(e)))}/>
+                <textarea id="conv-first" maxlength="8000" value={message.clone()} oninput={self.cb(|e|Msg::Field("inj:conv_text".into(),crate::api::input(e)))}/>
                 <small class="muted">{i18n::t(l,"conv_private_hint")}</small>
             </div>
             <footer class="inj-composer row"><div class="grow"/><button onclick={cancel}>{i18n::t(l,"cancel")}</button><button class="primary" data-create-conversation="" disabled={!ready} onclick={send}>{i18n::t(l,"conv_create")}</button></footer>
@@ -431,7 +431,7 @@ impl App {
         html! {<blockquote class="conv-quote" data-conv-quote={m["id"].to_string()}><small><b>{i18n::t(l,"inject")}</b>{format!(" · {} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&self.name(text(&m["from"]))]))}</small><b>{text(&m["title"])}</b><p>{text(&m["text"])}</p></blockquote>}
     }
 
-    fn view_conversation(&self, ctx: &Context<Self>, can_act: bool, it: &Item, c: &Value) -> Html {
+    fn view_conversation(&self, can_act: bool, it: &Item, c: &Value) -> Html {
         let l = self.lang();
         let l = l.as_str();
         let own = self.own.clone();
@@ -448,10 +448,10 @@ impl App {
                 messages.iter().find(|m| m["id"].as_u64() == Some(id)).map(|m| (self.name(text(&m["from"])), excerpt(text(if m["from"] == own && m["original"].is_string() { &m["original"] } else { &m["text"] }))))
             }
         };
-        let back = ctx.link().callback(|_| Msg::Field("inj:conv".into(), String::new()));
+        let back = self.cb(|_| Msg::Field("inj:conv".into(), String::new()));
         let send = {
             let (own, draft) = (own.clone(), draft.clone());
-            ctx.link().callback(move |_| {
+            self.cb(move |_| {
                 let mut a = crate::Action::post(format!("/api/player/{own}/conversations/{cid}/messages"), serde_json::json!({"text":draft,"reply_to":reply_id}));
                 a.kind = crate::ActionKind::ConvSend;
                 Msg::Action(a)
@@ -459,13 +459,13 @@ impl App {
         };
         let respond = {
             let (parent, conv) = (delivery.to_string(), cid.to_string());
-            ctx.link().callback(move |_| Msg::OpenWorkConv(parent.clone(), conv.clone()))
+            self.cb(move |_| Msg::OpenWorkConv(parent.clone(), conv.clone()))
         };
         html! {<>
             <div class="inj-chat conv-thread" data-conversation={cid.to_string()}>
                 <div class="conv-head"><button class="inj-back" onclick={back}>{format!("← {}",i18n::t(l,"conv_back"))}</button><span><b>{self.conv_names(c)}</b><small>{i18n::t(l,"conv_private_hint")}</small></span></div>
                 <div class="conv-quote-cite" data-cite-target={delivery.to_string()}>{self.quoted_inject(l, Some(&c["quote"]))}
-                    <button type="button" class="conv-cite" onclick={ctx.link().callback(move |_|Msg::Field("inj:conv_reply".into(),delivery.to_string()))}>{i18n::t(l,"conv_cite")}</button></div>
+                    <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),delivery.to_string()))}>{i18n::t(l,"conv_cite")}</button></div>
                 <ol class="inj-chat-inner" role="log" aria-live="polite">{for messages.iter().map(|m|{
                     let mine=m["from"]==own;
                     let id=m["id"].as_u64().unwrap_or(0);
@@ -475,7 +475,7 @@ impl App {
                         <small><b>{if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))}}</b>{format!(" · {}",text(&m["clock"]))}</small>
                         if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
                         <p>{body}</p>
-                        <button type="button" class="conv-cite" onclick={ctx.link().callback(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></li>}
+                        <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></li>}
                 })}
                 {for list(&c["responses"]).iter().map(|r|{
                     let by=if r["by"]==own{i18n::t(l,"thread_you").to_string()}else{self.name(text(&r["by"]))};
@@ -483,8 +483,8 @@ impl App {
                 })}</ol>
             </div>
             <footer class="inj-composer conv-composer">
-                if let Some((who,what))=reply_id.and_then(cited){<div class="chat-reply-composer" data-reply-preview={reply.clone()}><div><b>{i18n::tf(l,"replying_to",&[&who])}</b><p>{what}</p></div><button type="button" class="chat-reply-cancel" onclick={ctx.link().callback(|_|Msg::Field("inj:conv_reply".into(),String::new()))}>{i18n::t(l,"cancel_reply")}</button></div>}
-                <textarea id="conv-text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} value={draft.clone()} oninput={ctx.link().callback(|e|Msg::Field("inj:conv_text".into(),crate::api::input(e)))}/>
+                if let Some((who,what))=reply_id.and_then(cited){<div class="chat-reply-composer" data-reply-preview={reply.clone()}><div><b>{i18n::tf(l,"replying_to",&[&who])}</b><p>{what}</p></div><button type="button" class="chat-reply-cancel" onclick={self.cb(|_|Msg::Field("inj:conv_reply".into(),String::new()))}>{i18n::t(l,"cancel_reply")}</button></div>}
+                <textarea id="conv-text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} value={draft.clone()} oninput={self.cb(|e|Msg::Field("inj:conv_text".into(),crate::api::input(e)))}/>
                 <div class="row"><small class="literal-translation-hint">{i18n::t(l,"literal_translation_hint")}</small><div class="grow"/>
                     <button data-respond-from-conversation="" disabled={!can_act||it.msg.is_none()} onclick={respond}>{i18n::t(l,"conv_respond")}</button>
                     <button class="primary" data-send-conversation="" disabled={self.busy||draft.trim().is_empty()} onclick={send}>{i18n::t(l,"send")}</button></div>

@@ -50,6 +50,10 @@ pub fn token() -> String {
 }
 #[cfg(not(feature = "standalone"))]
 pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
+    #[cfg(feature = "bench")]
+    if let Some(answer) = crate::bench::intercept(token, path, &body) {
+        return answer;
+    }
     let req = if let Some(body) = body {
         Request::post(path)
             .header("Authorization", &format!("Bearer {token}"))
@@ -162,6 +166,10 @@ pub fn proposal_status(p: &Value) -> &str {
 
 #[cfg(feature = "standalone")]
 pub async fn request(role: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
+    #[cfg(feature = "bench")]
+    if let Some(answer) = crate::bench::intercept(role, path, &body) {
+        return answer;
+    }
     let state = crate::standalone::runtime()?;
     let changes = body.is_some();
     let result = server::browser::request(state.clone(), role, path, body).await;

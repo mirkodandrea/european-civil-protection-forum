@@ -1,6 +1,8 @@
 #[cfg(feature = "standalone")]
 mod editor3d;
 mod action_form;
+#[cfg(feature = "bench")]
+mod bench;
 mod advanced;
 mod controllo;
 mod api;
@@ -21,6 +23,7 @@ mod label_layout;
 mod i18n_review;
 mod i18n_reply;
 mod pdf_view;
+mod player_view;
 mod map;
 mod map_legend;
 #[cfg(not(feature = "standalone"))]
@@ -269,13 +272,6 @@ impl App {
             .and_then(|v| serde_json::from_str(v).ok())
             .unwrap_or_default()
     }
-    fn set_staged(&mut self, staged: Vec<Value>) {
-        if staged.is_empty() {
-            self.fields.remove("work:staged");
-        } else {
-            self.fields.insert("work:staged".into(), Value::Array(staged).to_string());
-        }
-    }
     /// (Re)start the pause after which the narrative gets action suggestions.
     fn schedule_suggest(&mut self, ctx: &Context<Self>) {
         let link = ctx.link().clone();
@@ -302,6 +298,25 @@ impl App {
     fn has_pre_actions_before(&self, to_s: i64) -> bool {
         let now = self.master["agenda"]["now_s"].as_i64().unwrap_or(0);
         !timeline::crossed_pre_actions(list(&self.master["planned_injects"]), now, to_s).is_empty()
+    }
+    /// The player's working screen, drawn from this console's state.
+    fn player_view(&self, ctx: &Context<Self>) -> player_view::PlayerView {
+        player_view::PlayerView {
+            state: self.state.clone(),
+            stat: self.stat.clone(),
+            own: self.own.clone(),
+            fields: self.fields.clone(),
+            busy: self.busy,
+            error: self.error.clone(),
+            active: self.active.clone(),
+            roles: self.roles(),
+            maps: true,
+            link: ctx.link().callback(|m| m),
+        }
+    }
+    /// Injects of the current turn that wait for the player (nav badge).
+    fn inject_todo(&self, ctx: &Context<Self>) -> usize {
+        self.player_view(ctx).inject_todo()
     }
     fn roles(&self) -> Vec<Value> {
         let mut roles = list(&self.stat["roles"]).to_vec();
@@ -752,25 +767,16 @@ impl Component for App {
                                 }
                             }
                             ActionKind::WorkSubmit => {
-                                self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error", "work:sugg", "work:sugg_for", "work:sugg_busy"] {
-                                    self.fields.remove(key);
-                                }
+                                player_view::response_sent(&mut self.fields);
                                 self.suggest_timer = None;
                                 self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
                             }
                             ActionKind::ConvStart => {
-                                for key in ["inj:newconv", "inj:conv_text", "inj:conv_people", "inj:conv_reply"] {
-                                    self.fields.remove(key);
-                                }
-                                if let Some(id) = value["conversation"].as_u64() {
-                                    self.fields.insert("inj:conv".into(), id.to_string());
-                                }
+                                player_view::conversation_started(&mut self.fields, value["conversation"].as_u64());
                                 self.notice = crate::i18n::ex("Inviato").into();
                             }
                             ActionKind::ConvSend => {
-                                self.fields.remove("inj:conv_text");
-                                self.fields.remove("inj:conv_reply");
+                                player_view::conversation_sent(&mut self.fields);
                                 self.notice = crate::i18n::ex("Inviato").into();
                             }
                             ActionKind::ClearField(key) => {
@@ -820,54 +826,23 @@ impl Component for App {
                 self.fields.insert("work:sugg".into(), value.to_string());
                 self.fields.insert("work:sugg_for".into(), narrative);
             }
-            Msg::StageActions(commands) => {
-                let mut staged = self.staged();
-                staged.extend(commands);
-                staged.truncate(32);
-                self.set_staged(staged);
-                // The form (or an AI suggestion) has been turned into a staged action.
-                for key in ["work:location", "work:destination"] {
-                    self.fields.remove(key);
-                }
-            }
-            Msg::Unstage(index) => {
-                let mut staged = self.staged();
-                if index < staged.len() {
-                    staged.remove(index);
-                }
-                self.set_staged(staged);
-            }
+            Msg::StageActions(commands) => player_view::stage(&mut self.fields, commands),
+            Msg::Unstage(index) => player_view::unstage(&mut self.fields, index),
             Msg::OpenWorkConv(parent, conversation) => {
                 Component::update(self, ctx, Msg::OpenWork(Some(parent)));
                 self.fields.insert("work:conversation".into(), conversation);
             }
             Msg::OpenWork(parent) => {
-                self.fields.remove("work:clarify");
                 let parent = parent
                     .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
                     .unwrap_or_default();
-                self.fields.remove("work:conversation");
-                if self.field("work:reply_to", "") != parent {
-                    self.fields.remove("work:staged");
-                    self.fields.remove("work:narrative");
-                    for key in ["work:basis", "work:file_data", "work:file_name", "work:file_size", "work:file_error", "work:sugg", "work:sugg_for"] {
-                        self.fields.remove(key);
-                    }
+                if player_view::open_work(&mut self.fields, parent) {
                     self.suggest_timer = None;
-                    self.fields.remove("work:location");
-                    self.fields.remove("work:destination");
                 }
-                self.fields.insert("work:reply_to".into(), parent);
-                self.fields.insert("work:open".into(), "true".into());
                 self.error.clear();
                 focus_when_rendered("#response-narrative", 10);
             }
-            Msg::OpenInjectDetail(key) => {
-                for k in ["inj:conv", "inj:newconv", "inj:conv_text", "inj:conv_reply", "inj:conv_people"] {
-                    self.fields.remove(k);
-                }
-                self.fields.insert("inj:open".into(), key);
-            }
+            Msg::OpenInjectDetail(key) => player_view::open_inject_detail(&mut self.fields, key),
             Msg::OpenInject(id) => {
                 self.selected = id;
                 self.inject_open = true;
@@ -1062,7 +1037,7 @@ impl Component for App {
             let unread = if id == "chat" && !self.is_master() {
                 self.chat_unread()
             } else if id == "map" && !self.is_master() && !self.is_evaluator() {
-                self.inject_todo()
+                self.inject_todo(ctx)
             } else if id == "risposte" && self.is_master() {
                 risposte::pending_count(&self.master)
             } else {
@@ -1147,6 +1122,11 @@ impl Component for App {
     }
 }
 fn main() {
+    #[cfg(feature = "bench")]
+    if bench::requested() {
+        yew::Renderer::<bench::Bench>::new().render();
+        return;
+    }
     #[cfg(feature = "standalone")]
     if api::window().location().search().unwrap_or_default()
         .split(['&', '?']).any(|p| p == "editor=1")

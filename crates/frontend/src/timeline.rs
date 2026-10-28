@@ -204,16 +204,16 @@ fn pills(inject: &Value, roles: &[Value]) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
-struct SendDialogProps {
-    inject: Value,
-    roles: Vec<Value>,
-    busy: bool,
-    action: Callback<Action>,
-    onclose: Callback<()>,
+pub struct SendDialogProps {
+    pub inject: Value,
+    pub roles: Vec<Value>,
+    pub busy: bool,
+    pub action: Callback<Action>,
+    pub onclose: Callback<()>,
 }
 
 #[function_component(SendDialog)]
-fn send_dialog(props: &SendDialogProps) -> Html {
+pub fn send_dialog(props: &SendDialogProps) -> Html {
     let inject = &props.inject;
     let id = text(&inject["id_inject"]).to_string();
     let served = strings(&inject["sent_to"]);
