@@ -28,6 +28,26 @@ pub fn to_world(scn: &Scenario, v: Vec3) -> Pos {
     ]
 }
 
+/// The drawn ground an aircraft at `p`, heading along `dir` (world, unit
+/// length), must clear: the highest terrain within reach ahead and behind,
+/// lowered with distance so the aircraft climbs before a ridge and sinks after
+/// it instead of hugging every fold. Exaggerated, like `to_bevy`'s heights.
+pub fn flight_floor(scn: &Scenario, p: Pos, dir: Vec2) -> f32 {
+    /// How far ahead and behind the terrain is looked at, and the climb
+    /// gradient the floor is allowed to fall away with.
+    const REACH_M: f32 = 600.0;
+    const STEP_M: f32 = 25.0;
+    const GRADIENT: f32 = 0.3;
+    let n = (REACH_M / STEP_M) as i32;
+    (-n..=n)
+        .map(|k| {
+            let d = k as f32 * STEP_M;
+            let q = [p[0] + dir.x * d, p[1] + dir.y * d];
+            height_at(scn, q) * EXAGGERATION - d.abs() * GRADIENT
+        })
+        .fold(f32::MIN, f32::max)
+}
+
 /// Bilinear elevation at a world position, metres (not exaggerated).
 pub fn height_at(scn: &Scenario, p: Pos) -> f32 {
     if let Some(t) = &scn.render_terrain {
@@ -120,5 +140,24 @@ mod tests {
         let c = scenario::Cell { row: 50, col: 50 };
         let p = scn.cell_centre(c);
         assert!((height_at(&scn, p) - scn.elevation_at(c)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_tanker_pass_clears_the_terrain_ahead() {
+        let s = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+        let (w, h) = (s.grid.width_m(), s.grid.height_m());
+        for dir in [Vec2::X, Vec2::Y, Vec2::new(1.0, 1.0).normalize()] {
+            for k in 0..60 {
+                let p = [w * (k as f32 + 0.5) / 60.0, h * ((k * 37 % 60) as f32 + 0.5) / 60.0];
+                let floor = flight_floor(&s, p, dir);
+                // Never below the ground under the aircraft, nor ever below
+                // the ridge it is about to cross once within the last 100 m.
+                assert!(floor >= height_at(&s, p) * EXAGGERATION - 1e-3);
+                for d in [-100.0, -50.0, 50.0, 100.0] {
+                    let q = [p[0] + dir.x * d, p[1] + dir.y * d];
+                    assert!(floor >= height_at(&s, q) * EXAGGERATION - 0.3 * 100.0 - 1e-3);
+                }
+            }
+        }
     }
 }
