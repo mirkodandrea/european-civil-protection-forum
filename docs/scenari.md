@@ -15,13 +15,13 @@ Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Gene
 | Standalone (WASM) | `localStorage` (`ttx.standalone.packs`) più i pack incorporati | `ttx.standalone.active` |
 
 La sessione salvata contiene il pack da cui è partita: al riavvio si ricostruisce lo stesso scenario anche se la libreria è cambiata.
-Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km) e **Selvariva** (`selvariva_basin`, 6 × 6 km), con i pack `valverde_night_wind` e `selvariva_festival`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
+Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km) e **Selvariva** (`selvariva_basin`, 6 × 6 km), con i pack `valverde_night_wind` e `selvariva_crisi_integrata`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
 
 I salvataggi browser nuovi registrano anche l’identità dei dati del territorio: un replay su una mappa modificata viene scartato con avviso. I salvataggi precedenti senza impronta restano leggibili. Il 3D locale ricostruisce la scena quando cambia scenario; il viewer remoto scarica la nuova scena fuori dal ciclo di rendering quando cambia territorio.
 
 Per aggiungere un territorio al server basta un nuovo `<id>.json` valido nella libreria; per includerlo anche nello standalone aggiungerlo a `crates/scenario/src/embedded.rs`, con eventuali pack, e ricostruire il browser. La feature `scenario/embedded` evita di incorporare i raster negli strumenti headless che non ne hanno bisogno.
 
-La traccia di conduzione da un’ora, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md).
+La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md).
 
 ## Da riga di comando
 
@@ -33,6 +33,35 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 ## API (solo EXCON)
 
 `GET /api/master/scenarios`, `GET /api/master/scenarios/<id>` (pack completo + nomi del territorio), `POST …/validate`, `…/save`, `…/delete`, `…/activate` (solo server). Tutti i problemi di un pack tornano insieme (400, uno per riga).
+
+## Testi in più lingue (`translations`)
+
+I contenuti dello scenario (nomi e descrizioni di ruoli e risorse, titoli e mittenti
+degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
+(scelta a inizio sessione) con questa precedenza:
+
+1. `translations` dello scenario: `{"it": {"Buses": "Autobus", ...}}`, lingua → testo
+   inglese di origine → traduzione. Vale per ogni punto in cui compare la stringa
+   intera (corrispondenza esatta, non parziale).
+2. Glossario incorporato (`crates/scenario/src/glossary.rs`): ruoli e risorse standard
+   in tutte le lingue dei giocatori; testi completi della Valverde in italiano.
+3. Traduzione LLM a runtime (solo giocatori), una volta per testo e lingua, in cache;
+   include i titoli degli inject scritti dall'EXCON.
+4. Senza LLM e senza voce: resta il testo dello scenario.
+
+La sostituzione avviene sul server (`display_map` in `crates/server/src/lib.rs`) nelle
+viste di giocatore, `/api/static`, `/api/state` e `/api/master`; mai nell'editor scenario.
+Un ruolo scritto nella lingua del lettore non viene tradotto.
+
+## Terminologia per i giocatori
+
+Nelle pagine dei giocatori «inject» diventa «messaggio» (it/en e le 10 lingue di
+`i18n_help.rs`); «Traduzione letterale» diventa «Tradotto automaticamente» con un
+suggerimento che lo spiega. L'EXCON mantiene «inject» (termine MSEL). JSON e dati
+tecnici stanno solo dietro sezioni «Avanzate» o «dati tecnici (JSON)»; lo «Spotting»
+è spiegato come «braci che accendono nuovi focolai». Limite noto: le chiavi
+dell'interfaccia giocatore fuori da `i18n_lang`, `i18n_function` e `i18n_help` restano
+in inglese per le lingue diverse da it/en.
 
 ## Cosa non è più cablato
 
@@ -62,6 +91,54 @@ Le azioni non sono eventi separati: appartengono a un inject. Ogni inject del pa
 - Nella finestra di invio dell'inject (e nel corpo di `POST /api/master/msel/<id>/send {recipients?, actions?}`) l'EXCON sceglie quali azioni eseguire: per impostazione predefinita tutte (le anticipate disattivate restano spente). Le azioni si decidono con il **primo** invio: inviare lo stesso inject ad altri ruoli non le riesegue. Un inject personalizzato porta le proprie azioni nel corpo di `POST /api/master/inject {…, actions:[…]}` (solo `offset_s` ≥ 0: non ha un'ora prevista).
 - Stato mostrato come sotto-elemento dell'inject nella timeline: pianificata, approvata alle HH:MM, eseguita, fallita, non eseguita, annullata (inject saltato). Il rollback a un turno dimentica le esecuzioni, gli interruttori e i «Non inviare» decisi da quel momento in poi.
 - **Non inviare**: sull'inject raggiunto («da gestire») i pulsanti **Invia** e **Non inviare**; «Ripristina» annulla la scelta. Un inject saltato non blocca «Avanza al prossimo inject» (`POST /api/master/msel/<id>/skip` e `/restore`).
+
+### Azioni di rivelazione (`reveal`)
+
+Un'azione può, invece di un `command`, rivelare **conoscenza sulla mappa** ai destinatari dell'inject (nebbia di guerra, `crates/exercise/src/knowledge.rs`). Non è stato del mondo: la esegue `Exercise`, mai `World::apply`. Esattamente uno tra `command` e `reveal`; `offset_s` deve essere ≥ 0 (un `reveal` anticipato è rifiutato al caricamento). Con `offset_s` 0 l'osservazione viene allegata ai messaggi consegnati dell'inject (uno per destinatario); con `offset_s` > 0 ogni destinatario riceve a quell'istante un messaggio di situazione. Come per i comandi, si decide al primo invio dell'inject e vale per i ruoli di quell'invio.
+
+```json
+{"id":"A-02","title":"Stima dell'incendio (112)","offset_s":0,
+ "reveal":{"kind":"approximate","position_error_m":400,"area_error_frac":0.3}}
+{"id":"A-03","title":"Mappa del fuoco","offset_s":0,
+ "reveal":{"kind":"exact","zones":"burning_and_adjacent","layers":["fire","roads"],"source":"Sala operativa"}}
+```
+
+- **`exact`**: `zones` è un elenco (`["C3","D3"]`) oppure una regola calcolata all'esecuzione, `"burning"` (zone con celle in fiamme) o `"burning_and_adjacent"` (più le otto zone vicine); `layers` tra `fire, buildings, roads, lines, units` (predefinito `["fire"]`). Usa `zone_observation`. Una regola senza zone in fiamme fa fallire l'azione ("no zone is burning").
+- **`approximate`**: stima non verificata dell'incendio *reale* (celle in fiamme o bruciate, come nel raster del fuoco) calcolata dal simulatore all'esecuzione: baricentro, area (ha) e direzione di propagazione, con errore deliberato e deterministico (funzione di seme, id inject, id azione e ruolo, quindi ogni ruolo legge un errore diverso ma riproducibile): posizione entro `position_error_m` (predefinito 300, max 5000), area entro ±`area_error_frac` (predefinito 0.25) e arrotondata a due cifre significative, direzione ±10° arrotondata a 5°. La direzione è quella dal baricentro delle celle bruciate (dove il fuoco è passato) a quello delle celle in fiamme (il fronte); se distano meno di una cella (fuoco appena innescato) è il vento verso cui soffia (direzione del vento + 180°). Il giocatore vede un cerchio tratteggiato (area dichiarata + errore di posizione), una freccia e l'etichetta «fonte · ora · stima non verificata»; l'ultima stima ricevuta prevale. Non rivela zone.
+- `source` (facoltativo) è la fonte mostrata; predefinita il mittente dell'inject. Nel `KnowledgeEvent` si registrano `source_name` e (per `exact`) `layers`.
+- Nei pacchetti forniti: `I-01` (112) → `A-02` approssimata, `I-03` (sala operativa → fire_commander) → `A-03` esatta (`burning_and_adjacent`, fire + roads). Nell'editor Scenario un'azione `reveal` si mostra e si modifica come JSON al posto degli strumenti di comando.
+
+**Aggiorna mappe dei ruoli** (manuale, mai automatico): nel pannello del turno compare, se almeno un ruolo ha ricevuto una rivelazione per zone (anche dallo strumento «Informazioni ai ruoli»), il pulsante che per ciascun ruolo ripete le stesse zone e gli stessi livelli dell'ultima rivelazione come nuovo snapshot (`POST /api/master/knowledge/refresh {source?}`; fonte predefinita la persona della sala operativa). I ruoli e le zone interessati sono elencati accanto al pulsante (`role_knowledge[ruolo].refresh`).
+
+## Drone di monitoraggio (`drones`, `MonitorArea`)
+
+Una risorsa che, finché è in posizione, tiene aggiornata la mappa del ruolo che la possiede. Gli aggiornamenti continui si guadagnano impegnando la risorsa: non sono gratuiti. Nei territori forniti (`synthetic_valley`/Valverde, `valverde_factory`, `selvariva_basin`) il `fire_commander` ha 1 drone e l'azione `MonitorArea`; un pack che non ridefinisce risorse e ruoli lo eredita dalla base. Il pack `selvariva_crisi_integrata` ridefinisce i ruoli e assegna il drone (limite di vento 45 km/h) a `direzione_soccorso`.
+
+Risorsa (in `resource_types`; un id `drones` senza `drone` usa i valori predefiniti):
+
+```json
+{"id":"drones","name":"Monitoring drones","description":"…","speed_mps":20,
+ "drone":{"max_zones":4,"endurance_s":2400,"turnaround_s":900,"update_interval_s":300,"wind_limit_kmh":50}}
+```
+
+| Campo | Predefinito | Significato |
+|---|---|---|
+| `max_zones` | 4 | il rettangolo che contiene le zone ordinate (griglia 8×8) non supera tanti riquadri |
+| `endurance_s` | 2400 | tempo **in posizione**; il transito dalla base non conta |
+| `turnaround_s` | 900 | dall'atterraggio alla base a "di nuovo disponibile" |
+| `update_interval_s` | 300 | intervallo tra due aggiornamenti della mappa, tempo simulato |
+| `wind_limit_kmh` | assente (nessun limite) | sopra questo vento non decolla (ordine rifiutato) e, in volo, viene richiamato |
+| `speed_mps` (risorsa) | 20 | velocità di transito in linea d'aria dalla base (`staging_base`, o `SetDeploymentTravel`) |
+
+Comando: `{"type":"MonitorArea","zones":["F3-G4"]}`. Ogni voce di `zones` è un codice (`"F3"`) o un rettangolo di zone (`"F3-G4"`); sono accettati anche nomi di luogo (la zona in cui cadono). `role` (solo EXCON) indica il possessore; senza, il primo ruolo che ha un drone. Un giocatore usa sempre il proprio e passa dal normale flusso proposta → approvazione EXCON → esecuzione (`DeployEngine`-like: partenza dalla base, transito, effetto all'arrivo). L'EXCON può comandarlo direttamente (`POST /api/master/command`, strumento «Drone di monitoraggio» in Controllo, JSON per più zone); il drone resta comunque impegnato. Un drone solo: finché non è di nuovo disponibile ogni ordine è rifiutato.
+
+Ciclo (`sim::drone`, nel `Dyn`, quindi annullato dal rollback): *in volo* (`en_route`) → *in posizione* (`working`, campionamenti a `arrivo + k·update_interval_s` per `k = 0…`, l'ultimo a fine autonomia) → *rientro e ricarica* (`refilling`) → `completed` e allocazione restituita da sola (nessun `ReturnResource` necessario). Un `ReturnResource` dell'EXCON lo richiama subito.
+
+Conoscenza (`exercise::monitoring`): ogni campione diventa un `KnowledgeEvent` di fonte `Monitoring` (`message` 0, `source_name` «Drone», livelli fire, buildings, roads, lines, units sulle zone coperte), senza messaggio. Solo due messaggi di situazione: «Drone in posizione» all'arrivo e «Drone rientrato» alla fine della copertura (autonomia, vento, richiamo). Il campionamento avviene ai secondi simulati esatti dentro `World::advance`, quindi non dipende dal passo con cui si avanza; l'`Exercise` li raccoglie dopo ogni avanzamento. Un rollback elimina le osservazioni `Monitoring` successive all'istante ripristinato. Lo stato per il giocatore è in `map.drones`, `map.live_zones`, `map.zone_updates`; la mappa disegna il perimetro tratteggiato delle zone in diretta e il drone, e vela leggermente le altre zone note.
+
+## Ricognizione a terra (`Reconnoitre`)
+
+Comando: `{"type":"Reconnoitre","zone":"F4"}` (codice di zona o nome di luogo; `role` solo per l'EXCON, che indica il ruolo informato). Impegna 1 `ground_crews` del ruolo: la squadra parte dalla base del ruolo (`staging_base` o `SetDeploymentTravel`), segue strade e terreno se il modello operativo è attivo (nessun percorso = ordine rifiutato) e all'arrivo produce **un solo** campione (`MonitorSample` con `recon: true`): un `KnowledgeEvent` di fonte `Monitoring` con `source_name` «Squadra di ricognizione»/«Reconnaissance crew», gli stessi livelli del drone sulla zona, e il messaggio «Ricognizione completata». Nessun aggiornamento continuo: per una mappa in diretta serve il drone. La squadra resta impiegata (`completed`, allocazione aperta) finché l'EXCON non conferma il rientro con `ReturnResource`. Un'osservazione successiva all'istante ripristinato da un rollback viene dimenticata come quelle del drone. Per più zone servono più ordini (la pagina del giocatore li crea uno per zona).
 
 Formato precedente: un pack può ancora avere `edits.timeline` (e un territorio `timeline`) con azioni autonome `{id, title, at_s, command, after?, note}`. Al caricamento vengono convertite e il campo non è più scritto: con `after` l'azione passa a quell'inject; senza `after` passa all'ultimo inject pianificato a `at_s` o prima di esso, altrimenti al primo inject; `offset_s = at_s − ora prevista dell'inject` (negativo se l'azione cadeva prima: diventa un'azione anticipata). L'errore è esplicito se non esiste alcun inject cui agganciarla.
 
@@ -163,3 +240,20 @@ Verifica grafica invisibile, senza avviare l’esercitazione:
 cargo build --release -p app --bin scenario-editor
 TTX_SNAPSHOT="$PWD/runs/editor.png" TTX_SCALE=1 target/release/scenario-editor
 ```
+
+## Tool WebMCP per agenti (ChatGPT Atlas, Chrome)
+
+`crates/frontend/src/webmcp.rs` espone su `document.modelContext` (WebMCP), con compatibilità per la precedente API `navigator.modelContext`, i tool per modificare uno scenario, nell'app server e nello standalone (stesse chiamate dell'editor, `api::request`). **I tool esistono solo mentre uno scenario è aperto nell'editor** (registrati all'apertura, `unregisterTool` alla chiusura o uscendo dalla vista) e lavorano sulla bozza che l'utente ha davanti, anche una copia non ancora salvata (per crearne uno nuovo: «Duplica» o «Personalizza», poi l'agente lo modifica). Mentre l'editor è aperto sono chiamabili anche come `window.ttxWebMcp.call(nome, args)`.
+
+La registrazione preferisce `document.modelContext.registerTool` e riprova per circa un minuto se il contesto viene iniettato dopo il caricamento. Se i tentativi si esauriscono, la console segnala il problema. Il fallback `window.ttxWebMcp` resta disponibile, ma non sostituisce la registrazione WebMCP del browser.
+
+| Tool | Cosa fa |
+|---|---|
+| `describe_scenario_format` | guida al formato e al flusso di lavoro |
+| `get_open_scenario` | bozza completa, stato di salvataggio, problemi, nomi del territorio (`reference`) |
+| `edit_open_scenario {operations,dry_run?}` | operazioni JSON-pointer `add/replace/remove` sulla bozza (`/edits/injects/-` aggiunge); tutto o niente, la bozza resta non salvata; l'id si cambia solo prima del primo salvataggio |
+| `validate_open_scenario` | tutti i problemi della bozza |
+| `save_open_scenario` | salva nella libreria (mai sugli inclusi); non avvia nulla |
+| `list_scenarios`, `get_scenario {id}` | sola lettura, per prendere esempi |
+
+I tool non avviano né toccano l'esercitazione in corso.

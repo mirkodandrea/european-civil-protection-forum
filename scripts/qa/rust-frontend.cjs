@@ -1,5 +1,5 @@
 // Invisible end-to-end fixture for the Rust/Wasm frontend; real APIs, no external AI.
-const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'playwright');
 const {spawn}=require('child_process');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict');
 const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(cwd,'runs/rust-frontend-advanced');
@@ -20,7 +20,7 @@ const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(
   await page.locator('#clock').filter({hasText:'Day'}).waitFor();
   assert(requests.some(url=>url.endsWith('.wasm')),'browser loads the compiled Rust module');
   assert(!requests.some(url=>/\/(common|interface|forecast|injects|player-preparation)\.js/.test(url)),'no legacy application JavaScript');
-  await page.locator('#start').click();await page.locator('#turn').filter({hasText:'orders'}).waitFor();
+  await page.locator('#start-anyway').click();await page.locator('#turn').filter({hasText:'orders'}).waitFor();
   const initial=(await api('/api/state')).world;
   await page.getByRole('button',{name:'Innesco',exact:true}).click();
   await page.locator('#map').click({position:{x:270,y:180}});

@@ -191,6 +191,7 @@ body:has(.standalone){height:100dvh;overflow:hidden}.standalone{height:100dvh;di
 .mapview{position:relative;display:inline-block;max-width:100%;line-height:0}.mapview canvas{cursor:grab;touch-action:none;outline-offset:2px}.mapview canvas:active{cursor:grabbing}
 .map-tools{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;line-height:1}.map-tools>button,.map-layers summary{width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.92);cursor:pointer;list-style:none;font-size:16px}.map-layers summary::-webkit-details-marker{display:none}
 .map-layers{position:relative}.map-layers>div{position:absolute;right:40px;top:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;white-space:nowrap;font-size:13px;line-height:1.3;color:var(--ink)}.map-layers label{display:flex;gap:6px;align-items:center}
+.map-tools .map-layers{position:static}.map-tools .map-layers>div{z-index:5;top:0;right:40px;width:max-content;max-height:calc(100% + 120px);overflow:auto;display:grid;grid-template-columns:auto auto;column-gap:16px;row-gap:8px}.map-layers fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}.map-layers legend{padding:0;margin-bottom:1px;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#5b6b6c)}.map-layers .map-layers-all{grid-column:1/-1;justify-self:start;margin-top:2px;font-size:12px;padding:3px 8px}.map-layers.filtered summary{border-color:var(--accent,#126752);box-shadow:inset 0 0 0 1px var(--accent,#126752)}
 .map-probe{position:absolute;left:8px;bottom:8px;max-width:min(70%,360px);background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:8px;padding:6px 28px 6px 10px;font-size:12px;line-height:1.4;color:var(--ink);pointer-events:none}.map-probe button{position:absolute;top:2px;right:2px;padding:0 6px;border:0;background:transparent;pointer-events:auto;line-height:1.4}
 .map-zoom-badge{position:absolute;top:8px;left:8px;background:rgba(18,43,44,.8);color:#fff;border-radius:6px;padding:2px 7px;font-size:12px;line-height:1.4}
 .map-keys{opacity:.8}.mapview:fullscreen{background:#edf1ee;display:flex;align-items:center;justify-content:center}.mapview:fullscreen canvas{max-height:100dvh!important;max-width:100vw!important}
@@ -877,3 +878,82 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 .sit-rcpt{border:1px solid var(--line);border-radius:6px;padding:4px 8px;display:flex;flex-wrap:wrap;gap:4px 14px}.sit-rcpt legend{font-size:12px;color:var(--muted)}.sit-voice{align-items:end}.sit-voice input{flex:1;min-width:140px}.sit-time{width:64px}
 .tp-suggest{display:inline-flex;align-items:baseline;gap:4px;padding:5px 12px;border:1px solid #c4554e;border-radius:8px;background:#fbeceb;color:#8a2520}.turn-panel .tp-suggest{padding:4px 10px;font-size:13px;white-space:nowrap}
 @media(max-width:1500px){.sit-grid{grid-template-columns:minmax(320px,1fr) minmax(420px,1.3fr)}.sit-sugg{grid-column:1/-1;max-height:none}}
+
+/* Map legend with shapes and textures (colour-blind safe); mirrors map.rs drawing. */
+.map-legend-sym{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--ink)}
+.map-legend-sym li{display:inline-flex;align-items:center;gap:5px;line-height:1.2}
+.lg-sw{display:inline-block;width:22px;height:14px;border:1px solid #122b2c;border-radius:2px;flex:none}
+.lg-fire{background:radial-gradient(circle,#fff4aa 1.5px,transparent 2px) 0 0/7px 7px,#ff4614}
+.lg-burnt{background:repeating-linear-gradient(135deg,transparent 0 3px,rgba(255,255,255,.55) 3px 4.5px),#231e1c}
+.lg-possible{background:#ff9628;opacity:.45}
+.lg-water{background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.85) 3px 4.5px),#3c96ff}
+.lg-line{height:0;border:0;border-top:3px dashed #ffe000;outline:1px solid #7a6a00;outline-offset:1px;background:none}
+.lg-forecast{height:0;border:0;border-top:3px dashed #713b72;background:none}
+.lg-cut{height:0;border:0;border-top:5px solid #b72e26;background:none}
+.lg-closure{height:0;border:0;border-top:5px dashed #b87512;background:none}
+.lg-unit{width:16px;height:11px;background:#ad6912;border-color:#112632}
+.lg-gl{display:inline-block;min-width:22px;text-align:center;font-weight:700;font-size:15px;line-height:1}
+.g-threat{color:#8a5200}.g-dmg{color:#b34700}.g-dest{color:#000}.g-evac{color:#00668f}.g-done{color:#1a45c8}.g-target{color:#ad6912}.g-rep{color:#e33}
+/* Keep the legend fully visible inside flex-sized map cards: the map yields, the legend does not. */
+.mapbox>.mapview{flex:0 1 auto;min-height:0}
+.mapbox>.map-legend,.mapbox>.map-legend-sym{flex:none;width:100%;max-width:none}
+.tactical-view .map-legend-sym{font-size:12px;gap:2px 10px}
+.tactical-map>.mapbox{overflow:visible}
+/* Partial approval: per-action decision, verdict pills */
+.command-decision{display:grid;gap:5px;margin:0 0 6px;padding-bottom:6px;border-bottom:1px dashed var(--line)}.command-decision .reject-reason{width:100%;min-width:0;font-size:13px}
+.command-card.excluded{background:#f7f3f2;border-style:dashed;border-color:#c98f89}.command-card.excluded .command-field{opacity:.55}
+.rejected-actions{margin:8px 0;padding:8px 10px;border-left:3px solid #c0645b;background:#fbefee;border-radius:6px}.rejected-actions ul{margin:4px 0 0;padding-left:18px}
+.pill.reply-state.partial{background:#fbe6c4;color:#7a4b00}.pill.reply-state.rejected{background:#f6d8d5;color:#8a2520}
+.response-decisions ul{list-style:none;margin:4px 0 10px;padding:0;display:grid;gap:4px}
+.inj-badge.partial{background:#fbe6c4;color:#7a4b00;font-weight:600}.inj-actions li.not-approved{color:#8a2520}.inj-actions li.not-approved small{color:var(--muted)}
+/* EXCON reply dialog: conversation on the left, the reply to handle on the right (desktop). */
+.inject-modal.response-dialog{width:min(1320px,96vw);max-height:94dvh;display:flex;flex-direction:column;overflow:hidden;padding:18px 20px}
+.response-head{display:flex;align-items:flex-start;gap:12px;flex:none;padding-bottom:10px;border-bottom:1px solid var(--line)}.response-head p{margin:2px 0 0}
+.response-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:18px;flex:1;min-height:0;margin-top:12px}
+.response-col{min-height:0;overflow:auto;padding-right:6px}.response-col-title{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.response-col-thread{border-right:1px solid var(--line);padding-right:16px}.response-col .response-thread{margin-top:0}
+.reply-basis{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 2px}.reply-doc{padding:3px 10px;font-size:13px;border-color:#3b7dd8;color:#1f4f99;background:#eef6ff}
+.pdf-viewer{margin:0 0 14px;border:1px solid var(--line);border-radius:10px;background:#f7f9f8;padding:8px}.pdf-bar{gap:8px;align-items:center;flex-wrap:wrap}.pdf-name{overflow-wrap:anywhere}
+.pdf-pages{display:grid;gap:8px;max-height:62dvh;overflow:auto;margin-top:8px}.pdf-page{display:block;background:#fff;box-shadow:0 1px 6px #0003}
+.pdf-viewer a.action{padding:6px 10px;font-size:13px;text-decoration:none}
+/* Player response form: grouped blocks. */
+.work-modal #player-work .work-block{padding:12px 0;border-top:1px solid var(--line)}.work-modal #player-work .work-block:first-child{border-top:0;padding-top:0}
+.work-modal #player-work .work-block>.work-section{margin:0 0 4px;font-size:15px}.work-modal #player-work .work-block>.work-section label{font-weight:700}
+.work-help{margin:2px 0 8px;font-size:13px;color:var(--muted)}
+.basis-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:6px 0 12px}
+.basis-option{display:flex;gap:8px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;font-weight:600;margin:0}
+.basis-option.is-selected{border-color:var(--accent);background:#e7f3ee;box-shadow:0 0 0 1px var(--accent) inset}.basis-option input[type=radio]{margin:0;width:20px;height:20px;min-height:20px;flex:none}
+.work-attach label{display:block;font-weight:600;margin-bottom:2px}.work-attach input[type=file]{max-width:100%}
+.work-file{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#f4f7f5}.work-file-name{font-weight:600;overflow-wrap:anywhere}
+.work-modal #player-work textarea#response-narrative{min-height:150px;white-space:pre-wrap}
+.launcher-page{flex:1;overflow:auto;width:100%;max-width:900px}.launcher-page h3{margin:16px 0 8px}.launcher-scenarios{display:grid;gap:8px;margin-bottom:12px}.launcher-scenario{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer}.launcher-scenario.active{border-color:var(--accent);background:#eef6f1}.launcher-scenario input{margin-top:4px}#launch-scenario>p{margin-bottom:12px}#await-start{max-width:640px;margin:40px auto}#await-start p{margin-top:8px}#language-gate button{min-width:120px}
+/* Workflow test bench (dev only, cargo feature `bench`): columns side by side; each column contains its own modals. */
+body:has(.bench){height:100dvh;overflow:hidden}.bench{height:100dvh;display:flex;flex-direction:column;min-height:0}.bench-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 18px;background:#fff;border-bottom:1px solid var(--line)}.bench-tabs{display:flex;gap:6px;padding:8px 18px;overflow-x:auto;background:#f9fbf9;border-bottom:1px solid var(--line);flex-shrink:0}.bench-tabs button{white-space:nowrap;font-size:13px;padding:6px 12px}.bench-tabs .active{background:var(--ink);color:white}
+.bench-flow{padding:8px 18px;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}.bench-steps{display:flex;gap:6px;list-style:none;margin:6px 0 0;padding:0;flex-wrap:wrap}.bench-step{display:flex;gap:8px;align-items:flex-start;flex:1;min-width:190px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#f7f9f8;color:var(--muted)}.bench-step small{display:block;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em}.bench-step-n{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#dfe7e2;font-weight:700;font-size:12px}.bench-step.active{border-color:var(--accent);background:#eef6f1;color:var(--ink);box-shadow:0 0 0 2px #12675233}.bench-step.active .bench-step-n{background:var(--accent);color:#fff}.bench-step.done{color:var(--ink)}.bench-step.done .bench-step-n{background:#cfe6d8;color:var(--accent)}
+.bench-cols{flex:1;min-height:0;display:grid;grid-template-columns:repeat(var(--bench-cols),minmax(0,1fr));gap:8px;padding:8px}.bench-col{position:relative;transform:translateZ(0);min-width:0;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#f4f7f5}.bench-col-title{position:sticky;top:0;z-index:5;padding:6px 12px;font-size:14px;background:var(--ink);color:#fff}.bench-col>.card,.bench-col>#risposte{margin:8px}.bench-col .card{padding:14px}.bench-planned ul{list-style:none;margin:0;padding:0}.bench-planned li{display:flex;gap:10px;align-items:center;justify-content:space-between}
+/* 2D maps: a rectangular viewport as wide as its container. The canvas
+   bitmap follows the box (map.rs), so the box always has an explicit height:
+   the territory keeps its proportions, fits at zoom 1 and the spare width or
+   height shows more terrain when zoomed in. */
+.mapbox{width:100%;max-width:none;display:flex;flex-direction:column;align-items:stretch}
+.mapbox>.mapview,.mapview{position:relative;display:block;width:100%;max-width:none;height:clamp(320px,62vh,820px);max-height:none;flex:none;border-radius:8px;overflow:hidden}
+.mapview canvas,.mapbox canvas,.tactical-view .mapbox canvas,.work-modal-map .mapbox canvas,#map-view .mapbox canvas,.excon-map .mapbox canvas,.excon-map #map-view .mapbox canvas,.sit-map canvas{position:absolute;inset:0;display:block;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;margin:0;border-radius:0}
+/* Player tactical map: the viewport fills what the card leaves after header and legend. */
+.tactical-map>.mapbox{flex:1 1 0;min-height:0;display:flex;overflow:hidden}
+.tactical-map>.mapbox>.mapview{flex:1 1 auto;height:auto;min-height:240px}
+.work-modal-map .mapview{height:max(300px,calc(96dvh - 250px))}
+.excon-map .mapview{height:max(380px,calc(100dvh - 330px))}
+/* EXCON Situazione: the map takes the wide column beside the impact table. */
+.sit-grid{grid-template-columns:minmax(0,1.6fr) minmax(380px,1fr)}.sit-grid .sit-sugg{grid-column:1/-1;max-height:none}
+.sit-map .mapview{height:max(380px,calc(100dvh - 360px))}
+@media(max-width:1050px){.tactical-view:not([hidden]){overflow:auto}.tactical-view .tactical-grid{flex:none;grid-template-rows:auto auto}.tactical-grid>.card{overflow:visible}.tactical-map>.mapbox{flex:none}.tactical-map>.mapbox>.mapview{height:60vh}.sit-grid{grid-template-columns:minmax(0,1fr)}}
+.mapview:fullscreen{width:100vw;height:100dvh;border-radius:0}
+/* Player action form: zone selection tools. */
+.zone-tools{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.zone-tool-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.zone-tool-row button{padding:5px 10px}
+.zone-tool-row button[aria-pressed=true]{background:var(--ink);color:#fff}
+.zone-tool-row select{max-width:220px}
+.zone-chips{display:flex;flex-wrap:wrap;gap:4px}
+.zone-chips .chip{padding:2px 8px;font-size:12px;border-radius:12px;background:#dcebe2;border-color:#b8d1c3}
+.bench-col .page{padding:8px}.bench-col .tactical-view{height:auto}.bench-col .tactical-grid{grid-template-columns:minmax(0,1fr)}.bench-col .tactical-map,.bench-col .work-modal-map,.bench-col .tactical-resources{display:none}.bench-col .modal-backdrop,.bench-col .modal-backdrop.work-backdrop{position:fixed;inset:31px 0 0 0;padding:8px;align-items:flex-start}.bench-col .work-modal,.bench-col .inject-modal{width:100%;max-width:none;height:auto;max-height:calc(100% - 4px);overflow:auto}.bench-col .work-modal-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto}.bench-col .response-cols{grid-template-columns:minmax(0,1fr)}

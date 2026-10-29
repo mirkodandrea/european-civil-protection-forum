@@ -28,7 +28,7 @@ pub const TERRITORIES: &[Territory] = &[
 ];
 pub const PACKS: &[&str] = &[
     include_str!("../../../data/scenarios/valverde_night_wind.pack.json"),
-    include_str!("../../../data/scenarios/selvariva_festival.pack.json"),
+    include_str!("../../../data/scenarios/selvariva_crisi_integrata.pack.json"),
 ];
 
 pub fn territory(id: &str) -> Result<&'static Territory> {

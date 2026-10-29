@@ -24,10 +24,11 @@ scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](
 - ~~Focus sul titolo del modale inject~~, ~~ordine dei campi del modale~~,
   ~~bozza AI in inglese~~, ~~concatenazione richiesta/chiarimento~~ e
   ~~motivo del rifiuto visibile al player~~ (risolti).
-- "AI non disponibile" dopo un chiarimento: ora il motivo è salvato (`failure`) e
-  mostrato; la causa probabile (azione costruita dal testo libero, non valida come
-  `Command`) è da confermare con `TTX_LIVE_LLM=1`. Possibile seguito: un nuovo
-  tentativo automatico che rimandi all'AI l'errore di validazione.
+- ~~"AI non disponibile" dopo un chiarimento~~: la bozza privata AI è stata
+  sostituita dai suggerimenti automatici sulla narrazione (`suggest_actions`).
+  Da provare con `TTX_LIVE_LLM=1` la qualità dei suggerimenti nei due ambiti
+  (player / EXCON) e valutare se ripetere la richiesta quando cambiano le azioni
+  già aggiunte.
 
 ## Esito QA multi-agente (2026-10-23)
 
@@ -104,6 +105,15 @@ chiarimento reale, ricontrollo automatico, `superseded`, retry LLM. Da fare:
 - Risposte: non provato nel browser un caso reale di proposta `superseded`
   (coperto solo da test unitari); il rifiuto dal modale non è stato provato fino
   in fondo.
+- Risposte per inject (playtest 28/10): le stringhe nuove (`i18n_risposte.rs`)
+  esistono solo in italiano e inglese; le altre lingue ripiegano sull’inglese. Il
+  P0 «azione narrata non registrata» non si riproduce sul percorso principale
+  (Rispondi dal dettaglio inject); il percorso ambiguo («+ Nuova azione» con
+  inject scelto automaticamente) è stato tolto.
+- Standalone: dopo «Rimuovi chiave» e ricaricamento, la sessione ripresa può
+  ancora indicare «AI configurata da .env» (l’AI risulta disponibile pur senza
+  chiave salvata né chiave di build); `scripts/qa/standalone-settings.cjs`
+  verifica solo che la chiave salvata sia sparita. Da chiarire.
 - Ricontrollo: solo automatico (nessun pulsante "Ricontrolla"); ogni ricontrollo
   scrive un evento nel log; il test sul caso "raggio del tubo oltre 60 m" richiede
   il modello operativo (il test usa un'evacuazione con pochi autobus).

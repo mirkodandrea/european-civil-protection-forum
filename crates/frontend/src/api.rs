@@ -50,6 +50,10 @@ pub fn token() -> String {
 }
 #[cfg(not(feature = "standalone"))]
 pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
+    #[cfg(feature = "bench")]
+    if let Some(answer) = crate::bench::intercept(token, path, &body) {
+        return answer;
+    }
     let req = if let Some(body) = body {
         Request::post(path)
             .header("Authorization", &format!("Bearer {token}"))
@@ -155,9 +159,17 @@ pub const LANGUAGES: &[(&str, &str)] = &[
 pub fn status(s: &str) -> &str {
     crate::i18n::status("it", s)
 }
+/// Console label of a proposal, including partial approval and acknowledgement.
+pub fn proposal_status(p: &Value) -> &str {
+    crate::i18n::proposal_status(if crate::i18n_excon::is_en() { "en" } else { "it" }, p)
+}
 
 #[cfg(feature = "standalone")]
 pub async fn request(role: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
+    #[cfg(feature = "bench")]
+    if let Some(answer) = crate::bench::intercept(role, path, &body) {
+        return answer;
+    }
     let state = crate::standalone::runtime()?;
     let changes = body.is_some();
     let result = server::browser::request(state.clone(), role, path, body).await;

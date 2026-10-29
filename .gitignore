@@ -14,3 +14,6 @@ __pycache__/
 /web/standalone/
 
 /_site/
+
+# Claude Code agent worktrees (never commit: they become broken gitlinks in CI)
+.claude/worktrees/

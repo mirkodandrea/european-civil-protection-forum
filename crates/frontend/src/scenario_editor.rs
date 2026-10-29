@@ -24,7 +24,7 @@ fn token() -> String {
     api::token()
 }
 
-async fn call(path: &str, body: Option<Value>) -> Result<Value, String> {
+pub(crate) async fn call(path: &str, body: Option<Value>) -> Result<Value, String> {
     api::request(&token(), path, body).await
 }
 
@@ -422,7 +422,7 @@ fn resources_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel
             let (selected, add) = (selected.clone(), upd(open, |p, _: MouseEvent| {
                 let l = p.edits.resource_types.get_or_insert_with(Vec::new);
                 let n = l.len() + 1;
-                l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None });
+                l.push(ResourceType { id: format!("resource_{n}"), name: format!("Risorsa {n}"), description: String::new(), speed_mps: None, drone: None });
             }));
             Callback::from(move |e| { selected.set((K_RESOURCE, n)); add.emit(e) })
         }}>{ex("+ Risorsa")}</button>
@@ -456,6 +456,8 @@ fn action_tip(action: &str) -> &'static str {
     match action {
         "CutFireLine" => "Apre una linea tagliafuoco (senza vegetazione) lungo un percorso: ferma l’avanzata se è completata prima del fuoco.",
         "WaterDrop" => "Lancio d’acqua da aerei o elicotteri su una zona: rallenta o spegne il fuoco sotto il passaggio.",
+        "MonitorArea" => "Manda il drone del comandante su alcune zone (fino a 4): finché è in posizione tiene aggiornata la sua mappa ogni pochi minuti, poi rientra e si ricarica.",
+        "Reconnoitre" => "Manda una squadra a terra in ricognizione su una zona: all’arrivo riferisce una volta cosa vede e la mappa del ruolo si aggiorna a quell’ora. La squadra resta impiegata finché l’EXCON non ne conferma il rientro.",
         "DeployEngine" => "Invia un’autobotte o una squadra a terra in un luogo: agisce dopo il viaggio dalla base, se le strade sono praticabili.",
         "EvacuateZone" => "Ordina di evacuare tutta una zona della griglia, con i suoi edifici e abitanti.",
         "EvacuateBuilding" => "Ordina di evacuare un singolo edificio, ad esempio una scuola o una casa di riposo.",
@@ -1112,7 +1114,7 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
         ("Soppressione progressiva", "Il lavoro di squadre e mezzi si accumula nel tempo (linee che si completano a poco a poco) invece di avere effetto istantaneo.", |o| o.progressive_suppression, |o, v| o.progressive_suppression = v),
         ("Traffico aggregato", "Simula il traffico dei veicoli civili come flusso complessivo: può rallentare le strade e gli spostamenti, senza modellare ogni singola auto.", |o| o.traffic, |o, v| o.traffic = v),
         ("Esposizione all’intensità", "Squadre e veicoli vicini al fronte accumulano esposizione in base all’intensità del fuoco; oltre certe soglie devono ritirarsi.", |o| o.intensity_exposure, |o, v| o.intensity_exposure = v),
-        ("Spotting (brace a distanza)", "Il vento trasporta braci che accendono nuovi focolai davanti al fronte. Rende il fuoco più imprevedibile: da attivare solo se lo scenario lo richiede.", |o| o.spotting, |o, v| o.spotting = v),
+        ("Spotting (braci che accendono nuovi focolai)", "Spotting: il vento trasporta braci che accendono nuovi focolai davanti al fronte. Rende il fuoco più imprevedibile: da attivare solo se lo scenario lo richiede.", |o| o.spotting, |o, v| o.spotting = v),
         ("Chiusure di tratto per fuoco", "Un tratto di strada raggiunto o minacciato dal fuoco viene chiuso e i percorsi vengono ricalcolati.", |o| o.segment_fire_closures, |o, v| o.segment_fire_closures = v),
         ("Spostamenti fuori strada", "Alcuni mezzi e squadre possono attraversare il terreno aperto, più lentamente, quando la strada non basta.", |o| o.terrain_travel, |o, v| o.terrain_travel = v),
         ("Coda dei mezzi di emergenza", "I mezzi di soccorso che usano lo stesso tratto si mettono in coda e si rallentano a vicenda.", |o| o.emergency_congestion, |o, v| o.emergency_congestion = v),
@@ -1227,6 +1229,62 @@ pub fn scenario_editor(props: &Props) -> Html {
             });
         })
     };
+
+    // WebMCP tools exist only while a scenario is open here, and act on this
+    // draft. `current` mirrors the latest state for the tools' closures.
+    let current = use_mut_ref(|| None::<Open>);
+    *current.borrow_mut() = (*open).clone();
+    {
+        let (open_h, current, refresh) = (open.clone(), current.clone(), refresh.clone());
+        use_effect_with(open.is_some(), move |editing| {
+            use wasm_bindgen::JsCast;
+            let mut handler = None;
+            if *editing {
+                let (snap, rep, sav) = (current.clone(), current.clone(), current.clone());
+                let (open_r, open_s) = (open_h.clone(), open_h.clone());
+                crate::webmcp::attach(crate::webmcp::Editor {
+                    snapshot: Box::new(move || {
+                        snap.borrow().as_ref().map(|o| crate::webmcp::Draft {
+                            pack: serde_json::to_value(&o.pack).unwrap_or_default(),
+                            reference: o.reference.clone(),
+                            saved_id: o.saved_id.clone(),
+                            dirty: o.dirty,
+                        })
+                    }),
+                    replace: Box::new(move |v| {
+                        let pack: ScenarioPack = serde_json::from_value(v).map_err(|e| format!("not a valid pack: {e}"))?;
+                        let mut cur = rep.borrow().clone().ok_or("no scenario is open")?;
+                        cur.pack = pack;
+                        cur.dirty = true;
+                        *rep.borrow_mut() = Some(cur.clone());
+                        open_r.set(Some(cur));
+                        Ok(())
+                    }),
+                    saved: Box::new(move |id| {
+                        let held = sav.borrow().clone();
+                        if let Some(mut cur) = held {
+                            cur.saved_id = Some(id);
+                            cur.dirty = false;
+                            *sav.borrow_mut() = Some(cur.clone());
+                            open_s.set(Some(cur));
+                        }
+                    }),
+                });
+                let h = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || refresh.emit(()));
+                let _ = api::window().add_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, h.as_ref().unchecked_ref());
+                handler = Some(h);
+            } else {
+                crate::webmcp::detach();
+            }
+            move || {
+                if let Some(h) = handler {
+                    let _ = api::window().remove_event_listener_with_callback(crate::webmcp::CHANGED_EVENT, h.as_ref().unchecked_ref());
+                }
+            }
+        });
+    }
+    // Leaving the view while editing also withdraws the tools.
+    use_effect_with((), |_| || crate::webmcp::detach());
 
     // Save (and optionally start). `Ok` shows the outcome, errors list problems.
     let save = {
@@ -1343,6 +1401,33 @@ pub fn scenario_editor(props: &Props) -> Html {
                     {for list(&lib["bases"]).iter().map(|base| {let id=text(base); let name=packs.iter().find(|p| text(&p["id"])==id).map(|p|text(&p["name"])).unwrap_or(id); html!{<option value={id.to_string()} selected={territory.as_str()==id}>{name}</option>}})}
                 </select>
             </label>
+            <div class="row">
+                <label class="button" title={ex("Legge uno scenario da un file JSON e lo apre nell’editor come nuovo scenario; salva poi per aggiungerlo alla libreria.")}>{ex("Importa scenario da file")}
+                    <input id="import-scenario-file" type="file" accept=".json,application/json" hidden=true onchange={{
+                        let (open, message, problems, tab) = (open.clone(), message.clone(), problems.clone(), tab.clone());
+                        Callback::from(move |e: Event| {
+                            let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                            let Some(file) = input.files().and_then(|f| f.get(0)) else { return };
+                            input.set_value("");
+                            let (open, message, problems, tab) = (open.clone(), message.clone(), problems.clone(), tab.clone());
+                            wasm_bindgen_futures::spawn_local(async move {
+                                match read_pack(file).await {
+                                    Ok(pack) => match call(&format!("/api/master/scenarios/{}", api::encode(&pack.base)), None).await {
+                                        Ok(v) => {
+                                            problems.set(vec![]);
+                                            message.set(String::new());
+                                            tab.set("general".into());
+                                            open.set(Some(Open { pack, reference: v["reference"].clone(), saved_id: None, dirty: true }));
+                                        }
+                                        Err(e) => message.set(format!("Territorio «{}» non disponibile: {e}", pack.base)),
+                                    },
+                                    Err(e) => message.set(e),
+                                }
+                            });
+                        })
+                    }}/>
+                </label>
+            </div>
             <table class="scenario-list"><thead><tr>
                 <th title={ex("Nome e descrizione dello scenario.")}>{ex("Nome")}</th>
                 <th title={ex("La mappa su cui si svolge: terreno, edifici e strade. Non si modifica da qui.")}>{ex("Territorio")}</th>
@@ -1363,7 +1448,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                         <button class="edit-scenario" disabled={*busy}
                             title={if builtin {ex("Apre una copia modificabile: lo scenario incluso resta com’è.")} else {ex("Apre lo scenario nell’editor. Salvare non tocca l’esercitazione in corso.")}}
                             onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), false)))}}>{if builtin {ex("Personalizza")} else {ex("Modifica")}}</button>
-                        if !builtin {<button disabled={*busy} title={ex("Apre una copia di questo scenario con un nuovo identificativo.")} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), true)))}}>{ex("Duplica")}</button>}
+                        <button class="clone-scenario" disabled={*busy} title={ex("Apre una copia di questo scenario con un nuovo identificativo.")} onclick={{let load = load.clone(); let id = id.clone(); Callback::from(move |_| load.emit((id.clone(), true)))}}>{ex("Duplica")}</button>
                         {twice(format!("start:{id}"), ex("Avvia").to_string(), "primary", "Avvia una nuova esercitazione da questo scenario. La sessione in corso (turni, messaggi, decisioni) viene scartata.", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("start", id.clone())))})}
                         if !builtin && !is_running {{twice(format!("delete:{id}"), ex("Elimina").to_string(), "danger", "Elimina definitivamente questo scenario dalla libreria. Non si può annullare.", {let act = act.clone(); let id = id.clone(); Callback::from(move |_| act.emit(("/api/master/scenarios/delete", id.clone())))})}}
                     </td>
@@ -1420,24 +1505,40 @@ pub fn scenario_editor(props: &Props) -> Html {
                         <button disabled={*busy} title={ex("Verifica lo scenario senza salvare e segnala gli errori da correggere.")} onclick={validate}>{ex("Controlla")}</button>
                     </div>
                     <div class="row scenario-transfer">
-                        <button title={ex("Scrive lo scenario intero come testo JSON nel riquadro «Avanzate: JSON» qui sotto, per copiarlo o archiviarlo.")} onclick={{
-                            let (pack_json, pack_json_open, pack) = (pack_json.clone(), pack_json_open.clone(), o.pack.clone());
-                            Callback::from(move |_| { pack_json.set(serde_json::to_string_pretty(&pack).unwrap_or_default()); pack_json_open.set(true) })
-                        }}>{ex("Esporta scenario (JSON)")}</button>
-                        <button title={ex("Sostituisce il contenuto dell’editor con il testo JSON incollato; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale.")} onclick={{
-                            let (pack_json, pack_json_open, open, message) = (pack_json.clone(), pack_json_open.clone(), open.clone(), message.clone());
-                            Callback::from(move |_| { if pack_json.trim().is_empty() { pack_json_open.set(true); message.set(ex("Incolla prima il testo JSON dello scenario (riquadro «Avanzate: JSON» qui sotto), poi premi Importa.").to_string()); return; } match serde_json::from_str::<ScenarioPack>(&pack_json) {
-                                Ok(mut pack) => {
-                                    if let Some(cur) = &*open {
-                                        // An imported pack never renames the scenario it is imported into.
-                                        pack.id = cur.pack.id.clone();
-                                        open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
-                                        message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
-                                    }
+                        <button id="export-scenario" title={ex("Scarica lo scenario intero come file JSON.")} onclick={{
+                            let (message, pack) = (message.clone(), o.pack.clone());
+                            Callback::from(move |_| {
+                                let value = serde_json::to_value(&pack).unwrap_or_default();
+                                match api::download_as(&value, &format!("{}.json", pack.id)) {
+                                    Ok(()) => message.set(ex("Scenario esportato").to_string()),
+                                    Err(e) => message.set(e),
                                 }
-                                Err(e) => message.set(format!("JSON non valido: {e}")),
-                            } })
-                        }}>{ex("Importa scenario (JSON)")}</button>
+                            })
+                        }}>{ex("Esporta scenario (JSON)")}</button>
+                        <label class="button" title={ex("Sostituisce il contenuto dell’editor con lo scenario letto da un file JSON; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale.")}>{ex("Importa scenario (JSON)")}
+                            <input id="import-scenario" type="file" accept=".json,application/json" hidden=true onchange={{
+                                let (open, message) = (open.clone(), message.clone());
+                                Callback::from(move |e: Event| {
+                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                    let Some(file) = input.files().and_then(|f| f.get(0)) else { return };
+                                    input.set_value("");
+                                    let (open, message) = (open.clone(), message.clone());
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        match read_pack(file).await {
+                                            Ok(mut pack) => {
+                                                if let Some(cur) = &*open {
+                                                    // An imported pack never renames the scenario it is imported into.
+                                                    pack.id = cur.pack.id.clone();
+                                                    open.set(Some(Open { pack, dirty: true, ..cur.clone() }));
+                                                    message.set(ex("Scenario importato nell’editor · salva per conservarlo").to_string());
+                                                }
+                                            }
+                                            Err(e) => message.set(e),
+                                        }
+                                    });
+                                })
+                            }}/>
+                        </label>
                     </div>
                     <details class="scenario-json" open={*pack_json_open} ontoggle={{
                         let pack_json_open = pack_json_open.clone();
@@ -1459,8 +1560,18 @@ pub fn scenario_editor(props: &Props) -> Html {
     </main>}
 }
 
+/// Reads a scenario pack from a JSON file chosen by the user.
+async fn read_pack(file: web_sys::File) -> Result<ScenarioPack, String> {
+    let text = wasm_bindgen_futures::JsFuture::from(file.text())
+        .await
+        .map_err(|_| ex("File non leggibile").to_string())?
+        .as_string()
+        .unwrap_or_default();
+    serde_json::from_str(&text).map_err(|e| format!("JSON non valido: {e}"))
+}
+
 /// Begin a new exercise from `id`. In the browser the page reloads into it.
-async fn start_scenario(id: &str) -> Result<String, String> {
+pub(crate) async fn start_scenario(id: &str) -> Result<String, String> {
     #[cfg(feature = "standalone")]
     {
         crate::store::activate(id)?;

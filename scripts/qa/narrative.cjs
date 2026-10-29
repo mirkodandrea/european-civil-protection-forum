@@ -1,85 +1,109 @@
-// Invisible browser QA through real HTTP commands and player/EXCON controls.
-// Uses a separate headless server, no saved session and no external model.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+// Invisible standalone QA of a narrated decision: the player answers an inject
+// with Rispondi (decision, basis), EXCON approves it in Risposte and records the
+// outcome as a persona with an intervention; approval and outcome are distinct
+// states. Runs on the standalone app (TTX_QA_URL, e.g. a Trunk server; default
+// the single-file build); no external model.
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 const root = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(root, 'runs/narrative-review'));
-const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8097';
-const bin = process.env.TTX_QA_BIN || path.join(root, 'target/release/ttx');
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const url = process.env.TTX_QA_URL || ('file://' + path.join(root, process.env.TTX_STANDALONE_FILE || 'web/standalone/ttx.html'));
 (async () => {
   fs.mkdirSync(out, { recursive: true });
-  let log = '', browser;
-  const child = spawn(bin, ['--headless', '--scenario', 'data/scenarios/synthetic_valley.json', '--port', new URL(base).port, '--web', process.env.TTX_QA_WEB || 'web/dist', '--no-state'], { cwd: root, env: { ...process.env, OPENROUTER_API_KEY: '' } });
-  child.stdout.on('data', b => { log += b; }); child.stderr.on('data', b => { log += b; });
-  const api = async (who, route, body) => {
-    const response = await fetch(base + route, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${who}`, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data;
-  };
+  const browser = await chromium.launch({ headless: true, channel: process.env.TTX_BROWSER_CHANNEL || 'chrome' });
+  const errors = [];
   try {
-    let ready = false;
-    for (let i = 0; i < 100; i++) { try { await api('master', '/api/state'); ready = true; break; } catch { if (child.exitCode !== null) throw Error(log); await wait(200); } }
-    assert(ready, log);
-    await api('master', '/api/master/start', {});
-    await api('master', '/api/player/mayor/language', { language: 'en' });
-    await api('master', '/api/master/inject', { title: 'Support for evacuated families', sender: '112', recipients: ['mayor'], text: 'Families at the shelter request psychological support. Coordinate assistance.' });
-    const before = (await api('master', '/api/state')).world;
-    browser = await chromium.launch({ headless: true, channel: 'chrome' });
-    const errors = [];
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-    const player = await context.newPage(); player.on('pageerror', e => errors.push(e.message));
-    await context.route('https://openrouter.ai/**', route => { errors.push('Unexpected external AI request'); return route.abort(); });
-    await player.goto(base + '/player.html?role=mayor');
-    // Desktop-only flow: the inject drill-down opens the Response modal ("Rispondi").
-    await player.locator('[data-view="map"]').click();
-    await player.locator('[data-inject-row]').filter({ hasText: 'Support for evacuated families' }).click();
-    await player.locator('[data-reply-inject]').click();
-    const work = player.locator('.work-modal');
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    page.on('pageerror', e => { if (!e.message.startsWith('Using exceptions for control flow')) errors.push(e.message); });
+    await page.route('https://openrouter.ai/**', route => { errors.push('Unexpected external AI request'); return route.abort(); });
+    const master = page.locator('[data-panel="master"]'), mayor = page.locator('[data-panel="mayor"]');
+    const choose = role => page.locator(`.role-tabs [data-role="${role}"]`).click();
+    const lang = async (p, l) => { const c = p.locator(`#language-gate [data-lang="${l}"]`); if (await c.count()) await c.click(); };
+    await page.goto(url);
+    if (url.startsWith('http')) { await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); }); await page.goto(url); }
+    await page.locator('.launcher #start-session').click();
+    await require('./standalone-languages.cjs').confirmLanguages(page);
+    await master.locator('#start').click();
+    await master.locator('#turn').filter({ hasText: /orders|ordini/ }).waitFor();
+    // EXCON sends a custom inject to the mayor only.
+    await master.locator('[data-view="timeline"]').click();
+    await master.locator('[data-inject-all]').click();
+    const modal = page.getByRole('dialog');
+    await modal.locator('#inject-title').fill('Support for evacuated families');
+    await modal.locator('#inject-sender').fill('112');
+    await modal.locator('#text').fill('Families at the shelter request psychological support. Coordinate assistance.');
+    await modal.locator('#inject-scope').selectOption('custom');
+    await modal.getByLabel(/Sindaco|Mayor/).check();
+    await modal.locator('#send').click();
+    await modal.waitFor({ state: 'hidden' });
+
+    // Desktop flow: the inject drill-down opens the Rispondi modal.
+    await choose('mayor'); await lang(mayor, 'en');
+    await mayor.locator('[data-view="map"]').click();
+    await mayor.locator('[data-inject-row]').filter({ hasText: 'Support for evacuated families' }).click();
+    await mayor.locator('[data-reply-inject]').click();
+    const work = mayor.locator('.work-modal');
     await work.locator('#response-narrative').fill('Activate psychological support for families at the shelter.');
-    await player.screenshot({ path: path.join(out, 'player-narrative-desktop.png') });
+    // A narrated decision: explicit kind and its basis are required.
+    await work.locator('#kind-decision').check();
+    assert(!(await work.locator('[data-respond]').isEnabled()), 'no basis, no send');
+    await work.locator('#basis-operational_judgment').check();
+    await page.screenshot({ path: path.join(out, 'player-narrative-desktop.png') });
     await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });
-    let proposals;
-    for (let i = 0; i < 50; i++) { proposals = (await api('master', '/api/master')).proposals; if (proposals.length) break; await wait(100); }
-    assert.equal(proposals.length, 1); const id = proposals[0].id;
-    assert.equal(proposals[0].narrative, true); assert.equal(proposals[0].status, 'pending'); assert.deepEqual(proposals[0].commands, []);
-    const master = await context.newPage(); master.on('pageerror', e => errors.push(e.message));
-    await master.goto(base + '/master.html');
+    await mayor.locator('[data-response-state="rs_review"]').waitFor();
+
+    // EXCON approves in Risposte, then records the outcome (a distinct event).
+    await choose('master');
     await master.locator('[data-view="risposte"]').click();
     await master.locator('.response-row').filter({ hasText: 'Support for evacuated families' }).click();
-    let card = master.locator(`[data-proposal="${id}"]`);
+    const dialog = master.locator('.response-dialog');
+    await dialog.locator('[data-response-state="rs_review"]').waitFor();
+    let card = dialog.locator('[data-proposal]').first();
     await card.locator('[data-approve]').click();
+    await dialog.locator('[data-response-state="rs_approved"]').waitFor();
+    card = dialog.locator('[data-proposal]').first();
     await card.locator('[data-narrative-outcome]').waitFor();
     await card.locator('[data-narrative-outcome]').fill('A support team is available at the shelter.');
     // EXCON speaks as a persona and may add an intervention (JSON tool: no map pick needed here).
-    await card.locator('[data-persona]').selectOption({ label: 'Mayor of Valverde' }).catch(() => card.locator('[data-persona]').selectOption({ index: 1 }));
+    await card.locator('[data-persona]').selectOption({ index: 1 });
     await card.locator('.staged-commands summary').click();
     await card.locator('.staged-commands textarea').fill('{"type":"IssueWarning","zone":"F4"}');
-    await card.getByRole('button', { name: 'Aggiungi comando' }).click();
+    await card.getByRole('button', { name: /Aggiungi comando|Add command/ }).click();
     await card.locator('[data-staged-command]').waitFor();
-    await master.screenshot({ path: path.join(out, 'excon-approved-narrative.png') });
+    await page.screenshot({ path: path.join(out, 'excon-approved-narrative.png') });
     await card.locator('[data-record-narrative-outcome]').click();
     await card.locator('.narrative-outcome').filter({ hasText: 'support team is available' }).waitFor();
     await card.locator('[data-outcome-intervention]').waitFor();
-    await master.screenshot({ path: path.join(out, 'excon-recorded-outcome.png') });
-    const after = (await api('master', '/api/master')).proposals.find(p => p.id === id);
-    assert.equal(after.status, 'approved'); assert.equal(after.narrative_outcomes.length, 1); assert.deepEqual(after.executions, []);
-    assert.equal(after.narrative_outcomes[0].interventions.length, 1, 'outcome linked to its EXCON intervention');
-    await player.reload();
-    await player.locator('[data-view="map"]').click();
-    await player.locator('[data-inject-row]').filter({ hasText: 'Support for evacuated families' }).click();
-    await player.locator('[data-inject-detail]').getByText(/A support team is available at the shelter/).waitFor();
-    assert(!(await player.locator('body').innerText()).includes('EXCON'), 'players never see EXCON');
-    await player.screenshot({ path: path.join(out, 'player-recorded-outcome.png') });
-    const other = await api('fire_commander', '/api/player/fire_commander'); assert(!JSON.stringify(other).includes('psychological support for families'));
-    const debrief = await api('master', '/api/debrief'); assert(JSON.stringify(debrief).includes('narrative_outcomes'));
+    await dialog.locator('[data-response-state="rs_outcome"]').waitFor();
+    await page.screenshot({ path: path.join(out, 'excon-recorded-outcome.png') });
+    await dialog.getByRole('button', { name: /^(Chiudi|Close)$/ }).first().click();
+
+    // The player reads the outcome in the inject's history; nobody else sees it.
+    await choose('mayor');
+    await mayor.locator('[data-inject-detail]').getByText(/A support team is available at the shelter/).waitFor();
+    await mayor.locator('[data-response-state="rs_outcome"]').waitFor();
+    assert(!(await mayor.innerText()).includes('EXCON'), 'players never see EXCON');
+    await page.screenshot({ path: path.join(out, 'player-recorded-outcome.png') });
+    await choose('fire_commander'); await lang(page.locator('[data-panel="fire_commander"]'), 'en');
+    await page.locator('[data-panel="fire_commander"] [data-view="map"]').click();
+    assert(!(await page.locator('[data-panel="fire_commander"]').innerText()).includes('Support for evacuated families'), 'role isolation');
+
+    // The debrief keeps the outcome and its intervention; the player executed nothing.
+    await choose('master'); await master.locator('[data-view="map"]').click(); await master.locator('[data-tool="end"]').click();
+    const pending = page.waitForEvent('download'); await master.locator('#debriefdownload').click();
+    const file = path.join(out, 'debrief.json'); await (await pending).saveAs(file);
+    const debrief = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const p = debrief.proposals.find(x => x.narrative);
+    assert.equal(p.narrative_outcomes.length, 1);
+    assert.equal(p.narrative_outcomes[0].interventions.length, 1, 'outcome linked to its EXCON intervention');
+    assert.deepEqual(p.executions, []);
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify({ passed: true, proposal: id, checks: ['response modal', 'persona', 'outcome with intervention', 'approval', 'EXCON outcome', 'player thread after reload', 'role isolation', 'debrief', 'no physical changes', 'no external AI'], errors }, null, 2));
+    fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify({ passed: true, url, checks: ['Rispondi modal', 'basis required', 'approval', 'persona', 'outcome with intervention', 'distinct states', 'player history', 'role isolation', 'debrief', 'no external AI'], errors }, null, 2));
     console.log(`Narrative browser QA passed: ${out}`);
   } finally {
-    if (browser) await browser.close(); child.kill(); fs.writeFileSync(path.join(out, 'server.log'), log);
+    await browser.close();
   }
 })().catch(e => { console.error(e); process.exitCode = 1; });

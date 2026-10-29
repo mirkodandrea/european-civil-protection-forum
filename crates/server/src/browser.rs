@@ -69,6 +69,24 @@ fn tape() -> Arc<llm::cassette::Cassette> {
     TAPE.with(Arc::clone)
 }
 
+/// The browser keeps its journal in `localStorage` (a few MB). A PDF above this
+/// many base64 characters is replaced there by a minimal valid stub, so a
+/// replay still produces the same exercise but the document itself is gone.
+const JOURNAL_PDF_CHARS: usize = 512 * 1024;
+const STUB_PDF: &str = "%PDF-1.4\n% document not kept in the browser save\n";
+
+fn journal_body(mut body: Value) -> Value {
+    use base64::Engine;
+    if let Some(a) = body.get_mut("attachment").filter(|a| a.is_object()) {
+        if a["data"].as_str().is_some_and(|d| d.len() > JOURNAL_PDF_CHARS) {
+            a["data"] = Value::String(
+                base64::engine::general_purpose::STANDARD.encode(STUB_PDF),
+            );
+        }
+    }
+    body
+}
+
 fn journaled(url: &str) -> bool {
     !url.contains("/presence") && !url.contains("/api/master/scenarios")
 }
@@ -128,14 +146,22 @@ pub fn new(ex: Exercise, scenarios: Option<Arc<library::Scenarios>>) -> AppState
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         situation: Default::default(),
         presence: Default::default(),
+        text_cache: Default::default(),
         scenarios,
     };
     tokio::spawn(flow::run_clock(state.clone()));
+    tokio::spawn(flow::run_excon_translator(state.clone()));
     state
 }
 
 /// Reconfiguration affects later requests; credentials never enter Exercise/logs.
-pub fn configure(state: &mut AppState, key: &str, model: &str, translator: &str) {
+pub fn configure(
+    state: &mut AppState,
+    key: &str,
+    model: &str,
+    translator: &str,
+    providers: &[String],
+) {
     let configured = if key.trim().is_empty() {
         Llm::off()
     } else {
@@ -144,7 +170,7 @@ pub fn configure(state: &mut AppState, key: &str, model: &str, translator: &str)
             model.trim().into(),
             llm::DEFAULT_BASE_URL.into(),
         )
-        .with_providers(vec![])
+        .with_providers(providers.to_vec())
         .with_translation_model(translator.trim())
     }
     .with_shared_cassette(tape());
@@ -176,7 +202,7 @@ pub async fn request(
 ) -> Result<Value, String> {
     // Recorded at the start, so the order matches what was asked; dropped again
     // if the request fails and therefore changed nothing.
-    let seq = body.clone().filter(|_| journaled(url)).map(|body| {
+    let seq = body.clone().filter(|_| journaled(url)).map(journal_body).map(|body| {
         let t_s = s.lock().world.time_s();
         JOURNAL.with(|j| {
             let mut j = j.borrow_mut();
@@ -254,6 +280,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/knowledge/refresh") => {
+            post_knowledge_refresh(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/master/references") => {
             post_references(
                 principal.clone(),
@@ -272,6 +306,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         }
         ("GET", "/api/state") => get_state(principal.clone(), s.clone()).await,
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
+        ("GET", "/api/attachments/<id>") => {
+            get_attachment(
+                principal.clone(),
+                s.clone(),
+                captures["id"].parse().map_err(|_| bad("invalid document id"))?,
+            )
+            .await
+        }
         ("GET", "/api/player/<role>") => {
             get_player(principal.clone(), s.clone(), captures["role"].to_string()).await
         }
@@ -357,7 +399,6 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/player/<role>/narrative") => narrative::submit(principal.clone(), s.clone(), captures["role"].into(), decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/master/proposals/<id>/narrative-outcome") => narrative::outcome(principal.clone(), s.clone(), captures["id"].parse().map_err(|_| bad("invalid proposal id"))?, decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/player/<role>/conversations") => conversations::start(principal.clone(), s.clone(), captures["role"].into(), decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/player/<role>/conversations/<id>/messages") => conversations::post_message(principal.clone(), s.clone(), captures["role"].into(), captures["id"].parse().map_err(|_| bad("invalid conversation id"))?, decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
@@ -437,7 +478,9 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/master/start") => post_start(principal.clone(), s.clone()).await,
+        ("POST", "/api/master/start") => {
+            post_start(principal.clone(), s.clone(), body.clone().map(decode).transpose()?).await
+        }
         ("POST", "/api/master/inject") => {
             post_inject(
                 principal.clone(),
@@ -588,8 +631,8 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/player/<role>/draft") => {
-            decision_drafts::prepare(
+        ("POST", "/api/player/<role>/suggest-actions") => {
+            action_suggestions::player(
                 principal.clone(),
                 s.clone(),
                 captures["role"].to_string(),
@@ -597,12 +640,11 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/player/<role>/draft/submit") => {
-            decision_drafts::submit(
+        ("POST", "/api/master/proposals/<id>/suggest-actions") => {
+            action_suggestions::excon(
                 principal.clone(),
                 s.clone(),
-                captures["role"].to_string(),
-                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+                captures["id"].parse().map_err(|_| bad("invalid id"))?,
             )
             .await
         }
@@ -673,10 +715,12 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/access"),
     ("GET", "/api/master/access"),
     ("POST", "/api/master/knowledge"),
+    ("POST", "/api/master/knowledge/refresh"),
     ("POST", "/api/master/references"),
     ("GET", "/api/evaluator"),
     ("GET", "/api/state"),
     ("GET", "/api/master"),
+    ("GET", "/api/attachments/<id>"),
     ("GET", "/api/player/<role>"),
     ("POST", "/api/player/<role>/presence"),
     ("GET", "/api/player/<role>/presence"),
@@ -693,7 +737,6 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/chat"),
     ("POST", "/api/player/<role>/reply"),
     ("POST", "/api/player/<role>/actions"),
-    ("POST", "/api/player/<role>/narrative"),
     ("POST", "/api/player/<role>/conversations"),
     ("POST", "/api/player/<role>/conversations/<id>/messages"),
     ("POST", "/api/master/proposals/<id>/narrative-outcome"),
@@ -726,8 +769,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/rollback"),
     ("POST", "/api/master/end"),
     ("POST", "/api/master/settings"),
-    ("POST", "/api/player/<role>/draft"),
-    ("POST", "/api/player/<role>/draft/submit"),
+    ("POST", "/api/player/<role>/suggest-actions"),
+    ("POST", "/api/master/proposals/<id>/suggest-actions"),
     ("POST", "/api/master/forecast"),
     ("POST", "/api/master/forecast/publish"),
     ("GET", "/api/master/impact"),

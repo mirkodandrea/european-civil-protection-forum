@@ -1,7 +1,10 @@
-// Invisible standalone threaded-actions QA. OpenRouter is intercepted locally
-// before the fixture key is configured; no external model calls are possible.
-// Use one browser page because each standalone page owns an independent exercise.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+// Invisible standalone QA of the "Risposte" flow (playtest 28/10): one inject,
+// a conversation started from it, responses with an action chosen on the map,
+// several responses to the same inject, AI suggestions in a single action slot,
+// a plain communication and the fire-line endpoints on a narrow screen.
+// OpenRouter is intercepted locally before the fixture key is configured; no
+// external model calls are possible. One page: each standalone page owns its exercise.
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
@@ -17,204 +20,176 @@ const supportedText = 'Issue a warning for the selected zone';
   const errors = [], modelTasks = [];
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 });
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => { if (!error.message.includes('control flow')) errors.push(error.message); });
   await page.route('https://openrouter.ai/api/v1/chat/completions', async route => {
     const request = route.request().postDataJSON();
     const system = request.messages?.[0]?.content || '';
-    const preparing = system.includes('BEFORE sending');
+    const suggesting = system.includes('ONLY what this role knows');
     const user = request.messages?.at(-1)?.content || '';
-    modelTasks.push(preparing ? 'prepare_decision' : 'translate');
-    let content;
-    if (preparing) {
-      const supported = user.includes(supportedText);
-      content = JSON.stringify({
-        message: supported ? supportedText : unsupportedText,
-        detected_language: 'en',
-        translation_en: supported ? supportedText : unsupportedText,
-        summary: supported ? 'Issue a warning for the selected zone' : 'Acknowledgment only',
-        actions: supported ? [{ type: 'IssueWarning', zone: 'F4' }] : [],
-        clarification: null,
-        messages: [],
-      });
-    } else {
-      content = user;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      headers: { 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ choices: [{ message: { content } }] }),
-    });
+    modelTasks.push(suggesting ? 'suggest_actions' : 'translate');
+    const supported = suggesting && user.includes(supportedText);
+    const content = suggesting
+      ? JSON.stringify({ actions: supported ? [{ type: 'IssueWarning', zone: 'F4' }, { type: 'IssueWarning', zone: 'G4' }] : [],
+          reasons: supported ? ['The narrative warns the zone', 'Neighbouring zone'] : [], summary: supported ? supportedText : 'Acknowledgment only' })
+      : user;
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ choices: [{ message: { content } }] }) });
   });
 
   const panel = role => page.locator(`[data-panel="${role}"]`);
-  const choose = async role => page.locator(`.role-tabs [data-role="${role}"]`).click();
+  const choose = role => page.locator(`.role-tabs [data-role="${role}"]`).click();
+  const pickLanguage = async role => { const c = panel(role).locator('#language-gate [data-lang="en"]'); if (await c.count()) await c.click(); };
   const waitPaint = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const clickMap = async (map, xFraction, yFraction) => {
     const box = await map.boundingBox();
     assert(box && box.width > 0 && box.height > 0, 'work map canvas is visible');
     await map.click({ position: { x: Math.max(2, box.width * xFraction), y: Math.max(2, box.height * yFraction) } });
   };
+  const master = panel('master'), mayor = panel('mayor'), fire = panel('fire_commander');
+  const work = mayor.locator('.work-modal');
+  const openInject = async (role, n = 0) => {
+    await choose(role); await pickLanguage(role);
+    await panel(role).locator('[data-view="map"]').click();
+    const back = panel(role).locator('[data-inject-back]');
+    if (await back.count()) await back.click();
+    await panel(role).locator('[data-inject-row]').nth(n).click();
+  };
+  const pending = async () => {
+    await choose('master'); await master.locator('[data-view="risposte"]').click();
+    const badge = master.locator('.pending-count');
+    return (await badge.isVisible()) ? parseInt(await badge.innerText(), 10) : 0;
+  };
 
   try {
     await page.goto(base, { waitUntil: 'domcontentloaded' });
-    const master = panel('master');
-    await master.locator('#start').waitFor({ timeout: 30000 });
-
-    // Configure only the mock-backed fixture credential and pause optional 3D
-    // simulation. Every actor stays in this same standalone browser page.
-    await page.locator('.standalone-settings summary').click();
-    await page.locator('#openrouter-key').fill('qa-fixture-only');
-    await page.locator('#configure-ai').click();
-    assert.equal(await page.locator('#openrouter-key').inputValue(), '', 'fixture credential clears after setup');
-    await page.locator('.standalone-settings summary').click();
-    await page.getByLabel('Simulazione', { exact: true }).uncheck();
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.locator('.launcher').waitFor({ timeout: 90000 });
+    // The mock-backed fixture credential is set in the launcher, before the exercise.
+    await page.locator('#launch-openrouter-key').fill('qa-fixture-only');
+    await page.locator('#launch-save-key').click();
+    await page.locator('.launcher #start-session').click();
+    await master.locator('#start').waitFor({ timeout: 60000 });
+    const sim = page.getByLabel('Simulazione', { exact: true }); if (await sim.isChecked()) await sim.uncheck();
+    await require('./standalone-languages.cjs').confirmLanguages(page, { mayor: 'en', fire_commander: 'en' });
     await master.locator('#start').click();
-    await master.locator('#turn').filter({ hasText: 'orders' }).waitFor();
+    await master.locator('#turn').filter({ hasText: /orders|ordini/ }).waitFor();
 
-    // EXCON delivers two private injects to the mayor using the real composer.
+    // EXCON delivers the first planned inject to all its recipients.
     await master.locator('[data-view="timeline"]').click();
-    const sendInject = async (title, text) => {
-      await master.locator('[data-inject-role="mayor"]').click();
-      const dialog = page.getByRole('dialog');
-      await page.waitForFunction(() => document.activeElement?.id === 'inject-title');
-      await dialog.locator('#inject-title').fill(title);
-      await dialog.locator('#inject-sender').fill('EXCON QA');
-      await dialog.locator('#text').fill(text);
-      await dialog.locator('#send').click();
-      await dialog.waitFor({ state: 'hidden' });
-      await master.locator('#excon-timeline').getByText(title).waitFor();
-    };
-    await sendInject('First coordination request', 'Coordinate with the fire commander.');
-    await sendInject('Latest coordination request', 'Coordinate the response for the latest report.');
+    await master.locator('[data-send-open]').first().click();
+    await master.locator('[data-send]').click();
+    await page.waitForTimeout(800);
 
-    const mayor = panel('mayor');
-    const fire = panel('fire_commander');
-    await choose('mayor');
-    await mayor.locator('#language').selectOption('en');
-    await mayor.locator('[data-view="chat"]').click();
-    const injectReference = mayor.locator('#chat-inject-reference-mayor');
-    await injectReference.waitFor();
-    const injectOptions = await injectReference.locator('option').evaluateAll(options => options.map(option => ({
-      value: option.value,
-      label: option.textContent,
-    })));
-    assert(injectOptions.length >= 2, 'both injects can be referenced from the composer');
-    const latestInjectId = injectOptions[0].value;
-    const earlierInjectId = injectOptions[1].value;
-    assert.equal(await injectReference.inputValue(), latestInjectId, 'latest received inject is preselected');
-    await mayor.locator('[data-contact="fire_commander"]').click();
-    await injectReference.selectOption(earlierInjectId);
-    await mayor.locator('#text').fill('Mayor update: coordinate the response with the fire commander.');
-    await mayor.locator('#send').click();
-    const mayorMessage = mayor.locator('#messages [data-chat-message]').filter({ hasText: 'Mayor update: coordinate the response' }).last();
-    await mayorMessage.waitFor();
-    const mayorMessageId = await mayorMessage.getAttribute('data-chat-message');
-    assert(mayorMessageId, 'mayor chat message has a stable id');
+    // The mayor starts a conversation from the inject; the reference is fixed at opening.
+    await openInject('mayor');
+    assert.equal(await mayor.locator('#new-player-action').count(), 0, 'no "+ New action" entry point');
+    await mayor.locator('[data-new-conversation]').click();
+    await mayor.locator('[data-conv-person="fire_commander"]').check();
+    await mayor.locator('#conv-first').fill('Mayor: can you hold the north road while we warn F4?');
+    await mayor.locator('[data-create-conversation]').click();
+    await mayor.locator('[data-conversation] [data-conv-quote]').waitFor();
 
-    // Fire replies to the mayor message. The mayor then proposes an action from
-    // that received peer bubble, using the same map-backed work modal.
-    await choose('fire_commander');
-    await fire.locator('#language').selectOption('en');
-    await fire.locator('[data-view="chat"]').click();
-    await fire.locator('[data-contact="mayor"]').click();
-    const fireIncoming = fire.locator(`#messages [data-chat-message="${mayorMessageId}"]`);
-    await fireIncoming.waitFor();
-    await fireIncoming.locator(`[data-reply-message="${mayorMessageId}"]`).click();
-    await fire.locator('#text').fill('Fire commander reply: we are ready to coordinate.');
-    await fire.locator('#send').click();
-    const fireReply = fire.locator('#messages [data-chat-message]').filter({ hasText: 'Fire commander reply: we are ready' }).last();
-    await fireReply.waitFor();
-    const fireMessageId = await fireReply.getAttribute('data-chat-message');
+    // The fire commander answers in chat, citing the inject: an intent, not an action.
+    await openInject('fire_commander');
+    await fire.locator('[data-conv-row]').first().click();
+    const delivery = await fire.locator('[data-cite-target]').getAttribute('data-cite-target');
+    await fire.locator('.conv-quote-cite .conv-cite').click();
+    await fire.locator(`[data-reply-preview="${delivery}"]`).waitFor();
+    await fire.locator('#conv-text').fill('Going to recon the ridge, will report back.');
+    await fire.locator('[data-send-conversation]').click();
+    await fire.locator('[data-conv-message]').filter({ hasText: 'Going to recon' }).locator(`[data-conv-cites="${delivery}"]`).waitFor();
+    assert.equal(await pending(), 0, 'a chat message is never a proposal');
 
-    await choose('mayor');
-    await mayor.locator('[data-view="chat"]').click();
-    await mayor.locator('[data-contact="fire_commander"]').click();
-    const mayorIncoming = mayor.locator(`#messages [data-chat-message="${fireMessageId}"]`);
-    await mayorIncoming.waitFor();
-    await mayorIncoming.locator(`[data-propose-message="${fireMessageId}"]`).click();
-    const work = mayor.locator('.work-modal');
+    // From the conversation the mayor answers with a map-chosen action, to the fire commander.
+    await openInject('mayor');
+    await mayor.locator('[data-conv-row]').first().click();
+    await mayor.locator('[data-conv-message]').filter({ hasText: 'Going to recon' }).waitFor();
+    await mayor.locator('[data-respond-from-conversation]').click();
     await work.waitFor();
-    assert.equal(await work.locator('#work-reply-to').inputValue(), fireMessageId,
-      'proposal opens with the selected peer chat as its parent');
+    assert(await work.locator('#to-players').isChecked(), 'from a conversation the recipients are its participants');
+    assert(await work.locator('[data-to-player="fire_commander"]').isChecked());
+    assert.equal(await work.locator('#work-reply-to').count(), 0, 'no reply-to selector');
+    await work.locator('#kind-decision').check();
     await work.locator('#work-action').selectOption('IssueWarning');
     await clickMap(work.locator('canvas#work-map'), 0.5, 0.45);
     assert((await work.locator('#work-location').inputValue()).trim(), 'map click selects a zone for the action');
-    await page.screenshot({ path: path.join(out, 'threaded-work-modal-desktop.png') });
     await work.locator('[data-add-action]').click();
+    await work.locator('[data-staged-action]').waitFor();
+    await work.locator('#response-narrative').fill('We warn the zone; fire holds the north road.');
+    assert(!(await work.locator('[data-respond]').isEnabled()), 'a decision waits for its basis');
+    await work.locator('#basis-plan').check();
+    await page.screenshot({ path: path.join(out, 'threaded-work-modal-desktop.png') });
     await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });
+    await mayor.locator('[data-conv-response-tag]').waitFor();
+    assert.equal(await pending(), 1);
 
-    // EXCON reviews the action and the messages that form its thread.
-    await choose('master');
-    const exconThread = master.locator('#excon-timeline .proposal-thread');
-    await exconThread.first().waitFor();
-    await exconThread.locator(`[data-thread-message="${fireMessageId}"]`).waitFor();
+    // EXCON reviews it under the mayor's row, with the conversation below the replies.
+    await master.locator('[data-response]').filter({ hasText: /Mayor|Sindaco/ }).locator('button').click();
+    const dialog = master.locator('.response-dialog');
+    await dialog.locator('[data-response-state="rs_review"]').waitFor();
+    await dialog.locator('[data-linked-conversation]').waitFor();
+    await dialog.locator('[data-proposal]').first().waitFor();
     await page.screenshot({ path: path.join(out, 'excon-proposal-thread-desktop.png'), fullPage: true });
+    await dialog.getByRole('button', { name: /^(Chiudi|Close)$/ }).first().click();
 
-    // The earlier inject can receive multiple action responses.
-    await choose('mayor');
-    await mayor.locator('[data-view="map"]').click();
-    for (let response = 0; response < 2; response++) {
-      await mayor.locator('#new-player-action').click();
-      await work.waitFor();
-      await work.locator('#work-reply-to').selectOption(earlierInjectId);
+    // The same inject can receive more responses (each one is its own proposal).
+    for (const zone of ['F4', 'G4']) {
+      await openInject('mayor');
+      await mayor.locator('[data-reply-inject]').click();
+      await work.locator('#kind-decision').check();
       await work.locator('#work-action').selectOption('IssueWarning');
-      await work.locator('#work-location').fill('F4');
+      await work.locator('#work-location').fill(zone);
       await work.locator('[data-add-action]').click();
+      await work.locator('#basis-operational_judgment').check();
       await work.locator('[data-respond]').click();
       await work.waitFor({ state: 'hidden' });
     }
-    await choose('master');
-    const priorProposals = master.locator('.proposal-inline[data-proposal]');
-    await page.waitForFunction(() => document.querySelectorAll('[data-panel="master"] .proposal-inline[data-proposal]').length >= 3);
-    const proposalCountBeforeAi = await priorProposals.count();
+    assert.equal(await pending(), 3);
 
-    // Unsupported mock result is explicitly blocked and remains private.
-    await choose('mayor');
-    await mayor.locator('[data-view="map"]').click();
-    await mayor.locator('#new-player-action').click();
-    await work.waitFor();
-    await work.locator('.work-ai summary').click();
-    await work.locator('#work-free-text').fill(unsupportedText);
-    await work.getByRole('button', { name: /prepare AI draft|prepara bozza AI/i }).click();
-    await work.getByText(/no verifiable operational actions|non contiene azioni operative verificabili/i).waitFor();
-    const confirm = work.locator('[data-stage-draft]');
-    assert(await confirm.isDisabled(), 'unsupported AI draft cannot be added to the response');
-    assert.equal(await master.locator('.proposal-inline[data-proposal]').count(), proposalCountBeforeAi,
-      'unsupported AI draft creates no EXCON proposal while its modal remains open');
-
-    // A valid coded action becomes reviewable but stays private until explicit
-    // confirmation. The gateway returns an action only for this exact request.
-    await work.locator('#work-free-text').fill(supportedText);
-    await work.getByRole('button', { name: /prepare AI draft|prepara bozza AI/i }).click();
-    await work.getByText(supportedText).waitFor();
-    assert(!(await confirm.isDisabled()), 'coded AI action enables the explicit confirmation');
-    assert.equal(await master.locator('.proposal-inline[data-proposal]').count(), proposalCountBeforeAi,
-      'AI interpretation is not sent before confirmation while its modal remains open');
-    await confirm.click();
-    await work.locator('[data-staged-action]').waitFor();
+    // AI suggestions: nothing actionable proposes nothing; an actionable narrative
+    // offers actions, and associating one (the only slot) is an explicit click.
+    await openInject('mayor');
+    await mayor.locator('[data-reply-inject]').click();
+    await work.locator('#response-narrative').fill(unsupportedText);
+    await work.locator('[data-work-suggestions="none"]').waitFor({ timeout: 15000 });
+    await work.locator('#response-narrative').fill(supportedText);
+    await work.locator('[data-add-suggestion="1"]').waitFor({ timeout: 15000 });
+    assert.equal(await work.locator('[data-staged-action]').count(), 0, 'suggestions are not staged by themselves');
+    assert.equal(await work.locator('[data-add-suggestions]').count(), 0, 'no "add all": one action per response');
+    await work.locator('[data-add-suggestion="0"]').click();
+    await work.locator('[data-add-suggestion="0"]').click();
+    assert.equal(await work.locator('[data-staged-action]').count(), 1, 'a second action replaces the first');
+    assert(await work.locator('#kind-communication').isDisabled(), 'an action makes it a decision');
+    await work.locator('#basis-law').check();
     await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });
-    await choose('master');
-    await page.waitForFunction(count => document.querySelectorAll('[data-panel="master"] .proposal-inline[data-proposal]').length > count, proposalCountBeforeAi);
-    assert(modelTasks.includes('prepare_decision'), 'AI drafts used the intercepted mock gateway');
+    assert.equal(await pending(), 4);
+    assert(modelTasks.includes('suggest_actions'), 'AI suggestions used the intercepted mock gateway');
+
+    // A plain communication is delivered at once and never waits for EXCON.
+    await openInject('mayor');
+    await mayor.locator('[data-reply-inject]').click();
+    await work.locator('#kind-communication').check();
+    assert.equal(await work.locator('[data-work-block="basis"]').count(), 0, 'no basis for a communication');
+    await work.locator('#response-narrative').fill('Received, following the situation.');
+    await work.locator('[data-respond]').click();
+    await work.waitFor({ state: 'hidden' });
+    await mayor.locator('[data-response-state="rs_sent"]').waitFor();
+    assert.equal(await pending(), 4, 'communications need no approval');
     await page.screenshot({ path: path.join(out, 'excon-confirmed-ai-action.png'), fullPage: true });
 
-    // Fire commander can place a line using two separate map clicks. Verify the
-    // mobile modal geometry and endpoint fields without sending the proposal.
+    // Fire commander places a line with two separate map clicks on a narrow screen,
+    // without sending it.
     await page.setViewportSize({ width: 390, height: 844 });
-    await choose('fire_commander');
-    await fire.locator('[data-view="chat"]').click();
-    await fire.locator('[data-contact="mayor"]').click();
-    const originalMayorMessage = fire.locator(`#messages [data-chat-message="${mayorMessageId}"]`);
-    await originalMayorMessage.locator(`[data-propose-message="${mayorMessageId}"]`).click();
+    await openInject('fire_commander');
+    await fire.locator('[data-reply-inject]').click();
     const fireWork = fire.locator('.work-modal');
-    await fireWork.waitFor();
+    await fireWork.locator('#kind-decision').check();
     await fireWork.locator('#work-action').selectOption('CutFireLine');
     const firstPoint = fireWork.getByRole('button', { name: /first point|primo punto/i });
     const secondPoint = fireWork.getByRole('button', { name: /second point|secondo punto/i });
-    await firstPoint.waitFor();
     await firstPoint.click();
     await clickMap(fireWork.locator('canvas#work-map'), 0.32, 0.38);
     const firstValue = await fireWork.locator('#work-location').inputValue();
@@ -228,11 +203,11 @@ const supportedText = 'Issue a warning for the selected zone';
     assert.equal(errors.length, 0, errors.join('\n'));
     fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify({
       fixture: 'single standalone exercise; local fake OpenRouter gateway; no external model calls',
-      flow: ['EXCON sends two mayor injects', 'latest inject preselected in peer composer', 'mayor selects earlier inject reference', 'fire commander replies to mayor chat', 'map-backed action proposal from reply bubble', 'EXCON inspects proposal thread', 'two action responses reference the same inject', 'unsupported AI draft blocked', 'coded AI action waits for explicit confirmation', 'mobile CutFireLine endpoint selection'],
-      injectIds: [earlierInjectId, latestInjectId],
-      chatIds: [mayorMessageId, fireMessageId],
-      modelTasks,
-      viewports: [[1440, 1000], [390, 844]],
+      flow: ['EXCON sends an inject', 'mayor starts a conversation from it', 'fire commander chats citing the inject (no proposal)',
+        'mayor answers from the conversation to the fire commander with a map-chosen action and a basis',
+        'EXCON reviews it with the conversation', 'two more responses to the same inject', 'AI suggestions in one action slot',
+        'communication without approval', 'narrow-screen CutFireLine endpoint selection'],
+      delivery, modelTasks, viewports: [[1440, 1000], [390, 844]],
       screenshots: ['threaded-work-modal-desktop.png', 'excon-proposal-thread-desktop.png', 'excon-confirmed-ai-action.png', 'threaded-work-modal-mobile.png'],
       errors,
     }, null, 2));

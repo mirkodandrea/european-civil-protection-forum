@@ -60,6 +60,25 @@ pub enum Command {
     DeployEngine {
         at: Loc,
     },
+    /// Send the monitoring drone over zones of the evacuation grid. Once on
+    /// station it keeps the owner's map of those zones updated. A zone entry is
+    /// a code (`"F3"`) or a rectangle of zones (`"F3-G4"`).
+    MonitorArea {
+        zones: Vec<String>,
+        /// Owner of the drone when EXCON tasks it directly; players always use their own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
+    /// Ground reconnaissance: one crew travels to a zone of the evacuation grid
+    /// (a code like `"F4"` or a named place) and, on arrival, reports once what
+    /// it sees there: the owner's map of that zone is updated at that instant.
+    Reconnoitre {
+        zone: String,
+        /// Role that receives the report when EXCON orders it directly;
+        /// players always send their own crews.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
     /// Evacuate every occupied building in a zone of the evacuation grid.
     EvacuateZone {
         zone: String,
@@ -156,6 +175,8 @@ pub const ALL_KINDS: &[&str] = &[
     "CutFireLine",
     "WaterDrop",
     "DeployEngine",
+    "MonitorArea",
+    "Reconnoitre",
     "EvacuateZone",
     "EvacuateBuilding",
     "IssueWarning",
@@ -179,6 +200,8 @@ impl Command {
             Command::CutFireLine { .. } => "CutFireLine",
             Command::WaterDrop { .. } => "WaterDrop",
             Command::DeployEngine { .. } => "DeployEngine",
+            Command::MonitorArea { .. } => "MonitorArea",
+            Command::Reconnoitre { .. } => "Reconnoitre",
             Command::EvacuateZone { .. } => "EvacuateZone",
             Command::EvacuateBuilding { .. } => "EvacuateBuilding",
             Command::IssueWarning { .. } => "IssueWarning",
@@ -218,6 +241,8 @@ impl Command {
                 _ => "Cut fire line (incomplete)".into(),
             },
             Command::DeployEngine { at } => format!("Deploy engine at {}", loc(at)),
+            Command::MonitorArea { zones, .. } => format!("Drone monitoring {}", zones.join(", ")),
+            Command::Reconnoitre { zone, .. } => format!("Ground reconnaissance of {zone}"),
             Command::WaterDrop { at } => format!("Water drop on {}", loc(at)),
             Command::EvacuateZone { zone, destination } => {
                 format!(
@@ -317,15 +342,15 @@ pub fn catalogue(allowed: &[String]) -> String {
         ),
         (
             "EvacuateZone",
-            r#"{"type":"EvacuateZone","zone":"F4","destination":"Valverde Sports Centre"}  — evacuate all occupied buildings of a grid zone. destination optional (an open shelter). Schools/hospitals need buses (50 seats each)."#,
+            r#"{"type":"EvacuateZone","zone":"F4","destination":"Valverde Sports Centre"}  — evacuate all occupied buildings of a grid zone. "zone" is ALWAYS a grid code such as F4, never a building or place name: to evacuate one named facility (a school, hospital, ...) use EvacuateBuilding. destination optional (an open shelter). Schools/hospitals need buses (50 seats each)."#,
         ),
         (
             "EvacuateBuilding",
-            r#"{"type":"EvacuateBuilding","building":"Pineta Primary School","destination":"Valverde Sports Centre"}  — evacuate one named facility. Schools/hospitals need buses."#,
+            r#"{"type":"EvacuateBuilding","building":"Pineta Primary School","destination":"Valverde Sports Centre"}  — evacuate one named facility ("building" is its exact name from the gazetteer, never a zone code). Schools/hospitals need buses."#,
         ),
         (
             "IssueWarning",
-            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone; later evacuations there are faster."#,
+            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone (grid code, never a building name); later evacuations there are faster."#,
         ),
         (
             "CloseRoad",
@@ -371,6 +396,14 @@ pub fn catalogue(allowed: &[String]) -> String {
         (
             "DeployEngine",
             r#"{"type":"DeployEngine","at":LOC} — deploy a road engine (operational model only); with local autonomy, at is the approved sector centre and local moves are bounded by the scenario tactical policy."#,
+        ),
+        (
+            "MonitorArea",
+            r#"{"type":"MonitorArea","zones":["F3-G4"]}  — send the monitoring drone over grid zones (codes like "F3", or a rectangle "F3-G4"; at most 4 zones in all). It flies from the staging base, then keeps the map of those zones updated every few minutes until its battery ends, and returns to recharge."#,
+        ),
+        (
+            "Reconnoitre",
+            r#"{"type":"Reconnoitre","zone":"F4"}  — send one ground crew to reconnoitre a grid zone (code like "F4" or a named place). It travels from the staging base by road or on foot; on arrival it reports once what it sees there (fire, buildings, roads, lines, units) and the map of that zone is updated at that time. The crew stays deployed until EXCON confirms its return. One zone per order: use several orders for several zones."#,
         ),
         (
             "AdvanceTime",
@@ -423,6 +456,7 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
     swap("Pine Hill", place);
     swap("fire_commander", crew_role);
     swap("F3:S", zone.clone().map(|z| format!("{z}:S")));
+    swap("F3-G4", zone.clone().map(|z| format!("{z}")));
     swap("F4", zone.clone());
     swap("F3", zone);
     doc
@@ -484,6 +518,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 18);
+        assert_eq!(ALL_KINDS.len(), 20);
     }
 }

@@ -6,6 +6,8 @@ license.workspace = true
 description = "Rust/WebAssembly browser UI for the TTX"
 
 [features]
+# Dev-only workflow test bench ("Banco di prova", `?bench=1` / `bench.html`).
+bench = []
 standalone = ["scenario/embedded", "dep:server", "dep:sim", "dep:exercise", "dep:llm", "dep:viz", "dep:anyhow"]
 
 [dependencies]
@@ -19,7 +21,7 @@ viz = { workspace = true, optional = true }
 yew = { version = "0.23", features = ["csr"] }
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "Location", "History", "Storage", "Url", "UrlSearchParams", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlElement", "Element", "DomRect", "Blob", "BlobPropertyBag", "HtmlAnchorElement", "KeyboardEvent", "MouseEvent", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "PointerEvent", "WheelEvent", "ResizeObserver", "EventTarget", "DragEvent", "DataTransfer", "ClipboardEvent"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Location", "History", "Storage", "Url", "UrlSearchParams", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlElement", "Element", "DomRect", "Blob", "BlobPropertyBag", "File", "FileList", "HtmlAnchorElement", "KeyboardEvent", "MouseEvent", "HtmlCanvasElement", "CanvasRenderingContext2d", "CanvasPattern", "TextMetrics", "ImageData", "PointerEvent", "WheelEvent", "ResizeObserver", "EventTarget", "DragEvent", "DataTransfer", "ClipboardEvent", "Navigator", "Event", "console"] }
 js-sys = "0.3"
 gloo-net = { version = "0.6", features = ["http", "websocket"] }
 gloo-timers = { version = "0.3", features = ["futures"] }

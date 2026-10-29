@@ -21,11 +21,13 @@ use serde::Serialize;
 
 pub mod command;
 pub mod digest;
+pub mod drone;
 pub mod hazard;
 pub mod impact;
 pub mod network;
 pub mod traffic;
 pub mod travel;
+pub use drone::{MonitorSample, MonitorState, SampleKind};
 pub use travel::{DeploymentTask, TaskStatus, TravelSetting};
 
 pub use command::{catalogue, catalogue_for, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
@@ -194,6 +196,10 @@ pub struct Dyn {
     pub resource_events: Vec<ResourceEvent>,
     pub arrivals: Vec<Arrival>,
     pub events: Vec<SimEvent>,
+    /// Drones on station: their update schedule, by task id.
+    pub monitors: BTreeMap<u64, MonitorState>,
+    /// Drone observations not yet taken up by the exercise layer.
+    pub monitor_samples: Vec<MonitorSample>,
 }
 
 #[derive(Clone)]
@@ -326,6 +332,8 @@ impl World {
                 resource_events: Vec::new(),
                 arrivals: Vec::new(),
                 events: Vec::new(),
+                monitors: BTreeMap::new(),
+                monitor_samples: Vec::new(),
             },
             cache,
             network,
@@ -486,7 +494,7 @@ impl World {
             Loc::Named(name) => self
                 .scn
                 .resolve_place(name)
-                .ok_or_else(|| format!("unknown place \"{name}\"")),
+                .ok_or_else(|| format!("unknown place \"{name}\"{}", self.did_you_mean(name))),
         }
     }
 
@@ -517,6 +525,169 @@ impl World {
             .zones
             .parse(key)
             .map(|(c, r)| self.scn.zones.name(c, r))
+    }
+
+    /// The zone code of a named place or sector (never a building or road).
+    fn place_zone(&self, name: &str) -> Option<String> {
+        let key = scenario::normalise(name);
+        if key.is_empty() {
+            return None;
+        }
+        let pos = self
+            .scn
+            .places
+            .iter()
+            .find(|p| {
+                scenario::normalise(&p.name) == key
+                    || p.aliases.iter().any(|a| scenario::normalise(a) == key)
+            })
+            .map(|p| p.pos)
+            .or_else(|| {
+                self.scn
+                    .sectors
+                    .iter()
+                    .find(|s| scenario::normalise(&s.id) == key || scenario::normalise(&s.name) == key)
+                    .map(|s| s.centre())
+            })?;
+        self.scn.zone_of(pos)
+    }
+
+    /// Up to three known names (buildings, places, sectors) close to `key`:
+    /// one contains the other, or they share a word of three letters or more.
+    pub fn place_suggestions(&self, key: &str) -> Vec<String> {
+        let k = scenario::normalise(key);
+        let words: Vec<String> = key
+            .split(|c: char| !c.is_alphanumeric())
+            .map(scenario::normalise)
+            .filter(|w| w.len() >= 3)
+            .collect();
+        if k.is_empty() {
+            return Vec::new();
+        }
+        let names = self
+            .scn
+            .buildings
+            .iter()
+            .filter_map(|b| b.name.clone())
+            .chain(self.scn.places.iter().map(|p| p.name.clone()))
+            .chain(self.scn.sectors.iter().map(|s| s.name.clone()));
+        let mut scored: Vec<(usize, String)> = Vec::new();
+        for n in names {
+            let nn = scenario::normalise(&n);
+            let mut score = 0;
+            if nn.contains(&k) || (nn.len() >= 3 && k.contains(&nn)) {
+                score += 10;
+            }
+            score += words.iter().filter(|w| nn.contains(w.as_str())).count();
+            if score > 0 && !scored.iter().any(|(_, x)| *x == n) {
+                scored.push((score, n));
+            }
+        }
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        scored.into_iter().take(3).map(|(_, n)| n).collect()
+    }
+
+    /// `" (did you mean «A», «B»?)"` for a name that matched nothing, or empty.
+    fn did_you_mean(&self, key: &str) -> String {
+        let s = self.place_suggestions(key);
+        if s.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " (did you mean {}?)",
+                s.iter().map(|n| format!("«{n}»")).collect::<Vec<_>>().join(", ")
+            )
+        }
+    }
+
+    fn unknown_building(&self, key: &str) -> String {
+        if let Some(code) = self.zone_code(key) {
+            return format!("\"{key}\" is a zone ({code}), not a building: use Evacuate zone, or name a building{}", self.did_you_mean(key));
+        }
+        format!("unknown building \"{key}\"{}", self.did_you_mean(key))
+    }
+
+    fn example_zone(&self) -> String {
+        self.scn.zones.names().first().cloned().unwrap_or_else(|| "F4".into())
+    }
+
+    /// Error for a zone argument that is not a zone code, saying what it is
+    /// instead (a building, a named place) and what to use.
+    fn unknown_zone(&self, key: &str, building_action: Option<&str>) -> String {
+        if let Some(i) = self.find_building(key) {
+            let name = self.scn.buildings[i]
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("#{}", self.scn.buildings[i].id));
+            let zone = self.scn.zone_of(self.scn.buildings[i].pos);
+            return match (building_action, zone) {
+                (Some(a), _) => format!(
+                    "\"{key}\" is a building, not a zone: use {a} for «{name}», or a zone code like {}",
+                    self.example_zone()
+                ),
+                (None, Some(z)) => format!("\"{key}\" is a building, not a zone: «{name}» lies in zone {z}"),
+                (None, None) => format!("\"{key}\" is a building, not a zone code like {}", self.example_zone()),
+            };
+        }
+        format!(
+            "unknown zone \"{key}\": a zone is a grid code like {}{}",
+            self.example_zone(),
+            self.did_you_mean(key)
+        )
+    }
+
+    /// Adapt a command whose place is of another kind than its type expects,
+    /// when the intent is unambiguous: an evacuate-zone or warning aimed at a
+    /// building or named place, or an evacuate-building aimed at a zone code.
+    /// Returns the command to use and a sentence telling what was changed.
+    pub fn reconcile_command(&self, cmd: &Command) -> (Command, Option<String>) {
+        match cmd {
+            Command::EvacuateZone { zone, destination } if self.zone_code(zone).is_none() => {
+                if let Some(i) = self.find_building(zone) {
+                    let name = self.scn.buildings[i]
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| format!("#{}", self.scn.buildings[i].id));
+                    return (
+                        Command::EvacuateBuilding {
+                            building: name.clone(),
+                            destination: destination.clone(),
+                        },
+                        Some(format!("«{zone}» is a building, not a zone: treated as Evacuate building «{name}»")),
+                    );
+                }
+                if let Some(code) = self.place_zone(zone) {
+                    return (
+                        Command::EvacuateZone { zone: code.clone(), destination: destination.clone() },
+                        Some(format!("«{zone}» is a named place: treated as zone {code}, where it lies")),
+                    );
+                }
+            }
+            Command::IssueWarning { zone } if self.zone_code(zone).is_none() => {
+                let code = self
+                    .find_building(zone)
+                    .map(|i| self.scn.buildings[i].pos)
+                    .and_then(|p| self.scn.zone_of(p))
+                    .or_else(|| self.place_zone(zone));
+                if let Some(code) = code {
+                    return (
+                        Command::IssueWarning { zone: code.clone() },
+                        Some(format!("«{zone}» is not a zone code: warning zone {code}, where it lies")),
+                    );
+                }
+            }
+            Command::EvacuateBuilding { building, destination }
+                if self.find_building(building).is_none() && self.zone_code(building).is_some() =>
+            {
+                let code = self.zone_code(building).unwrap_or_default();
+                return (
+                    Command::EvacuateZone { zone: code.clone(), destination: destination.clone() },
+                    Some(format!("«{building}» is a zone, not a building: treated as Evacuate zone {code}")),
+                );
+            }
+            _ => {}
+        }
+        (cmd.clone(), None)
     }
 
     fn buildings_in_zone(&self, zone: &str) -> Vec<usize> {
@@ -714,6 +885,15 @@ impl World {
         actor: &Actor,
         pools: &mut BTreeMap<String, BTreeMap<String, Pool>>,
     ) -> Result<Vec<String>, String> {
+        // EXCON tasking a drone acts through the owner's drone.
+        let owner;
+        let actor = match (actor, cmd) {
+            (Actor::Master, Command::MonitorArea { role, .. }) => {
+                owner = Actor::Role(self.drone_owner(role.as_deref())?);
+                &owner
+            }
+            _ => actor,
+        };
         let role = match actor {
             Actor::Master => None,
             Actor::Role(id) => {
@@ -762,10 +942,14 @@ impl World {
         }
         let mut notes = Vec::new();
         if let Actor::Role(id) = actor {
-            if self.scn.operations.road_routing && !matches!(cmd, Command::WaterDrop { .. }) {
+            if self.scn.operations.road_routing
+                && !matches!(cmd, Command::WaterDrop { .. } | Command::MonitorArea { .. })
+            {
                 if let Some(target) = self.travel_target(cmd) {
                     let resource = match cmd {
-                        Command::CutFireLine { .. } => "ground_crews",
+                        Command::CutFireLine { .. } | Command::Reconnoitre { .. } => {
+                            "ground_crews"
+                        }
                         Command::DeployEngine { .. } => "engines",
                         Command::CloseRoad { .. } => "police_patrols",
                         _ => "buses",
@@ -839,10 +1023,24 @@ impl World {
                 self.resolve_loc(at)?;
                 take("air_tankers", 1, "a water drop")?;
             }
+            Command::MonitorArea { zones, .. } => {
+                let (resource, spec) = role
+                    .and_then(|r| self.drone_of(r))
+                    .ok_or("no monitoring drone is available to this role")?;
+                let covered = self.checked_monitor_zones(zones, &spec)?;
+                self.check_drone_wind(&spec)?;
+                take(&resource, 1, "a monitoring drone")?;
+                notes.push(format!("drone over {}", covered.join(", ")));
+            }
+            Command::Reconnoitre { zone, .. } => {
+                let code = self.recon_zone(zone)?;
+                take("ground_crews", 1, "a ground reconnaissance")?;
+                notes.push(format!("1 crew reconnoitres {code}"));
+            }
             Command::EvacuateZone { zone, destination } => {
                 let code = self
                     .zone_code(zone)
-                    .ok_or_else(|| format!("unknown zone \"{zone}\""))?;
+                    .ok_or_else(|| self.unknown_zone(zone, Some("Evacuate building")))?;
                 let idx: Vec<usize> = self
                     .buildings_in_zone(&code)
                     .into_iter()
@@ -863,7 +1061,7 @@ impl World {
             } => {
                 let i = self
                     .find_building(building)
-                    .ok_or_else(|| format!("unknown building \"{building}\""))?;
+                    .ok_or_else(|| self.unknown_building(building))?;
                 if self.d.buildings[i].people_inside == 0 {
                     return Err(format!("{building} is already empty"));
                 }
@@ -873,7 +1071,7 @@ impl World {
             }
             Command::IssueWarning { zone } => {
                 self.zone_code(zone)
-                    .ok_or_else(|| format!("unknown zone \"{zone}\""))?;
+                    .ok_or_else(|| self.unknown_zone(zone, None))?;
             }
             Command::CloseRoad { road } => {
                 let id = self
@@ -891,7 +1089,7 @@ impl World {
             Command::OpenShelter { building } => {
                 let i = self
                     .find_building(building)
-                    .ok_or_else(|| format!("unknown building \"{building}\""))?;
+                    .ok_or_else(|| self.unknown_building(building))?;
                 let b = &self.scn.buildings[i];
                 if b.shelter_capacity == 0 {
                     return Err(format!("{building} cannot be used as a shelter"));
@@ -995,6 +1193,7 @@ impl World {
                                 task.command,
                                 Command::CutFireLine { .. } | Command::DeployEngine { .. }
                             ))
+                        && !matches!(task.command, Command::MonitorArea { .. })
                     {
                         return Err("units are performing the task; wait for completion".into());
                     }
@@ -1136,6 +1335,14 @@ impl World {
     /// Execute a command. Validates first; resources are consumed from the
     /// acting role. Returns human-readable notes.
     pub fn apply(&mut self, cmd: &Command, actor: &Actor) -> Result<Vec<String>, String> {
+        let owner;
+        let actor = match (actor, cmd) {
+            (Actor::Master, Command::MonitorArea { role, .. }) => {
+                owner = Actor::Role(self.drone_owner(role.as_deref())?);
+                &owner
+            }
+            _ => actor,
+        };
         let before_pools = self.d.pools.clone();
         let mut pools = before_pools.clone();
         let notes = self.check_inner(cmd, actor, &mut pools)?;
@@ -1194,6 +1401,28 @@ impl World {
         match cmd {
             Command::DeployEngine { .. } => {
                 out.push("Engine deployment requires allocated role resources".into());
+            }
+            Command::MonitorArea { .. } => {
+                out.push("Drone monitoring requires an allocated drone".into());
+            }
+            Command::Reconnoitre { zone, role } => {
+                // A crew on arrival reports for its role; EXCON names the role it informs.
+                let owner = match (actor, role) {
+                    (Actor::Role(id), _) => id.clone(),
+                    (Actor::Master, Some(id)) if self.scn.role(id).is_some() => id.clone(),
+                    (Actor::Master, Some(id)) => return Err(format!("unknown role {id}")),
+                    (Actor::Master, None) => {
+                        return Err("name the role that receives the reconnaissance".into())
+                    }
+                };
+                let code = self.recon_zone(zone)?;
+                self.record_reconnaissance(&owner, &code);
+                out.push(format!("reconnaissance of {code} reported to {owner}"));
+                self.event(
+                    "reconnaissance",
+                    format!("{owner}: ground reconnaissance reports on {code}"),
+                    Some(code),
+                );
             }
             Command::CutFireLine {
                 from,
@@ -1473,6 +1702,7 @@ impl World {
                     .map(|a| a.qty - a.returned)
                     .unwrap_or(0);
                 if *qty == remaining {
+                    self.drone_recalled(*allocation);
                     if let Some(task) = self.d.tasks.iter_mut().find(|task| {
                         task.allocations.contains(allocation)
                             && !matches!(

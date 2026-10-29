@@ -88,16 +88,15 @@ fn answer_is_a_plain_message_and_the_proposal_stays_approvable() {
 fn actions_or_drafts_cannot_answer_a_question_and_a_closed_question_takes_no_answer() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let p1 = ex.player_actions("mayor", "warn", warn(), None).unwrap();
+    let p1 = ex.player_actions("mayor", "warn", warn(), None, exercise::BasisKind::OperationalJudgment).unwrap();
     ex.request_clarification(p1, "Which zone?").unwrap();
     let q = ex.deliver_clarification(p1, "Quale zona?", "Which zone?").unwrap();
-    let err = ex.player_actions("mayor", "warn F4", warn(), Some(q)).unwrap_err().to_string();
+    let err = ex.player_actions("mayor", "warn F4", warn(), Some(q), exercise::BasisKind::OperationalJudgment).unwrap_err().to_string();
     assert!(err.contains("open question"), "{err}");
     assert!(ex.player_reply("mayor", "F4", q, ev()).is_err());
-    assert!(ex.begin_player_draft("mayor", MASTER, "F4", None, Some(q)).is_err());
     assert!(ex.answer_clarification("fire_commander", "x", q, "x", false).is_err(), "someone else's question");
     ex.close_clarification(p1).unwrap();
     assert!(ex.answer_clarification("mayor", "late", q, "late", false).is_err());
     // A new action on its own is fine.
-    assert!(ex.player_actions("mayor", "warn F4", warn(), None).is_ok());
+    assert!(ex.player_actions("mayor", "warn F4", warn(), None, exercise::BasisKind::OperationalJudgment).is_ok());
 }

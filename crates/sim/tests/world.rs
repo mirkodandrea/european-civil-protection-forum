@@ -310,3 +310,41 @@ fn tanker_and_patrol_effects_begin_on_arrival_without_double_allocation() {
  let due=w.d.tasks[1].arrival_s;w.advance(due-w.time_s()).unwrap();assert!(w.d.roads[&road].closed);assert_eq!(w.d.tasks[1].status,sim::TaskStatus::Completed);assert_eq!(w.d.pools["mayor"]["police_patrols"].used,1);
  let mut direct=world();direct.apply(&drop,&Actor::Master).unwrap();assert_eq!(direct.d.drops.len(),1);assert!(direct.d.tasks.is_empty());assert!(direct.d.allocations.is_empty(),"EXCON intervention cannot fabricate deployed teams");
 }
+
+#[test]
+fn building_given_as_a_zone_is_adapted_or_explained() {
+    let w = world();
+    // The playtest case: a school typed where a zone is expected.
+    let bad = Command::EvacuateZone { zone: "Pineta Primary School".into(), destination: None };
+    let v = w.validate(&bad, &role("mayor"));
+    let Verdict::Rejected { reason } = v else { panic!("direct validation must still reject") };
+    assert!(reason.contains("is a building, not a zone") && reason.contains("Evacuate building") && reason.contains("Pineta Primary School"), "{reason}");
+    let (fixed, note) = w.reconcile_command(&bad);
+    assert!(matches!(&fixed, Command::EvacuateBuilding { building, .. } if building == "Pineta Primary School"), "{fixed:?}");
+    assert!(note.unwrap().contains("treated as Evacuate building"));
+    assert!(!matches!(w.validate(&fixed, &role("mayor")), Verdict::Rejected { ref reason } if reason.contains("unknown")));
+}
+
+#[test]
+fn named_place_given_as_a_zone_maps_to_the_zone_where_it_lies() {
+    let w = world();
+    let (fixed, note) = w.reconcile_command(&Command::EvacuateZone { zone: "Pineta".into(), destination: None });
+    let Command::EvacuateZone { zone, .. } = &fixed else { panic!("{fixed:?}") };
+    assert!(w.zone_code(zone).is_some() && note.unwrap().contains("named place"));
+    let (fixed, _) = w.reconcile_command(&Command::IssueWarning { zone: "Pineta Primary School".into() });
+    assert!(matches!(fixed, Command::IssueWarning { ref zone } if w.zone_code(zone).is_some()), "{fixed:?}");
+    // A zone code given as a building is read as that zone.
+    let (fixed, _) = w.reconcile_command(&Command::EvacuateBuilding { building: "F4".into(), destination: None });
+    assert!(matches!(fixed, Command::EvacuateZone { ref zone, .. } if zone == "F4"));
+}
+
+#[test]
+fn unmatched_names_get_suggestions() {
+    let w = world();
+    let v = w.validate(&Command::EvacuateZone { zone: "Pineta Primry Skool".into(), destination: None }, &role("mayor"));
+    let Verdict::Rejected { reason } = v else { panic!() };
+    assert!(reason.contains("grid code") && reason.contains("did you mean") && reason.contains("Pineta"), "{reason}");
+    let v = w.validate(&Command::EvacuateBuilding { building: "F4".into(), destination: None }, &role("mayor"));
+    let Verdict::Rejected { reason } = v else { panic!() };
+    assert!(reason.contains("is a zone"), "{reason}");
+}

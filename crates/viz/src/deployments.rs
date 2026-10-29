@@ -4,6 +4,7 @@ use crate::materials::{structure, Finish, StructureMaterial};
 use crate::models::{self, Rig};
 use crate::{Scn, Snapshot};
 use bevy::prelude::*;
+use scenario::Pos;
 use view::TaskStatus;
 use std::collections::HashMap;
 #[derive(Component)]
@@ -24,6 +25,23 @@ pub struct DeploymentPalette {
     material: Handle<StructureMaterial>,
     kit_material: Handle<StructureMaterial>,
 }
+impl DeploymentPalette {
+    /// Body mesh and material of a model (`"tanker"`, `"car"`, `"bus"`…), for
+    /// the effects that borrow a vehicle without being a deployment.
+    pub fn body(&self, name: &str) -> (Handle<Mesh>, Handle<StructureMaterial>) {
+        let material = if matches!(name, "engine" | "tanker" | "firefighter" | "drone") {
+            &self.material
+        } else {
+            &self.kit_material
+        };
+        (self.models[name].0.clone(), material.clone())
+    }
+}
+/// Altitude a monitoring drone flies at, metres above the ground (a symbol
+/// altitude, like the tankers': at 50 m real it would vanish in the canopy).
+const DRONE_ALT_M: f32 = 90.0;
+/// Ground speed of the drawn orbit over the monitored area, metres per real second.
+const DRONE_ORBIT_MPS: f32 = 28.0;
 /// Beacons and headlamps brighten after dark (`structure.wgsl`, lamps read the
 /// night factor from the material's emissive red).
 pub fn night_vehicles(
@@ -50,7 +68,7 @@ pub fn setup(
     mut mats: ResMut<Assets<StructureMaterial>>,
 ) {
     let mut models = HashMap::new();
-    for name in ["engine", "tanker", "firefighter"] {
+    for name in ["engine", "tanker", "firefighter", "drone"] {
         let body = meshes.add(models::mesh(&models::units()[name].model, Vec3::ZERO));
         let parts = models::unit_parts(name)
             .into_iter()
@@ -92,8 +110,16 @@ pub fn setup(
         )),
     });
 }
-fn model_for(resource: &str) -> (&'static str, f32, f32) {
-    match resource {
+fn is_drone(scn: &Scn, task: &view::Deployment) -> bool {
+    task.action == "MonitorArea"
+        || task.resource == "drones"
+        || scn.0.drone_spec(&task.resource).is_some()
+}
+fn model_for(scn: &Scn, task: &view::Deployment) -> (&'static str, f32, f32) {
+    if is_drone(scn, task) {
+        return ("drone", 7.0, DRONE_ALT_M);
+    }
+    match task.resource.as_str() {
         "air_tankers" => ("tanker", 2.8, 120.),
         "ground_crews" => ("firefighter", 4., 0.2),
         "buses" => ("bus", 3., 0.2),
@@ -113,6 +139,7 @@ pub fn update(
     mut commands: Commands,
     scn: Res<Scn>,
     snap: Res<Snapshot>,
+    time: Res<Time>,
     palette: Res<DeploymentPalette>,
     mut markers: Query<
         (Entity, &DeploymentMarker, &mut Transform),
@@ -133,9 +160,10 @@ pub fn update(
         .iter()
         .filter(|task| task.qty > 0 && task.status != TaskStatus::Cancelled)
         .collect::<Vec<_>>();
+    let real_s = time.elapsed_seconds();
     for (entity, marker, mut transform) in &mut markers {
         if let Some(task) = visible.iter().find(|t| t.id == marker.0) {
-            set(&scn, task, snap.time_s, &mut transform);
+            set(&scn, task, snap.time_s, real_s, &mut transform);
         } else {
             commands.entity(entity).despawn_recursive();
         }
@@ -145,14 +173,21 @@ pub fn update(
             let moving = task.position(snap.time_s) != task.position(snap.time_s + 1);
             let work = task.status == TaskStatus::Working;
             let t = snap.time_s as f32;
+            // Propellers and beacons run on real time: tied to the simulated
+            // clock they would strobe at speed and freeze between turns.
             let a = match part.rig.kind.as_str() {
                 "wheel" if moving => t * 2.,
-                "prop" if moving || work => t * 24.,
+                "prop" if moving || work => real_s * 40.,
                 "swing" if moving => (t * 3. + part.rig.phase).sin() * 0.4,
-                "tool" if work => (t * 2. + part.rig.phase).sin() * 0.25,
+                "tool" if work => (real_s * 5. + part.rig.phase).sin() * 0.6,
                 _ => 0.,
             };
             tf.rotation = Quat::from_axis_angle(part.rig.axis.normalize_or_zero(), a);
+            if part.rig.kind == "blink" {
+                let active = moving || work;
+                let lit = active && ((real_s * 3.).floor() as i32 + part.rig.phase as i32) % 2 == 0;
+                tf.scale = Vec3::splat(if lit { 1. } else { 0. });
+            }
         }
     }
     let show_marks = std::env::var("TTX_SNAPSHOT_MARKS").as_deref() != Ok("0");
@@ -206,13 +241,13 @@ pub fn update(
         }
     }
     for task in visible {
-        let (name, _, lift) = model_for(&task.resource);
-        let airborne = name == "tanker";
+        let (name, _, lift) = model_for(&scn, task);
+        let airborne = matches!(name, "tanker" | "drone");
         let mut transform = Transform::default();
-        set(&scn, task, snap.time_s, &mut transform);
+        set(&scn, task, snap.time_s, real_s, &mut transform);
         if !markers.iter().any(|(_, m, _)| m.0 == task.id) {
             let (body, parts) = &palette.models[name];
-            let material = if matches!(name, "engine" | "tanker" | "firefighter") {
+            let material = if matches!(name, "engine" | "tanker" | "firefighter" | "drone") {
                 palette.material.clone()
             } else {
                 palette.kit_material.clone()
@@ -244,6 +279,9 @@ pub fn update(
                     }
                 });
         }
+        if show_marks && name == "drone" && task.status == TaskStatus::Working {
+            scan_marks(&scn, task, transform.translation, real_s, &mut gizmos);
+        }
         if show_marks {
             let p = to_bevy(&scn.0, task.position(snap.time_s), lift + 2.);
             gizmos.linestrip(
@@ -260,7 +298,7 @@ pub fn update(
                 TaskStatus::EnRoute | TaskStatus::Refilling | TaskStatus::Withdrawing
             )
         {
-            let lift = if airborne { 120.0 } else { 12.0 };
+            let lift = if airborne { lift } else { 12.0 };
             let points = task
                 .route
                 .as_ref()
@@ -293,13 +331,79 @@ pub fn update(
         }
     }
 }
-fn set(scn: &Scn, task: &view::Deployment, t: i64, transform: &mut Transform) {
-    let (_, scale, lift) = model_for(&task.resource);
-    transform.translation = to_bevy(&scn.0, task.position(t), lift);
+/// Where a drone on station circles: the centre and a radius that keeps the
+/// orbit inside the monitored zones.
+fn orbit(scn: &Scn, task: &view::Deployment) -> Option<(Pos, f32)> {
+    let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for z in &task.zones {
+        let r = scn.0.zone_bounds(z)?;
+        b = [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])];
+    }
+    if task.zones.is_empty() {
+        return Some((task.target, 160.0));
+    }
+    let half = ((b[2] - b[0]).min(b[3] - b[1]) * 0.5).max(1.0);
+    Some(([(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5], (half * 0.55).clamp(80.0, 320.0)))
+}
+
+/// The drawn position of a deployment: its track, except a drone on station,
+/// which circles over its area in real time.
+fn drawn(scn: &Scn, task: &view::Deployment, t: i64, real_s: f32) -> (Pos, Pos, f32) {
+    let (name, _, lift) = model_for(scn, task);
+    let (here, next) = (task.position(t), task.position(t + 1));
+    if name != "drone" {
+        return (here, next, lift);
+    }
+    if task.status == TaskStatus::Working {
+        if let Some((c, r)) = orbit(scn, task) {
+            let a = real_s * DRONE_ORBIT_MPS / r + task.id as f32 * 1.7;
+            let at = |a: f32| [c[0] + r * a.cos(), c[1] + r * a.sin()];
+            return (at(a), at(a + 0.05), lift);
+        }
+    }
+    // Parked at its base (recharging, or waiting): on the ground, rotors still.
+    let lift = if here == next && task.status != TaskStatus::EnRoute { 0.3 } else { lift };
+    (here, next, lift)
+}
+
+fn set(scn: &Scn, task: &view::Deployment, t: i64, real_s: f32, transform: &mut Transform) {
+    let (_, scale, _) = model_for(scn, task);
+    let (here, next, lift) = drawn(scn, task, t, real_s);
+    transform.translation = to_bevy(&scn.0, here, lift);
     transform.scale = Vec3::splat(scale);
-    let direction =
-        to_bevy(&scn.0, task.position(t + 1), lift) - to_bevy(&scn.0, task.position(t), lift);
+    let direction = to_bevy(&scn.0, next, lift) - to_bevy(&scn.0, here, lift);
     if direction.length_squared() > 0.01 {
         transform.rotation = Quat::from_rotation_y(direction.x.atan2(direction.z));
     }
+}
+
+/// A drone on station: the monitored zones outlined, and a sensor cone from
+/// the aircraft to a sweeping footprint on the ground.
+fn scan_marks(scn: &Scn, task: &view::Deployment, at: Vec3, real_s: f32, gizmos: &mut Gizmos) {
+    let s = &scn.0;
+    let cyan = Color::srgba(0.3, 0.95, 1.0, 0.8);
+    for z in &task.zones {
+        let Some(b) = s.zone_bounds(z) else { continue };
+        let ring = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]];
+        let mut pts = Vec::new();
+        for w in ring.windows(2) {
+            for k in 0..=24 {
+                let f = k as f32 / 24.0;
+                pts.push(to_bevy(s, [w[0][0] + (w[1][0] - w[0][0]) * f, w[0][1] + (w[1][1] - w[0][1]) * f], 8.0));
+            }
+        }
+        gizmos.linestrip(pts, Color::srgba(0.3, 0.95, 1.0, 0.45));
+    }
+    let foot = crate::frame::to_world(s, at);
+    let r = 55.0 + 10.0 * (real_s * 2.0).sin();
+    let rim: Vec<Vec3> = (0..=24)
+        .map(|k| {
+            let a = k as f32 / 24.0 * std::f32::consts::TAU;
+            to_bevy(s, [foot[0] + r * a.cos(), foot[1] + r * a.sin()], 4.0)
+        })
+        .collect();
+    for p in rim.iter().step_by(6) {
+        gizmos.line(at - Vec3::Y * 2.0, *p, Color::srgba(0.3, 0.95, 1.0, 0.35));
+    }
+    gizmos.linestrip(rim, cyan);
 }

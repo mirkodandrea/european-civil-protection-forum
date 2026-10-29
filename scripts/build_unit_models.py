@@ -552,12 +552,50 @@ def tanker():
     box("Tail light", (0, 7.42, 4.1), (.1, .08, .1), "tail", .02)
 
 
+def drone():
+    # Monitoring quadcopter (Matrice class, ~1.3 m tip to tip): dark carbon
+    # body, four folding arms with motors, red/white rotor tips so the spin
+    # reads from far away, landing skids, a gimbal camera under the nose and
+    # navigation lights. Origin at the skids; the rotors turn about Z.
+    box("Body", (0, 0, .42), (.36, .5, .16), "dark", .05)
+    box("Top shell", (0, -.02, .53), (.3, .4, .07), "white", .03)
+    box("Battery", (0, .12, .6), (.2, .22, .06), "metal", .02)
+    rod("GPS mast", (0, .18, .63), (0, .18, .76), .015, "metal")
+    ico("GPS puck", (0, .18, .78), (.06, .06, .02), "white", 1)
+    arm_r = .62
+    for k, (sx, sy) in enumerate(((-1, -1), (1, -1), (1, 1), (-1, 1))):
+        tip = Vector((sx * arm_r * .707, sy * arm_r * .707, .46))
+        rod("Arm", (sx * .12, sy * .16, .44), tip, .022, "dark", sides=8)
+        rod("Motor", tip, tip + Vector((0, 0, .08)), .045, "metal", sides=12)
+        # front arms carry red lights, rear arms green (aviation convention: red ahead)
+        box("Arm light", tip - Vector((0, 0, .03)), (.04, .04, .025), "tail" if sy < 0 else "beacon", .01)
+        pivot = tuple(tip + Vector((0, 0, .09)))
+        with part(f"rotor_{k}", pivot, (0, 0, 1), "prop"):
+            rod("Rotor hub", tip + Vector((0, 0, .08)), tip + Vector((0, 0, .11)), .03, "alu", sides=10)
+            for a in (0.3 + k * .4, math.pi + 0.3 + k * .4):
+                c, s = math.cos(a), math.sin(a)
+                blade = box("Rotor blade", tip + Vector((c * .14, s * .14, .1)), (.28, .035, .008), "dark")
+                blade.rotation_euler = (0, 0, a)
+                cap = box("Rotor tip", tip + Vector((c * .3, s * .3, .1)), (.05, .037, .009), "red")
+                cap.rotation_euler = (0, 0, a)
+    for sx in (-1, 1):
+        rod("Skid leg", (sx * .12, -.12, .36), (sx * .2, -.14, .03), .012, "dark")
+        rod("Skid leg", (sx * .12, .14, .36), (sx * .2, .16, .03), .012, "dark")
+        rod("Skid", (sx * .2, -.26, .02), (sx * .2, .28, .02), .016, "dark", sides=8)
+    # gimbal camera under the nose (front is -Y)
+    rod("Gimbal stem", (0, -.18, .34), (0, -.18, .28), .02, "metal")
+    ico("Camera", (0, -.2, .23), (.07, .07, .06), "dark", 2)
+    ico("Lens", (0, -.27, .23), (.035, .015, .035), "glass", 1)
+    with part("beacon", (0, .04, .5), (0, 0, 1), "blink", 0.0):
+        box("Strobe", (0, .22, .5), (.05, .03, .03), "light", .01)
+
+
 def rt(v):
     """Blender (Z up, front -Y) to runtime (Y up, front +Z)."""
     return [round(v[0], 5), round(v[2], 5), round(-v[1], 5)]
 
 
-BUILDERS = {"firefighter": firefighter, "engine": engine, "tanker": tanker}
+BUILDERS = {"firefighter": firefighter, "engine": engine, "tanker": tanker, "drone": drone}
 baked = {}
 for name, build in BUILDERS.items():
     current = bpy.data.collections.new(name)
@@ -604,7 +642,7 @@ bpy.context.preferences.filepaths.save_version = 0
 bpy.ops.wm.save_as_mainfile(filepath=str(OUT / "units_assets.blend"))
 
 # --- contact sheet (after saving the source) ---------------------------------
-layout = {"firefighter": (-5, 0, 0), "engine": (0, 0, 0), "tanker": (0, 16, 2.4)}
+layout = {"firefighter": (-5, 0, 0), "engine": (0, 0, 0), "tanker": (0, 16, 2.4), "drone": (6, 0, 0)}
 for name, pos in layout.items():
     for o in bpy.data.collections[name].objects:
         o.location = Vector(pos) + o.location
@@ -639,7 +677,7 @@ bpy.ops.render.render(write_still=True)
 # from the front-left and the rear-right.
 if os.environ.get("UNIT_CLOSEUPS"):
     outdir = Path(os.environ["UNIT_CLOSEUPS"])
-    views = {"firefighter": ((-5, 0, 1.0), 2.4), "engine": ((0, 0, 1.5), 9.0), "tanker": ((0, 16, 2.4), 22.0)}
+    views = {"firefighter": ((-5, 0, 1.0), 2.4), "engine": ((0, 0, 1.5), 9.0), "tanker": ((0, 16, 2.4), 22.0), "drone": ((6, 0, .4), 1.8)}
     sc.render.resolution_x, sc.render.resolution_y = 1000, 800
     for name, (centre, scale) in views.items():
         for tag, ang in (("a", -35), ("b", 145)):

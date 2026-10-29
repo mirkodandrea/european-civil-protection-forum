@@ -26,14 +26,18 @@ pub mod chat_policy;
 pub mod timing;
 pub use timing::{ClockControl, ExercisePhase, PhaseEntry, ScheduleStatus, ScheduledInject};
 pub mod design;
-pub mod drafts;
+pub mod action_suggestions;
+pub mod files;
+pub use files::{FileRef, PdfUpload};
 pub mod evaluation;
 pub mod interventions;
 pub mod knowledge;
+mod monitoring;
 pub mod conversations;
 pub mod narrative;
 pub mod persona;
 pub mod response;
+pub use response::{Addressee, ResponseKind};
 pub mod summaries;
 pub mod threads;
 pub mod planned;
@@ -95,6 +99,11 @@ pub enum MsgKind {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Message {
+    /// Copy for the EXCON console, in `excon_language` (see [`Exercise::excon_pending`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_excon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excon_lang: Option<String>,
     pub original: Option<String>,
     pub language_src: Option<String>,
     pub translation_failed: bool,
@@ -143,6 +152,54 @@ pub enum ProposalStatus {
     RolledBack,
     /// Replaced by the player's answer to the EXCON's clarification question.
     Superseded,
+    /// EXCON took note of a response that carried nothing to execute (no
+    /// actions, communications or drafts). Terminal: the EXCON note is the answer.
+    Acknowledged,
+}
+
+/// What the EXCON made of a proposal, as players and the EXCON lists show it.
+/// It is orthogonal to [`ProposalStatus`], which also tracks execution: an
+/// `Applied` proposal can still be `PartiallyApproved`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Review {
+    /// Not decided yet (being interpreted or awaiting the EXCON).
+    #[default]
+    InReview,
+    /// A question to the player is open (asked by EXCON or by the AI).
+    ClarificationRequested,
+    Approved,
+    /// Some actions approved, the others rejected (see [`ApprovalRecord::rejected_actions`]).
+    PartiallyApproved,
+    Rejected,
+    /// Nothing to execute: the EXCON took note (see [`ProposalStatus::Acknowledged`]).
+    Acknowledged,
+    /// Chat without operational content; nothing to decide.
+    Informational,
+    /// Replaced by a newer reply before any decision.
+    Superseded,
+    /// Undone by a rollback before any decision.
+    Withdrawn,
+}
+
+/// The EXCON rejects one action of a proposal it otherwise approves.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionRejection {
+    /// Index into the reviewed actions (the EXCON's edit, else the proposal's commands).
+    pub index: usize,
+    /// Reason for the player (optional).
+    #[serde(default, alias = "reason")]
+    pub note: Option<String>,
+}
+
+/// One action the EXCON did not approve, kept with the decision.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RejectedAction {
+    /// Position in the reviewed actions.
+    pub index: usize,
+    pub command: Command,
+    pub description: String,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -198,7 +255,12 @@ pub struct ApprovalRecord {
     pub persona: Option<String>,
     pub edited: bool,
     pub proposed_commands: Vec<Command>,
+    /// The approved actions (what executes); empty for a rejection.
     pub effective_commands: Vec<Command>,
+    /// Actions the EXCON did not approve, with their reasons.
+    pub rejected_actions: Vec<RejectedAction>,
+    /// Approved, partially approved, rejected or acknowledged.
+    pub review: Review,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -224,6 +286,8 @@ fn wall_ms() -> u128 {
 pub enum BasisKind {
     Procedure,
     Plan,
+    /// Laws and regulations.
+    Law,
     OperationalJudgment,
 }
 
@@ -295,6 +359,20 @@ impl Proposal {
     pub fn pure_narrative(&self) -> bool {
         self.narrative && !self.carries_actions
     }
+
+    /// The EXCON's verdict when decided, else where the proposal stands.
+    pub fn review_state(&self) -> Review {
+        if let Some(d) = &self.decision {
+            return d.review;
+        }
+        match self.status {
+            ProposalStatus::NeedsClarification => Review::ClarificationRequested,
+            ProposalStatus::Informational => Review::Informational,
+            ProposalStatus::Superseded => Review::Superseded,
+            ProposalStatus::RolledBack => Review::Withdrawn,
+            _ => Review::InReview,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -304,9 +382,18 @@ pub struct Proposal {
     /// The response also declared simulator actions (`narrative` + `commands`).
     /// A narrative without this flag is a pure narrative initiative.
     pub carries_actions: bool,
+    /// The EXCON added simulator actions to a narrative-only response while
+    /// reviewing it (e.g. from AI suggestions); `carries_actions` follows them.
+    pub excon_actions: bool,
     /// Linked conversation (see [`conversations`]) the response came out of.
     /// It is the only way a player who never received the inject can answer it.
     pub via_conversation: Option<u64>,
+    /// A plain communication (see [`response::ResponseKind`]): stored in the
+    /// inject's history, never reviewed or executed (status `Informational`).
+    pub communication: bool,
+    /// Who the response was addressed to: the fictitious sender EXCON plays,
+    /// or real players (delivered through a linked conversation).
+    pub addressed_to: response::Addressee,
     pub narrative_outcomes: Vec<narrative::NarrativeOutcome>,
     pub resource_limit_draft: Option<Value>,
     pub evidence: Option<DecisionEvidence>,
@@ -336,6 +423,8 @@ pub struct Proposal {
     pub invalid: Vec<String>,
     pub clarification: Option<String>,
     pub status: ProposalStatus,
+    /// Derived from `status` and `decision` (see [`Proposal::review_state`]); kept current by every transition.
+    pub review: Review,
     pub master_note: Option<String>,
     /// Question the EXCON put to the proposing player (status `NeedsClarification`).
     #[serde(default)]
@@ -375,6 +464,9 @@ pub struct Decision {
     pub note: Option<String>,
     /// Who EXCON speaks as in the note and the feedback (see [`persona`]).
     pub persona: Option<String>,
+    /// With `approve`: actions not approved (partial approval). With a
+    /// rejection: optional per-action reasons (every action is rejected).
+    pub rejected_actions: Vec<ActionRejection>,
 }
 
 /// A clarification the EXCON asked of a player, to be delivered.
@@ -468,7 +560,6 @@ pub struct TurnWindow {
 
 pub struct Exercise {
     pub(crate) turn_summaries: Vec<summaries::TurnSummary>,
-    player_drafts: BTreeMap<u64, drafts::PlayerDraft>,
     /// Player conversations about an inject (see [`conversations`]).
     pub linked_conversations: Vec<conversations::LinkedConversation>,
     pub training_design: design::TrainingDesign,
@@ -479,6 +570,8 @@ pub struct Exercise {
     pub exercise_phase: ExercisePhase,
     pub phase_history: Vec<PhaseEntry>,
     pub clock_control: ClockControl,
+    /// Language of the EXCON console (players have their own in `Player`).
+    pub excon_language: String,
     pub scheduled_injects: Vec<ScheduledInject>,
     /// Actions run (or not) for each inject delivery (see [`actions`]).
     pub action_runs: BTreeMap<String, actions::ActionRun>,
@@ -526,6 +619,8 @@ pub struct Exercise {
     /// simulated minute per second); 0 = as fast as possible.
     pub speed: f32,
     snapshots: Vec<(u32, WorldSnapshot)>,
+    /// PDF documents attached to player responses (see [`files`]).
+    pub(crate) files: files::FileStore,
     log_file: Option<PathBuf>,
     next_id: u64,
 }
@@ -551,7 +646,6 @@ impl Exercise {
         let turn_minutes = world.scn.turn_minutes.clamp(1, 24 * 60);
         let mut ex = Exercise {
             turn_summaries: Vec::new(),
-            player_drafts: BTreeMap::new(),
             linked_conversations: Vec::new(),
             training_design: Default::default(),
             current_path: None,
@@ -567,6 +661,7 @@ impl Exercise {
                 reason: "Initial training phase".into(),
             }],
             clock_control: ClockControl::default(),
+            excon_language: "en".into(),
             scheduled_injects: Vec::new(),
             action_runs: BTreeMap::new(),
             skipped_injects: BTreeMap::new(),
@@ -595,6 +690,7 @@ impl Exercise {
             conversations: BTreeMap::new(),
             speed: 0.0,
             snapshots: Vec::new(),
+            files: Default::default(),
             log_file: None,
             next_id: 1,
         };
@@ -604,6 +700,25 @@ impl Exercise {
             json!({"scenario": ex.world.scn.id, "seed": ex.world.seed}),
         );
         ex
+    }
+
+    /// Every participant confirms a language before the exercise starts: the
+    /// scenario's languages become proposals (multi-device server). Without
+    /// this, as in the standalone app, the scenario's languages hold.
+    pub fn with_language_choice(mut self) -> Exercise {
+        for p in self.players.values_mut() {
+            p.language_confirmed = false;
+        }
+        self
+    }
+
+    /// Roles whose participant has not confirmed a language yet.
+    pub fn pending_languages(&self) -> Vec<String> {
+        self.players
+            .values()
+            .filter(|p| !p.language_confirmed)
+            .map(|p| p.role.clone())
+            .collect()
     }
 
     /// Also append every log entry as a JSON line to `path`.
@@ -675,10 +790,39 @@ impl Exercise {
     }
 
     pub fn language_of(&self, role: &str) -> String {
+        if role == MASTER {
+            return self.excon_language.clone();
+        }
         self.players
             .get(role)
             .map(|p| p.language.clone())
             .unwrap_or_else(|| "en".into())
+    }
+
+    /// Player messages to the EXCON that still lack a copy in the EXCON
+    /// language: `(id, source text, source language)`. The source is the
+    /// player's original, so the translation never goes through English twice.
+    pub fn excon_pending(&self) -> Vec<(u64, String, String)> {
+        self.messages
+            .iter()
+            .filter(|m| {
+                m.to == MASTER
+                    && m.from != MASTER
+                    && matches!(m.kind, MsgKind::Reply | MsgKind::Clarification)
+                    && m.excon_lang.as_deref() != Some(self.excon_language.as_str())
+            })
+            .map(|m| match (&m.original, &m.language_src) {
+                (Some(o), Some(l)) => (m.id, o.clone(), l.clone()),
+                _ => (m.id, m.text_en.clone(), "en".into()),
+            })
+            .collect()
+    }
+
+    pub fn set_excon_text(&mut self, id: u64, lang: &str, text: String) {
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
+            m.text_excon = Some(text);
+            m.excon_lang = Some(lang.into());
+        }
     }
 
     pub fn set_language(&mut self, role: &str, lang: &str) -> Result<()> {
@@ -688,6 +832,11 @@ impl Exercise {
         .contains(&lang)
         {
             bail!("choose a supported language");
+        }
+        if role == MASTER {
+            self.excon_language = lang.to_string();
+            self.record("language_set", role, json!({"language": lang}));
+            return Ok(());
         }
         let Some(p) = self.players.get_mut(role) else {
             bail!("unknown role {role}")
@@ -818,6 +967,7 @@ impl Exercise {
             let resource_event_count = self.world.d.resource_events.len();
             let events = self.world.advance(dt)?;
             self.record_resource_events(resource_event_count, MASTER);
+            self.absorb_monitoring();
             if let Some(r) = self.resolving.as_mut() {
                 r.events.extend(events);
             }
@@ -857,6 +1007,7 @@ impl Exercise {
             let resource_event_count = self.world.d.resource_events.len();
             self.world.advance(dt)?;
             self.record_resource_events(resource_event_count, MASTER);
+            self.absorb_monitoring();
         }
         let report = TurnReport {
             turn: r.turn,
@@ -911,11 +1062,11 @@ impl Exercise {
         self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
         self.rollback_narrative_outcomes(turn);
-        self.player_drafts.clear();
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
         self.restore_epoch += 1;
         self.forget_actions_since_restore();
+        self.forget_monitoring_since_restore();
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self
             .proposals
@@ -923,6 +1074,7 @@ impl Exercise {
             .filter(|p| {
                 p.turn >= turn
                     && p.status != ProposalStatus::Rejected
+                    && p.status != ProposalStatus::Acknowledged
                     && p.status != ProposalStatus::RolledBack
             })
             .map(|p| p.id)
@@ -956,7 +1108,6 @@ impl Exercise {
             bail!("a turn is being resolved; wait for it to finish");
         }
         self.stop_clock("Exercise ended");
-        self.player_drafts.clear();
         self.phase = Phase::Debrief;
         self.record(
             "exercise_ended",
@@ -1023,6 +1174,8 @@ impl Exercise {
         };
         let reply_to = message_reply_to.or(thread_reply_to);
         let m = Message {
+            text_excon: None,
+            excon_lang: None,
             original: None,
             language_src: None,
             translation_failed: false,
@@ -1117,6 +1270,9 @@ impl Exercise {
         if inject_id.is_none() && actions.custom.iter().any(|a| a.offset_s < 0) {
             bail!("a custom inject has no planned time: its actions cannot come before it");
         }
+        for a in &actions.custom {
+            self.world.scn.check_action(a)?;
+        }
         let mut to = self.recipients(recipients)?;
         // Roles that already received this MSEL inject are skipped silently.
         if let Some(id) = inject_id {
@@ -1159,7 +1315,7 @@ impl Exercise {
             self.skipped_injects.remove(id);
         }
         self.record("inject_sent", MASTER, json!({"inject_id": delivery_id, "msel_id": inject_id, "title": title, "sender": sender, "recipients": to, "messages": ids}));
-        self.register_inject_actions(delivery_id, inject_id, actions, first);
+        self.register_inject_actions(delivery_id, inject_id, actions, first, sender, &to);
         Ok(ids)
     }
 
@@ -1219,6 +1375,7 @@ impl Exercise {
         text: &str,
         commands: Vec<Command>,
         reply_to: Option<u64>,
+        basis: BasisKind,
     ) -> Result<u64> {
         self.validate_chat(role, MASTER, text, true)?;
         if commands.is_empty() || commands.len() > 32 {
@@ -1230,6 +1387,8 @@ impl Exercise {
                 text: text.into(),
                 commands,
                 reply_to,
+                kind: response::ResponseKind::Decision,
+                basis: Some(basis),
                 ..Default::default()
             },
         )
@@ -1329,7 +1488,10 @@ impl Exercise {
         self.proposals.push(Proposal {
             narrative: false,
             carries_actions: false,
+            excon_actions: false,
             via_conversation: None,
+            communication: false,
+            addressed_to: Default::default(),
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence,
@@ -1357,6 +1519,7 @@ impl Exercise {
             invalid: Vec::new(),
             clarification: None,
             status: ProposalStatus::Parsing,
+            review: Review::InReview,
             master_note: None,
             clarification_request: None,
             clarification_closed: false,
@@ -1498,7 +1661,10 @@ impl Exercise {
         self.proposals.push(Proposal {
             narrative: false,
             carries_actions: false,
+            excon_actions: false,
             via_conversation: None,
+            communication: false,
+            addressed_to: Default::default(),
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence: None,
@@ -1526,6 +1692,7 @@ impl Exercise {
             invalid: Vec::new(),
             clarification: None,
             status: ProposalStatus::Parsing,
+            review: Review::InReview,
             master_note: None,
             clarification_request: None,
             clarification_closed: false,
@@ -1566,6 +1733,7 @@ impl Exercise {
         };
         let p = self.proposal_mut(pid)?;
         p.status = status;
+        p.review = p.review_state();
         p.history.push(change.clone());
         self.record(
             "proposal_status",
@@ -1652,6 +1820,7 @@ impl Exercise {
                 Err(reason) => (false, reason),
             };
             self.record_resource_events(resource_event_count, p.source.label());
+            self.absorb_monitoring();
             if ok && matches!(cmd, Command::AdvanceTime { .. }) {
                 self.clock_control.revision += 1;
             }
@@ -1741,8 +1910,21 @@ impl Exercise {
     }
 
     fn set_commands(&mut self, pid: u64, commands: Vec<Command>) -> Result<()> {
-        if self.proposal(pid).is_some_and(|p| p.pure_narrative()) && !commands.is_empty() {
-            bail!("narrative initiatives cannot contain simulated commands; submit a separate operational proposal");
+        // Only the EXCON review (revalidate/decide) reaches a narrative proposal
+        // here: the actions it adds turn the initiative into a response that
+        // carries actions; removing all of them again restores it.
+        if let Some((pure, excon)) = self.proposal(pid).filter(|p| p.narrative).map(|p| (p.pure_narrative(), p.excon_actions)) {
+            let added = !commands.is_empty();
+            if pure && added {
+                let p = self.proposal_mut(pid)?;
+                p.carries_actions = true;
+                p.excon_actions = true;
+                self.record("narrative_actions_added", MASTER, json!({"proposal": pid, "commands": commands}));
+            } else if excon && !added {
+                let p = self.proposal_mut(pid)?;
+                p.carries_actions = false;
+                p.excon_actions = false;
+            }
         }
         let actor = self
             .proposal(pid)
@@ -1750,8 +1932,17 @@ impl Exercise {
             .source
             .actor();
         let prior = self.prior(pid);
+        // A place of another kind than the action expects (a building given
+        // as a zone) is adapted when unambiguous; the verdict says so.
+        let (commands, adapted): (Vec<Command>, Vec<Option<String>>) =
+            commands.iter().map(|c| self.world.reconcile_command(c)).unzip();
         let mut verdicts = self.world.validate_batch(&prior, &commands, &actor);
         self.check_limit_batch(pid, &commands, &actor, &mut verdicts);
+        for (v, note) in verdicts.iter_mut().zip(adapted) {
+            if let (Verdict::Ok { notes }, Some(n)) = (v, note) {
+                notes.insert(0, n);
+            }
+        }
         let p = self.proposal_mut(pid)?;
         p.descriptions = commands.iter().map(|c| c.describe()).collect();
         p.commands = commands;
@@ -2075,6 +2266,18 @@ impl Exercise {
     }
 
     /// The EXCON decides on a proposal.
+    ///
+    /// * `approve` with no [`Decision::rejected_actions`]: every action is approved.
+    /// * `approve` with some rejected actions: **partial approval**. Only the
+    ///   other actions are kept (and executed); the rejected ones are stored
+    ///   in [`ApprovalRecord::rejected_actions`] with their reasons, and the
+    ///   player is told which is which. Rejecting every action of a proposal
+    ///   that carries nothing else is a rejection.
+    /// * `approve` on a proposal with nothing to execute (no actions,
+    ///   communications, drafts or limits, not a narrative initiative): the
+    ///   EXCON **acknowledges** it ([`ProposalStatus::Acknowledged`]).
+    /// * no `approve`: the whole proposal is rejected; per-action reasons, if
+    ///   any, are kept and reported.
     pub fn decide(&mut self, pid: u64, d: Decision) -> Result<DecisionOutcome> {
         if self.phase != Phase::Orders {
             bail!("decisions require an open exercise turn");
@@ -2090,49 +2293,85 @@ impl Exercise {
             bail!("proposal {pid} is already {status:?}");
         }
         let proposed_commands = self.proposal(pid).unwrap().commands.clone();
-        // Re-check feasibility now: resources may have changed since parsing.
-        let cmds = match d.commands.clone() {
-            Some(c) => c,
-            None => self.proposal(pid).unwrap().commands.clone(),
+        // The actions the EXCON reviewed: its edit, else the interpretation.
+        let reviewed = d.commands.clone().unwrap_or_else(|| proposed_commands.clone());
+        let clean = |n: &Option<String>| n.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        let mut reasons: BTreeMap<usize, Option<String>> = BTreeMap::new();
+        for r in &d.rejected_actions {
+            if r.index >= reviewed.len() {
+                bail!(
+                    "action {} does not exist: proposal {pid} has {} action(s)",
+                    r.index + 1,
+                    reviewed.len()
+                );
+            }
+            if reasons.insert(r.index, clean(&r.note)).is_some() {
+                bail!("action {} is rejected twice", r.index + 1);
+            }
+        }
+        let rejected_action = |i: usize, c: &Command, note: Option<String>| RejectedAction {
+            index: i,
+            command: c.clone(),
+            description: c.describe(),
+            note,
         };
-        self.set_commands(pid, cmds)?;
+        let rejected: Vec<RejectedAction> = reviewed
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match reasons.get(&i) {
+                Some(note) => Some(rejected_action(i, c, note.clone())),
+                // A whole rejection rejects every action, with or without a reason.
+                None if !d.approve => Some(rejected_action(i, c, None)),
+                None => None,
+            })
+            .collect();
+        let kept: Vec<Command> = reviewed
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !reasons.contains_key(i))
+            .map(|(_, c)| c.clone())
+            .collect();
+        let before = self.proposal(pid).unwrap();
+        let carries_other = before.narrative
+            || !before.inject_drafts.is_empty()
+            || !before.communication_drafts.is_empty()
+            || before.resource_limit_draft.is_some();
+        // Rejecting every action of a proposal with nothing else left is a rejection.
+        let approve = d.approve && (!kept.is_empty() || carries_other || rejected.is_empty());
+        let acknowledge = approve && kept.is_empty() && rejected.is_empty() && !carries_other;
+        let partial = approve && !rejected.is_empty();
+        // Re-check feasibility now (resources may have changed since parsing),
+        // only for what is approved.
+        self.set_commands(pid, if approve { kept.clone() } else { reviewed.clone() })?;
         let p = self.proposal(pid).unwrap().clone();
         let notify = match &p.source {
             Source::Player(r) => Some(r.clone()),
             Source::Master => None,
         };
-        let note = d.note.clone().filter(|n| !n.trim().is_empty());
+        let note = clean(&d.note);
         let persona = self.persona_for(d.persona.as_deref(), p.inject_id);
         let who = self.persona_name(persona.as_deref(), "en");
-        if d.approve
+        if approve
             && matches!(p.source, Source::Master)
             && p.summary.contains("UNPLANNED DIVERGENCE")
             && note.is_none()
         {
             bail!("unplanned training divergence requires explicit EXCON rationale");
         }
-        if d.approve {
+        if approve {
             self.edit_communications(
                 pid,
                 Some(p.communication_drafts.clone()),
                 Some(p.inject_drafts.clone()),
             )?;
-            if !p.narrative
-                && p.commands.is_empty()
-                && p.inject_drafts.is_empty()
-                && p.communication_drafts.is_empty()
-                && p.resource_limit_draft.is_none()
-            {
-                bail!("nothing to approve: proposal {pid} has no actions (edit it to add some, or reject it)");
-            }
             if p.verdicts.iter().any(|v| !v.is_ok()) {
-                bail!("proposal is not feasible; edit its actions or resources before approval");
+                bail!("proposal is not feasible; edit or reject the infeasible actions before approval");
             }
             if d.commands.is_none() && !p.invalid.is_empty() {
                 bail!("proposal contains invalid actions; edit it before approval");
             }
         }
-        let effective_limits = if d.approve {
+        let effective_limits = if approve {
             p.resource_limit_draft
                 .as_ref()
                 .map(|v| serde_json::from_value::<ResourceLimits>(v.clone()))
@@ -2140,26 +2379,43 @@ impl Exercise {
         } else {
             None
         };
-        if d.approve {
+        if approve {
             if let Some(limits) = &effective_limits {
                 self.validate_limits_for_phase(limits, self.exercise_phase)?;
             }
         }
+        let review = if !approve {
+            Review::Rejected
+        } else if acknowledge {
+            Review::Acknowledged
+        } else if partial {
+            Review::PartiallyApproved
+        } else {
+            Review::Approved
+        };
         self.proposal_mut(pid)?.decision = Some(ApprovalRecord {
             resource_limits: effective_limits,
-            approve: d.approve,
+            approve,
             actor: MASTER.into(),
             turn: self.turn,
             t_s: self.world.time_s(),
             wall_ms: wall_ms(),
             note: note.clone(),
             persona: persona.clone(),
-            edited: d.commands.is_some() && p.commands != proposed_commands,
+            edited: d.commands.is_some() && reviewed != proposed_commands,
             proposed_commands,
-            effective_commands: p.commands.clone(),
+            effective_commands: if approve { p.commands.clone() } else { Vec::new() },
+            rejected_actions: rejected.clone(),
+            review,
         });
+        let reason = |r: &RejectedAction| {
+            r.note
+                .as_ref()
+                .map(|n| format!(" Reason: {n}"))
+                .unwrap_or_default()
+        };
         let mut facts = Vec::new();
-        if !d.approve {
+        if !approve {
             self.transition(
                 pid,
                 ProposalStatus::Rejected,
@@ -2174,13 +2430,37 @@ impl Exercise {
                     p.descriptions.join("; ")
                 }
             ));
+            for r in rejected.iter().filter(|r| r.note.is_some()) {
+                facts.push(format!("NOT APPROVED: {}.{}", r.description, reason(r)));
+            }
+        } else if acknowledge {
+            self.transition(
+                pid,
+                ProposalStatus::Acknowledged,
+                MASTER,
+                note.as_deref().unwrap_or("Acknowledged by EXCON"),
+            )?;
+            facts.push(format!(
+                "Your message was acknowledged by {who}. It contained no orders to execute."
+            ));
         } else {
             self.transition(
                 pid,
                 ProposalStatus::Approved,
                 MASTER,
-                note.as_deref().unwrap_or("Approved by EXCON"),
+                note.as_deref().unwrap_or(if partial {
+                    "Partially approved by EXCON"
+                } else {
+                    "Approved by EXCON"
+                }),
             )?;
+            if partial {
+                facts.push(format!(
+                    "{who} approved {} of the {} actions of your orders; the others will NOT be executed.",
+                    kept.len(),
+                    reviewed.len()
+                ));
+            }
             if p.pure_narrative() {
                 facts.push(format!("Narrative initiative approved by {who}. Its outcome is pending; no simulated action was executed."));
             } else if matches!(p.source, Source::Master) || p.commands.is_empty() {
@@ -2209,8 +2489,15 @@ impl Exercise {
                     ));
                 }
             }
+            for r in &rejected {
+                facts.push(format!(
+                    "NOT APPROVED: {}. It will not be executed.{}",
+                    r.description,
+                    reason(r)
+                ));
+            }
         }
-        if d.approve && p.narrative && p.carries_actions {
+        if approve && p.narrative && p.carries_actions {
             facts.push("The narrative part of your response was approved; its outcome is pending and is not simulated.".into());
         }
         if let Some(n) = &note {
@@ -2218,7 +2505,7 @@ impl Exercise {
         }
         self.proposal_mut(pid)?.master_note = note;
         let facts_en = facts.join("\n");
-        self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
+        self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "review": review, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
         Ok(DecisionOutcome {
             proposal: pid,
             notify,
@@ -2257,6 +2544,7 @@ impl Exercise {
             self.world.apply(cmd, &Actor::Master)
         };
         self.record_resource_events(resource_event_count, MASTER);
+        self.absorb_monitoring();
         if r.is_ok() && matches!(cmd, Command::AdvanceTime { .. }) {
             self.clock_control.revision += 1;
         }

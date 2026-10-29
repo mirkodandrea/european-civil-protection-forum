@@ -1,0 +1,3 @@
+pdfjs-dist 4.10.38 (npm, sha512 /Y3fcFrXEAsMjJXeL9J8+ZG9U01LbuWaYypvDW2ycW1jL269L3js3DVBjDJ0Up9Np1uqDXsDrRihHANhZOlwdQ==)
+Files: build/pdf.min.mjs, build/pdf.worker.min.mjs, LICENSE (Apache-2.0).
+Embedded in the WASM by crates/frontend/src/pdf_view.rs (include_str!).

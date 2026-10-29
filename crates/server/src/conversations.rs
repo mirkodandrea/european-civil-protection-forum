@@ -4,7 +4,7 @@
 use crate::browser::Json;
 use crate::{access::Principal, bad, ApiResult, AppState};
 #[cfg(not(target_arch = "wasm32"))]
-use rocket::serde::json::Json;
+use crate::body::Json;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -21,7 +21,7 @@ fn own(principal: &Principal, role: &str) -> Result<(), crate::ApiError> {
 
 /// English working copy plus the text for each recipient's language.
 /// Participants who share the sender's language get the literal text.
-async fn translations(
+pub(crate) async fn translations(
     s: &AppState,
     text: &str,
     sender_language: &str,

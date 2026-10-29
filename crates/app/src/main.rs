@@ -159,7 +159,9 @@ fn main() -> Result<()> {
                 .as_secs();
             let log = PathBuf::from("runs").join(format!("run-{stamp}.jsonl"));
             tracing::info!("event log: {}", log.display());
-            Ok(exercise::Exercise::new(world).with_log_file(log))
+            Ok(exercise::Exercise::new(world)
+                .with_language_choice()
+                .with_log_file(log))
         })
     };
     let fingerprint: Arc<dyn Fn(&scenario::ScenarioPack) -> String + Send + Sync> = {

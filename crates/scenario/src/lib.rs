@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "embedded")]
 pub mod embedded;
 pub mod factory;
+pub mod glossary;
 pub mod editor;
 pub mod pack;
 pub mod synthetic;
@@ -287,6 +288,21 @@ impl ZoneGrid {
             .collect()
     }
 
+    /// The given zones plus their eight neighbours inside the grid (sorted,
+    /// no duplicates); unknown names are ignored.
+    pub fn with_neighbours(&self, names: &[String]) -> Vec<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for (c, r) in names.iter().filter_map(|n| self.parse(n)) {
+            for (dc, dr) in (-1i64..=1).flat_map(|dc| (-1i64..=1).map(move |dr| (dc, dr))) {
+                let (c, r) = (c as i64 + dc, r as i64 + dr);
+                if (0..self.cols as i64).contains(&c) && (0..self.rows as i64).contains(&r) {
+                    out.insert(self.name(c as usize, r as usize));
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
     /// The zone containing `p`, if inside the grid.
     pub fn zone_of(&self, p: Pos, height_m: f32) -> Option<String> {
         if p[0] < 0.0 || p[1] < 0.0 {
@@ -363,6 +379,10 @@ pub struct ResourceType {
     /// built-in default for the id (air tankers 90, buses 8, anything else 10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_mps: Option<f32>,
+    /// Makes the resource a monitoring drone (see [`DroneSpec`]). The id
+    /// `drones` is a drone with the default parameters even when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drone: Option<DroneSpec>,
 }
 
 impl ResourceType {
@@ -371,8 +391,54 @@ impl ResourceType {
         self.speed_mps.unwrap_or(match self.id.as_str() {
             "air_tankers" => 90.0,
             "buses" => 8.0,
+            "drones" => 20.0,
             _ => 10.0,
         })
+    }
+}
+
+/// Parameters of a monitoring drone. Times are simulated seconds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DroneSpec {
+    /// Largest area one mission may cover: the bounding box of the ordered
+    /// zones of the 8×8 grid may hold at most this many zones.
+    pub max_zones: u32,
+    /// Time on station before the battery obliges it to return.
+    pub endurance_s: i64,
+    /// Time from landing at the staging base to being available again.
+    pub turnaround_s: i64,
+    /// Interval between map updates of the covered zones while on station.
+    pub update_interval_s: i64,
+    /// The drone does not fly (and is recalled) when the wind blows faster, km/h.
+    /// `None`: no wind limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_limit_kmh: Option<f32>,
+}
+
+impl Default for DroneSpec {
+    fn default() -> Self {
+        Self {
+            max_zones: 4,
+            endurance_s: 2400,
+            turnaround_s: 900,
+            update_interval_s: 300,
+            wind_limit_kmh: None,
+        }
+    }
+}
+
+impl DroneSpec {
+    pub fn check(&self) -> Result<()> {
+        anyhow::ensure!(
+            (1..=64).contains(&self.max_zones)
+                && (60..=86_400).contains(&self.endurance_s)
+                && (0..=86_400).contains(&self.turnaround_s)
+                && (1..=self.endurance_s).contains(&self.update_interval_s)
+                && self.wind_limit_kmh.is_none_or(|w| w.is_finite() && w > 0.0),
+            "invalid drone parameters"
+        );
+        Ok(())
     }
 }
 
@@ -403,6 +469,7 @@ pub(crate) fn legacy_grants() -> Vec<OperationalGrant> {
             name: "Road engines".into(),
             description: "2,500 L training engine; 60 m hose reach; refills at staging".into(),
             speed_mps: None,
+            drone: None,
         }),
     }]
 }
@@ -494,12 +561,124 @@ pub struct InjectAction {
     pub id: String,
     pub title: String,
     /// An EXCON `sim::Command` as JSON; validated when the exercise loads.
+    /// `null` for a `reveal` action (exactly one of the two is set).
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub command: serde_json::Value,
-    /// Seconds after the inject is sent; negative: before its planned time.
+    /// Map knowledge disclosed to the inject's recipients instead of a world
+    /// change (fog of war is not world state: run by the exercise, never by
+    /// `World::apply`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal: Option<RevealSpec>,
+    /// Seconds after the inject is sent; negative: before its planned time
+    /// (never for a `reveal`).
     #[serde(default, alias = "delay_s")]
     pub offset_s: i64,
     #[serde(default)]
     pub note: String,
+}
+
+/// Layers EXCON may disclose for a set of zones.
+pub const ZONE_LAYERS: [&str; 5] = ["fire", "buildings", "roads", "lines", "units"];
+
+/// Which zones an exact reveal covers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RevealZones {
+    /// Computed when the action runs.
+    Rule(ZoneRule),
+    List(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneRule {
+    /// Zones with burning cells.
+    Burning,
+    /// Burning zones and their eight neighbours.
+    BurningAndAdjacent,
+}
+
+/// Map knowledge an inject discloses to its recipients (`source` defaults to
+/// the inject's sender).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RevealSpec {
+    /// The truth in the chosen zones and layers, as of delivery.
+    Exact {
+        zones: RevealZones,
+        #[serde(default = "default_reveal_layers")]
+        layers: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
+    /// An unverified estimate of the actual fire (centroid, area, direction
+    /// of spread) with a deliberate, deterministic error.
+    Approximate {
+        /// Largest position error, metres.
+        #[serde(default = "default_position_error")]
+        position_error_m: f32,
+        /// Largest relative area error (0.25 = ±25 %).
+        #[serde(default = "default_area_error")]
+        area_error_frac: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
+}
+
+fn default_reveal_layers() -> Vec<String> {
+    vec!["fire".into()]
+}
+fn default_position_error() -> f32 {
+    300.0
+}
+fn default_area_error() -> f32 {
+    0.25
+}
+
+impl RevealSpec {
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::Exact { source, .. } | Self::Approximate { source, .. } => source.as_deref(),
+        }
+    }
+}
+
+impl Scenario {
+    /// Checks one inject action: exactly one of command / reveal, a reveal
+    /// never before its inject, known layers and zones.
+    pub fn check_action(&self, a: &InjectAction) -> Result<()> {
+        match &a.reveal {
+            None => anyhow::ensure!(a.command.is_object(), "action {} command must be a JSON object", a.id),
+            Some(r) => {
+                anyhow::ensure!(
+                    a.command.is_null(),
+                    "action {} has both a command and a reveal: choose one",
+                    a.id
+                );
+                anyhow::ensure!(a.offset_s >= 0, "reveal action {} cannot come before its inject", a.id);
+                match r {
+                    RevealSpec::Exact { zones, layers, .. } => {
+                        anyhow::ensure!(!layers.is_empty(), "reveal action {} needs at least one layer", a.id);
+                        if let Some(l) = layers.iter().find(|l| !ZONE_LAYERS.contains(&l.as_str())) {
+                            anyhow::bail!("reveal action {}: unknown layer {l}", a.id);
+                        }
+                        if let RevealZones::List(z) = zones {
+                            anyhow::ensure!(!z.is_empty(), "reveal action {} needs at least one zone", a.id);
+                            if let Some(z) = z.iter().find(|z| self.zone_bounds(&z.to_uppercase()).is_none()) {
+                                anyhow::bail!("reveal action {}: unknown zone {z}", a.id);
+                            }
+                        }
+                    }
+                    RevealSpec::Approximate { position_error_m, area_error_frac, .. } => anyhow::ensure!(
+                        (0.0..=5000.0).contains(position_error_m) && (0.0..=1.0).contains(area_error_frac),
+                        "reveal action {}: position_error_m must be 0..5000 and area_error_frac 0..1",
+                        a.id
+                    ),
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Legacy standalone timeline action, still read from old packs and converted
@@ -587,6 +766,12 @@ pub struct Scenario {
     /// persona applies. Empty: a built-in neutral name ("Operations room").
     #[serde(default)]
     pub default_persona: String,
+    /// Texts of this scenario in other languages: language code -> English
+    /// source text -> translation (role and resource names and descriptions,
+    /// inject titles, senders). Overrides [`glossary`]; missing entries stay English
+    /// or are translated at runtime.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub translations: BTreeMap<String, BTreeMap<String, String>>,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
     /// Legacy standalone actions: read for old files, emptied by
@@ -603,6 +788,38 @@ pub struct Scenario {
 }
 
 impl Scenario {
+    /// English source text -> text in `lang`: built-in glossary overlaid with
+    /// this scenario's `translations`. Empty for the working language.
+    pub fn display_map(&self, lang: &str) -> BTreeMap<String, String> {
+        if lang == "en" {
+            return BTreeMap::new();
+        }
+        let mut map = glossary::builtin(lang);
+        if let Some(own) = self.translations.get(lang) {
+            map.extend(own.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        map.retain(|k, v| k != v && !v.trim().is_empty());
+        map
+    }
+
+    /// Scenario-authored texts players read, which need a translation.
+    pub fn translatable_texts(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for r in &self.roles {
+            out.extend([r.name.clone(), r.description.clone()]);
+        }
+        for r in &self.resource_types {
+            out.extend([r.name.clone(), r.description.clone()]);
+        }
+        for m in &self.msel {
+            out.extend([m.title.clone(), m.sender.clone()]);
+        }
+        out.retain(|t| !t.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The persona exercise control speaks as by default, in `language`.
     pub fn default_persona_name(&self, language: &str) -> String {
         let name = self.default_persona.trim();
@@ -741,6 +958,11 @@ impl Scenario {
                 b.sector
             );
         }
+        for r in &self.resource_types {
+            if let Some(d) = self.drone_spec(&r.id) {
+                d.check().with_context(|| format!("resource {}", r.id))?;
+            }
+        }
         for r in &self.reinforcements {
             anyhow::ensure!(
                 self.role(&r.assigned_to).is_some(),
@@ -767,11 +989,7 @@ impl Scenario {
                     i.id
                 );
                 anyhow::ensure!(seen.insert(a.id.as_str()), "duplicate action id {}", a.id);
-                anyhow::ensure!(
-                    a.command.is_object(),
-                    "action {} command must be a JSON object",
-                    a.id
-                );
+                self.check_action(a)?;
             }
         }
         Ok(())
@@ -811,6 +1029,7 @@ impl Scenario {
                 id: a.id,
                 title: a.title,
                 command: a.command,
+                reveal: None,
                 offset_s: a.at_s - planned[idx],
                 note: a.note,
             });
@@ -820,6 +1039,14 @@ impl Scenario {
 
     pub fn role(&self, id: &str) -> Option<&Role> {
         self.roles.iter().find(|r| r.id == id)
+    }
+
+    /// Drone parameters of a resource, if it is a drone.
+    pub fn drone_spec(&self, resource: &str) -> Option<DroneSpec> {
+        match self.resource_types.iter().find(|r| r.id == resource) {
+            Some(r) => r.drone.clone().or_else(|| (resource == "drones").then(DroneSpec::default)),
+            None => None,
+        }
     }
 
     pub fn sector(&self, id: &str) -> Option<&Sector> {
@@ -1039,7 +1266,7 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("timeline").is_none());
         let again: Scenario = serde_json::from_value(v).unwrap();
-        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 4);
+        assert_eq!(again.msel.iter().map(|i| i.actions.len()).sum::<usize>(), 10);
     }
 
     #[test]

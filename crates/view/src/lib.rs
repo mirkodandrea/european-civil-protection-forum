@@ -112,6 +112,13 @@ pub struct Deployment {
     pub track: Track,
     /// Road path to draw while travelling; `None` when there is no route.
     pub route: Option<Vec<Pos>>,
+    /// The approved order's command type (`"DeployEngine"`, `"WaterDrop"`,
+    /// `"CutFireLine"`, `"MonitorArea"`…), so a viewer can depict the work.
+    #[serde(default)]
+    pub action: String,
+    /// A monitoring drone's zones (codes of the evacuation grid).
+    #[serde(default)]
+    pub zones: Vec<String>,
 }
 
 impl Deployment {
@@ -135,6 +142,12 @@ pub struct BuildingDraw {
     pub threatened: bool,
     pub evacuating: bool,
     pub empty_evacuated: bool,
+    /// People still leaving while `evacuating`.
+    #[serde(default)]
+    pub evac_people: u32,
+    /// Assembly area or shelter the evacuees head for, when one was named.
+    #[serde(default)]
+    pub evac_to: Option<Pos>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -158,6 +171,9 @@ pub struct FireLine {
 pub struct Drop {
     pub at: Pos,
     pub radius_m: f32,
+    /// Simulated second of the drop.
+    #[serde(default)]
+    pub t_s: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -238,6 +254,10 @@ pub struct ViewState {
     pub drops: Vec<Drop>,
     pub traffic: Vec<Vehicle>,
     pub deployments: Vec<Deployment>,
+    /// Whether evacuation traffic is modelled (then `traffic` carries it and
+    /// a viewer must not invent its own evacuating vehicles).
+    #[serde(default)]
+    pub traffic_model: bool,
     /// Zones with an issued warning.
     pub warned: Vec<String>,
     pub last_turn: Option<TurnWindow>,

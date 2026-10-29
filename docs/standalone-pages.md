@@ -31,16 +31,26 @@ disponibile il flusso manuale EXCON.
 Esportare il debrief JSON per conservare le evidenze; la sessione si riprende
 automaticamente solo nello stesso browser.
 
+All’apertura dev mostra un launcher prima di costruire esercitazione e
+interfaccia: riprendere la sessione salvata, scegliere lo scenario di una nuova
+esercitazione (la sessione salvata viene eliminata), impostare la lingua della
+console EXCON e la chiave OpenRouter, o cancellare i dati salvati. Ogni nuova
+esercitazione chiede la lingua nella scheda di ciascun ruolo (quella dello
+scenario è proposta); l’EXCON avvia quando tutti hanno scelto, o con “Avvia
+comunque”.
+“Salva e inizia nuova sessione” dalle Impostazioni riparte direttamente,
+senza launcher.
+
 ## Build e verifica
 
-Installare il target `wasm32-unknown-unknown`. Su main installare
-`wasm-bindgen-cli` 0.2.129; su dev Trunk 0.21.14. Poi:
+Installare il target `wasm32-unknown-unknown` e Trunk 0.21.14 (stesso
+build su main e dev). Poi:
 
 ```sh
 OPENROUTER_API_KEY='' TTX_LLM_CASSETTE='' ./scripts/build_standalone.sh
 cargo test --locked --release -p server -p exercise -p llm
-npm ci --prefix scripts/record
-scripts/record/node_modules/.bin/playwright install chromium
+npm ci --prefix scripts/qa
+scripts/qa/node_modules/.bin/playwright install chromium
 TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone.cjs
 TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone-settings.cjs
 ```

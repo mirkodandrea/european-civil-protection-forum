@@ -23,7 +23,7 @@ use rocket::http::Status;
 #[cfg(not(target_arch = "wasm32"))]
 use rocket::response::{self, Responder};
 #[cfg(not(target_arch = "wasm32"))]
-use rocket::serde::json::Json;
+use body::Json;
 #[cfg(not(target_arch = "wasm32"))]
 use rocket::{Build, Request, Rocket};
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,7 +48,9 @@ mod narrative;
 mod conversations;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod persist;
-mod decision_drafts;
+#[cfg(not(target_arch = "wasm32"))]
+mod body;
+mod action_suggestions;
 pub mod flow;
 mod forecast;
 mod situation;
@@ -71,11 +73,83 @@ pub struct AppState {
     /// Background turn preview of the EXCON situation view.
     situation: situation::SlotRef,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
+    /// Runtime translations of scenario texts, by (English text, language).
+    text_cache: Arc<Mutex<std::collections::BTreeMap<(String, String), CachedText>>>,
     /// Saved session; `None` keeps everything in memory.
     #[cfg(not(target_arch = "wasm32"))]
     persist: Option<Arc<persist::Persist>>,
     /// Scenario packs the EXCON can edit and start; `None` hides the editor.
     pub scenarios: Option<Arc<library::Scenarios>>,
+}
+
+/// Cached runtime translation of one scenario text into one language.
+struct CachedText {
+    /// `None` after a failed attempt, retried after [`TEXT_RETRY`].
+    text: Option<String>,
+    at: Instant,
+}
+const TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+/// Most texts translated at runtime for one view.
+const MAX_RUNTIME_TEXTS: usize = 60;
+
+/// English source text -> text in `language` for the scenario-authored
+/// content players read (role, resource and inject texts, senders). The
+/// built-in glossary and the scenario's own `translations` come first and work
+/// without an LLM; the rest (and `extra`, e.g. titles of injects the EXCON
+/// wrote) is translated once per language and cached. What cannot be
+/// translated stays in the scenario's language.
+async fn display_map(
+    s: &AppState,
+    language: &str,
+    extra: Vec<String>,
+    use_llm: bool,
+) -> std::collections::BTreeMap<String, String> {
+    if language == "en" {
+        return Default::default();
+    }
+    let (mut map, mut texts) = {
+        let ex = s.lock();
+        let scn = &ex.world.scn;
+        let mut texts = scn.translatable_texts();
+        // A role written in the player's language needs no translation.
+        for r in scn.roles.iter().filter(|r| r.language == language) {
+            texts.retain(|t| *t != r.name && *t != r.description);
+        }
+        (scn.display_map(language), texts)
+    };
+    texts.extend(extra);
+    texts.sort();
+    texts.dedup();
+    texts.retain(|t| !map.contains_key(t) && !t.trim().is_empty());
+    texts.truncate(MAX_RUNTIME_TEXTS);
+    if !use_llm || texts.is_empty() || !s.llm.is_available() {
+        return map;
+    }
+    let cached = |t: &String| {
+        let cache = s.text_cache.lock().unwrap_or_else(|p| p.into_inner());
+        cache
+            .get(&(t.clone(), language.to_string()))
+            .filter(|c| c.text.is_some() || c.at.elapsed() < TEXT_RETRY)
+            .map(|c| c.text.clone())
+    };
+    let missing: Vec<String> = texts.iter().filter(|t| cached(t).is_none()).cloned().collect();
+    let done = futures::future::join_all(missing.iter().map(|t| async move {
+        let r = s.llm.translate(t, language).await.ok().filter(|x| !x.trim().is_empty());
+        (t.clone(), r)
+    }))
+    .await;
+    {
+        let mut cache = s.text_cache.lock().unwrap_or_else(|p| p.into_inner());
+        for (t, r) in done {
+            cache.insert((t, language.to_string()), CachedText { text: r, at: Instant::now() });
+        }
+    }
+    for t in texts {
+        if let Some(Some(tr)) = cached(&t) {
+            map.insert(t, tr);
+        }
+    }
+    map
 }
 
 impl AppState {
@@ -172,10 +246,12 @@ fn router_inner(
         forecast_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         situation: Default::default(),
         presence: Default::default(),
+        text_cache: Default::default(),
         persist,
         scenarios,
     };
     tokio::spawn(flow::run_clock(state.clone()));
+    tokio::spawn(flow::run_excon_translator(state.clone()));
     if state.persist.is_some() {
         let state = state.clone();
         tokio::spawn(async move {
@@ -197,7 +273,7 @@ fn router_inner(
 pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Rocket<Build> {
     let config = rocket::Config::figment()
         .merge(("log_level", "off"))
-        .merge(("limits.json", 2 * 1024 * 1024));
+        .merge(("limits.json", MAX_BODY_BYTES));
     let mut app = rocket::custom(config)
         .manage(state.clone())
         .mount(
@@ -207,6 +283,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_access,
                 get_access_links,
                 post_knowledge,
+                post_knowledge_refresh,
                 forecast::compute,
                 forecast::publish,
                 situation::get_impact,
@@ -228,15 +305,15 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_state,
                 get_master,
                 get_player,
+                get_attachment,
                 post_presence,
                 get_presence,
-                decision_drafts::prepare,
-                decision_drafts::submit,
+                action_suggestions::player,
+                action_suggestions::excon,
                 post_player_chat,
                 post_master_chat,
                 post_reply,
                 post_player_actions,
-                narrative::submit,
                 narrative::outcome,
                 conversations::start,
                 conversations::post_message,
@@ -429,6 +506,10 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+/// Largest request body: a 10 MB PDF in base64 plus the rest of the response.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_BODY_BYTES: usize = 15 * 1024 * 1024;
+
 type ApiResult = Result<Json<Value>, ApiError>;
 
 fn bad(msg: impl Into<String>) -> ApiError {
@@ -439,15 +520,22 @@ fn bad(msg: impl Into<String>) -> ApiError {
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/static"))]
 async fn get_static(s: AppState, principal: Principal) -> ApiResult {
-    let ex = s.lock();
-    if let Principal::Player { role } = principal {
-        return Ok(Json(ex.player_static(&role)?));
+    if let Principal::Player { role } = &principal {
+        let language = s.lock().language_of(role);
+        let map = display_map(&s, &language, Vec::new(), true).await;
+        let mut v = s.lock().player_static(role)?;
+        scenario::glossary::localize_value(&mut v, &map);
+        return Ok(Json(v));
     }
+    let language = s.lock().language_of(exercise::MASTER);
+    let map = display_map(&s, &language, Vec::new(), false).await;
+    let ex = s.lock();
     let mut v = ex.world.static_view();
     v["msel"] = json!(ex.world.scn.msel);
     v["excon_roles"] = json!(ex.world.scn.excon_roles);
     v["default_persona"] = json!(ex.world.scn.default_persona);
     v["personas"] = ex.personas();
+    scenario::glossary::localize_value(&mut v, &map);
     Ok(Json(v))
 }
 
@@ -483,6 +571,7 @@ struct KnowledgeBody {
 )]
 async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBody>) -> ApiResult {
     let Json(b) = b;
+    let mut disclosed_layers = Vec::new();
     let observation = {
         let ex = s.lock();
         if !ex.players.contains_key(&b.role)
@@ -505,7 +594,9 @@ async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBod
             } else {
                 b.layers.clone()
             };
-            ex.zone_observation(&b.zones, &layers)?
+            let o = ex.zone_observation(&b.zones, &layers)?;
+            disclosed_layers = layers;
+            o
         } else if b.current_perimeter {
             ex.current_perimeter()
         } else {
@@ -516,13 +607,36 @@ async fn post_knowledge(_principal: Principal, s: AppState, b: Json<KnowledgeBod
     };
     let text = Exercise::map_information_text(&b.source);
     let translations = flow::translations(&s, std::slice::from_ref(&b.role), &text).await;
-    let id = s.lock().acquire_map(
+    let id = s.lock().acquire_map_layers(
         &b.role,
         &b.source,
         observation,
         translations.get(&b.role).map(String::as_str),
+        disclosed_layers,
     )?;
     Ok(Json(json!({"message":id})))
+}
+
+#[derive(Deserialize, Default)]
+struct RefreshBody {
+    /// Source shown to the players (default: the scenario's operations-room persona).
+    #[serde(default)]
+    source: Option<String>,
+}
+/// Manual only: re-reveals to every role that received a zone reveal the same
+/// zones and layers as a fresh snapshot. The roles it would update are listed in
+/// `role_knowledge[role].refresh`.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/knowledge/refresh", data = "<b>")
+)]
+async fn post_knowledge_refresh(_principal: Principal, s: AppState, b: Json<RefreshBody>) -> ApiResult {
+    let source = b.0.source.filter(|x| !x.trim().is_empty());
+    let roles: Vec<String> = s.lock().refresh_plan().iter().filter_map(|p| p["role"].as_str().map(String::from)).collect();
+    let text = Exercise::map_information_text(source.as_deref().unwrap_or("the operations room"));
+    let translations = flow::translations(&s, &roles, &text).await;
+    let done = s.lock().refresh_role_maps(source.as_deref(), &translations)?;
+    Ok(Json(json!({"updated": done.iter().map(|(r, m)| json!({"role":r,"message":m})).collect::<Vec<_>>()})))
 }
 
 #[derive(Deserialize)]
@@ -549,9 +663,10 @@ async fn get_evaluator(
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/state"))]
-async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
+async fn get_state(principal: Principal, s: AppState) -> ApiResult {
+    let map = excon_display_map(&s, &principal).await;
     let ex = s.lock();
-    Ok(Json(json!({
+    let mut view = json!({
         "wall_ms": web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d|d.as_millis()).unwrap_or(0),
         "exercise_phase":ex.exercise_phase,
         "phase_history":ex.phase_history,
@@ -572,11 +687,26 @@ async fn get_state(_principal: Principal, s: AppState) -> ApiResult {
         "llm": {"available": s.llm.is_available(), "model": s.llm.model(), "translation_model":s.llm.model_for("translate")},
         "world": ex.world.view(),
         "resource_accounting": ex.resource_accounting(None),
-    })))
+    });
+    scenario::glossary::localize_value(&mut view, &map);
+    Ok(Json(view))
+}
+
+/// Display texts for the EXCON console (built-in and scenario translations only).
+async fn excon_display_map(
+    s: &AppState,
+    principal: &Principal,
+) -> std::collections::BTreeMap<String, String> {
+    if !matches!(principal, Principal::Master) {
+        return Default::default();
+    }
+    let language = s.lock().language_of(exercise::MASTER);
+    display_map(s, &language, Vec::new(), false).await
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master"))]
-async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
+async fn get_master(principal: Principal, s: AppState) -> ApiResult {
+    let map = excon_display_map(&s, &principal).await;
     let ex = s.lock();
     // Peer-to-peer chat is private to its two participants. Operational
     // proposals remain visible to EXCON through the separate review queue.
@@ -603,7 +733,7 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
                         .is_some_and(|to| to != exercise::MASTER))
         })
         .collect::<Vec<_>>();
-    Ok(Json(json!({
+    let mut view = json!({
         "proposals": ex.proposals,
         "planned_injects": ex.planned_injects(),
         "inject_actions": ex.inject_action_runs(),
@@ -619,11 +749,45 @@ async fn get_master(_principal: Principal, s: AppState) -> ApiResult {
         "digest": ex.world.digest(None),
         "conversations": std::collections::BTreeMap::from([(exercise::MASTER, ex.conversation(exercise::MASTER))]),
         "role_knowledge": ex.role_knowledge(),
+    });
+    scenario::glossary::localize_value(&mut view, &map);
+    Ok(Json(view))
+}
+
+/// A PDF attached to a response: EXCON, and the role that attached it. Served
+/// as JSON (base64) so the in-process browser build can use the same route.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/attachments/<id>"))]
+async fn get_attachment(principal: Principal, s: AppState, id: u64) -> ApiResult {
+    use base64::Engine;
+    let ex = s.lock();
+    let file = match &principal {
+        Principal::Master => ex.file_for(None, id),
+        Principal::Player { role } => ex.file_for(Some(role), id),
+        Principal::Evaluator { .. } => return Err(bad("document not found")),
+    }?;
+    Ok(Json(json!({
+        "id": file.meta.id, "name": file.meta.name, "size": file.meta.size,
+        "content_type": file.content_type,
+        "data": base64::engine::general_purpose::STANDARD.encode(file.bytes.as_slice()),
     })))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
 async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
+    let (language, extra) = {
+        let ex = s.lock();
+        let extra = ex
+            .inbox(&role)
+            .into_iter()
+            .filter(|m| m.kind == exercise::MsgKind::Inject)
+            .flat_map(|m| [m.title.clone().unwrap_or_default(), m.from.clone()])
+            .collect::<Vec<_>>();
+        (ex.players.get(&role).map(|p| p.language.clone()), extra)
+    };
+    let map = match language {
+        Some(language) => display_map(&s, &language, extra, true).await,
+        None => Default::default(),
+    };
     let ex = s.lock();
     let player = ex
         .players
@@ -644,7 +808,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
                 } else { message.text.clone() };
                 Some(visible)
             }).collect::<Vec<_>>();
-            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "communication": p.communication, "addressed_to": p.addressed_to, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>(),"effect_commands":o.interventions.iter().map(|x|&x.command).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "review": p.review, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "review":d.review, "rejected_actions":d.rejected_actions, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
         })
         .collect();
     let inbox = ex
@@ -671,7 +835,6 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "clock": ex.world.clock(),
         "time_s":ex.world.time_s(),
         "inbox": inbox,
-        "drafts": ex.player_drafts(&role),
         "turn_summaries": ex.player_turn_summaries(&role),
         "resources": ex.world.d.pools.get(&role),
         "resource_accounting": ex.resource_accounting(Some(&role))[&role],
@@ -681,6 +844,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "clarification_threads": ex.player_clarification_threads(&role),
         "linked_conversations": ex.player_linked_conversations(&role),
     });
+    scenario::glossary::localize_value(&mut view, &map);
     // Players never read "EXCON": any leftover wording of the model becomes the
     // default persona. What participants wrote themselves stays as typed.
     scrub_excon(&ex, &mut view, &player.language, &role);
@@ -861,7 +1025,7 @@ async fn deliver_chat(s: AppState, from: String, b: ChatBody) -> ApiResult {
         (ex.language_of(&from), ex.turn, ex.clock_control.revision)
     };
     let mut failed = false;
-    let text_en = if language == "en" || from == exercise::MASTER {
+    let text_en = if language == "en" {
         b.text.clone()
     } else {
         match s.llm.translate_to_english(&b.text, &language).await {
@@ -1168,10 +1332,26 @@ async fn post_execute(_principal: Principal, s: AppState, id: u64) -> ApiResult 
     Ok(Json(json!({"results":results})))
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/start"))]
-async fn post_start(_principal: Principal, s: AppState) -> ApiResult {
-    s.lock().start()?;
+#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/start", data = "<b>"))]
+async fn post_start(_principal: Principal, s: AppState, b: Option<Json<StartBody>>) -> ApiResult {
+    let force = b.is_some_and(|b| b.force);
+    let mut ex = s.lock();
+    let pending = ex.pending_languages();
+    if !force && !pending.is_empty() {
+        return Err(bad(format!(
+            "waiting for the language of: {}",
+            pending.join(", ")
+        )));
+    }
+    ex.start()?;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize, Default)]
+struct StartBody {
+    /// Start even if some participants have not chosen a language.
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Deserialize)]
@@ -1320,11 +1500,16 @@ struct DecideBody {
     approve: bool,
     #[serde(default)]
     commands: Option<Vec<Value>>,
-    #[serde(default)]
+    /// Note for the player; `reason` is accepted as the same field.
+    #[serde(default, alias = "reason")]
     note: Option<String>,
     /// Persona EXCON speaks as in the note and the feedback.
     #[serde(default)]
     persona: Option<String>,
+    /// Partial approval: actions (indices into `commands`, else the
+    /// proposal's) the EXCON does not approve, each with an optional reason.
+    #[serde(default)]
+    rejected_actions: Vec<exercise::ActionRejection>,
 }
 
 #[cfg_attr(
@@ -1365,6 +1550,7 @@ async fn post_decide(
                 commands,
                 note: b.note,
                 persona: b.persona,
+                rejected_actions: b.rejected_actions,
             },
         )?;
         let p = ex.proposal(id).unwrap();

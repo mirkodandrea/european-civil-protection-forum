@@ -38,6 +38,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto." },
     Tool { id: "evac", group: "Fuoco e interventi", icon: "🚌", label: "Evacua zona", tip: "Ordina l’evacuazione di tutti gli edifici occupati di una zona." },
     Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: dimezza il tempo di evacuazione." },
+    Tool { id: "drone", group: "Risorse e squadre", icon: "🛰", label: "Drone di monitoraggio", tip: "Invia il drone del comandante antincendio sulla zona scelta: finché è in posizione tiene aggiornata la sua mappa. Per più zone usa il comando JSON (es. \"F3-G4\")." },
     Tool { id: "bstatus", group: "Fuoco e interventi", icon: "🏠", label: "Stato edificio", tip: "Forza lo stato di danno di un edificio scelto sulla mappa." },
     Tool { id: "correct", group: "Fuoco e interventi", icon: "↶", label: "Correggi ultimo intervento", tip: "Annulla l’ultimo intervento fisico, se nulla è cambiato dopo di esso." },
     Tool { id: "weather", group: "Meteo", icon: "🌬", label: "Condizioni a contorno", tip: "Imposta vento (direzione da cui soffia e velocità) e umidità del combustibile." },
@@ -109,6 +110,7 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
         "extzone" => json!({"type":"Extinguish","area":zone()?}),
         "warn" => json!({"type":"IssueWarning","zone":zone()?}),
         "evac" => json!({"type":"EvacuateZone","zone":zone()?}),
+        "drone" => json!({"type":"MonitorArea","zones":[zone()?]}),
         "line" => json!({"type":"CutFireLine","from":pt(0)?,"to":pt(1)?}),
         "bstatus" => {
             let v = points.first()?;
@@ -137,7 +139,7 @@ pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
         ("line", 0) => "Clicca sulla mappa il primo punto della linea.",
         ("line", 1) => "Clicca il secondo punto della linea.",
         ("line", _) => "Linea pronta. Un nuovo clic ricomincia dal primo punto.",
-        ("extzone" | "evac" | "warn", _) => "Clicca una zona della mappa.",
+        ("extzone" | "evac" | "warn" | "drone", _) => "Clicca una zona della mappa.",
         ("bstatus", _) => "Clicca un edificio sulla mappa.",
         _ => "Clicca sulla mappa il punto dell’intervento.",
     }
@@ -176,10 +178,14 @@ pub fn fields_body(fields: &[Field], values: &BTreeMap<String, String>, extra: &
     for f in fields {
         let raw = values.get(f.key).cloned().unwrap_or_else(|| f.init.clone());
         let v = match f.kind {
-            FieldKind::Number => json!(raw
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| format!("{}: {}", ex(f.label), ex("numero non valido")))?),
+            FieldKind::Number => {
+                let n = raw
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("{}: {}", ex(f.label), ex("numero non valido")))?;
+                // Whole numbers go out as integers: integer fields (AdvanceTime.minutes: u32) reject 40.0.
+                if n.fract() == 0.0 && n.abs() < 9e15 { json!(n as i64) } else { json!(n) }
+            }
             FieldKind::Check => json!(raw == "true"),
             FieldKind::Multi(_) => json!(raw.split(',').filter(|k| !k.is_empty()).collect::<Vec<_>>()),
             _ => json!(raw),
@@ -339,7 +345,7 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
             points.set(next);
         })
     };
-    let zone_tool = matches!(tool, "extzone" | "evac" | "warn");
+    let zone_tool = matches!(tool, "extzone" | "evac" | "warn" | "drone");
     let pending = if zone_tool {
         points.first().map(|v| json!({"zone": v["zone"]}))
     } else {
@@ -779,7 +785,7 @@ pub fn controllo(p: &ControlloProps) -> Html {
     };
     let modal = match open.as_deref() {
         None => html! {},
-        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "evac" | "warn" | "bstatus")) => {
+        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "evac" | "warn" | "drone" | "bstatus")) => {
             html! {<MapToolModal key={id.to_string()} tool={id.to_string()} common={common.clone()}/>}
         }
         Some("knowledge") => html! {<KnowledgeModal tool="knowledge" common={common.clone()}/>},
@@ -875,6 +881,7 @@ mod tests {
         let c = click(510., 495., "B2");
         assert_eq!(build_command("extzone", &[c.clone()], &p, &stat).unwrap()["area"], json!("B2"));
         assert_eq!(build_command("warn", &[c.clone()], &p, &stat).unwrap()["zone"], json!("B2"));
+        assert_eq!(build_command("drone", &[c.clone()], &p, &stat).unwrap(), json!({"type":"MonitorArea","zones":["B2"]}));
         assert_eq!(build_command("drop", &[c.clone()], &p, &stat).unwrap()["at"], json!({"x":510.0,"y":495.0}));
         assert_eq!(build_command("ignite", &[c.clone()], &p, &stat).unwrap()["radius_m"], json!(80.0));
         assert_eq!(build_command("bstatus", &[c.clone()], &p, &stat).unwrap()["building"], json!("#7"));

@@ -12,7 +12,7 @@ A turn-based wildfire TTX for the Civil Protection Forum 2026:
 - a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread as a 32-run Monte Carlo ensemble (the fire is the set of cells reached by at least half of the runs), buildings with occupants, approved deployed teams travelling on the simulation clock, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, second by second;
 - an **EXCON** web console: injects (MSEL), turn control, approval of every player action, god-mode map tools, AI prompts, commands by code, rollback;
 - **player** web pages (tablets): role-specific inbox in the player's own language, free-text replies;
-- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash`) that translates injects, turns replies into candidate commands, drafts clarification questions when orders are vague, and translates recorded feedback and situation updates.
+- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash-1017`) that translates injects, turns replies into candidate commands, drafts clarification questions when orders are vague, and translates recorded feedback and situation updates.
 
 > Humans decide. Rules constrain. The model simulates. AI mediates. The EXCON approves.
 
@@ -53,7 +53,8 @@ cargo install trunk --locked
 
 # .env in the repo root
 OPENROUTER_API_KEY=sk-or-...
-# OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash   (default)
+# OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash-1017   (default)
+# OPENROUTER_PROVIDERS=together   (default, only these hosts, no fallback; "auto" = OpenRouter chooses)
 
 cargo run --release -p app            # builds the browser UI if needed, then starts window + web server on :8080
 cargo run --release -p app -- --headless   # native server only (no window)
@@ -64,6 +65,10 @@ standalone WASM app through Trunk on `http://127.0.0.1:8080`, with automatic
 rebuild and browser refresh. It reads `OPENROUTER_API_KEY` from `.env` like
 `run_pages_local.sh`; the key is compiled into the browser app, so keep this
 local build private. Changes in `crates/frontend/` are picked up automatically.
+
+`./scripts/dev_bench.sh` serves the dev-only workflow test bench (EXCON and
+player screens side by side on a simulated server, no AI) at
+`http://127.0.0.1:8080/?bench=1`; see [docs/banco-di-prova.md](docs/banco-di-prova.md).
 
 Then open:
 
@@ -151,15 +156,16 @@ prepares a batch of real exercise states, saves PNGs and an HTML review report;
 
 ## Playing a turn
 
-1. **EXCON**: start the exercise, open a player conversation and choose **Scrivi come → Inject** in the chat composer. Write a custom message or load an MSEL template; select the conversation recipient or explicitly use the template audience. Each player receives a translated chat message and replies in the same conversation.
-2. **Players** choose their language and write in the conversation. With **Prepara decisione con l’AI**, interpretation happens privately: the assistant asks the player specific questions when details are missing. The player reviews the final message/actions and explicitly confirms delivery. EXCON receives only that confirmed message and proposal. Ordinary information can be sent directly by disabling decision preparation.
-3. **EXCON** approves, edits (JSON) or rejects each proposal (*Proposals* tab). Players get feedback in their language. The EXCON can also act directly: map tools (ignite, fire line, drop, extinguish zone, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
+1. **EXCON**: wait until every participant has confirmed a language (the console lists who is missing; *Avvia comunque* overrides), then start the exercise. Players see a waiting screen until then. Every new or restarted exercise asks each participant again (the scenario's language is proposed); in the standalone app each role tab asks.
+   Open a player conversation and choose **Scrivi come → Inject** in the chat composer. Write a custom message or load an MSEL template; select the conversation recipient or explicitly use the template audience. Each player receives a translated chat message and replies in the same conversation.
+2. **Players** write in the conversation, in their language. With **Prepara decisione con l’AI**, interpretation happens privately: the assistant asks the player specific questions when details are missing. The player reviews the final message/actions and explicitly confirms delivery. EXCON receives only that confirmed message and proposal. Ordinary information can be sent directly by disabling decision preparation.
+3. **EXCON** approves, edits (JSON) or rejects each proposal (*Risposte* tab), or approves only some of its actions (each left-out action can carry a reason for the player); a reply with nothing to execute is acknowledged. Lists show the verdict (approved / partially approved / rejected / acknowledged / clarification requested). Players get feedback in their language, action by action. The EXCON can also act directly: map tools (ignite, fire line, drop, extinguish zone, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
 4. **Close turn ▶▶** in the Timeline's turn panel (runs to the end of the turn, default 30 min; the panel also offers intermediate advances): approved actions are executed, then the turn is **simulated live, one simulated second at a time**. The 3D view redraws continuously, the browsers refresh up to 4 times a second, and when the turn ends every player receives a situation update. **speed** is simulated seconds per real second: 0 = maximum speed (a 30-minute turn in about 0.45 s), 60× = one simulated minute per second (30 s per turn), 120× = 15 s per turn.
 5. Repeat. Use *Rollback* to return to the start of an earlier turn and *End* to finish. *Debrief JSON* gives the full timeline.
 
 Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone codes** from the map grid (`F4`), as zone edges for fire lines (`F4:N`), or as coordinates.
 
-`scripts/demo_session.sh` plays a full two-turn session through the API; `scripts/record/record.sh` plays one in the browser and records the demo video (Italian, English and Armenian players; an AI prompt; a clarification; reinforcements).
+`scripts/demo_session.sh` plays a full two-turn session through the API. The narrated demo-video pipeline has been removed for now; `.claude/skills/demo-video-recording` records how to rebuild it.
 
 ## Layout
 
@@ -175,7 +181,7 @@ crates/frontend         Yew Rust/WebAssembly UI (chat, canvas maps, EXCON, evalu
 crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, live turn view, HUD)
 crates/app              the `ttx` binary
 web/dist/               Generated HTML entry points, CSS, WebAssembly and loader (Trunk build)
-scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)
+scripts/qa              browser QA scripts (Playwright; npm ci --prefix scripts/qa)
 assets/models           Blender vegetation, town and articulated PBR unit bakes
 data/scenarios          generated scenario JSON
 docs/                   high-level capabilities and open topics
@@ -195,7 +201,6 @@ The server tests play the whole EXCON ↔ player ↔ LLM loop over HTTP with a m
 
 - [docs/stato-attuale.md](docs/stato-attuale.md): specifica di alto livello delle capacità presenti
 - [docs/todo.md](docs/todo.md): pochi temi ancora da definire
-- [scripts/record/README.md](scripts/record/README.md): come registrare una sessione demo
 
 The implementation and detailed behavior can be read from the source code.
 

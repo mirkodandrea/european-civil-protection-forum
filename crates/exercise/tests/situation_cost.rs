@@ -29,7 +29,7 @@ fn exercise_of(pack_file: &str) -> Exercise {
 #[test]
 #[ignore]
 fn measure_preview_cost() {
-    for name in ["valverde_night_wind", "selvariva_festival"] {
+    for name in ["valverde_night_wind", "selvariva_crisi_integrata"] {
         let mut ex = exercise_of(&format!("{name}.pack.json"));
         for step in 0..3 {
             let t = Instant::now();

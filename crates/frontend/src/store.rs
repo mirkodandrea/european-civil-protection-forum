@@ -10,6 +10,7 @@ pub const PACKS_KEY: &str = "ttx.standalone.packs";
 pub const ACTIVE_KEY: &str = "ttx.standalone.active";
 pub const API_KEY: &str = "ttx.standalone.openrouter-key";
 const NOTICE_KEY: &str = "ttx.standalone.notice";
+const AUTOSTART_KEY: &str = "ttx.standalone.autostart";
 const FORMAT: u32 = 2;
 
 /// Everything needed to play a session again from the start: the scenario it
@@ -24,6 +25,11 @@ pub struct SavedSession {
     pub tape: Vec<(String, String)>,
     /// Simulated seconds reached when saved.
     pub end_t_s: i64,
+    /// Participants chose their language before the start (journal holds
+    /// their choices). Sessions saved before this existed kept the
+    /// scenario's languages and replay that way.
+    #[serde(default)]
+    pub language_choice: bool,
 }
 
 thread_local! {
@@ -32,6 +38,16 @@ thread_local! {
     static LAST_SAVED: Cell<(usize, usize, i64)> = const { Cell::new((0, 0, 0)) };
     static FROZEN: Cell<bool> = const { Cell::new(false) };
     static SAVE_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Scenario chosen in the launcher when the browser blocks storage: the
+    /// exercise still starts (nothing is persisted).
+    static CHOSEN: RefCell<Option<String>> = const { RefCell::new(None) };
+    static LANGUAGE_CHOICE: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Whether the running session asks participants for their language
+/// (see [`SavedSession::language_choice`]).
+pub fn set_language_choice(on: bool) {
+    LANGUAGE_CHOICE.with(|c| c.set(on));
 }
 
 fn storage() -> Option<web_sys::Storage> {
@@ -89,11 +105,36 @@ fn store_packs(packs: &BTreeMap<String, scenario::ScenarioPack>) -> Result<(), S
     )
 }
 
-/// Start the next exercise from `id`: forget the session, remember the choice, reload.
+/// Start the next exercise from `id`: forget the session, remember the choice,
+/// reload straight into the exercise (the choice was made in the app).
 pub fn activate(id: &str) -> Result<(), String> {
     set(ACTIVE_KEY, id)?;
+    if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+        let _ = s.set_item(AUTOSTART_KEY, "1");
+    }
     restart(&[SESSION_KEY]);
     Ok(())
+}
+
+/// Chosen in the launcher: the next exercise starts from `id`, without the saved session.
+pub fn choose(id: &str) -> Result<(), String> {
+    if storage().is_none() {
+        CHOSEN.with(|c| *c.borrow_mut() = Some(id.to_string()));
+        return Ok(());
+    }
+    set(ACTIVE_KEY, id)?;
+    remove(SESSION_KEY);
+    Ok(())
+}
+
+/// Once after [`activate`]: skip the launcher.
+pub fn take_autostart() -> bool {
+    let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) else {
+        return false;
+    };
+    let set = s.get_item(AUTOSTART_KEY).ok().flatten().is_some();
+    let _ = s.remove_item(AUTOSTART_KEY);
+    set
 }
 
 /// Complete authored territories, shared by the 3D editor and exercise library.
@@ -243,7 +284,9 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
         Ok(())
     }
     fn active(&self) -> Option<String> {
-        get(ACTIVE_KEY).filter(|id| self.load(id).is_some())
+        get(ACTIVE_KEY)
+            .or_else(|| CHOSEN.with(|c| c.borrow().clone()))
+            .filter(|id| self.load(id).is_some())
     }
     fn set_active(&self, id: &str) -> Result<(), String> {
         set(ACTIVE_KEY, id)
@@ -341,6 +384,7 @@ pub fn autosave(state: &server::AppState, force: bool) {
         journal,
         tape,
         end_t_s,
+        language_choice: LANGUAGE_CHOICE.with(Cell::get),
     };
     let result = serde_json::to_string(&session)
         .map_err(|e| e.to_string())

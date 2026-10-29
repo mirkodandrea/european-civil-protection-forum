@@ -184,7 +184,7 @@ impl PreviewJob {
             .filter(|(k, r)| r.executed_s.is_some() && !already.get(*k).copied().unwrap_or(false))
             .map(|(_, r)| PreviewAction {
                 at_s: r.executed_s.unwrap_or(from_s),
-                text: format!("{}: {}", r.title, Exercise::describe_action(&r.command)),
+                text: format!("{}: {}", r.title, Exercise::describe_run(&r.command, r.reveal.as_ref())),
                 inject: r.inject.clone(),
                 ok: r.status == ActionStatus::Done,
             })
@@ -318,12 +318,6 @@ impl Exercise {
     /// The present impact picture with deltas against the start of the turn.
     pub fn impact_report(&self) -> ImpactReport {
         self.world.impact().with_baseline(&self.turn_start_impact())
-    }
-
-    pub(crate) fn describe_action(command: &serde_json::Value) -> String {
-        serde_json::from_value::<sim::Command>(command.clone())
-            .map(|c| c.describe())
-            .unwrap_or_else(|e| format!("invalid command: {e}"))
     }
 }
 

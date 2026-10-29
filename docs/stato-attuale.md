@@ -6,7 +6,7 @@ dettagli implementativi restano nel codice.
 
 ## Territori alternativi
 
-Disponibili Valverde (4 × 4 km) e Selvariva (6 × 6 km), con catalogo delle basi nello standalone, filtro nell’editor e caricamento della base dichiarata da ciascun pack. Il cambio scenario ricostruisce la scena 3D locale; il viewer remoto riceve l’identità del territorio e carica la mappa corrispondente. Il pack `selvariva_festival` propone otto inject per una demo facilitata di un’ora: festival, scolaresca, due abitati, rotazione del vento e assistenza narrativa. Territorio, nomi e quantità sono sintetici. Vedi [traccia e validazione](scenario-selvariva.md).
+Disponibili Valverde (4 × 4 km) e Selvariva (6 × 6 km), con catalogo delle basi nello standalone, filtro nell’editor e caricamento della base dichiarata da ciascun pack. Il cambio scenario ricostruisce la scena 3D locale; il viewer remoto riceve l’identità del territorio e carica la mappa corrispondente. Il pack `selvariva_crisi_integrata` (sostituisce `selvariva_festival`) propone 3 ruoli, cinque turni da 30 minuti e dieci inject: festival e scolaresca, accessi, rinforzi, vento, assistenza, stampa e consegne; il drone è della direzione dei soccorsi e cinque inject rivelano la mappa (stime approssimate e rilievi esatti). Territorio, nomi e quantità sono sintetici. Vedi [traccia e validazione](scenario-selvariva.md).
 
 ## Authoring 3D degli scenari
 
@@ -80,8 +80,18 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    congelato al momento dell’invio. Le altre conversazioni restano private.
    L’AI traduce letteralmente i messaggi senza interpretarli come azioni. Un
    filtro lessicale blocca insulti e volgarità prima di tradurre o consegnare il
-   testo, lasciando la bozza modificabile al mittente. Non è richiesta conferma
-   della lingua predefinita, che resta modificabile dal menu. La scheda iniziale
+   testo, lasciando la bozza modificabile al mittente. Ogni nuova
+   esercitazione (avvio, riavvio, nuovo scenario; server e standalone) chiede
+   a ogni partecipante la lingua, anche se il ruolo è ora di un’altra persona:
+   quella del ruolo nello scenario è proposta (`Exercise::with_language_choice`),
+   poi il player attende l’avvio. Nello standalone la richiesta compare nella
+   scheda di ciascun ruolo; le sessioni salvate prima di questa modifica
+   (`SavedSession::language_choice` assente) si riprendono con le lingue dello
+   scenario. Sul server la lingua della console EXCON è chiesta di nuovo quando
+   l’esercitazione torna al briefing (riavvio). L’EXCON
+   vede chi manca accanto ad “Avvia esercitazione”, che resta disabilitato
+   finché tutti hanno scelto; “Avvia comunque” (`POST /api/master/start
+   {force:true}`) parte senza attendere. La scheda iniziale
    “Funzione” è in sola lettura: descrive ruolo, capacità e
    asset, distingue risorse disponibili, prenotate e impiegate e raccoglie i
    riepiloghi AI dei turni conclusi. La tab Conversazioni conta i messaggi non
@@ -94,13 +104,17 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    mappa tattica sta a sinistra e l’elenco degli inject a destra. Un click su un
    inject apre al posto dell’elenco il dettaglio (indietro all’elenco, come nelle
    Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
-   conversazioni collegate e due azioni: **Rispondi** e **Nuova conversazione**.
-   Rispondi apre un modale quasi a schermo intero con mappa e modulo: una risposta
-   è una **narrazione facoltativa** più **zero o più azioni** (almeno una delle due).
-   Le azioni si aggiungono dal modulo strutturato oppure descrivendole all’assistente
-   AI, che propone una bozza da rivedere (nessuna azione codificata: la bozza non è
-   aggiungibile); il pulsante **Rispondi** invia tutto in una sola volta. Ogni
-   inject può ricevere più risposte.
+   conversazioni nate dall’inject (sotto le risposte) e due azioni: **Rispondi** e
+   **Avvia conversazione**. È l’unico percorso: niente «+ Nuova azione», niente
+   «Proponi azione» dalle chat, niente selettore «Rispondi a…» (vedi «Risposte per
+   inject» sotto). Rispondi apre un modale quasi a schermo intero con mappa e
+   modulo: destinatario (il mittente fittizio dell’inject o uno o più player),
+   tipo (**comunicazione** o **decisione/azione**), il testo «Descrivi la tua
+   risposta o decisione», e per una decisione il **fondamento** obbligatorio e al
+   più **una** azione di simulazione associata (dal modulo o dai **suggerimenti
+   AI**: quando il player smette di scrivere, pausa di 2,5 s, almeno 20 caratteri,
+   l’AI propone azioni del suo ruolo; associarne una sostituisce la precedente).
+   Ogni inject può ricevere più risposte.
 3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
    destinatario, badge delle approvazioni), ne controlla la fattibilità e decide:
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta con i suoi comandi; la
@@ -109,9 +123,9 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    `clarification_answered` e registrato). Modificando i
    parametri la fattibilità è ricalcolata in automatico (`/revalidate`).
    La tab Risposte mostra solo gli inject effettivamente inviati e, per ciascuno,
-   l'intero thread in ordine (inject, risposte, chiarimenti EXCON; le chat tra
-   player restano private). Rispondendo a un chiarimento il selettore
-   «Rispondi a inject» non è offerto: resta solo per le azioni indipendenti.
+   l'intero thread in ordine (inject, risposte con tipo, destinatario e stato,
+   chiarimenti EXCON) e sotto le conversazioni tra player nate dall’inject, con la
+   trascrizione.
 4. Le azioni approvate vengono eseguite o applicate durante l'avanzamento del
    tempo simulato. Le mappe, gli aggiornamenti ai ruoli, il registro e il debrief
    mostrano gli effetti.
@@ -120,6 +134,49 @@ La conversazione o l'interpretazione AI non modificano direttamente il mondo.
 La simulazione applica solo comandi autorizzati e approvati. EXCON può annullare
 un ramo dell'esercitazione con il rollback. Può inoltre calcolare previsioni del
 fuoco, revisionarle e pubblicarle ai ruoli scelti.
+
+### Decisione EXCON per singola azione
+
+`POST /api/master/proposals/<id>/decide` accetta, oltre a `approve`, `commands`
+(modifica) e `note` (`reason` è accettato come sinonimo), l'elenco
+`rejected_actions: [{index, note?}]` (indici nelle azioni revisionate: la modifica
+EXCON, altrimenti i comandi della proposta; `note` ammette il sinonimo `reason`).
+
+- **Approvazione parziale** (`approve: true` con azioni escluse): si eseguono solo le
+  azioni approvate; la verifica di fattibilità vale solo per queste, quindi un'azione
+  non fattibile si può escludere senza bloccare le altre. La proposta è `approved`
+  (poi `applied`/`failed`) e le comunicazioni rivedute partono come per
+  un'approvazione completa. `ApprovalRecord` conserva `proposed_commands`,
+  `effective_commands` (solo le approvate) e `rejected_actions` (indice, comando,
+  descrizione, motivo). Escludere tutte le azioni di una proposta che non porta
+  altro (comunicazioni, inject, limiti, narrazione) equivale a un rifiuto.
+- **Rifiuto** (`approve: false`): tutte le azioni sono rifiutate; i motivi per
+  azione eventualmente indicati sono conservati e comunicati.
+- **Presa visione** (`approve: true` su una proposta senza nulla da eseguire, ad
+  esempio una domanda informativa): stato `acknowledged`, finale; nessuna
+  esecuzione, la nota EXCON è la risposta al player. Diversa da un'iniziativa
+  narrativa, che dopo l'approvazione attende un esito: una risposta presa visione
+  non riceve esiti narrativi. Il rollback non la annulla (come un rifiuto).
+- **Stato della revisione** (`review` su ogni proposta e nella decisione):
+  `in_review`, `clarification_requested`, `approved`, `partially_approved`,
+  `rejected`, `acknowledged`, `informational`, `superseded`, `withdrawn` (annullata
+  da rollback prima di una decisione). È separato da `status`, che segue anche
+  l'esecuzione: una proposta `applied` resta `partially_approved`, e dopo un
+  rollback (`rolled_back`) la decisione e il suo `review` restano nel record.
+  Ogni riga di `inject_responses` ha `decided_proposals` (`review`, nota, numero
+  di azioni approvate/rifiutate): la tab Risposte mostra «approvata», «approvata
+  in parte», «rifiutata», «presa visione» invece di «risposta ricevuta». Il player
+  vede lo stesso esito nella lista e, per un'approvazione parziale, ogni azione
+  con ✓/✗ e il motivo.
+- Il messaggio di riscontro al player (e quindi la sua conversazione con l'AI)
+  elenca `APPROVED: …` e `NOT APPROVED: … Reason: …` per ogni azione. L'evento
+  `proposal_decided` del log riporta `review` e la decisione completa; il journal
+  della sessione ripete il corpo della richiesta, e i campi nuovi hanno valori
+  predefiniti (sessioni salvate prima restano leggibili).
+
+Nella console (Risposte) ogni azione ha la casella «Approva questa azione» e, se
+esclusa, un motivo facoltativo per il player; il pulsante diventa «Approva N di M
+azioni». Una proposta senza azioni offre «Prendi atto».
 
 ### Risposte con narrazione e azioni
 
@@ -150,6 +207,42 @@ l’approvazione non indica una missione completata. Il salvataggio della sessio
 (journal) li ripristina; il rollback ripristina il mondo e annulla esiti e interventi
 dei turni annullati.
 
+### Risposte per inject (playtest 28/10)
+
+Ogni invio con **Rispondi** è una proposta salvata nella storia dell’inject, anche
+senza effetti meccanici (`response_recorded` nel log), visibile al player e a EXCON.
+Corpo di `POST /api/player/<role>/actions`, oltre a `narrative`, `commands`,
+`reply_to`, `conversation`, `basis`, `attachment`:
+
+- `kind`: `communication` (solo informazione: stato `informational` subito, senza
+  fondamento, senza approvazione EXCON, senza azioni; non blocca il flusso) o
+  `decision` (fondamento obbligatorio — piano/procedura, legge/norma, giudizio
+  operativo — anche se l’azione è solo narrata; revisione EXCON). `kind` è
+  obbligatorio per ogni chiamante (422 se manca) e non c’è fondamento predefinito;
+  anche `Exercise::player_actions` richiede il fondamento esplicito.
+- `to_persona` / `to_players`: destinatario. Predefinito: il mittente fittizio
+  dell’inject (`addressed_to.persona`). Con `to_players` la risposta è anche
+  pubblicata, tradotta per ciascuno, in una conversazione collegata all’inject con
+  quei player (quella da cui si scrive, una esistente con gli stessi partecipanti o
+  una nuova) e il messaggio porta `proposal`.
+
+Stati mostrati (player ed EXCON, `i18n_risposte::response_state`): **Inviata**
+(comunicazione), **In valutazione** (`pending`), **Approvata**, **Eseguita**
+(`applied`), **Esito registrato** (EXCON ha registrato l’esito narrativo, ad es. la
+pubblicazione dell’avviso: evento distinto dall’approvazione), più chiarimento
+richiesto, approvata in parte, rifiutata, presa visione, non eseguita. Non c’è più
+«Approvata · esito in attesa».
+
+Una risposta data da una conversazione compare **una sola volta** in
+`inject_responses`: sotto la riga dell’inject di chi risponde se ne ha una copia,
+altrimenti sotto la riga dell’inject citato dalla conversazione (prima compariva due
+volte, attribuita anche a chi aveva aperto la conversazione). Ogni riga mostra le
+conversazioni sull’inject a cui partecipa il destinatario.
+
+Un messaggio in una conversazione («vado in ricognizione») è solo testo: non è mai
+interpretato né diventa una missione; per registrare una decisione si usa Rispondi.
+Test: `crates/exercise/tests/risposte.rs`, `crates/server/tests/risposte.rs`.
+
 ### Personaggi: i player non vedono mai «EXCON»
 
 Tutto ciò che EXCON scrive a un player (domande di chiarimento, note di
@@ -170,7 +263,9 @@ sull’inglese). La console EXCON continua a dire EXCON.
 ### Conversazioni collegate a un inject
 
 Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
-(`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
+(**Avvia conversazione** nel dettaglio dell’inject: scelta dei player e primo
+messaggio); poi prosegue come thread autonomo con l’inject citato in testa
+(riferimento fissato all’apertura) (`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
 testo originale e inglese, citazioni; `message_count`), mostrata espandibile in Risposte
 sotto l’inject. Il testo compare anche nel log (`conversation_message`), nel debrief e
@@ -190,10 +285,79 @@ In Risposte di EXCON la risposta compare sotto l’inject con il ruolo che rispo
 riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell’inject
 è rifiutato.
 
-API: `POST /api/player/<role>/actions {narrative?, commands?, text?, reply_to?,
-conversation?}` (unica rotta di risposta; ricorda che serve almeno narrazione o un
-comando); `POST /api/player/<role>/narrative {text, reply_to}` resta per compatibilità
-(solo narrazione); `POST /api/player/<role>/conversations {delivery, participants,
+### Base della risposta e allegato PDF
+
+- Il modale di risposta del player (`tactical.rs`) è in blocchi: **base della risposta**
+  (Piani / Leggi / Giudizi operativi, `basis` = `plan|law|operational_judgment`,
+  predefinito giudizio operativo), eventuale **PDF**, **narrazione** guidata dal formato
+  chi/cosa/come/dove/quando (testo di aiuto e placeholder localizzati in `i18n_reply.rs`,
+  tutte le 12 lingue), **azioni**. La base diventa `Proposal.evidence.basis.kind`
+  (`BasisKind::Law` è nuovo) e compare in `inject_responses[].replies[]`, in
+  `pending_proposals[]` e nei messaggi `reply` del `thread` come `basis` e `document`;
+  il contesto AI del player riceve la riga `[basis] plans|laws|operational judgement`
+  (+ nome del PDF).
+- `attachment {name, content_type: "application/pdf", data: base64}` è ammesso solo con
+  base piani/leggi. Il server controlla tipo dichiarato, firma `%PDF-` e dimensione
+  (max 10 MB, `exercise::files::MAX_PDF_BYTES`; max 20 file per ruolo, 100 totali) prima di
+  salvare qualunque cosa. I byte restano in memoria nell'`Exercise` (`exercise::files`), non
+  entrano in log, `/api/master` né nell'export della cronologia (solo `{id,name,size}`).
+  Un rollback segna le proposte come annullate ma conserva messaggi e documenti (storico).
+- `GET /api/attachments/<id>` (JSON con `data` base64, identico in server e standalone):
+  solo EXCON e il ruolo autore; valutatori 403, altri ruoli e id ignoti "document not found".
+- EXCON: il modale Risposte (`risposte.rs`) è orizzontale, conversazione a sinistra e
+  risposta da gestire a destra; il chip "PDF" apre `pdf_view.rs`, che disegna il file con
+  pdf.js (`pdfjs-dist@4.10.38`, copiato in `crates/frontend/assets/vendor/pdfjs` e incluso
+  nel WASM con `include_str!`: nessun CDN, funziona offline e nel `ttx.html` a file unico).
+  Resta anche il link a un blob per aprire/scaricare con il visualizzatore del browser.
+### Azioni suggerite dall’AI sulle narrazioni
+
+Il vecchio assistente «Descrivi le azioni con l’assistente AI» (bozza privata
+`POST /api/player/<role>/draft` + `/draft/submit`, task LLM `prepare_decision`,
+`exercise::drafts`) è stato rimosso. Al suo posto un solo task LLM,
+`suggest_actions` (`llm::tasks::SuggestScope`), con due ambiti; il modello
+risponde `{actions, quotes, reasons, summary}` in JSON (citazioni: vedi
+«Fedeltà delle formulazioni AI»), l’esercitazione lo valida
+(`Exercise::check_suggestions`: solo `Command` validi del ruolo autore, niente
+doppioni né azioni già nella risposta/proposta, verdetto di fattibilità dopo le
+proposte approvate) e **nulla cambia**: i suggerimenti sono bozze che un umano
+aggiunge. Il contesto si raccoglie sotto il mutex, il modello gira fuori; se
+l’AI manca la risposta è `status: ai_unavailable` e l’interfaccia lo dice.
+
+- **Player, automatico**: `POST /api/player/<role>/suggest-actions {narrative,
+  reply_to?, conversation?, staged?}` (solo il player stesso; fase ordini). Il
+  contesto è solo ciò che il ruolo sa (`Exercise::player_suggestion_context`):
+  mappa del ruolo (`player_map`), risorse, schieramenti e proposte proprie del
+  turno, thread visibile dell’inject (`thread_evidence`), conversazioni collegate
+  a cui partecipa, chat con gli altri ruoli e la sua conversazione continua con
+  l’AI. Il modale di risposta mostra «Azioni suggerite dall’AI» sotto la
+  narrazione (`tactical.rs`, `data-work-suggestions`), con il motivo e l’eventuale
+  esito negativo della verifica; «Aggiungi»/«Aggiungi tutte» le mette tra le
+  azioni della risposta, che segue la normale approvazione EXCON.
+- **EXCON, su richiesta**: nella revisione (Risposte, widget `Proposal`) una
+  risposta con narrazione ha il pulsante **Suggerisci azioni**
+  (`POST /api/master/proposals/<id>/suggest-actions`). Qui l’AI legge lo stato
+  completo (mondo, schieramenti, design, contabilità risorse, mappa del player) e
+  tutte le conversazioni (thread dell’inject per tutti i destinatari, conversazioni
+  collegate all’inject o con il ruolo, chat del ruolo, conversazione AI del
+  ruolo). Mentre la proposta è aperta le bozze si aggiungono alle azioni da
+  approvare (ricontrollate da `/revalidate`, poi approvazione anche parziale);
+  dopo l’approvazione vanno agli interventi dell’esito narrativo. Aggiungere
+  azioni a una narrazione pura la trasforma in risposta con azioni
+  (`carries_actions`, `excon_actions = true`, evento `narrative_actions_added`);
+  togliendole tutte torna pura.
+
+- Persistenza: il body completo delle POST è ora scritto nel journal (`server/src/body.rs`;
+  prima `Data::peek` lo troncava a 512 byte e i corpi lunghi non si rigiocavano). Limite
+  corpo 15 MiB. Nel salvataggio del browser standalone (localStorage, ~5 MB) i PDF oltre
+  ~384 KB sono sostituiti da un PDF segnaposto: dopo un ricaricamento restano nome e
+  riferimento ma il contenuto non è più disponibile.
+
+
+API: `POST /api/player/<role>/actions {kind, narrative?, commands?, text?, reply_to?,
+conversation?, basis?, attachment?, to_persona?, to_players?}` (unica rotta di
+risposta: `kind` obbligatorio, `basis` obbligatorio per `decision`, serve almeno
+narrazione o un comando; la vecchia `POST /api/player/<role>/narrative` è stata
+rimossa); `POST /api/player/<role>/conversations {delivery, participants,
 text}` e `POST /api/player/<role>/conversations/<id>/messages {text, reply_to?}`;
 `GET /api/player/<role>` espone `linked_conversations` (con `quote`, messaggi nella
 lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`
@@ -201,6 +365,59 @@ lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`
 `conversation` delle proposte. `POST /api/master/proposals/<id>/narrative-outcome
 {text, language?}` registra l’esito. Limite noto: i partecipanti si fissano alla
 creazione.
+
+## Fedeltà delle formulazioni AI (playtest 28/10)
+
+Un invito comunale a evitare abbruciamenti era diventato «divieto di
+abbruciamento (Issue warning to zone F4)». Regole e controlli (`llm::fidelity`):
+
+- I prompt di `parse_reply`, `suggest_actions`, traduzioni, riepilogo di turno e
+  aggiornamento di situazione includono `FIDELITY_RULES`: quantità, condizioni,
+  luoghi e forza giuridica restano quelli del player (un invito resta un invito;
+  divieto/ordinanza/obbligo solo se il player li dichiara), nessun contenuto,
+  luogo o potere inventato; un’intenzione («manderò una squadra») è
+  un’intenzione; una narrazione non è eseguita dal simulatore.
+- Ogni azione proposta dall’AI porta una **citazione letterale** (`quotes`) del
+  testo del player: se la citazione non compare nel testo l’azione è scartata
+  (contata in `dropped`); i suggerimenti mostrano la citazione davanti al motivo
+  («parole del player» → motivo). Un’azione senza citazione è ancora accettata.
+- `parse_reply` classifica la `modality` (decisione, intenzione, invito,
+  richiesta, resoconto, domanda) ed etichetta il riepilogo per l’EXCON
+  («Intention (not executed): …», «Invitation/appeal (not a ban or order): …»).
+  Resoconti e domande non producono azioni; in chat diretta solo le decisioni.
+- Un riepilogo, motivo o messaggio con lessico vincolante (ban, divieto,
+  vietato, ordinanza, obbligo, Verbot, interdiction…, non negato) assente dal
+  testo del player è sostituito dalle parole del player; una traduzione inglese
+  che lo introduce è segnalata con «CHECK WORDING».
+- La scheda della proposta EXCON mostra anche il **testo originale del player**
+  accanto alla traduzione.
+- Gli effetti di un esito narrativo nella vista player sono descritti nella
+  lingua del player (`effect_commands`), non con la descrizione inglese del server.
+
+Test offline in `crates/llm/src/{fidelity,tasks}.rs`; prova dal vivo
+`TTX_LIVE_LLM=1 cargo test -p llm --test live`.
+
+## Traduzioni dell’interfaccia player
+
+Le stringhe player sono chiavi di `i18n.rs` (it/en) con le altre lingue nei
+cataloghi `i18n_lang`, `i18n_reply`, … e in `i18n_more.json` (generato da
+`scripts/i18n/player_catalogue.py`, con `--check` elenca le mancanze). I testi
+scritti in linea come coppia italiano/inglese passano da `i18n::pair`. I test di
+`i18n_more` falliscono se una chiave o una coppia manca in una lingua, o se una
+schermata solo player usa il catalogo EXCON (`ex`, `exfmt!`) o un ramo
+italiano/inglese. `ex()` in un pannello player non italiano mostra l’inglese
+(o la traduzione di `i18n_more`), mai l’italiano.
+
+## Banco di prova (sviluppo)
+
+Pagina solo di sviluppo (feature cargo `bench`, `?bench=1` nello standalone,
+`bench.html` sul server) che affianca le schermate EXCON e player di sei flussi
+brevi (inject e narrativa, suggerimenti AI al player e all’EXCON, chiarimento,
+conversazione tra player, decisione per azione) su un finto server in memoria,
+senza AI né simulatore. La schermata di lavoro del player (`tactical.rs`,
+`inject_panel.rs`, `clarify.rs`) è disegnata da `player_view::PlayerView`, che
+`App` costruisce dal proprio stato e il banco dal finto server. Dettagli e
+avvio: [banco-di-prova.md](banco-di-prova.md).
 
 ## Capacità modellate
 
@@ -220,6 +437,27 @@ interventi progressivi, risorse fisiche limitate e altri effetti operativi; il
 modello storico mantiene regole più semplici. La vista 3D e le mappe presentano
 lo stato e non prendono decisioni.
 
+**Interventi visibili nella vista 3D** (`crates/viz/src/effects.rs`, solo
+presentazione, animata in tempo reale e non fedele al secondo simulato):
+ogni lancio d'acqua recente (≤ 15 min simulati) viene riprodotto come passaggio
+del Canadair (quello del dispiegamento, o un velivolo sostitutivo controvento)
+con cortina d'acqua che cade sul cerchio del lancio e si apre in nebbia; le
+autobotti al lavoro lanciano un getto ad arco sulle celle in fiamme più intense
+entro ~95 m (vapore dove colpisce fiamma), oppure bagnano il combustibile verso
+il fuoco più vicino; le squadre che tagliano la linea sollevano polvere; le celle
+bagnate hanno una velatura blu. Il drone ha un modello Blender dedicato
+(quadricottero, `scripts/build_unit_models.py`): in posizione orbita sulle zone
+monitorate, con rotori e luci animate, contorno delle zone e cono di scansione
+(simboli). Le evacuazioni senza traffico modellato mostrano auto (abitazioni) e
+bus (scuole, ospedali) che partono distanziati dagli edifici in evacuazione e
+percorrono la rete stradale verso il rifugio indicato o, in mancanza, verso
+l'uscita più lontana dal fuoco evitando le strade vicine all'incendio; con il
+traffico del modello operativo si disegnano solo i veicoli simulati. Il
+protocollo `view` porta a questo scopo `Deployment::action/zones`,
+`Drop::t_s`, `BuildingDraw::evac_people/evac_to` e `ViewState::traffic_model`.
+Fixture: `scripts/visual-fixtures/suppression.json` (autobotte a 8 min, lancio a
+26 min, drone; modello operativo) e `evacuation.json` (modello storico).
+
 ## Confini del modello
 
 - Le persone sono conteggiate per edificio e non simulate individualmente.
@@ -229,18 +467,29 @@ lo stato e non prendono decisioni.
   generate dall'AI possono variare; se l'AI non è disponibile, EXCON può
   interpretare manualmente le proposte.
 
-- I codici delle zone restano visibili a ogni zoom, anche ai bordi della
-  porzione inquadrata, con dimensione percepita costante e indipendente dai
-  livelli facoltativi della mappa.
+- I codici delle zone restano visibili a ogni zoom senza coprire la mappa: in
+  vista d'insieme le lettere delle colonne corrono lungo il bordo superiore e i
+  numeri delle righe lungo il bordo sinistro della parte inquadrata (come gli
+  assi di un grafico); quando una zona supera 150 px sullo schermo ogni zona
+  mostra il proprio codice nell'angolo visibile. Testo di 10 px semitrasparente
+  con alone sottile, senza riquadro; linee della griglia tenui.
 
+- Drone di monitoraggio: risorsa `drones` (1, `fire_commander`, tutti i territori) e comando `MonitorArea {zones}`. Dopo approvazione EXCON parte dalla base, vola in linea d'aria e, in posizione, ogni `update_interval_s` (300 s simulati) aggiunge alla mappa del possessore un'osservazione fresca delle zone coperte (fonte «Drone», senza messaggi; due soli messaggi, arrivo e rientro). Autonomia 2400 s, ricarica 900 s, massimo 4 zone, limite di vento facoltativo; poi il drone torna disponibile da solo. Mappa del giocatore: zone in diretta tratteggiate, drone e banner «drone in diretta»; vista 3D: quadricottero che orbita sulle zone con cono di scansione. Parametri e dettagli in `docs/scenari.md`. Non coperto: copertura circolare (punto + raggio), più droni in coda.
+- Etichette e legenda della mappa 2D (`crates/frontend/src/map.rs`, `label_layout.rs`, `map_legend.rs`): nomi di edifici, luoghi, chiusure, risorse e codici di zona sono posizionati in pixel dello schermo dopo il disegno del mondo, con font compatto di 12–14,5 px CSS (cresce lentamente con lo zoom della mappa) su fondo bianco traslucido; solo i nomi critici hanno un bordo sottile. I codici di zona sono descritti sopra (assi o angolo della zona, senza riquadro). In vista d'insieme i nomi lunghi sono abbreviati («Presidio sanitari…», completi da zoom 3) e i luoghi descrittivi di più di due parole compaiono solo da zoom 1,4. Le etichette continuano a evitare il fronte attivo. Il posizionamento (`label_layout::place`, puro e con test) segue la priorità: 0 edifici critici (scuola, ospedale, distributore, municipio) e colpiti da minaccia/danno/evacuazione, incendio segnalato; 1 altri edifici con nome, chiusure, risorse; 2 luoghi; 3 codici di zona. Ogni etichetta prova una corona di posizioni attorno al punto; se si sposta di oltre 10 px è unita al punto da una linea guida; se non c'è spazio le etichette a bassa priorità spariscono, i codici di zona non entrano nel posizionamento ma ne sono ostacoli. Nome di luogo ed edificio uguali e vicini valgono un’etichetta. I segnaposto (edifici con stato, ancore) non vengono coperti. La legenda (`map_legend.rs`, stringhe it/en proprie, altre lingue in inglese) non si affida al solo colore: fronte attivo = puntini, bruciato = tratteggio diagonale, acqua/ritardante = righe orizzontali, linee tratteggiate/continue per previsione, linea di contenimento, strada tagliata e chiusura polizia, simboli per stato degli edifici (▲ minacciato, ◆ danneggiato, ✕ distrutto, ➜ in evacuazione, ○ evacuato) disegnati sulla mappa con lo stesso glifo. `GET` della statica per ruolo include ora `kind` degli edifici.
+- Ogni mappa 2D (EXCON Situazione e Controllo, quadro tattico e finestra d'azione del giocatore, previsione) è una finestra rettangolare larga il 100% del suo contenitore, con altezza propria (lo spazio libero della scheda nel quadro tattico, l'altezza dello schermo meno l'intestazione in Situazione, Controllo e finestra d'azione). Il canvas segue le dimensioni della finestra (nitido a ogni densità di pixel); il territorio mantiene le proporzioni, a zoom 1 è centrato e intero, e ingrandendo lo spazio in più mostra più terreno; pan e zoom valgono su tutto il rettangolo (`map.rs`, `Frame`). In Situazione la mappa occupa la colonna larga accanto a «Impatto per luogo»; i suggerimenti di inject vanno sotto. Sotto 1050 px la vista tattica scorre come una pagina.
+- Azioni del giocatore («Aggiungi un’azione», `crates/frontend/src/place_pick.rs`): il menu contiene solo le azioni abilitate per il ruolo nello scenario (sezione Risorse/ruoli dell'editor; il server rifiuta comunque ogni azione non abilitata, `sim::World::validate`). Un'azione non in elenco si descrive nella narrazione: l'EXCON ne valuta l'esito senza effetti automatici. Lo strumento di selezione dipende dall'azione: *punto* (autobotte, lancio d'acqua), *due punti* in ordine o un bordo di zona `F4:N` (linea tagliafuoco), *più zone* (avviso, evacuazione di zona, ricognizione, drone) cliccando le celle (di nuovo per toglierle), disegnando un rettangolo con due angoli o aggiungendo un luogo con nome che diventa le celle che copre (raggio `radius_m`, edifici del luogo, cella del centro); *edificio* o *strada* singoli. Avviso, evacuazione e ricognizione su più zone diventano un ordine per zona; il drone riceve tutte le zone in un solo ordine.
+- Ricognizione a terra (`Reconnoitre {zone}`): una squadra (`ground_crews`) parte dalla base, raggiunge la zona (percorso stradale/a piedi con il modello operativo) e all'arrivo riferisce una sola volta cosa vede: la mappa del ruolo per quella zona si aggiorna a quell'ora (fonte «Squadra di ricognizione», messaggio «Ricognizione completata»). La squadra resta impiegata finché l'EXCON non ne conferma il rientro. L'EXCON può ordinarla direttamente indicando `role` (effetto immediato). Abilitata per il `fire_commander` dei territori forniti e per `direzione_soccorso` del pack Selvariva.
 - Mappa interattiva (EXCON e giocatori): zoom/pan (rotellina, trascinamento, pinch, tastiera), ispezione hover/tocco, livelli, inquadra incendio, schermo intero, barra di scala. Per i giocatori l’ispezione mostra solo le celle riferite (fog of war): altrove «non riferito». Pagina di prova: `/maptest.html` (dati sintetici, selettori funzioni e zone abilitate).
+- Controllo dei livelli della mappa 2D (`crates/frontend/src/map_layers.rs`): il pulsante ☰ nella colonna di strumenti apre un piccolo riquadro a caselle raggruppate. *Sfondo*: sfondo vegetazione/combustibile (spento = fondo chiaro neutro, così strade, edifici, luoghi, fuoco, zone e squadre risaltano), griglia, codici di zona (assi sui bordi e codici nelle celle), nebbia. *Territorio*: strade, edifici, etichette. *Incendio*: fronte e area bruciata, alone di incertezza dell'ensemble, segnalazioni e stime, previsione. *Operazioni*: squadre e droni, linee tagliafuoco/lanci/acqua, chiusure stradali e zone allertate. «Mostra tutto» ripristina; il pulsante è evidenziato se qualche livello è spento. La scelta è solo di presentazione, resta nel local storage del browser per contesto di mappa (`ttx.map_layers.<id>`: le due mappe del giocatore, quadro tattico e Rispondi, la condividono; le mappe EXCON hanno ciascuna la propria) e senza storage vale per la pagina. Con i livelli spenti il clic restituisce comunque la zona (edifici e strade nascosti non vengono selezionati). Testi it/en nel catalogo, fr/de/es nel modulo, altre lingue in inglese.
 
-- Console EXCON unificata (“Controllo”): mappa interattiva più un elenco ricercabile di 29 strumenti, ciascuno con il proprio tooltip, che si aprono in modali dedicati (con mappa per la scelta dei punti). Gli strumenti sulla mappa applicano subito il comando (nessuna anteprima; “Correggi ultimo intervento” annulla l’ultimo). Il meteo si riduce a vento e umidità del combustibile. Informazioni ai ruoli, previsione e missioni restano raggiungibili dall’elenco. Le informazioni ai ruoli si rivelano per zona e per livello (incendio, edifici, strade, linee e lanci, squadre) con `POST /api/master/knowledge {role, source, zones, layers}`; il giocatore vede il resto velato (fog of war, `known_zones`). `GET /api/master` espone `role_knowledge`. Gli occupanti degli edifici restano sempre nascosti.
+- Console EXCON unificata (“Controllo”): mappa interattiva più un elenco ricercabile di 29 strumenti, ciascuno con il proprio tooltip, che si aprono in modali dedicati (con mappa per la scelta dei punti). Gli strumenti sulla mappa applicano subito il comando (nessuna anteprima; “Correggi ultimo intervento” annulla l’ultimo). Il meteo si riduce a vento e umidità del combustibile. Informazioni ai ruoli, previsione e missioni restano raggiungibili dall’elenco. Le informazioni ai ruoli si rivelano per zona e per livello (incendio, edifici, strade, linee e lanci, squadre) con `POST /api/master/knowledge {role, source, zones, layers}`; il giocatore vede il resto velato (fog of war, `known_zones`). `GET /api/master` espone `role_knowledge`. Gli occupanti degli edifici restano sempre nascosti. Gli inject del MSEL possono rivelare mappa con azioni `reveal` (stima approssimata dell'incendio con errore deterministico, oppure zone/livelli esatti, anche per regola «in fiamme + adiacenti»; vedi `docs/scenari.md`); il banner della mappa del giocatore mostra ora e fonte dell'ultimo dato e la sua età in minuti simulati. A fine turno l'EXCON può aggiornare a mano le mappe dei ruoli (`POST /api/master/knowledge/refresh`). Aperto: un inject inviato in più riprese esegue le rivelazioni solo per i ruoli del primo invio.
 
 - MSEL unificato (redesign EXCON): `InjectTemplate.event` (default vuoto) raggruppa gli inject. `GET /api/master` e `/api/state` espongono `planned_injects` (cronologico: `id_inject`, `title`, `event`, `scenario_time`, `scenario_time_s`, `recipients_planned`, `sent_to`, `not_yet_sent_to`); `GET /api/master` espone anche `inject_responses` (per consegna e ruolo: `replies`, `pending_proposals`). `POST /api/master/msel/<id>/send` accetta `{"recipients":[ruoli]}` (default: destinatari pianificati); i ruoli che hanno già ricevuto l’inject sono saltati in silenzio.
 - Azioni pianificate (`Scenario.timeline`, `exercise::actions`): world changes sulla timeline MSEL, indipendenti dagli inject. A ogni avanzamento del tempo EXCON decide Esegui/Salta/Rinvia per quelle che cadono nella finestra; la durata del turno è una proprietà dello scenario (`turn_minutes`) e la scheda Timeline dell'editor mostra inject e azioni su un'unica asse oraria con fasce di turno e trascinamento; vedi `docs/scenari.md`.
-- Proposte: `POST /api/master/proposals/<id>/clarify {note}` porta una proposta del player in `needs_clarification` e consegna la domanda nello stesso thread; `POST /api/master/proposals/<id>/revalidate {commands?}` ricalcola descrizioni e verdetti senza decidere; la risposta del player a un chiarimento (`POST /api/player/<role>/reply` con `reply_to` = messaggio di domanda) e un messaggio `reply` nello stesso thread: solo traduzione in inglese, nessuna interpretazione AI, nessuna nuova proposta e nessuna sostituzione; la proposta torna `pending` con i comandi originali (per cambiare azione il player ne crea una nuova; `/actions` e `/draft` con `reply_to` = domanda aperta sono rifiutati con errore esplicito). `superseded`/`supersedes` restano nei tipi ma non vengono piu prodotti. Il flag `edited` della decisione è vero solo se i comandi cambiano davvero.
+- Proposte: `POST /api/master/proposals/<id>/clarify {note}` porta una proposta del player in `needs_clarification` e consegna la domanda nello stesso thread; `POST /api/master/proposals/<id>/revalidate {commands?}` ricalcola descrizioni e verdetti senza decidere; la risposta del player a un chiarimento (`POST /api/player/<role>/reply` con `reply_to` = messaggio di domanda) e un messaggio `reply` nello stesso thread: solo traduzione in inglese, nessuna interpretazione AI, nessuna nuova proposta e nessuna sostituzione; la proposta torna `pending` con i comandi originali (per cambiare azione il player ne crea una nuova; `/actions` con `reply_to` = domanda aperta è rifiutato con errore esplicito). `superseded`/`supersedes` restano nei tipi ma non vengono piu prodotti. Il flag `edited` della decisione è vero solo se i comandi cambiano davvero.
 - Thread di chiarimento: la conversazione testuale EXCON-player su una dichiarazione e una vista derivata (`exercise::threads`), non una copia dei dati. Mette in fila la proposta (e l'eventuale catena storica `supersedes`/`superseded_by`), i messaggi `clarification` di EXCON e le risposte del player; l'id del thread e quello della proposta d'origine. Stato: `awaiting_player` (ultima voce di EXCON), `awaiting_excon`, `closed` (chiuso da EXCON con `POST /api/master/clarifications/<id>/close`, oppure proposta decisa). Chiudere ritira una domanda senza risposta (la proposta torna `pending`); un nuovo `clarify` riapre. EXCON fa domande di follow-up con lo stesso `clarify` sulla proposta corrente (`current_proposal`); il player risponde in testo, piu volte, con `POST /api/player/<role>/reply` con `reply_to` = ultimo messaggio di EXCON (si puo rispondere a un chiarimento anche senza inject). Esposto come `clarification_threads` in `/api/master` (con testo inglese), `/api/player/<role>` (senza `text_en`) e nel debrief; ogni riga di `inject_responses` ha `clarification_threads` e i messaggi del suo `thread` portano `clarification_thread`, cosi la scheda Risposte mostra le stesse voci con stato e pulsante "Chiudi chiarimento". Lato player la chat compare nella timeline tattica (`crates/frontend/src/clarify.rs`). I thread non modificano il mondo: solo `World::apply` da proposte approvate.
 - Rendering dei dati: `render.rs` mostra comandi, meteo, esecuzioni, eventi e dati generici come elenchi leggibili (il JSON grezzo resta in un blocco richiudibile “dati grezzi” solo dove serve al debug); `event_label`/`role_label` danno nomi leggibili a eventi e ruoli.
 - LLM: `chat()` ritenta fino a 2 volte su errori di rete, corpo illeggibile o troncato, 429/5xx e risposta 2xx senza contenuto (mai sui 4xx).
 - Notifiche della console EXCON (`crates/frontend/src/notifications.rs`): la campanella è lo storico cronologico (più recente in alto, «da leggere» evidenziato, pallino arancione se ci sono voci che richiedono azione); i toast compaiono in basso a destra, fuori dai controlli del turno. Gli eventi sono mappati in modo puro da `log_spec` (titolo specifico: «Turno 1 · avanzamento a 13:05», «Inject inviato a …», «Azione pianificata eseguita: …»). Priorità *Informativo* (toast che scade dopo ~6 s, oppure solo campanella per avanzamenti, inizio risoluzione, inject inviati, risorse) e *Richiede azione* (proposta in attesa da un ruolo, azione pianificata o consegna non riuscita, bozza da rivedere: toast arancione che resta finché la proposta non viene decisa; non si segna letto aprendo la vista). Le voci simili ravvicinate (avanzamenti dello stesso turno, risorse, missione) si fondono finché non lette; al massimo 3 toast, gli informativi cedono per primi. Non notificano: comandi propri dell'EXCON, parsing delle proposte, cambi di stato interni, chat tra altri ruoli. I player ricevono un solo avviso per cambio di fase del turno, esiti delle proprie proposte, chiarimenti (azione), messaggi, riepiloghi e missioni.
+
+- Validazione luogo/tipo di azione (playtest 2026-10-27, problema #3): un luogo di tipo diverso da quello atteso non fa più perdere il turno. Nel modulo del giocatore (`tactical.rs`) cambiare tipo di azione svuota il luogo se ne cambia la natura (zona, edificio, strada, punto); per «Evacuare una zona» e «Allertare una zona» il campo ha l’elenco dei codici griglia e dei luoghi, e scrivere il nome di un edificio passa da solo a «Evacuazione di edificio» con un avviso. Lato modello, `sim::World::reconcile_command` (chiamato da `Exercise::set_commands`, quindi per form e interpretazione AI) adatta i casi non ambigui: zona = nome di edificio, EvacuateBuilding; zona = luogo con nome («Pineta»), zona in cui cade; allerta su un edificio, zona dell’edificio; EvacuateBuilding con un codice zona, EvacuateZone. L’adattamento compare come nota del verdetto. Se nulla corrisponde, l’errore dice che cosa è stato riconosciuto e propone i nomi più vicini (`unknown zone "X": a zone is a grid code like A1 (did you mean «…»?)`; `"X" is a building, not a zone: use Evacuate building…`). Il catalogo per l’LLM (`sim::command::catalogue`) dice che `zone` è sempre un codice griglia e che una struttura singola usa `EvacuateBuilding`. Le stringhe nuove sono in `i18n.rs` (it/en) e `i18n_place.rs` (altre lingue).

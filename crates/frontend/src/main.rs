@@ -1,6 +1,8 @@
 #[cfg(feature = "standalone")]
 mod editor3d;
 mod action_form;
+#[cfg(feature = "bench")]
+mod bench;
 mod advanced;
 mod controllo;
 mod api;
@@ -12,8 +14,22 @@ mod history;
 mod inject_panel;
 mod i18n;
 mod i18n_excon;
+mod i18n_function;
+mod i18n_help;
+mod i18n_place;
 mod i18n_lang;
+mod i18n_lobby;
+mod i18n_more;
+mod label_layout;
+mod i18n_review;
+mod i18n_reply;
+mod i18n_risposte;
+mod pdf_view;
+mod place_pick;
+mod player_view;
 mod map;
+mod map_legend;
+mod map_layers;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
@@ -22,6 +38,7 @@ mod risposte;
 mod situation;
 mod staged_commands;
 mod scenario_editor;
+mod webmcp;
 mod server_settings;
 mod settings;
 #[cfg(feature = "standalone")]
@@ -50,8 +67,6 @@ pub enum ActionKind {
     ConvSend,
     Store(String),
     Send(String, String),
-    Prepare(String),
-    Submit(String),
     Download,
     /// Remove this form field once the request succeeded.
     ClearField(String),
@@ -104,9 +119,6 @@ pub struct Draft {
     pub recipients: String,
     /// Actions of a custom inject (run when it is sent).
     pub actions: Vec<scenario::InjectAction>,
-    pub private: Value,
-    pub dirty: bool,
-    pub clock_revision: Value,
 }
 impl Default for Draft {
     fn default() -> Self {
@@ -121,12 +133,13 @@ impl Default for Draft {
             scope: "conversation".into(),
             recipients: String::new(),
             actions: Vec::new(),
-            private: Value::Null,
-            dirty: false,
-            clock_revision: Value::Null,
         }
     }
 }
+/// Pause in typing after which the narrative is read for action suggestions.
+const SUGGEST_PAUSE_MS: u32 = 2500;
+/// Shorter narratives are not worth a suggestion request.
+const SUGGEST_MIN_CHARS: usize = 20;
 pub struct Bootstrap {
     access: Value,
     stat: Value,
@@ -160,9 +173,12 @@ pub struct App {
     last_report: Value,
     /// EXCON console language; stored in this browser only.
     excon_lang: String,
+    /// The language gate was answered in this browser session.
+    lang_chosen: bool,
     refresh_again: bool,
     drafts: BTreeMap<String, Draft>,
-    dismissed: BTreeSet<u64>,
+    /// Debounce of the automatic action suggestions on the narrative.
+    suggest_timer: Option<gloo_timers::callback::Timeout>,
     seen: BTreeMap<String, u64>,
     fields: BTreeMap<String, String>,
     responses: BTreeMap<String, Value>,
@@ -211,6 +227,10 @@ pub enum Msg {
     OpenNotification(String),
     DismissToast(String),
     ExconLang(String),
+    /// Language chosen in the start-of-session gate.
+    PickLang(String),
+    /// Static view reloaded in the player's language.
+    StaticLoaded(Result<Value, String>),
     OpenInject(String),
     /// Open the drill-down of a response row (empty: back to the list).
     OpenInjectDetail(String),
@@ -220,11 +240,13 @@ pub enum Msg {
     /// Add commands to the response being composed.
     StageActions(Vec<Value>),
     Unstage(usize),
-    NarrativeFromDraft(String),
+    /// The narrative stopped changing: ask for action suggestions.
+    Suggest,
+    /// Suggestions for the narrative `.0` (see `/api/player/<role>/suggest-actions`).
+    Suggested(String, Result<Value, String>),
     CloseInject,
     View(String),
     Field(String, String),
-    Discard,
     Filter(String),
     ClearError,
     PresenceCheck,
@@ -254,12 +276,12 @@ impl App {
             .and_then(|v| serde_json::from_str(v).ok())
             .unwrap_or_default()
     }
-    fn set_staged(&mut self, staged: Vec<Value>) {
-        if staged.is_empty() {
-            self.fields.remove("work:staged");
-        } else {
-            self.fields.insert("work:staged".into(), Value::Array(staged).to_string());
-        }
+    /// (Re)start the pause after which the narrative gets action suggestions.
+    fn schedule_suggest(&mut self, ctx: &Context<Self>) {
+        let link = ctx.link().clone();
+        self.suggest_timer = Some(gloo_timers::callback::Timeout::new(SUGGEST_PAUSE_MS, move || {
+            link.send_message(Msg::Suggest)
+        }));
     }
     fn field(&self, key: &str, default: &str) -> String {
         self.fields
@@ -280,6 +302,25 @@ impl App {
     fn has_pre_actions_before(&self, to_s: i64) -> bool {
         let now = self.master["agenda"]["now_s"].as_i64().unwrap_or(0);
         !timeline::crossed_pre_actions(list(&self.master["planned_injects"]), now, to_s).is_empty()
+    }
+    /// The player's working screen, drawn from this console's state.
+    fn player_view(&self, ctx: &Context<Self>) -> player_view::PlayerView {
+        player_view::PlayerView {
+            state: self.state.clone(),
+            stat: self.stat.clone(),
+            own: self.own.clone(),
+            fields: self.fields.clone(),
+            busy: self.busy,
+            error: self.error.clone(),
+            active: self.active.clone(),
+            roles: self.roles(),
+            maps: true,
+            link: ctx.link().callback(|m| m),
+        }
+    }
+    /// Injects of the current turn that wait for the player (nav badge).
+    fn inject_todo(&self, ctx: &Context<Self>) -> usize {
+        self.player_view(ctx).inject_todo()
     }
     fn roles(&self) -> Vec<Value> {
         let mut roles = list(&self.stat["roles"]).to_vec();
@@ -408,9 +449,23 @@ impl Component for App {
         #[cfg(not(feature = "standalone"))]
         let token = ctx.props().token.clone().unwrap_or_else(api::token);
         let key = token.clone();
+        // Players confirm their language on the exercise (`language_confirmed`,
+        // asked again for every new exercise, standalone included). The
+        // standalone EXCON picks its own in the launcher; on the server the
+        // EXCON choice is per browser session and asked again after a restart.
+        let lang_chosen = cfg!(feature = "standalone") || session_flag(&format!("ttx_lang_ok_{token}"));
         ctx.link().send_future(async move {
             let result = async {
                 let access = api::request(&key, "/api/access", None).await?;
+                if access["kind"] == "master" {
+                    // The server translates player messages to the EXCON language.
+                    let lang = web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
+                        .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+                        .unwrap_or_else(|| "it".into());
+                    let _ = api::request(&key, "/api/player/master/language", Some(json!({"language": lang}))).await;
+                }
                 let stat = api::request(&key, "/api/static", None).await?;
                 let links = if access["kind"] == "master" {
                     api::request(&key, "/api/master/access", None).await?
@@ -470,9 +525,10 @@ impl Component for App {
                 .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
                 .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
                 .unwrap_or_else(|| "it".into()),
+            lang_chosen,
             refresh_again: false,
             drafts: BTreeMap::new(),
-            dismissed: BTreeSet::new(),
+            suggest_timer: None,
             seen: BTreeMap::new(),
             fields: BTreeMap::new(),
             responses: BTreeMap::new(),
@@ -564,40 +620,23 @@ impl Component for App {
                 match result {
                     Ok((state, master)) => {
                         self.update_notifications(ctx, &state, &master);
-                        self.state = state;
-                        self.master = master;
-                        if !self.is_master() && !self.is_evaluator() {
-                            let revision = self.state["clock_control"]["revision"].clone();
-                            if !self.busy {
-                                for draft in self.drafts.values_mut() {
-                                    if !draft.private.is_null()
-                                        && (draft.private["turn"] != self.state["turn"]
-                                            || draft.clock_revision != revision)
-                                    {
-                                        draft.private = Value::Null;
-                                    }
-                                }
+                        // A restarted exercise (back to the briefing) asks the EXCON
+                        // console language again: someone else may run it now.
+                        // Standalone picks it in the launcher.
+                        let restarted = !self.state.is_null() && self.state["phase"] != "briefing" && state["phase"] == "briefing";
+                        if restarted && self.is_master() && !cfg!(feature = "standalone") {
+                            if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+                                let _ = s.remove_item(&format!("ttx_lang_ok_{}", self.token));
                             }
-                            for private in list(&self.state["drafts"]) {
-                                let id = private["id"].as_u64().unwrap_or(0);
-                                let to = text(&private["to"]);
-                                if self.dismissed.contains(&id)
-                                    || private["status"] == "interpreting"
-                                {
-                                    continue;
-                                }
-                                let d = self.drafts.entry(to.into()).or_default();
-                                if d.private.is_null() && private["turn"] == self.state["turn"] {
-                                    d.private = private.clone();
-                                    d.clock_revision = revision.clone();
-                                    d.text = if private["status"] == "needs_clarification" {
-                                        String::new()
-                                    } else {
-                                        text(&private["message"]).into()
-                                    };
-                                }
-                            }
+                            self.lang_chosen = false;
                         }
+                        self.state = state;
+                        // From now on the server's `language_confirmed` decides the gate
+                        // (a deleted session asks again).
+                        if !self.is_master() {
+                            self.lang_chosen = false;
+                        }
+                        self.master = master;
                         self.mark_seen();
                     }
                     Err(e) => self.error = e,
@@ -630,10 +669,7 @@ impl Component for App {
                     }
                     self.busy = true;
                     self.notice = match &action.kind {
-                        ActionKind::Prepare(_) => {
-                            crate::i18n::ex("L’AI sta analizzando il messaggio…")
-                        }
-                        ActionKind::Submit(_) | ActionKind::Send(_, _) => {
+                        ActionKind::Send(_, _) => {
                             crate::i18n::ex("Traduzione e invio in corso…")
                         }
                         _ => crate::i18n::ex("Elaborazione…"),
@@ -728,35 +764,6 @@ impl Component for App {
                                 .into();
                                 self.responses.insert(key, value);
                             }
-                            ActionKind::Prepare(to) => {
-                                let d = self.drafts.entry(to.clone()).or_default();
-                                d.private = value["draft"].clone();
-                                d.dirty = false;
-                                d.clock_revision = self.state["clock_control"]["revision"].clone();
-                                d.text = if d.private["status"] == "needs_clarification" {
-                                    String::new()
-                                } else {
-                                    text(&d.private["message"]).into()
-                                };
-                                let needs_clarification =
-                                    d.private["status"] == "needs_clarification";
-                                if to == "master" && !needs_clarification {
-                                    self.fields.insert("work:free_text".into(), d.text.clone());
-                                }
-                                self.notice = if needs_clarification {
-                                    crate::i18n::ex("Serve un chiarimento prima dell’invio").into()
-                                } else if d.private["status"] == "unsupported"
-                                    || list(&d.private["actions"]).is_empty()
-                                        && d.private["status"] == "ready"
-                                {
-                                    if self.lang() == "it" {"Richiesta non inviabile: non contiene azioni supportate dal simulatore."} else {"Cannot send: this request contains no actions supported by the simulator."}.into()
-                                } else if d.private["status"] == "ai_unavailable" {
-                                    if self.lang() == "it" {"Verifica AI non riuscita: riprova oppure scegli un’azione dal modulo."} else {"AI validation failed: retry or choose a supported action in the form."}.into()
-                                } else {
-                                    crate::i18n::ex("Azioni individuate · controlla la bozza")
-                                        .into()
-                                };
-                            }
                             ActionKind::Send(to, sent) => {
                                 self.notice = if value["translation_failed"] == true {
                                     crate::i18n::ex("Inviato · traduzione non disponibile")
@@ -769,53 +776,22 @@ impl Component for App {
                                     *d = Draft::default();
                                 }
                             }
-                            ActionKind::Submit(to) => {
-                                if to == "master" && !self.is_master() {
-                                    self.fields.insert("work:open".into(), "false".into());
-                                    self.fields.remove("work:clarify");
-                                }
-                                self.notice = if value["translation_failed"] == true {
-                                    crate::i18n::ex("Inviato · traduzione non disponibile").into()
-                                } else if value["proposal"].is_null() {
-                                    crate::i18n::ex("Messaggio tradotto inviato").into()
-                                } else {
-                                    crate::i18n::ex("Decisione inviata per la revisione").into()
-                                };
-                                if let Some(d) = self.drafts.remove(&to) {
-                                    if let Some(id) = d.private["id"].as_u64() {
-                                        self.dismissed.insert(id);
-                                    }
-                                }
-                            }
                             ActionKind::Download => {
                                 if let Err(e) = api::download(&value) {
                                     self.error = e
                                 }
                             }
                             ActionKind::WorkSubmit => {
-                                self.fields.insert("work:open".into(), "false".into());
-                                for key in ["work:location", "work:destination", "work:qty", "work:reply_to", "work:clarify", "work:narrative", "work:staged", "work:conversation", "work:free_text", "work:reply"] {
-                                    self.fields.remove(key);
-                                }
-                                if let Some(draft) = self.drafts.remove("master") {
-                                    if let Some(id) = draft.private["id"].as_u64() {
-                                        self.dismissed.insert(id);
-                                    }
-                                }
+                                player_view::response_sent(&mut self.fields);
+                                self.suggest_timer = None;
                                 self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
                             }
                             ActionKind::ConvStart => {
-                                for key in ["inj:newconv", "inj:conv_text", "inj:conv_people", "inj:conv_reply"] {
-                                    self.fields.remove(key);
-                                }
-                                if let Some(id) = value["conversation"].as_u64() {
-                                    self.fields.insert("inj:conv".into(), id.to_string());
-                                }
+                                player_view::conversation_started(&mut self.fields, value["conversation"].as_u64());
                                 self.notice = crate::i18n::ex("Inviato").into();
                             }
                             ActionKind::ConvSend => {
-                                self.fields.remove("inj:conv_text");
-                                self.fields.remove("inj:conv_reply");
+                                player_view::conversation_sent(&mut self.fields);
                                 self.notice = crate::i18n::ex("Inviato").into();
                             }
                             ActionKind::ClearField(key) => {
@@ -827,76 +803,93 @@ impl Component for App {
                 }
                 self.request_refresh(ctx);
             }
-            Msg::NarrativeFromDraft(text) => {
-                self.fields.insert("work:narrative".into(), text);
-                if let Some(draft) = self.drafts.remove("master") {
-                    if let Some(id) = draft.private["id"].as_u64() {
-                        self.dismissed.insert(id);
-                    }
+            Msg::Suggest => {
+                self.suggest_timer = None;
+                let narrative = self.field("work:narrative", "");
+                if self.is_master()
+                    || self.state["phase"] != "orders"
+                    || self.field("work:open", "false") != "true"
+                    || narrative.trim().chars().count() < SUGGEST_MIN_CHARS
+                    || narrative == self.field("work:sugg_for", "")
+                    || !self.field("work:sugg_busy", "").is_empty()
+                {
+                    return false;
                 }
+                self.fields.insert("work:sugg_busy".into(), "1".into());
+                let body = json!({
+                    "narrative": narrative,
+                    "reply_to": self.field("work:reply_to", "").parse::<u64>().ok(),
+                    "conversation": self.field("work:conversation", "").parse::<u64>().ok(),
+                    "staged": self.staged(),
+                });
+                let (token, path) = (self.token.clone(), format!("/api/player/{}/suggest-actions", self.own));
+                ctx.link().send_future(async move {
+                    Msg::Suggested(narrative, api::request(&token, &path, Some(body)).await)
+                });
             }
-            Msg::StageActions(commands) => {
-                let mut staged = self.staged();
-                staged.extend(commands);
-                staged.truncate(32);
-                self.set_staged(staged);
-                // The form (or the AI draft) has been turned into a staged action.
-                for key in ["work:location", "work:destination", "work:free_text", "work:reply"] {
-                    self.fields.remove(key);
+            Msg::Suggested(narrative, result) => {
+                self.fields.remove("work:sugg_busy");
+                if self.field("work:open", "false") != "true" {
+                    return false;
                 }
-                if let Some(draft) = self.drafts.remove("master") {
-                    if let Some(id) = draft.private["id"].as_u64() {
-                        self.dismissed.insert(id);
-                    }
+                if narrative != self.field("work:narrative", "") {
+                    // The player kept writing: suggest for the newer text.
+                    self.schedule_suggest(ctx);
+                    return false;
                 }
+                let value = result.unwrap_or_else(|e| json!({"status": "ai_unavailable", "actions": [], "failure": e}));
+                self.fields.insert("work:sugg".into(), value.to_string());
+                self.fields.insert("work:sugg_for".into(), narrative);
             }
-            Msg::Unstage(index) => {
-                let mut staged = self.staged();
-                if index < staged.len() {
-                    staged.remove(index);
-                }
-                self.set_staged(staged);
-            }
+            Msg::StageActions(commands) => player_view::stage(&mut self.fields, commands),
+            Msg::Unstage(index) => player_view::unstage(&mut self.fields, index),
             Msg::OpenWorkConv(parent, conversation) => {
-                Component::update(self, ctx, Msg::OpenWork(Some(parent)));
-                self.fields.insert("work:conversation".into(), conversation);
-            }
-            Msg::OpenWork(parent) => {
-                self.fields.remove("work:clarify");
-                let parent = parent
-                    .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
-                    .unwrap_or_default();
-                self.fields.remove("work:conversation");
-                if self.field("work:reply_to", "") != parent {
-                    self.fields.remove("work:staged");
-                    self.fields.remove("work:narrative");
-                    if let Some(draft) = self.drafts.remove("master") {
-                        if let Some(id) = draft.private["id"].as_u64() {
-                            self.dismissed.insert(id);
-                        }
-                    }
-                    self.fields.remove("work:free_text");
-                    self.fields.remove("work:reply");
-                    self.fields.remove("work:location");
-                    self.fields.remove("work:destination");
+                if player_view::open_work_conv(&mut self.fields, &self.state, &self.own, parent, conversation) {
+                    self.suggest_timer = None;
                 }
-                self.fields.insert("work:reply_to".into(), parent);
-                self.fields.insert("work:open".into(), "true".into());
                 self.error.clear();
                 focus_when_rendered("#response-narrative", 10);
             }
-            Msg::OpenInjectDetail(key) => {
-                for k in ["inj:conv", "inj:newconv", "inj:conv_text", "inj:conv_reply", "inj:conv_people"] {
-                    self.fields.remove(k);
+            Msg::OpenWork(parent) => {
+                let parent = parent
+                    .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
+                    .unwrap_or_default();
+                if player_view::open_work(&mut self.fields, parent) {
+                    self.suggest_timer = None;
                 }
-                self.fields.insert("inj:open".into(), key);
+                self.error.clear();
+                focus_when_rendered("#response-narrative", 10);
             }
+            Msg::OpenInjectDetail(key) => player_view::open_inject_detail(&mut self.fields, key),
             Msg::OpenInject(id) => {
                 self.selected = id;
                 self.inject_open = true;
                 self.error.clear();
                 focus_when_rendered("#inject-title", 10);
             }
+            Msg::PickLang(l) => {
+                let key = format!("ttx_lang_ok_{}", self.token);
+                if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+                    let _ = s.set_item(&key, "1");
+                }
+                self.lang_chosen = true;
+                if self.is_master() {
+                    ctx.link().send_message(Msg::ExconLang(l));
+                } else {
+                    // Static names (roles, resources) are localised by the server: reload them
+                    // once the language is set.
+                    let (token, own) = (self.token.clone(), self.own.clone());
+                    ctx.link().send_future(async move {
+                        let _ = api::request(&token, &format!("/api/player/{own}/language"), Some(json!({"language": l}))).await;
+                        Msg::StaticLoaded(api::request(&token, "/api/static", None).await)
+                    });
+                }
+            }
+            Msg::StaticLoaded(Ok(stat)) => {
+                self.stat = stat;
+                ctx.link().send_message(Msg::Refresh);
+            }
+            Msg::StaticLoaded(Err(_)) => ctx.link().send_message(Msg::Refresh),
             Msg::ExconLang(l) => {
                 if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
                     let _ = s.set_item("ttx_excon_lang", &l);
@@ -975,17 +968,8 @@ impl Component for App {
                 self.mark_seen();
             }
             Msg::Field(key, value) => {
-                if ["work:free_text", "work:reply_to"].contains(&key.as_str())
-                    && self.fields.get(&key) != Some(&value)
-                {
-                    if let Some(draft) = self.drafts.remove("master") {
-                        if let Some(id) = draft.private["id"].as_u64() {
-                            self.dismissed.insert(id);
-                        }
-                    }
-                    if key == "work:reply_to" {
-                        self.fields.remove("work:reply");
-                    }
+                if key == "work:narrative" && !self.is_master() && self.fields.get(&key) != Some(&value) {
+                    self.schedule_suggest(ctx);
                 }
                 if key.starts_with("draft:") {
                     let selected = self.selected.clone();
@@ -995,10 +979,6 @@ impl Component for App {
                     match key.as_str() {
                         "draft:text" => {
                             d.text = value;
-                            if !d.private.is_null() && d.private["status"] != "needs_clarification"
-                            {
-                                d.dirty = d.text != text(&d.private["message"]);
-                            }
                             if player_chat {
                                 let token = self.token.clone();
                                 let path = format!("/api/player/{own}/presence");
@@ -1039,20 +1019,6 @@ impl Component for App {
                     self.fields.insert(key, value);
                 }
             }
-            Msg::Discard => {
-                let key = if (self.active == "map" || self.field("work:open", "false") == "true")
-                    && !self.is_master()
-                {
-                    "master"
-                } else {
-                    &self.selected
-                };
-                if let Some(d) = self.drafts.remove(key) {
-                    if let Some(id) = d.private["id"].as_u64() {
-                        self.dismissed.insert(id);
-                    }
-                }
-            }
             Msg::Filter(query) => {
                 self.filter = query;
                 self.request_refresh(ctx);
@@ -1089,7 +1055,7 @@ impl Component for App {
             let unread = if id == "chat" && !self.is_master() {
                 self.chat_unread()
             } else if id == "map" && !self.is_master() && !self.is_evaluator() {
-                self.inject_todo()
+                self.inject_todo(ctx)
             } else if id == "risposte" && self.is_master() {
                 risposte::pending_count(&self.master)
             } else {
@@ -1100,7 +1066,11 @@ impl Component for App {
         let l = self.lang();
         let l = l.as_str();
         let href = |path: &str| path.to_string();
-        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button></div>};
+        // Participants still choosing a language hold the start; the EXCON may override.
+        let waiting: Vec<String> = self.state["players"].as_object().map(|players| players.values().filter(|p| p["language_confirmed"] == false).map(|p| self.name(text(&p["role"]))).collect()).unwrap_or_default();
+        let time_controls = html! {<div id="turn-controls" class="row"><button id="start" class="primary" hidden={phase!="briefing"} disabled={self.busy||!waiting.is_empty()} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({}))))}>{i18n::t(l,"start_exercise")}</button>
+            if phase=="briefing"&&!waiting.is_empty(){<span id="language-waiting" class="muted" role="status">{crate::exfmt!("In attesa della lingua: {}","Waiting for the language of: {}",waiting.join(", "))}</span><button id="start-anyway" disabled={self.busy} onclick={ctx.link().callback(|_|Msg::Action(Action::post("/api/master/start",json!({"force":true}))))}>{crate::i18n::ex("Avvia comunque")}</button>}
+        </div>};
         let running = phase == "resolving" || self.state["clock_control"]["running"] == true;
         // On the Timeline the turn panel owns status and time: the header keeps one indicator.
         let compact = self.is_master() && !self.is_evaluator() && self.page == "chat" && self.active == "timeline" && phase != "briefing";
@@ -1111,16 +1081,35 @@ impl Component for App {
         } else {
             html! {<span class="pill sim-state paused" id="sim-state" role="status">{i18n::t(l,if phase=="orders"{"sim_paused_orders"}else{"sim_paused"})}</span>}
         };
+        let lang_gate = if self.is_master() {
+            !self.lang_chosen
+        } else {
+            !self.lang_chosen && !self.state.is_null() && self.state["player"]["language_confirmed"] == false
+        };
+        if lang_gate && !self.own.is_empty() && !self.is_evaluator() && self.page != "lobby" && self.page != "advanced" {
+            let options = if self.is_master() { api::EXCON_LANGUAGES } else { api::LANGUAGES };
+            // The scenario's language for this role is the proposed one.
+            let proposed = if self.is_master() { self.excon_lang.clone() } else { text(&self.state["player"]["language"]).to_string() };
+            let buttons = html! {<div class="row" id="language-gate">{for options.iter().map(|(id, name)| { let id = id.to_string(); html!{<button class={classes!((id==proposed).then_some("primary"))} data-lang={id.clone()} onclick={ctx.link().callback(move |_| Msg::PickLang(id.clone()))}>{*name}</button>} })}</div>};
+            // Standalone: one tab per role, so the question stays inside the role's
+            // panel (a full-page modal would hide the role tabs).
+            if cfg!(feature = "standalone") {
+                return html! {<main class="page"><section class="card" id="await-start" aria-labelledby="lang-gate-title">
+                    <h2 id="lang-gate-title">{format!("{} · Language / Lingua", self.name(&self.own))}</h2>{buttons}
+                </section></main>};
+            }
+            return html! {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="lang-gate-title">
+                <h2 id="lang-gate-title">{"Language / Lingua"}</h2>{buttons}
+            </section></div>};
+        }
         html! {<>
             <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div><div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
-            if self.is_master()&&!self.is_evaluator(){<select key={self.excon_lang.clone()} id="language" aria-label={i18n::t(l,"language")} value={self.excon_lang.clone()} onchange={ctx.link().callback(|e|Msg::ExconLang(api::select(e)))}>{for api::EXCON_LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.excon_lang}>{name}</option>})}</select>}
-            if !self.is_master()&&!self.is_evaluator(){<select key={self.field("language",text(&self.state["player"]["language"]))} id="language" aria-label={i18n::t(l,"language")} value={self.field("language",text(&self.state["player"]["language"]))} onchange={{let own=self.own.clone();ctx.link().callback(move |e|Msg::Action(Action::post(format!("/api/player/{own}/language"),json!({"language":api::select(e)}))))}}>{for api::LANGUAGES.iter().map(|(id,name)|html!{<option value={*id} selected={*id==self.field("language",text(&self.state["player"]["language"]))}>{name}</option>})}</select>}
             {self.view_notification_bell(ctx)}
             </header>
 
             <nav class="navigation" aria-label={i18n::t(l,"views")}>
-            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("situazione",crate::i18n::ex("Situazione"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))} {nav("chat",i18n::t(l,"nav_chat"))}}}
+            if self.page=="chat" {if self.is_master(){ {nav("timeline",i18n::t(l,"nav_timeline"))} {nav("situazione",crate::i18n::ex("Situazione"))} {nav("risposte",crate::i18n::ex("Risposte"))} {nav("map",crate::i18n::ex("Controllo"))} }else{{nav("function",i18n::t(l,"nav_function"))} {nav("map",i18n::t(l,"nav_injects"))}}}
             <div class="grow"/>
             if self.page=="chat"&&self.is_master(){<div class="mgmt-tabs" role="group" aria-label="Management"><span class="mgmt-label">{"Management"}</span>{nav("history",i18n::t(l,"nav_history"))}{nav("scenario",crate::i18n::ex("Impostazioni"))}</div>}
             if self.is_master()&&!cfg!(feature="standalone"){<a href={href("master.html")}>{i18n::t(l,"nav_timeline")}</a><a id="advanced" href={href("advanced.html")}>{i18n::t(l,"tools_link")}</a>}
@@ -1136,7 +1125,8 @@ impl Component for App {
             else if self.is_master()&&self.active=="timeline"{<main class="page timeline-page"><timeline::ExconTimeline master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} last_report={self.last_report.clone()} action={self.action(ctx)} busy={self.busy||gated} pending={self.pending.clone()} oninject={ctx.link().callback(Msg::OpenInject)} onview={ctx.link().callback(Msg::View)} onadvance={ctx.link().callback(|(b,t)|Msg::Advance(b,t))}/></main>}
             else if self.is_master()&&self.active=="scenario"{<scenario_editor::ScenarioEditor revision={self.state["generation"].as_u64().unwrap_or(0)}/>}
             else if self.is_master()&&self.active=="situazione"{<situation::Situation stat={self.stat.clone()} state={self.state.clone()} master={self.master.clone()}/>}
-            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
+            else if self.is_master()&&self.active=="risposte"{<main class="page"><risposte::Risposte token={self.token.clone()} master={self.master.clone()} state={self.state.clone()} stat={self.stat.clone()} responses={self.responses.clone()} action={self.action(ctx)} busy={self.busy||gated}/></main>}
+            else if !self.is_master()&&phase=="briefing"{<main class="page"><section class="card" id="await-start"><h2>{i18n::t(l,"await_start")}</h2><p>{i18n::t(l,"await_start_note")}</p><p class="muted">{api::LANGUAGES.iter().find(|(id,_)|*id==l).map(|(_,name)|*name).unwrap_or(l)}</p></section></main>}
             else{{self.view_chat(ctx)}}
             if let Some((body,to_s))=&self.due_modal{<timeline::AdvanceReviewDialog body={body.clone()} to_s={*to_s} injects={list(&self.master["planned_injects"]).to_vec()} agenda={self.master["agenda"].clone()} roles={list(&self.stat["roles"]).iter().filter(|r|text(&r["id"])!="master").cloned().collect::<Vec<_>>()} busy={self.busy} pending={self.pending.clone()} action={self.action(ctx)} onclose={ctx.link().callback(|_|Msg::CloseDue)}/>}
             if self.inject_open {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="inject-modal-title" onkeydown={{let link=ctx.link().clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.send_message(Msg::CloseInject);}})}}><div class="row"><h2 id="inject-modal-title">{if self.selected=="all"{crate::i18n::ex("Inject personalizzato").into()}else{crate::exfmt!("Inject · {}","Inject · {}",self.name(&self.selected))}}</h2><div class="grow"/><button aria-label={crate::i18n::ex("Chiudi modale inject")} disabled={self.busy} onclick={ctx.link().callback(|_|Msg::CloseInject)}>{crate::i18n::ex("Chiudi")}</button></div>if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}{self.view_inject_form(ctx)}</section></div>}
@@ -1157,6 +1147,11 @@ impl Component for App {
     }
 }
 fn main() {
+    #[cfg(feature = "bench")]
+    if bench::requested() {
+        yew::Renderer::<bench::Bench>::new().render();
+        return;
+    }
     #[cfg(feature = "standalone")]
     if api::window().location().search().unwrap_or_default()
         .split(['&', '?']).any(|p| p == "editor=1")
@@ -1184,4 +1179,12 @@ fn main() {
     }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();
+}
+
+/// True when this browser session already stored `key`.
+fn session_flag(key: &str) -> bool {
+    web_sys::window()
+        .and_then(|w| w.session_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .is_some()
 }

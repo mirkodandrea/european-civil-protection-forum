@@ -272,6 +272,11 @@ pub fn summarize_command(c: &Value) -> Option<String> {
             }
         }
         "WaterDrop" => exfmt!("Lancio d’acqua su {}", "Water drop on {}", fmt_loc(&c["at"])),
+        "MonitorArea" => {
+            let zones = c["zones"].as_array().map(|z| z.iter().map(s).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+            exfmt!("Drone di monitoraggio su {}", "Monitoring drone over {}", zones)
+        }
+        "Reconnoitre" => exfmt!("Ricognizione a terra in {}", "Ground reconnaissance of {}", s(&c["zone"])),
         "DeployEngine" => exfmt!("Squadra su strada verso {}", "Engine deployed to {}", fmt_loc(&c["at"])),
         "EvacuateZone" => with_dest(exfmt!("Evacuazione zona {}", "Evacuate zone {}", s(&c["zone"])), opt("destination")),
         "EvacuateBuilding" => with_dest(exfmt!("Evacuazione di {}", "Evacuate {}", s(&c["building"])), opt("destination")),
@@ -375,7 +380,7 @@ pub fn render_with_raw(kind: &str, v: &Value) -> Html {
 
 /// Small collapsed "dati grezzi" block.
 pub fn raw(v: &Value) -> Html {
-    html! {<details class="rv-raw"><summary>{crate::i18n::ex("dati grezzi")}</summary><pre>{crate::api::pretty(v)}</pre></details>}
+    html! {<details class="rv-raw"><summary>{crate::i18n::ex("dati tecnici (JSON)")}</summary><pre>{crate::api::pretty(v)}</pre></details>}
 }
 
 /// Collapsible titled block with the readable rendering of `v`.

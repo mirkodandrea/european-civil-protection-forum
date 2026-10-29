@@ -1,8 +1,8 @@
 //! Player conversations linked to an inject.
 //!
 //! A player who received an inject can open a conversation with one or more
-//! other players about it. The conversation is private to its participants
-//! (like peer chat, EXCON sees who took part, not the text) and is *evidence only*: nothing said in it
+//! other players about it. Other players cannot read it; EXCON reads every
+//! transcript. It is *evidence only*: nothing said in it
 //! changes the world. Its purpose is to let the group prepare a response.
 //!
 //! Rules (all enforced here, never in the UI):
@@ -15,7 +15,12 @@
 //! * a message may cite a previous message of the conversation or the inject;
 //! * a participant may answer the inject itself from the conversation
 //!   (`Exercise::player_response` with `conversation`), even without having
-//!   received it. The provenance is stored on the response.
+//!   received it. The provenance is stored on the response;
+//! * a response addressed to players (not to the fictitious sender) is posted
+//!   in a conversation with them, tagged with its proposal, so it stays in the
+//!   inject's history and the conversation reads continuously;
+//! * nothing said in a conversation is a decision: "vado in ricognizione" in
+//!   chat is an intent, recorded only as text (never parsed, never a mission).
 use crate::{chat_policy, Exercise, Message, MsgKind, Phase, MASTER};
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -41,6 +46,9 @@ pub struct ConvMessage {
     /// A previous message of the conversation, or the inject delivery.
     pub reply_to: Option<u64>,
     pub translation_failed: bool,
+    /// The response (proposal) this message delivers, when a player answered
+    /// an inject with "Rispondi" addressed to other players.
+    pub proposal: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -223,7 +231,7 @@ impl Exercise {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn push_conversation_message(
+    pub(crate) fn push_conversation_message(
         &mut self,
         id: u64,
         from: &str,
@@ -260,6 +268,7 @@ impl Exercise {
             texts: by_role,
             reply_to,
             translation_failed,
+            proposal: None,
         };
         // EXCON reads the text like every other message, so the log carries it too.
         self.record(
@@ -334,7 +343,8 @@ impl Exercise {
                         json!({"id": m.id, "from": m.from, "turn": m.turn, "clock": m.clock,
                             "text": m.texts.get(role).unwrap_or(&m.text_en),
                             "original": (m.from == role).then_some(&m.original),
-                            "reply_to": m.reply_to, "translation_failed": m.translation_failed})
+                            "reply_to": m.reply_to, "translation_failed": m.translation_failed,
+                            "proposal": m.proposal})
                     }).collect::<Vec<_>>()})
             })
             .collect()
@@ -351,7 +361,7 @@ impl Exercise {
                     "turn": c.turn, "t_s": c.t_s, "message_count": c.messages.len(),
                     "messages": c.messages.iter().map(|m| json!({"id": m.id, "from": m.from, "turn": m.turn,
                         "t_s": m.t_s, "clock": m.clock, "original": m.original, "text_en": m.text_en,
-                        "reply_to": m.reply_to, "translation_failed": m.translation_failed})).collect::<Vec<_>>(),
+                        "reply_to": m.reply_to, "translation_failed": m.translation_failed, "proposal": m.proposal})).collect::<Vec<_>>(),
                     "responses": self.proposals.iter()
                         .filter(|p| p.via_conversation == Some(c.id))
                         .map(|p| p.id).collect::<Vec<_>>()})

@@ -65,6 +65,43 @@ pub fn default_actions(inject: &Value) -> BTreeSet<String> {
 }
 
 /// An action's offset as a chip: `−5 min`, `+2 min`, `all’invio`.
+/// Readable summary of an inject action; reveal actions are described in the EXCON language.
+fn action_summary(a: &Value) -> String {
+    use crate::i18n_excon::ex;
+    let r = &a["reveal"];
+    if !r.is_object() {
+        return text(&a["summary"]).to_string();
+    }
+    if r["kind"] == "approximate" {
+        return format!(
+            "{} · ±{:.0} m · {} ±{:.0}%",
+            ex("Stima sulla mappa (non verificata)"),
+            r["position_error_m"].as_f64().unwrap_or(0.),
+            ex("area"),
+            r["area_error_frac"].as_f64().unwrap_or(0.) * 100.
+        );
+    }
+    let zones = match &r["zones"] {
+        Value::String(s) if s == "burning" => ex("zone in fiamme").to_string(),
+        Value::String(s) if s == "burning_and_adjacent" => ex("zone in fiamme e adiacenti").to_string(),
+        z => list(z).iter().map(|x| text(x).to_string()).collect::<Vec<_>>().join(", "),
+    };
+    let layers = list(&r["layers"])
+        .iter()
+        .map(|l| match text(l) {
+            "fire" => ex("Incendio"),
+            "buildings" => ex("Edifici"),
+            "roads" => ex("Strade"),
+            "lines" => ex("Linee e lanci"),
+            "units" => ex("Squadre"),
+            other => other,
+        }
+        .to_lowercase())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}: {zones} · {layers}", ex("Mappa rivelata"))
+}
+
 pub fn offset_chip(offset_s: i64) -> String {
     let m = (offset_s.abs() as f64 / 60.0 * 10.0).round() / 10.0;
     let m = if m.fract() == 0.0 { format!("{}", m as i64) } else { format!("{m:.1}") };
@@ -167,16 +204,16 @@ fn pills(inject: &Value, roles: &[Value]) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
-struct SendDialogProps {
-    inject: Value,
-    roles: Vec<Value>,
-    busy: bool,
-    action: Callback<Action>,
-    onclose: Callback<()>,
+pub struct SendDialogProps {
+    pub inject: Value,
+    pub roles: Vec<Value>,
+    pub busy: bool,
+    pub action: Callback<Action>,
+    pub onclose: Callback<()>,
 }
 
 #[function_component(SendDialog)]
-fn send_dialog(props: &SendDialogProps) -> Html {
+pub fn send_dialog(props: &SendDialogProps) -> Html {
     let inject = &props.inject;
     let id = text(&inject["id_inject"]).to_string();
     let served = strings(&inject["sent_to"]);
@@ -227,7 +264,7 @@ fn send_dialog(props: &SendDialogProps) -> Html {
                     chosen_actions.set(next);
                 })};
                 html!{<li key={aid.clone()}><label class="send-role"><input type="checkbox" data-send-action={aid.clone()} checked={checked} disabled={off||props.busy} {onchange}/>
-                    <span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span> <b>{text(&a["title"])}</b> <span class="muted">{text(&a["summary"])}</span>
+                    <span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span> <b>{text(&a["title"])}</b> <span class="muted">{action_summary(a)}</span>
                     if off{<small>{crate::i18n::ex("disattivata nella timeline")}</small>}</label></li>}
             })}</ul>}
         <div class="row send-actions"><div class="grow"/><button class="primary" data-send="" disabled={props.busy||selected.is_empty()} onclick={send}>{crate::exfmt!("Invia a {} destinatari","Send to {} recipients",selected.len())}</button></div>
@@ -627,7 +664,7 @@ pub fn advance_review_dialog(props: &AdvanceReviewProps) -> Html {
                 html!{<li class="planned-inject review-row" data-review-pre={format!("{iid}:{aid}")} key={format!("{iid}:{aid}")}>
                     <span class="planned-times"><b>{compact_clock(origin,act["instant_s"].as_i64().unwrap_or(0))}</b><small>{offset_chip(act["offset_s"].as_i64().unwrap_or(0))}</small></span>
                     <span class="planned-body"><b class="planned-title">{text(&act["title"])}</b>
-                        <span class="planned-text">{text(&act["summary"])}</span>
+                        <span class="planned-text">{action_summary(act)}</span>
                         <small class="muted">{crate::exfmt!("prima dell’inject «{}»","before inject «{}»",text(&inj["title"]))}</small></span>
                     <span class="review-send"><label class="inline-check"><input type="checkbox" data-pre-toggle={aid.clone()} checked={enabled} disabled={props.busy} onchange={toggle}/> {crate::i18n::ex("esegui")}</label></span></li>}
             })}</ul>}
@@ -646,6 +683,7 @@ struct TurnPanelProps {
     state: Value,
     /// Scripted actions with their runs, for the last-advance summary.
     actions: Vec<Value>,
+    roles: Vec<Value>,
     /// Report returned by the last advance, when this console ran it.
     report: Value,
     busy: bool,
@@ -702,6 +740,28 @@ fn last_advance_summary(state: &Value, actions: &[Value], report: &Value, origin
     let line = if parts.is_empty() { crate::i18n::ex("nessuna azione eseguita").to_string() } else { parts.join(" · ") };
     html! {<span class={classes!("tp-last",bad.then_some("bad"))} data-last-advance="" title={line.clone()}>
         <b>{crate::exfmt!("Ultimo avanzamento {} → {}:","Last advance {} → {}:",hhmm(origin,from),hhmm(origin,to))}</b>{" "}{line}</span>}
+}
+
+/// Roles that received a zone reveal and the zones a refresh would repeat for
+/// each: `(role name, zones, layers)`.
+pub fn refresh_plan(state: &Value, roles: &[Value]) -> Vec<(String, Vec<String>, Vec<String>)> {
+    let strings = |v: &Value| list(v).iter().map(|x| text(x).to_string()).collect::<Vec<_>>();
+    state["role_knowledge"].as_object().into_iter().flatten().filter(|(_, k)| k["refresh"].is_object()).map(|(r, k)| (role_name(roles, r), strings(&k["refresh"]["zones"]), strings(&k["refresh"]["layers"]))).collect()
+}
+
+/// «Update role maps»: manual, one click. Each role that received a zone
+/// reveal gets the same zones and layers again as a fresh snapshot. Compact:
+/// the roles and zones it will touch are listed before the click.
+fn refresh_maps(state: &Value, roles: &[Value], disabled: bool, action: &Callback<Action>) -> Html {
+    let plan = refresh_plan(state, roles);
+    if plan.is_empty() {
+        return Html::default();
+    }
+    let zones = |z: &[String]| if z.len() > 6 { format!("{}…", z[..6].join(" ")) } else { z.join(" ") };
+    let list_text = plan.iter().map(|(r, z, _)| format!("{r} ({})", zones(z))).collect::<Vec<_>>().join(" · ");
+    let title = plan.iter().map(|(r, z, l)| format!("{r}: {} [{}]", z.join(" "), l.join(", "))).collect::<Vec<_>>().join("\n");
+    let action = action.clone();
+    html! {<span class="tp-refresh"><button id="refresh-role-maps" disabled={disabled} title={title} onclick={Callback::from(move |_| action.emit(Action::post("/api/master/knowledge/refresh", json!({}))))}>{crate::exfmt!("Aggiorna mappe dei ruoli ({})","Update role maps ({})",plan.len())}</button>{" "}<small class="muted" data-refresh-roles="">{list_text}</small></span>}
 }
 
 /// The single owner of status and time on the Timeline page: the open turn as
@@ -821,6 +881,7 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
             else{<span class="tp-attention none muted" id="tp-attention">{crate::i18n::ex("Nulla da gestire ora")}</span>}
             <crate::situation::SuggestionBadge generation={props.state["generation"].as_u64().unwrap_or(0)} onopen={{let v=props.onview.clone();Callback::from(move |_|v.emit("situazione".into()))}}/>
             {if resolving{Html::default()}else{last_advance_summary(&props.state,&props.actions,&props.report,origin)}}
+            {if resolving{Html::default()}else{refresh_maps(&props.state,&props.roles,props.busy||!orders,&props.action)}}
             <div class="grow"/>
             <button class="primary" id="advance-next" disabled={ctl_off||to_next.is_none()} title={primary.as_ref().map(|(t,_,closes)|if *closes{crate::exfmt!("Porta il tempo alle {} e chiude il turno {}: si apre il turno {}","Moves time to {} and closes turn {}: turn {} opens",hhmm(origin,*t),a["turn"],a["turn"].as_u64().unwrap_or(1)+1)}else{crate::exfmt!("Porta il tempo a {} e lascia il turno aperto: l’EXCON decide poi se inviare l’inject","Moves time to {} and keeps the turn open: you then decide whether to send the inject",clock_at(origin,*t))})} onclick={go(to_next)}>{advance_label(a)}</button>
             <span class="tp-step">{crate::i18n::ex("Avanza di")}<input aria-label={crate::i18n::ex("Minuti di avanzamento")} id="advance-step" type="number" min="1" max="1440" value={(*step).clone()} oninput={{let s=step.clone();Callback::from(move |e|s.set(crate::api::input(e)))}}/>{"min"}
@@ -850,7 +911,7 @@ fn action_sub_row(inject: &Value, a: &Value, can_toggle: bool, action: &Callback
         <span class="pi-off" title={if pre{crate::i18n::ex("Prima dell’ora prevista dell’inject")}else{crate::i18n::ex("Dopo l’invio dell’inject")}}>{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>
         <span class="pill kind action" title={crate::i18n::ex("Azione dell’inject: cambia il mondo")}>{crate::i18n::ex("Azione")}</span>
         <b class="planned-title">{text(&a["title"])}</b>
-        <span class="pi-preview muted">{text(&a["summary"])}</span>
+        <span class="pi-preview muted">{action_summary(a)}</span>
         <span class="pill rcpt">{action_status_text(inject,a)}</span>
         {toggle.unwrap_or_default()}
         if let Some(r)=a["result"].as_str().filter(|r|!r.is_empty()){<small class="pi-result muted" title={r.to_string()}>{r}</small>}</li>}
@@ -979,7 +1040,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             {subs(&post)}</li>}
     };
     let panel = (!agenda.is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving")).then(|| {
-        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()}/>}
+        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} roles={roles.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()}/>}
     });
     // The selected inject in full, in the side column on wide screens (inline below it otherwise).
     let detail = current_key.as_ref().and_then(|k| all_items.iter().find(|i| item_key(i) == *k)).map(|i| {
@@ -995,7 +1056,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             Callback::from(move |_| opened.set(Some(id.clone())))
         };
         let (pre, post) = split_actions(i);
-        let acts = |l: &[Value]| html! {{for l.iter().map(|a|html!{<li><span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>{" "}<b>{text(&a["title"])}</b>{" · "}<span class="muted">{text(&a["summary"])}{" · "}{action_status_text(i,a)}</span></li>})}};
+        let acts = |l: &[Value]| html! {{for l.iter().map(|a|html!{<li><span class="pi-off">{offset_chip(a["offset_s"].as_i64().unwrap_or(0))}</span>{" "}<b>{text(&a["title"])}</b>{" · "}<span class="muted">{action_summary(a)}{" · "}{action_status_text(i,a)}</span></li>})}};
         let body = html! {<>
             <div class="tl-detail-head"><span class="pill kind inject">{crate::i18n::ex("Inject")}</span><b class="tl-detail-title">{text(&i["title"])}</b><div class="grow"/>
                 <button class="tp-small" aria-label={crate::i18n::ex("Chiudi")} onclick={close}>{"✕"}</button></div>

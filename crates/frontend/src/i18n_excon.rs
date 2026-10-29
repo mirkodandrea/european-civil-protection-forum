@@ -1,13 +1,23 @@
 //! English strings for the EXCON console, keyed by the Italian source text.
 //! The console language is a per-browser choice, so a thread-local is enough
 //! (wasm is single-threaded); the page reloads when it changes.
+//!
+//! A player panel sets its own language here too: any language other than
+//! Italian reads the English text (never Italian), and the player languages
+//! with an `i18n_more` entry for that English text read their own.
 use std::cell::Cell;
-thread_local! { static EN: Cell<bool> = const { Cell::new(false) }; }
+thread_local! { static LANG: Cell<&'static str> = const { Cell::new("it") }; }
+/// Whether the UI reads anything but Italian (English texts and templates).
 pub fn is_en() -> bool {
-    EN.with(|c| c.get())
+    LANG.with(|c| c.get()) != "it"
 }
 pub fn set_ui_lang(lang: &str) {
-    EN.with(|c| c.set(lang == "en"));
+    let code = crate::api::LANGUAGES
+        .iter()
+        .map(|(id, _)| *id)
+        .find(|id| *id == lang)
+        .unwrap_or("en");
+    LANG.with(|c| c.set(code));
 }
 /// Standalone mounts one `App` per role, all alive at once. Only the visible
 /// one may own the global language, otherwise a hidden panel re-rendering in
@@ -19,23 +29,31 @@ pub fn set_ui_lang_if_visible(visible: bool, lang: &str) {
 }
 /// Runs `f` under `lang`, restoring the previous global language afterwards.
 pub fn with_ui_lang<R>(lang: &str, f: impl FnOnce() -> R) -> R {
-    let previous = is_en();
+    let previous = LANG.with(|c| c.get());
     set_ui_lang(lang);
     let out = f();
-    EN.with(|c| c.set(previous));
+    LANG.with(|c| c.set(previous));
     out
 }
-/// Translates an Italian console string when the console language is English.
+/// Translates an Italian console string when the UI language is not Italian.
 pub fn ex(it: &'static str) -> &'static str {
-    if EN.with(|c| c.get()) {
-        en(it).unwrap_or(it)
-    } else {
-        it
+    match LANG.with(|c| c.get()) {
+        "it" => it,
+        lang => {
+            let english = en(it).or_else(|| crate::i18n_reply::ex_en(it));
+            match english {
+                Some(e) if lang != "en" => crate::i18n_more::lookup(lang, e).unwrap_or(e),
+                Some(e) => e,
+                None => it,
+            }
+        }
     }
 }
 pub fn en(it: &str) -> Option<&'static str> {
     Some(match it {
         "Iniziativa narrativa" => "Narrative initiative",
+        "Testo originale del player" => "Player's original text",
+        "Avvia comunque" => "Start anyway",
         "Invio in corso…" => "Sending…",
         "Attendi la fine degli invii in corso" => "Wait for the sends in progress to finish",
         "Iniziativa narrativa ricevuta" => "Narrative initiative received",
@@ -59,6 +77,15 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Il nome con cui l’EXCON si rivolge ai player quando non sceglie un altro personaggio e l’inject non ha un mittente." => "The name EXCON uses with players when it picks no other persona and the inject has no sender.",
         "Sala operativa" => "Operations room",
         "Registra esito narrativo" => "Record narrative outcome",
+        "Suggerisci azioni" => "Suggest actions",
+        "Suggerimento in corso…" => "Suggesting…",
+        "L’AI legge lo stato completo e tutte le conversazioni collegate e propone azioni del ruolo da rivedere." => "The AI reads the full state and every linked conversation and proposes actions of the role for you to review.",
+        "Suggerimenti AI non disponibili." => "AI suggestions unavailable.",
+        "Nessuna nuova azione suggerita." => "No new actions suggested.",
+        "Bozze AI: aggiungile alle azioni da approvare, poi rivedile e approva." => "AI drafts: add them to the actions to approve, then review and approve.",
+        "Bozze AI: aggiungile agli interventi dell’esito narrativo, poi registralo." => "AI drafts: add them to the narrative outcome interventions, then record it.",
+        "Aggiungi" => "Add",
+        "Aggiungi tutte" => "Add all",
         "Approvata · esito EXCON in attesa" => "Approved · awaiting EXCON outcome",
         "Esito narrativo registrato" => "Narrative outcome recorded",
 
@@ -119,6 +146,9 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Che cosa arriva: uno dei tipi di risorsa definiti." => "What arrives: one of the defined resource types.",
         "Elimina questa offerta di rinforzo." => "Delete this reinforcement offer.",
         "Aggiungi azione" => "Add action",
+        "Rivelazione di conoscenza sulla mappa ai destinatari dell’inject (nebbia di guerra): non cambia il mondo." => "Map knowledge revealed to the inject’s recipients (fog of war): it does not change the world.",
+        "Rivelazione sulla mappa (JSON)" => "Map reveal (JSON)",
+        "kind: exact (zones: elenco o \"burning\" / \"burning_and_adjacent\", layers) oppure approximate (position_error_m, area_error_frac); source facoltativa." => "kind: exact (zones: a list or \"burning\" / \"burning_and_adjacent\", layers) or approximate (position_error_m, area_error_frac); source optional.",
         "Elimina azione" => "Delete action",
         "azioni" => "actions",
         "Comando (JSON)" => "Command (JSON)",
@@ -130,6 +160,18 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Rinvia" => "Defer",
         "Avvia il turno" => "Start the turn",
         "approvata" => "approved",
+        "approvata in parte" => "partially approved",
+        "rifiutata" => "rejected",
+        "presa visione" => "acknowledged",
+        "Decisioni EXCON" => "EXCON decisions",
+        "Approva questa azione" => "Approve this action",
+        "Motivo per il player (facoltativo)" => "Reason for the player (optional)",
+        "Azioni non approvate" => "Actions not approved",
+        "Motivo" => "Reason",
+        "Prendi atto" => "Acknowledge",
+        "Tutte le azioni sono escluse: per non approvare nulla usa Rifiuta." => "All actions are left out: to approve nothing, use Reject.",
+        "Non approvabile: escludi o correggi le azioni non valide (vedi verifica sopra) oppure rifiuta la proposta." => "Cannot be approved: leave out or fix the invalid actions (see the check above) or reject the proposal.",
+        "Nessuna azione da eseguire: puoi prendere atto (la nota è la risposta al player), chiedere un chiarimento o rifiutare." => "Nothing to execute: you can acknowledge it (the note is the answer to the player), ask for clarification or reject it.",
         "eseguita" => "done",
         "fallita" => "failed",
         "saltata" => "skipped",
@@ -189,6 +231,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Creare una linea tagliafuoco" => "Create a fire line",
         "Effettuare un lancio d’acqua" => "Make a water drop",
         "Inviare un’autobotte" => "Send a water tender",
+        "Inviare il drone di monitoraggio" => "Send the monitoring drone",
+        "Inviare una squadra in ricognizione" => "Send a crew to reconnoitre",
         "Richiedere rinforzi" => "Request reinforcements",
         "Innescare un incendio" => "Ignite a fire",
         "Spegnere un’area" => "Extinguish an area",
@@ -242,6 +286,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Spegni 150 m" => "Extinguish 150 m",
         "Evacua zona" => "Evacuate zone",
         "Avvisa zona" => "Warn zone",
+        "Drone di monitoraggio" => "Monitoring drone",
+        "Invia il drone del comandante antincendio sulla zona scelta: finché è in posizione tiene aggiornata la sua mappa. Per più zone usa il comando JSON (es. \"F3-G4\")." => "Sends the fire commander's drone over the chosen zone: while on station it keeps that map updated. For several zones use the JSON command (e.g. \"F3-G4\").",
         "Stato edificio" => "Building status",
         "Annulla primo punto" => "Cancel first point",
         "Anteprima intervento fisico" => "Physical intervention preview",
@@ -321,6 +367,11 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Zone già note:" => "Zones already known:",
         "Livelli da rivelare" => "Layers to reveal",
         "Incendio" => "Fire",
+        "Stima sulla mappa (non verificata)" => "Map estimate (unverified)",
+        "area" => "area",
+        "zone in fiamme" => "burning zones",
+        "zone in fiamme e adiacenti" => "burning and adjacent zones",
+        "Mappa rivelata" => "Map revealed",
         "Edifici" => "Buildings",
         "Strade" => "Roads",
         "Linee e lanci" => "Lines and drops",
@@ -339,7 +390,9 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Danneggiato" => "Damaged",
         "Integro" => "Intact",
         // BEGIN render.rs
-        "dati grezzi" => "raw data",
+        "dati tecnici (JSON)" => "technical data (JSON)",
+        "Spotting (braci che accendono nuovi focolai)" => "Spotting (embers starting new fires)",
+        "Spotting: il vento trasporta braci che accendono nuovi focolai davanti al fronte. Rende il fuoco più imprevedibile: da attivare solo se lo scenario lo richiede." => "Spotting: the wind carries embers that start new fires ahead of the front. Makes the fire less predictable: enable only if the scenario needs it.",
         "Direzione vento" => "Wind direction",
         "Velocità vento" => "Wind speed",
         "Umidità combustibile" => "Fuel moisture",
@@ -629,7 +682,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "← Scenari" => "← Scenarios",
         "Unità al turno (0 = nessuna)" => "Units per turn (0 = none)",
         "Apre una linea tagliafuoco (senza vegetazione) lungo un percorso: ferma l’avanzata se è completata prima del fuoco." => "Clears a fire line (no vegetation) along a path: stops the spread if finished before the fire arrives.",
-        "Lancio d’acqua da aerei o elicotteri su una zona: rallenta o spegne il fuoco sotto il passaggio." => "Water drop from aircraft or helicopters on an area: slows or puts out the fire under the pass.",
+        "Manda una squadra a terra in ricognizione su una zona: all’arrivo riferisce una volta cosa vede e la mappa del ruolo si aggiorna a quell’ora. La squadra resta impiegata finché l’EXCON non ne conferma il rientro." => "Sends a ground crew to reconnoitre a zone: on arrival it reports once what it sees and the role's map is updated to that time. The crew stays deployed until EXCON confirms its return.",
+        "Lancio d’acqua da aerei o elicotteri su una zona: rallenta o spegne il fuoco sotto il passaggio." =>"Water drop from aircraft or helicopters on an area: slows or puts out the fire under the pass.",
         "Invia un’autobotte o una squadra a terra in un luogo: agisce dopo il viaggio dalla base, se le strade sono praticabili." => "Sends an engine or ground crew to a place: acts after the trip from the base, if roads are passable.",
         "Ordina di evacuare tutta una zona della griglia, con i suoi edifici e abitanti." => "Orders the evacuation of a whole grid zone, with its buildings and occupants.",
         "Ordina di evacuare un singolo edificio, ad esempio una scuola o una casa di riposo." => "Orders the evacuation of a single building, e.g. a school or a care home.",
@@ -694,6 +748,15 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Identificativo vuoto o duplicato." => "Empty or duplicate identifier.",
         "Scrive lo scenario intero come testo JSON nel riquadro «Avanzate: JSON» qui sotto, per copiarlo o archiviarlo." => "Writes the whole scenario as JSON into the «Advanced: JSON» box below, to copy or archive it.",
         "Sostituisce il contenuto dell’editor con il testo JSON incollato; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale." => "Replaces the editor contents with the pasted JSON text; save afterwards to keep it. The scenario identifier stays the current one.",
+        "Esporta scenario (JSON)" => "Export scenario (JSON)",
+        "Importa scenario (JSON)" => "Import scenario (JSON)",
+        "Importa scenario da file" => "Import scenario from file",
+        "Scarica lo scenario intero come file JSON." => "Downloads the whole scenario as a JSON file.",
+        "Sostituisce il contenuto dell’editor con lo scenario letto da un file JSON; salva poi per conservarlo. L’identificativo dello scenario resta quello attuale." => "Replaces the editor contents with the scenario read from a JSON file; save afterwards to keep it. The scenario identifier stays the current one.",
+        "Legge uno scenario da un file JSON e lo apre nell’editor come nuovo scenario; salva poi per aggiungerlo alla libreria." => "Reads a scenario from a JSON file and opens it in the editor as a new scenario; save afterwards to add it to the library.",
+        "Scenario esportato" => "Scenario exported",
+        "File non leggibile" => "File could not be read",
+        "Scenario importato nell’editor · salva per conservarlo" => "Scenario imported into the editor · save to keep it",
         "Incolla prima il testo JSON dello scenario (riquadro «Avanzate: JSON» qui sotto), poi premi Importa." => "Paste the scenario JSON text first (the «Advanced: JSON» box below), then press Import.",
         "Testo JSON dell’intero scenario, per Esporta e Importa scenario." => "JSON text of the whole scenario, for Export and Import scenario.",
         "Esporta scenario scrive qui il JSON dell’intero scenario; per importarne uno, incollalo qui e premi Importa scenario. Nulla è salvato finché non premi Salva." => "Export scenario writes the JSON of the whole scenario here; to import one, paste it here and press Import scenario. Nothing is stored until you press Save.",
@@ -937,7 +1000,6 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Riformula la bozza con il modello linguistico; senza AI il testo resta com’è" => "Rephrases the draft with the language model; without AI the text stays as it is",
         "Riscrivi con AI" => "Rewrite with AI",
         "Riscrivi con la voce di" => "Rewrite in the voice of",
-        "Sala operativa" => "Operations room",
         "Scarta" => "Dismiss",
         "Simulazione identica a quella dell’avanzamento a fine turno, con le stesse decisioni già prese: se nessuno fa altro, accade questo. Non invia né pianifica nulla." => "Same simulation as the advance to the end of the turn, with the decisions already taken: if nobody does anything else, this is what happens. It sends and plans nothing.",
         "Situazione" => "Situation",
@@ -1016,6 +1078,17 @@ mod lang_tests {
         set_ui_lang_if_visible(true, "en");
         set_ui_lang_if_visible(false, "it");
         assert!(is_en());
+        set_ui_lang("it");
+    }
+    #[test]
+    fn other_player_languages_never_read_italian() {
+        set_ui_lang("fr");
+        assert!(is_en(), "templates fall back to English");
+        let shown = ex("Iniziativa narrativa");
+        assert_ne!(shown, "Iniziativa narrativa");
+        assert_eq!(shown, crate::i18n_more::lookup("fr", "Narrative initiative").unwrap_or("Narrative initiative"));
+        with_ui_lang("it", || assert_eq!(ex("Iniziativa narrativa"), "Iniziativa narrativa"));
+        assert!(is_en(), "the previous language is restored");
         set_ui_lang("it");
     }
 }

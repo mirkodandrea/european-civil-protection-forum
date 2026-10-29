@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn warns_when_a_pre_action_falls_before_the_start() {
-        let act = |id: &str, off: i64| scenario::InjectAction { id: id.into(), title: id.into(), command: serde_json::json!({}), offset_s: off, note: String::new() };
+        let act = |id: &str, off: i64| scenario::InjectAction { id: id.into(), title: id.into(), command: serde_json::json!({}), reveal: None, offset_s: off, note: String::new() };
         let mut m = inj("I-01", 1, Some(600));
         m.actions = vec![act("ok", -300), act("early", -900), act("post", 60)];
         assert_eq!(inject_warnings(&m, 30), vec![Warn::BeforeStart("early".into(), -300)]);

@@ -58,7 +58,7 @@ async fn players_see_personas_and_never_excon_across_the_response_flow() {
         &c,
         "mayor",
         "/api/player/mayor/actions",
-        Some(json!({"narrative":"Attivo assistenza","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Attivo assistenza","reply_to":parent})),
     )
     .await;
     assert_eq!(st, Status::Ok, "{body}");
@@ -134,7 +134,8 @@ async fn players_see_personas_and_never_excon_across_the_response_flow() {
     assert_eq!(outcome["persona"], "Prefettura");
     assert!(!outcome["effects"].as_array().unwrap().is_empty());
     assert_eq!(outcome["text"], "Team sent by Sala operativa");
-    assert_eq!(mine["proposals"][0]["decision"]["persona"], "112 Dispatch");
+    // The Italian player reads the scenario sender in Italian.
+    assert_eq!(mine["proposals"][0]["decision"]["persona"], "Centrale 112");
     let feedback = mine["inbox"]
         .as_array()
         .unwrap()
@@ -163,7 +164,7 @@ async fn a_refused_outcome_action_leaves_the_world_and_the_outcome_untouched() {
         &c,
         "mayor",
         "/api/player/mayor/actions",
-        Some(json!({"narrative":"Attivo assistenza","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Attivo assistenza","reply_to":parent})),
     )
     .await;
     let id = body["proposal"].as_u64().unwrap();

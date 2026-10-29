@@ -319,6 +319,11 @@ impl World {
                 from, to, along, ..
             } => self.line_endpoints(from, to, along).ok().map(|(a, _)| a),
             Command::WaterDrop { at } | Command::DeployEngine { at } => self.resolve_loc(at).ok(),
+            Command::MonitorArea { zones, .. } => self.monitor_centre(zones),
+            Command::Reconnoitre { zone, .. } => self
+                .recon_zone(zone)
+                .ok()
+                .and_then(|z| self.scn.zone_centre(&z)),
             Command::CloseRoad { road } => self
                 .find_road(road)
                 .and_then(|id| self.scn.road(&id))
@@ -345,7 +350,7 @@ impl World {
             .iter()
             .find(|a| allocations.contains(&a.id))?;
         let setting = self.d.travel_settings.get(role)?.get(&a.resource)?;
-        let mut route = if self.scn.operations.road_routing && a.resource != "air_tankers" {
+        let mut route = if self.scn.operations.road_routing && !self.flies(&a.resource) {
             self.operational_route(
                 setting.origin,
                 target,
@@ -430,7 +435,7 @@ impl World {
         );
         Some(detail)
     }
-    fn end_task(&mut self, i: usize, status: TaskStatus, detail: String) {
+    pub(crate) fn end_task(&mut self, i: usize, status: TaskStatus, detail: String) {
         let t = self.time_s();
         let task = &mut self.d.tasks[i];
         let at = task.position(t);
@@ -454,7 +459,7 @@ impl World {
         let task = &self.d.tasks[i];
         let current = task.position(t);
         let base = self.d.travel_settings[&task.role][&task.resource].origin;
-        let route = if self.scn.operations.road_routing && task.resource != "air_tankers" {
+        let route = if self.scn.operations.road_routing && !self.flies(&task.resource) {
             self.operational_route(
                 current,
                 base,
@@ -466,7 +471,7 @@ impl World {
         } else {
             None
         };
-        if self.scn.operations.road_routing && task.resource != "air_tankers" && route.is_none() {
+        if self.scn.operations.road_routing && !self.flies(&task.resource) && route.is_none() {
             self.end_task(
                 i,
                 TaskStatus::Failed,
@@ -519,7 +524,7 @@ impl World {
         let t = self.time_s();
         let task = self.d.tasks[i].clone();
         if !self.scn.operations.road_routing
-            || task.resource == "air_tankers"
+            || self.flies(&task.resource)
             || !matches!(
                 task.status,
                 TaskStatus::EnRoute | TaskStatus::Refilling | TaskStatus::Withdrawing
@@ -605,6 +610,10 @@ impl World {
             let task = self.d.tasks[i].clone();
             let qty = self.task_active_qty(&task);
             if qty == 0 {
+                continue;
+            }
+            if matches!(task.command, Command::MonitorArea { .. }) {
+                self.step_drone(i);
                 continue;
             }
             if self.check_task_route(i) {

@@ -5,6 +5,12 @@ use crate::{Exercise, MsgKind, ProposalStatus, MASTER};
 use serde_json::{json, Value};
 
 impl Exercise {
+    /// What the player said a response rests on, for EXCON views.
+    pub(crate) fn basis_of(&self, proposal: Option<u64>) -> Option<crate::BasisKind> {
+        let evidence = self.proposal(proposal?)?.evidence.as_ref()?;
+        Some(evidence.basis.kind)
+    }
+
     /// Planned time of an MSEL inject in simulated seconds from start: the live
     /// schedule if any, then the scenario's own `at_s`, otherwise the start of
     /// its suggested turn, counted with the scenario's turn length (not the
@@ -72,6 +78,13 @@ impl Exercise {
         rows.into_iter().map(|r| r.2).collect()
     }
 
+    /// `role` has its own copy of the delivery event `inject_id`.
+    pub(crate) fn received_inject(&self, role: &str, inject_id: u64) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.kind == MsgKind::Inject && m.inject_id == Some(inject_id) && m.to == role)
+    }
+
     /// One row per (inject delivery, recipient): the inject, the player's
     /// replies in that thread and any proposal still awaiting EXCON review.
     pub fn inject_responses(&self) -> Vec<Value> {
@@ -83,10 +96,14 @@ impl Exercise {
                 let delivery = m.inject_id.unwrap();
                 // A response a conversation participant (who may not have
                 // received the inject) gave through a linked conversation.
+                // It sits here only when the responder has no copy of their
+                // own: otherwise it belongs to their own row (never twice).
                 let via = |proposal: Option<u64>| {
-                    proposal
-                        .and_then(|pid| self.proposal(pid))
-                        .is_some_and(|p| p.via_conversation.is_some() && p.reply_to == Some(m.id))
+                    proposal.and_then(|pid| self.proposal(pid)).is_some_and(|p| {
+                        p.via_conversation.is_some()
+                            && p.reply_to == Some(m.id)
+                            && !self.received_inject(p.source.label(), delivery)
+                    })
                 };
                 let replies: Vec<Value> = self
                     .messages
@@ -98,9 +115,32 @@ impl Exercise {
                     })
                     .map(|r| {
                         json!({"id": r.id, "reply_to": r.reply_to, "clock": r.clock,
-                        "t_s": r.t_s, "text": r.text_en, "original": r.original,
+                        "t_s": r.t_s, "text": r.text_excon.as_ref().unwrap_or(&r.text_en), "original": r.original,
                         "proposal": r.proposal, "from": r.from,
-                        "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation)})
+                        "response": r.proposal.and_then(|pid| self.proposal(pid)).map(|p| json!({
+                            "status": p.status, "review": p.review, "communication": p.communication,
+                            "addressed_to": p.addressed_to, "narrative": p.narrative,
+                            "actions": p.commands.len(), "outcomes": p.narrative_outcomes.len(),
+                            "executed": p.executions.iter().filter(|e| e.ok).count()})),
+                        "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation),
+                        "basis": self.basis_of(r.proposal), "document": r.proposal.and_then(|pid| self.document_of(pid))})
+                    })
+                    .collect();
+                // Latest EXCON verdict on this recipient's responses (newest last).
+                let decided: Vec<Value> = self
+                    .proposals
+                    .iter()
+                    .filter(|p| {
+                        p.inject_id == Some(delivery)
+                            && (p.source.label() == m.to || via(Some(p.id)))
+                            && p.decision.is_some()
+                    })
+                    .map(|p| {
+                        let d = p.decision.as_ref().unwrap();
+                        json!({"id": p.id, "status": p.status, "review": p.review,
+                        "note": d.note, "t_s": d.t_s,
+                        "approved": d.effective_commands.len(),
+                        "rejected": d.rejected_actions.len()})
                     })
                     .collect();
                 let pending: Vec<Value> = self
@@ -117,8 +157,9 @@ impl Exercise {
                             )
                     })
                     .map(|p| {
-                        json!({"id": p.id, "status": p.status, "summary": p.summary,
+                        json!({"id": p.id, "status": p.status, "review": p.review, "summary": p.summary,
                         "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
+                        "basis": self.basis_of(Some(p.id)), "document": self.document_of(p.id),
                         "role": p.source.label(), "conversation": p.via_conversation,
                         "narrative": p.narrative, "carries_actions": p.carries_actions,
                         "awaiting_clarification": p.status == ProposalStatus::NeedsClarification
@@ -151,8 +192,10 @@ impl Exercise {
                             .map(|c| c.id);
                         json!({"id": t.id, "kind": t.kind, "from": t.from, "to": t.to,
                         "turn": t.turn, "clock": t.clock, "t_s": t.t_s, "title": t.title,
-                        "text": t.text_en, "original": original, "reply_to": t.reply_to,
-                        "clarification_thread": clarification})
+                        "text": if t.to != MASTER { &t.text_en } else if t.kind == MsgKind::Chat { t.text_excon.as_ref().unwrap_or(&t.text) } else { t.text_excon.as_ref().unwrap_or(&t.text_en) }, "original": original, "reply_to": t.reply_to,
+                        "clarification_thread": clarification,
+                        "basis": if t.kind == MsgKind::Reply { self.basis_of(t.proposal) } else { None },
+                        "document": if t.kind == MsgKind::Reply { t.proposal.and_then(|pid| self.document_of(pid)) } else { None }})
                     })
                     .collect();
                 // Status and open proposal of each clarification conversation of this delivery.
@@ -167,14 +210,22 @@ impl Exercise {
                 json!({
                     "thread": thread,
                     "conversations": self.master_linked_conversations().into_iter()
-                        .filter(|c| c["delivery"] == m.id).collect::<Vec<_>>(),
+                        
+                        // Every conversation on this inject the recipient takes part in.
+                        .filter(|c| c["inject_id"] == delivery && list_has(&c["participants"], &m.to))
+                        .collect::<Vec<_>>(),
                     "clarification_threads": threads,
                     "inject_message_id": m.id, "delivery_id": delivery,
                     "id_inject": self.delivery_msel.get(&delivery),
                     "title": m.title, "role": m.to, "clock": m.clock, "t_s": m.t_s,
                     "inject_text": m.text_en, "replies": replies, "pending_proposals": pending,
+                    "decided_proposals": decided,
                 })
             })
             .collect()
     }
+}
+
+fn list_has(v: &Value, role: &str) -> bool {
+    v.as_array().is_some_and(|a| a.iter().any(|x| x == role))
 }

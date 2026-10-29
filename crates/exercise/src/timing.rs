@@ -79,6 +79,7 @@ impl Exercise {
         let resource_event_count=self.world.d.resource_events.len();
         let events=self.world.advance(seconds)?;
         self.record_resource_events(resource_event_count,MASTER);
+        self.absorb_monitoring();
         if !events.is_empty() { self.record("clock_physical_events",MASTER,json!({"events":events})); } else { self.touch(); }
         Ok(events)
     }

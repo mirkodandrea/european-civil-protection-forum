@@ -253,7 +253,7 @@ pub fn unit_parts(name: &str) -> Vec<(Mesh, Rig)> {
 mod pbr_tests {
     #[test]
     fn articulated_units_preserve_pivots_and_surface_ids() {
-        for name in ["engine", "tanker", "firefighter"] {
+        for name in ["engine", "tanker", "firefighter", "drone"] {
             let u = &super::units()[name];
             assert!(u.model.positions.len() > 1000);
             assert!(u.model.colors.iter().any(|c| c[3] < 0.1));

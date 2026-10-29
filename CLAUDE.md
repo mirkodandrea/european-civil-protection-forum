@@ -14,11 +14,11 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | People | Not modelled individually: buildings have occupant counts |
 | Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. |
 | Places | Named places, zone codes of an 8×8 grid (`F4`), zone edges (`F4:N`), or coordinates |
-| LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash`, key in `.env`; must degrade gracefully |
+| LLM | OpenRouter, default `deepseek/deepseek-v4.1-flash-1017` (provider `together` only, reasoning on for `parse_reply`/`suggest_actions`), key in `.env`; must degrade gracefully |
 | Scenario | Synthetic "Valverde valley" territory + editable scenario packs (`docs/scenari.md`); EXCON edits roles, resources, ignitions, injects in the Scenario view |
 | 3D assets | Reuse `propagator_abm` Blender meshes (`assets/models/meshes.json`) |
 | Turn resolution | Simulated live between turns in 1-second steps. The 3D view updates continuously; browsers are coarser (≤ 4 Hz). Default speed = maximum (`speed` 0); the EXCON sets a factor (e.g. 60× = 1 simulated min/s) |
-| Demo video | Narrated with OpenRouter TTS `google/gemini-3.1-flash-tts-preview` (voice Charon), telling the story of the incident (not game mechanics); every clip checked by transcription; subtitles burned in + track + .srt/.vtt; LLM answers replayed from `scripts/record/llm_cassette.jsonl`; simulator streamed into ffmpeg while recording |
+| Demo video | Pipeline removed for now (2026-10-29). When needed again, rebuild it from the `demo-video-recording` skill: Gemini TTS narration (voice Charon) telling the story of the incident, every clip checked by transcription, burned-in + soft subtitles, LLM cassette, simulator streamed into ffmpeg |
 | AI context | One continuous conversation per player and for the EXCON (received messages, replies, interpretations) |
 | Player UI | Situation map first on the player's page (phones) |
 | Camera | Cinematic director follows injects, proposals, orders and the fire during turns; sun, shadows, fog, bloom, fire lights |
@@ -46,7 +46,7 @@ cargo run --release -p viewer -- --server http://host:8080   # remote 3D screen
 cargo run -p scenario --bin gen-scenario
 ./scripts/demo_session.sh                  # scripted 2-turn session against a running ttx
 echo "$PWD/runs/x.png" > runs/shot.req     # simulator window screenshot (or press P)
-./scripts/record/record.sh                 # re-record the narrated demo (own ttx on :8090, LLM cassette, TTS cache)
+npm ci --prefix scripts/qa                 # Playwright for the browser QA scripts in scripts/qa
 devtunnel host -p 8080                     # private tunnel for phone play (play.html)
 ```
 

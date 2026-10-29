@@ -350,8 +350,15 @@ impl Scenario {
                 if !action_ids.insert(a.id.as_str()) {
                     out.push(format!("{at}: identificativo duplicato"));
                 }
-                if !a.command.is_object() {
+                if a.reveal.is_some() {
+                    if !a.command.is_null() {
+                        out.push(format!("{at}: comando e rivelazione insieme: sceglierne uno"));
+                    }
+                } else if !a.command.is_object() {
                     out.push(format!("{at}: il comando deve essere un oggetto JSON"));
+                }
+                if a.reveal.is_some() && a.offset_s < 0 {
+                    out.push(format!("{at}: una rivelazione non può precedere il suo inject"));
                 }
             }
         }
@@ -407,6 +414,7 @@ impl Scenario {
             roles: vec![],
             excon_roles: vec![],
             default_persona: String::new(),
+            translations: Default::default(),
             reinforcements: vec![],
             msel: vec![],
             timeline: vec![],
@@ -447,6 +455,8 @@ mod tests {
         "CutFireLine",
         "WaterDrop",
         "DeployEngine",
+        "MonitorArea",
+        "Reconnoitre",
         "EvacuateZone",
         "EvacuateBuilding",
         "IssueWarning",

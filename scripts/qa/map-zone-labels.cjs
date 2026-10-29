@@ -1,9 +1,16 @@
-// Invisible QA for always-visible zone codes in the tactical reply map.
+// Invisible QA for always-visible zone codes in the tactical reply map (axis letters/numbers at overview, per-cell codes when zoomed).
 // Uses a real EXCON inject and the ordinary player UI; no simulator state is mutated.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
+
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
 
 const cwd = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(cwd, 'runs/map-zone-labels-review'));
@@ -43,7 +50,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
     };
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y, ...rest) {
       const canvas = this.canvas;
-      if (canvas?.id === 'work-map' && /^[A-H][1-8]$/.test(String(text))) {
+      if (canvas?.id === 'work-map' && /^([A-H]|[1-8]|[A-H][1-8])$/.test(String(text))) {
         const rect = canvas.getBoundingClientRect();
         const t = this.getTransform();
         const cssX = (t.a * x + t.e) * rect.width / canvas.width;
@@ -54,11 +61,11 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
           x: cssX, y: cssY, width: rect.width, height: rect.height,
           worldCenter: (() => {
             const world = worldTransforms.get(this);
-            if (!world) return null;
+            if (!world || !/^[A-H][1-8]$/.test(String(text))) return null;
             const col = String(text).charCodeAt(0) - 65;
             const row = Number(String(text).slice(1)) - 1;
-            const mapX = (col + 0.5) * canvas.width / 8;
-            const mapY = (row + 0.5) * canvas.height / 8;
+            const mapX = (col + 0.5) * 1200 / 8; // territory units (square 8x8 territory)
+            const mapY = (row + 0.5) * 1200 / 8;
             return {
               x: (world.a * mapX + world.e) * rect.width / canvas.width,
               y: (world.d * mapY + world.f) * rect.height / canvas.height,
@@ -77,7 +84,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
   const waitPaint = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const assertFontSize = (records, stage) => {
     assert(records.length > 0, `${stage}: instrumented zone codes were drawn`);
-    for (const record of records) assert(Math.abs(record.fontCSS - 13) < 0.2, `${stage}: ${record.code} perceived font ${record.fontCSS.toFixed(2)} CSS px`);
+    for (const record of records) assert(Math.abs(record.fontCSS - 10) < 0.2, `${stage}: ${record.code} perceived font ${record.fontCSS.toFixed(2)} CSS px`);
   };
   const saveFontEvidence = records => ({
     count: records.length,
@@ -88,15 +95,18 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
 
   try {
     await page.goto(base, { waitUntil: 'domcontentloaded' });
-    await master.locator('#start').waitFor({ timeout: 30000 });
-    await page.locator('.standalone-settings summary').click();
-    await page.locator('#openrouter-key').fill('qa-fixture-only');
-    await page.locator('#configure-ai').click();
-    assert.equal(await page.locator('#openrouter-key').inputValue(), '', 'fixture credential clears after setup');
-    await page.locator('.standalone-settings summary').click();
-    await page.getByLabel('Simulazione', { exact: true }).uncheck();
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.locator('.launcher').waitFor({ timeout: 90000 });
+    // The mock-backed fixture credential is set in the launcher, before the exercise.
+    await page.locator('#launch-openrouter-key').fill('qa-fixture-only');
+    await page.locator('#launch-save-key').click();
+    await launch(page);
+    await master.locator('#start').waitFor({ timeout: 60000 });
+    const sim = page.getByLabel('Simulazione', { exact: true }); if (await sim.isChecked()) await sim.uncheck();
+    await require('./standalone-languages.cjs').confirmLanguages(page);
     await master.locator('#start').click();
-    await master.locator('#turn').filter({ hasText: 'orders' }).waitFor();
+    await master.locator('#turn').filter({ hasText: /orders|ordini/ }).waitFor();
 
     // Deliver a normal inject, then open the player's real reply editor.
     await master.locator('[data-view="timeline"]').click();

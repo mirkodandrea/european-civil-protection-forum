@@ -1,9 +1,22 @@
 // Invisible standalone player conversations QA. OpenRouter is intercepted locally;
 // the fixture key is never sent to a real service or written to the manifest.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
+
+/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
+async function launch(page) {
+  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
+  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
+  if (await button.count()) await button.click();
+}
+
+/** The start-of-session language gate; a no-op when this session already answered it. */
+async function pickLanguage(scope, lang) {
+  const choice = scope.locator(`#language-gate [data-lang="${lang}"]`);
+  if (await choice.count()) await choice.click();
+}
 
 const cwd = path.resolve(__dirname, '../..');
 const out = path.resolve(process.env.TTX_QA_OUT || path.join(cwd, 'runs/player-conversations-review'));
@@ -52,7 +65,7 @@ const exceptionMessage = "Using exceptions for control flow, don't mind me. This
   const waitPaint = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
   try {
-    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.goto(base, { waitUntil: 'domcontentloaded' }); await launch(page);
     await master.locator('#start').waitFor({ timeout: 30000 });
     await page.locator('.standalone-settings summary').click();
     await page.locator('#openrouter-key').fill('qa-fixture-only');
@@ -60,6 +73,7 @@ const exceptionMessage = "Using exceptions for control flow, don't mind me. This
     assert.equal(await page.locator('#openrouter-key').inputValue(), '', 'fixture credential clears after setup');
     await page.locator('.standalone-settings summary').click();
     await page.getByLabel('Simulazione', { exact: true }).uncheck();
+    await require('./standalone-languages.cjs').confirmLanguages(page, { mayor: 'it', fire_commander: 'en' });
     await master.locator('#start').click();
     await master.locator('#turn').filter({ hasText: 'orders' }).waitFor();
 
@@ -75,7 +89,7 @@ const exceptionMessage = "Using exceptions for control flow, don't mind me. This
     await master.locator('#excon-timeline').getByText('Municipal coordination').waitFor();
 
     await choose('mayor');
-    await mayor.locator('#language').selectOption('it');
+    await pickLanguage(mayor, 'it');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#player-timeline').getByText('Municipal coordination').waitFor();
     const bell = mayor.locator('[data-notification-bell]');
@@ -93,7 +107,7 @@ const exceptionMessage = "Using exceptions for control flow, don't mind me. This
 
     // A peer message creates its own notification and a per-conversation unread count.
     await choose('fire_commander');
-    await fire.locator('#language').selectOption('en');
+    await pickLanguage(fire, 'en');
     await fire.locator('[data-view="chat"]').click();
     await fire.locator('[data-contact="mayor"]').click();
     await fire.locator('#text').fill('I confirm receipt, thank you.');

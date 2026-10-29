@@ -442,6 +442,7 @@ fn default_language_needs_no_confirmation_and_evidence_is_validated_before_recor
     ex.start().unwrap();
     let mid = ex.send_inject(None, "Fire", "112", &["mayor".into()], "Fire reported", &BTreeMap::new()).unwrap()[0];
     assert!(ex.players["mayor"].language_confirmed);
+    assert!(ex.pending_languages().is_empty());
     assert!(!ex.players["mayor"].language.is_empty());
     assert!(ex.set_language("mayor", "invented-language").is_err());
     ex.set_language("mayor", "it").unwrap();
@@ -611,7 +612,7 @@ fn named_place_fire_line_player_action_terminates() {
     let mut ex = exercise();
     ex.start().unwrap();
     let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"Pineta Fuel Station","to":"Pineta Primary School"})).unwrap();
-    let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None, exercise::BasisKind::OperationalJudgment).unwrap();
     assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
 }
 
@@ -636,7 +637,7 @@ fn factory_operational_fire_line_validation_is_fast() {
     ex.start().unwrap();
     let t = std::time::Instant::now();
     let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"F4","to":"G4"})).unwrap();
-    let pid = ex.player_actions("fire_commander", "Linea · F4", vec![cmd], None).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea · F4", vec![cmd], None, exercise::BasisKind::OperationalJudgment).unwrap();
     assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
     assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
 }
@@ -660,7 +661,7 @@ fn factory_operational_fire_line_reply_to_inject_is_fast() {
     let t = std::time::Instant::now();
     for (from, to) in [("Pineta Fuel Station", "Pineta Primary School"), ("F5", "H5")] {
         let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":from,"to":to})).unwrap();
-        let pid = ex.player_actions("fire_commander", "Linea", vec![cmd], Some(parent)).unwrap();
+        let pid = ex.player_actions("fire_commander", "Linea", vec![cmd], Some(parent), exercise::BasisKind::OperationalJudgment).unwrap();
         assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
         eprintln!("{from}->{to}: {:?} verdict={:?}", t.elapsed(), ex.proposal(pid).unwrap().verdicts[0]);
     }
@@ -820,6 +821,7 @@ fn act(id: &str, offset_s: i64, wind: f64) -> scenario::InjectAction {
         id: id.into(),
         title: format!("Action {id}"),
         command: json!({"type": "SetWeather", "wind_dir_deg": wind}),
+        reveal: None,
         offset_s,
         note: String::new(),
     }
@@ -1093,4 +1095,33 @@ fn live_turn_length_does_not_move_implied_inject_times() {
     assert_eq!(due(&ex), 2 * 20 * 60);
     ex.turn_minutes = 45;
     assert_eq!(due(&ex), 2 * 20 * 60);
+}
+
+#[test]
+fn building_or_place_written_as_a_zone_is_adapted_in_the_proposal() {
+    let mut ex = exercise();
+    ex.start().unwrap();
+    for (name, building) in [("Pineta Primary School", true), ("Pineta", false)] {
+        let pid = reply(&mut ex, "mayor", "evacuate").unwrap();
+        ex.attach_parse(pid, parsed(json!([{"type":"EvacuateZone","zone":name}]))).unwrap();
+        let p = ex.proposal(pid).unwrap();
+        assert_eq!(matches!(p.commands[0], Command::EvacuateBuilding { .. }), building, "{name}: {:?}", p.commands);
+        let reasons = format!("{:?}", p.verdicts);
+        assert!(!reasons.contains("unknown zone"), "{name}: {reasons}");
+        if let sim::Verdict::Ok { notes } = &p.verdicts[0] {
+            assert!(notes[0].contains(name), "{notes:?}");
+        }
+    }
+}
+
+#[test]
+fn language_choice_keeps_the_scenario_language_as_proposal() {
+    let scn = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    let mut ex = Exercise::new(World::new(scn, 1).unwrap()).with_language_choice();
+    let mut pending = ex.pending_languages();
+    pending.sort();
+    assert_eq!(pending, ["fire_commander", "mayor", "regional_cp"]);
+    assert_eq!(ex.players["mayor"].language, "it");
+    ex.set_language("mayor", "it").unwrap();
+    assert!(!ex.pending_languages().contains(&"mayor".to_string()));
 }

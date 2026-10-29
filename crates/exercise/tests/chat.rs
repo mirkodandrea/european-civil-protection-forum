@@ -313,8 +313,7 @@ fn action_threads_freeze_selected_chat_and_hide_other_roles_private_injects() {
             "fire_commander",
             "Warn F4",
             vec![Command::IssueWarning { zone: "F4".into() }],
-            Some(followup)
-        )
+            Some(followup), exercise::BasisKind::OperationalJudgment)
         .is_err());
     assert_eq!(
         (ex.messages.len(), ex.proposals.len()),
@@ -326,8 +325,7 @@ fn action_threads_freeze_selected_chat_and_hide_other_roles_private_injects() {
             "mayor",
             "Warn F4 again",
             vec![Command::IssueWarning { zone: "F4".into() }],
-            Some(answer),
-        )
+            Some(answer), exercise::BasisKind::OperationalJudgment)
         .unwrap();
     assert_eq!(
         ex.proposal(structured)

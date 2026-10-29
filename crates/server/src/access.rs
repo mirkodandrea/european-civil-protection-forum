@@ -168,9 +168,13 @@ impl Principal {
                     || path == "/api/access"
                     || path == "/ws"
                     || path == own
+                    // Own documents only: the handler checks the author.
+                    || (read
+                        && path
+                            .strip_prefix("/api/attachments/")
+                            .is_some_and(|id| id.parse::<u64>().is_ok()))
                     || [
-                        "draft",
-                        "draft/submit",
+                        "suggest-actions",
                         "chat",
                         "reply",
                         "actions",
