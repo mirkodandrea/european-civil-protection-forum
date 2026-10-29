@@ -1,8 +1,9 @@
-//! Inject suggestions for critical situations: explainable rules over the
-//! present impact picture and the turn preview.
+//! EXCON alerts for critical situations: explainable rules over the present
+//! impact picture and the turn preview, worded as what happens if nobody acts
+//! (situational awareness for whoever runs the exercise).
 //!
-//! Suggestions are drafts for the EXCON to open, edit and send (or plan) by
-//! hand. Nothing here sends, schedules or changes anything. Each suggestion
+//! Each alert carries an optional inject draft the EXCON may open, edit and
+//! send (or plan) by hand. Nothing here sends, schedules or changes anything. Each suggestion
 //! has a stable id (`rule:object`), so one the EXCON dismissed, sent or
 //! planned is not proposed again.
 
@@ -66,6 +67,8 @@ pub struct Suggestion {
     pub text: LText,
     /// Why the rule fired, in plain words.
     pub evidence: LText,
+    /// For the EXCON: the situation in one line (what is coming, and for whom).
+    pub alert: LText,
 }
 
 /// What the EXCON did with a suggestion.
@@ -269,6 +272,17 @@ fn building_reached(cx: &Ctx) -> Vec<Suggestion> {
             format!("reached around {}", hhmm(scn, reach))
         };
         let n = st.people_inside;
+        let alert = if reach <= cx.now {
+            lt(
+                format!("{name}: il fuoco è già arrivato, ancora {n} persone all'interno ({}).", status.it),
+                format!("{name}: the fire is already there, {n} people still inside ({}).", status.en),
+            )
+        } else {
+            lt(
+                format!("{name}: fuoco previsto verso le {}, ancora {n} persone all'interno ({}).", hhmm(scn, reach), status.it),
+                format!("{name}: fire expected around {}, {n} people still inside ({}).", hhmm(scn, reach), status.en),
+            )
+        };
         let note_it = if transport {
             " Servono mezzi di trasporto."
         } else {
@@ -298,6 +312,7 @@ fn building_reached(cx: &Ctx) -> Vec<Suggestion> {
                 format!("{name}: {n} persone, {when_it}, {}", status.it),
                 format!("{name}: {n} people, {when_en}, {}", status.en),
             ),
+            alert,
         });
     }
     out
@@ -351,6 +366,17 @@ fn houses_reached(cx: &Ctx) -> Vec<Suggestion> {
                     format!("{name}: {houses} abitazioni, {people} persone, {it}"),
                     format!("{name}: {houses} homes, {people} people, {en}"),
                 ),
+                alert: if reach <= cx.now {
+                    lt(
+                        format!("{name}: {houses} abitazioni già minacciate dal fuoco, {people} persone ancora in casa."),
+                        format!("{name}: {houses} homes already threatened by the fire, {people} people still at home."),
+                    )
+                } else {
+                    lt(
+                        format!("{name}: fuoco sulle abitazioni verso le {}, {houses} case con {people} persone ancora dentro.", hhmm(scn, reach)),
+                        format!("{name}: fire on the homes around {}, {houses} houses with {people} people still inside.", hhmm(scn, reach)),
+                    )
+                },
             }
         })
         .collect()
@@ -517,6 +543,17 @@ fn place_without_exit(cx: &Ctx) -> Vec<Suggestion> {
                 format!("{} ({people} people) {en}. Whoever is still there cannot drive out any more: consider sheltering in place or other means.", place.name),
             ),
             evidence: lt(format!("{}: {people} persone, {it}", place.name), format!("{}: {people} people, {en}", place.name)),
+            alert: if reach <= cx.now {
+                lt(
+                    format!("{}: nessuna via d'uscita stradale percorribile, {people} persone sul posto.", place.name),
+                    format!("{}: no passable road exit left, {people} people there.", place.name),
+                )
+            } else {
+                lt(
+                    format!("{}: senza vie d'uscita stradali verso le {} ({causes}), {people} persone sul posto.", place.name, hhmm(scn, reach)),
+                    format!("{}: no road exit left around {} ({causes}), {people} people there.", place.name, hhmm(scn, reach)),
+                )
+            },
         });
     }
     out
@@ -580,6 +617,10 @@ fn evacuees_on_cut_road(cx: &Ctx) -> Vec<Suggestion> {
                 evidence: lt(
                     format!("{vehicles} veicoli, {people} persone su {name}, che {it}"),
                     format!("{vehicles} vehicles, {people} people on {name}, which {en}"),
+                ),
+                alert: lt(
+                    format!("{name}: {vehicles} veicoli di evacuati ({people} persone) in viaggio su una strada che {it}."),
+                    format!("{name}: {vehicles} evacuee vehicles ({people} people) travelling on a road that {en}."),
                 ),
             }
         })
@@ -646,6 +687,10 @@ fn shelters(cx: &Ctx) -> Vec<Suggestion> {
                     format!("{name}: rifugio con {there} accolti e {coming} in arrivo, {it}"),
                     format!("{name}: shelter with {there} sheltered and {coming} arriving, {en}"),
                 ),
+                alert: lt(
+                    format!("Rifugio {name}: {it}, con {there} accolti e {coming} in arrivo."),
+                    format!("Shelter {name}: {en}, with {there} sheltered and {coming} arriving."),
+                ),
             });
         }
         let total = there + coming;
@@ -668,6 +713,10 @@ fn shelters(cx: &Ctx) -> Vec<Suggestion> {
                 evidence: lt(
                     format!("{name}: {there} accolti + {coming} in arrivo = {total} su {} posti", b.shelter_capacity),
                     format!("{name}: {there} sheltered + {coming} arriving = {total} for {} places", b.shelter_capacity),
+                ),
+                alert: lt(
+                    format!("Rifugio {name}: {total} persone previste per {} posti, {} resterebbero senza posto.", b.shelter_capacity, total - b.shelter_capacity),
+                    format!("Shelter {name}: {total} people expected for {} places, {} would be left without one.", b.shelter_capacity, total - b.shelter_capacity),
                 ),
             });
         }
@@ -723,6 +772,10 @@ fn deployments_cut_off(cx: &Ctx) -> Vec<Suggestion> {
             evidence: lt(
                 format!("{} {} di {} diretti a {zone} via {name}, che {it}", task.qty, task.resource, task.role),
                 format!("{} {} of {} heading to {zone} via {name}, which {en}", task.qty, task.resource, task.role),
+            ),
+            alert: lt(
+                format!("{} {} di {} diretti a {zone} via {name}, che {it}.", task.qty, task.resource, task.role),
+                format!("{} {} of {} heading to {zone} via {name}, which {en}.", task.qty, task.resource, task.role),
             ),
         });
     }

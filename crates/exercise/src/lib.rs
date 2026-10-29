@@ -27,6 +27,7 @@ pub mod timing;
 pub use timing::{ClockControl, ExercisePhase, PhaseEntry, ScheduleStatus, ScheduledInject};
 pub mod design;
 pub mod action_suggestions;
+pub mod alert_brief;
 pub mod files;
 pub use files::{FileRef, PdfUpload};
 pub mod evaluation;

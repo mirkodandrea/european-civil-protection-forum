@@ -177,6 +177,10 @@ fn suggestions_flag_a_school_reached_before_it_is_evacuated() {
     assert!(school.evidence.it.contains("persone") && school.evidence.en.contains("people"));
     assert!(school.evidence.en.contains("evacuation not started"));
     assert!(school.text.en.contains("Transport"));
+    // The EXCON alert names the place, the people inside and when the fire arrives.
+    let name = &school.object.name;
+    assert!(school.alert.it.starts_with(name.as_str()) && school.alert.en.contains("evacuation not started"), "{:?}", school.alert);
+    assert!(school.reach_s.unwrap() <= ex.world.time_s() || school.alert.en.contains("fire expected around"), "{:?}", school.alert);
     assert!(!school.recipients.is_empty());
     // Dismissing it hides exactly that (rule, object).
     ex.mark_suggestion(&school.id, "dismissed").unwrap();

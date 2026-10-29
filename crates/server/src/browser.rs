@@ -699,6 +699,22 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/situation/draft") => {
+            situation::post_draft(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/situation/brief") => {
+            situation::post_brief(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("GET", "/api/evaluator/assessment") => {
             assessment::get(
                 principal.clone(),
@@ -779,5 +795,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/situation/mark"),
     ("POST", "/api/master/situation/plan"),
     ("POST", "/api/master/situation/rewrite"),
+    ("POST", "/api/master/situation/draft"),
+    ("POST", "/api/master/situation/brief"),
     ("GET", "/api/evaluator/assessment"),
 ];

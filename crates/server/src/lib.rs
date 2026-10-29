@@ -292,6 +292,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 situation::post_mark,
                 situation::post_plan,
                 situation::post_rewrite,
+                situation::post_draft,
+                situation::post_brief,
                 post_references,
                 post_resource_limits,
                 post_clock,
