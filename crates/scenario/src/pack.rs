@@ -456,6 +456,7 @@ mod tests {
         "WaterDrop",
         "DeployEngine",
         "MonitorArea",
+        "Reconnoitre",
         "EvacuateZone",
         "EvacuateBuilding",
         "IssueWarning",

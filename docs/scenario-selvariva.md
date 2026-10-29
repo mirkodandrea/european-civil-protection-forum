@@ -28,7 +28,7 @@ Conca boscata di **6 × 6 km**: griglia fisica 300 × 300 a 20 m, terreno visual
 | Ruolo | Risorse iniziali | Decisioni |
 |---|---|---|
 | Coordinamento civile e assistenza (`coordinamento_civile`) | 4 autobus, 3 pattuglie | Avvisi, accoglienza, evacuazione, viabilità, assistenza e comunicati (narrativi) |
-| Direzione dei soccorsi AIB e VVF (`direzione_soccorso`) | 4 squadre, 2 autobotti, **1 drone**, nessun mezzo aereo | Linee, autobotti, lanci (dopo rinforzo), monitoraggio con il drone |
+| Direzione dei soccorsi AIB e VVF (`direzione_soccorso`) | 4 squadre, 2 autobotti, **1 drone**, nessun mezzo aereo | Linee, autobotti, lanci (dopo rinforzo), monitoraggio con il drone, ricognizione a terra con una squadra (`Reconnoitre`) |
 | Sala operativa e previsione (`sala_operativa`) | — | Richiesta rinforzi, quadro comune, SITREP, raccordo nazionale/ERCC (narrativo) |
 
 Rinforzi, dopo approvazione della richiesta della sala: 2 squadre in 35 minuti e 1 mezzo aereo in 45 (alla direzione dei soccorsi), 2 autobus in 30 (al coordinamento civile).

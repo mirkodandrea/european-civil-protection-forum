@@ -320,6 +320,10 @@ impl World {
             } => self.line_endpoints(from, to, along).ok().map(|(a, _)| a),
             Command::WaterDrop { at } | Command::DeployEngine { at } => self.resolve_loc(at).ok(),
             Command::MonitorArea { zones, .. } => self.monitor_centre(zones),
+            Command::Reconnoitre { zone, .. } => self
+                .recon_zone(zone)
+                .ok()
+                .and_then(|z| self.scn.zone_centre(&z)),
             Command::CloseRoad { road } => self
                 .find_road(road)
                 .and_then(|id| self.scn.road(&id))

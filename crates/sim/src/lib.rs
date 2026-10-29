@@ -947,7 +947,9 @@ impl World {
             {
                 if let Some(target) = self.travel_target(cmd) {
                     let resource = match cmd {
-                        Command::CutFireLine { .. } => "ground_crews",
+                        Command::CutFireLine { .. } | Command::Reconnoitre { .. } => {
+                            "ground_crews"
+                        }
                         Command::DeployEngine { .. } => "engines",
                         Command::CloseRoad { .. } => "police_patrols",
                         _ => "buses",
@@ -1029,6 +1031,11 @@ impl World {
                 self.check_drone_wind(&spec)?;
                 take(&resource, 1, "a monitoring drone")?;
                 notes.push(format!("drone over {}", covered.join(", ")));
+            }
+            Command::Reconnoitre { zone, .. } => {
+                let code = self.recon_zone(zone)?;
+                take("ground_crews", 1, "a ground reconnaissance")?;
+                notes.push(format!("1 crew reconnoitres {code}"));
             }
             Command::EvacuateZone { zone, destination } => {
                 let code = self
@@ -1397,6 +1404,25 @@ impl World {
             }
             Command::MonitorArea { .. } => {
                 out.push("Drone monitoring requires an allocated drone".into());
+            }
+            Command::Reconnoitre { zone, role } => {
+                // A crew on arrival reports for its role; EXCON names the role it informs.
+                let owner = match (actor, role) {
+                    (Actor::Role(id), _) => id.clone(),
+                    (Actor::Master, Some(id)) if self.scn.role(id).is_some() => id.clone(),
+                    (Actor::Master, Some(id)) => return Err(format!("unknown role {id}")),
+                    (Actor::Master, None) => {
+                        return Err("name the role that receives the reconnaissance".into())
+                    }
+                };
+                let code = self.recon_zone(zone)?;
+                self.record_reconnaissance(&owner, &code);
+                out.push(format!("reconnaissance of {code} reported to {owner}"));
+                self.event(
+                    "reconnaissance",
+                    format!("{owner}: ground reconnaissance reports on {code}"),
+                    Some(code),
+                );
             }
             Command::CutFireLine {
                 from,

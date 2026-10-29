@@ -7,6 +7,7 @@ const ROLE_ACTIONS: &[&str] = &[
     "WaterDrop",
     "DeployEngine",
     "MonitorArea",
+    "Reconnoitre",
     "EvacuateZone",
     "EvacuateBuilding",
     "IssueWarning",

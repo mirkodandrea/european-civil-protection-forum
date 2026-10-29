@@ -178,7 +178,7 @@ def generate(template, seed=33):
         ('mayor','Coordinamento comunale','local','Avvisi, evacuazione e accoglienza nei due abitati. Concorda priorità e percorsi con il direttore antincendio.',
          ['IssueWarning','EvacuateZone','EvacuateBuilding','OpenShelter','CloseRoad','ReopenRoad'],{'buses':4,'police_patrols':3}),
         ('fire_commander','Direzione antincendio','regional','Scegli dove impegnare squadre, autobotti, mezzo aereo e drone di monitoraggio; i trasferimenti e la sicurezza limitano le missioni.',
-         ['CutFireLine','WaterDrop','DeployEngine','MonitorArea'],{'ground_crews':4,'air_tankers':1,'engines':2,'drones':1}),
+         ['CutFireLine','WaterDrop','DeployEngine','MonitorArea','Reconnoitre'],{'ground_crews':4,'air_tankers':1,'engines':2,'drones':1}),
         ('regional_cp','Sala di coordinamento','national','Raccogli il quadro di situazione, richiedi rinforzi e coordina comunicazione pubblica e assistenza esterna.',
          ['RequestReinforcement','IssueWarning','OpenShelter'],{}),
         ('volunteer_coordinator','Coordinamento assistenza','local','Organizza assistenza alle famiglie, supporto psicologico e raccolta dei bisogni con iniziative narrative sottoposte a EXCON. Nessuna missione sanitaria o ricerca è simulata automaticamente.',[],{})]]

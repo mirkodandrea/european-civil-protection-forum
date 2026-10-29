@@ -536,7 +536,7 @@ fn roles() -> Vec<Role> {
             level: "local".into(),
             language: "en".into(),
             description: "Commands firefighting: fire lines (fuel breaks) with ground crews, water drops with air tankers, aerial monitoring with a drone.".into(),
-            allowed_actions: acts(&["CutFireLine", "WaterDrop", "DeployEngine", "MonitorArea"]),
+            allowed_actions: acts(&["CutFireLine", "WaterDrop", "DeployEngine", "MonitorArea", "Reconnoitre"]),
             resources: res(&[("ground_crews", 3), ("air_tankers", 1), ("engines", 2), ("drones", 1)]),
         },
         Role {

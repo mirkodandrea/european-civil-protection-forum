@@ -1,4 +1,5 @@
-//! What a monitoring drone teaches its owner. The simulator samples the world
+//! What a monitoring drone (or a ground reconnaissance crew, a one-off
+//! sample) teaches its owner. The simulator samples the world
 //! at each update instant of simulated time ([`sim::MonitorSample`]); here every
 //! sample becomes a [`KnowledgeEvent`] of source `Monitoring`, tied to no
 //! message so the inbox is not flooded. Only mission start and end send one
@@ -13,6 +14,9 @@ use sim::{MonitorSample, SampleKind};
 pub const DRONE_LAYERS: [&str; 5] = ["fire", "buildings", "roads", "lines", "units"];
 /// Who players hear a drone observation from.
 pub const DRONE_SOURCE: &str = "Drone";
+/// Who players hear a ground reconnaissance report from.
+pub const RECON_SOURCE: &str = "Reconnaissance crew";
+pub const RECON_SOURCE_IT: &str = "Squadra di ricognizione";
 
 impl Exercise {
     /// Take up the samples the simulator recorded since the last call. Safe to
@@ -31,6 +35,11 @@ impl Exercise {
         let clock = move |t: i64| scenario::format_clock(start + t);
         let italian = self.language_of(&s.role) == "it";
         let zones = s.zones.join(", ");
+        let source = if s.recon {
+            if italian { RECON_SOURCE_IT } else { RECON_SOURCE }
+        } else {
+            DRONE_SOURCE
+        };
         if s.kind != SampleKind::End {
             let layers: Vec<String> = DRONE_LAYERS.iter().map(|l| l.to_string()).collect();
             let Ok(observation) = self.zone_observation_from(&s.view, &s.zones, &layers) else {
@@ -45,7 +54,7 @@ impl Exercise {
                 source: KnowledgeSource::Monitoring,
                 observation,
                 timeline: self.log.iter().filter(|e| e.kind == "rollback").count(),
-                source_name: Some(DRONE_SOURCE.into()),
+                source_name: Some(source.into()),
                 layers,
             };
             self.record("map_information_acquired", MASTER, json!(&event));
@@ -53,6 +62,18 @@ impl Exercise {
         }
         let (title, text, text_en) = match s.kind {
             SampleKind::Update => return,
+            SampleKind::Start if s.recon => {
+                let at = clock(s.t_s);
+                (
+                    if italian { "Ricognizione completata" } else { "Reconnaissance report" },
+                    if italian {
+                        format!("La squadra di ricognizione ha osservato la zona {zones} alle {at}: la mappa di questa zona è aggiornata a quell’ora. La squadra resta impiegata finché l’EXCON non ne conferma il rientro.")
+                    } else {
+                        format!("The reconnaissance crew observed zone {zones} at {at}: the map of this zone is updated to that time. The crew stays deployed until EXCON confirms its return.")
+                    },
+                    format!("The reconnaissance crew observed zone {zones} at {at}: the map of this zone is updated to that time. The crew stays deployed until EXCON confirms its return."),
+                )
+            }
             SampleKind::Start => (
                 if italian { "Drone in posizione" } else { "Drone on station" },
                 if italian {
@@ -89,7 +110,7 @@ impl Exercise {
             &text_en,
             None,
         );
-        let persona = self.persona_for(Some(DRONE_SOURCE), None);
+        let persona = self.persona_for(Some(source), None);
         self.set_message_persona(mid, persona);
     }
 

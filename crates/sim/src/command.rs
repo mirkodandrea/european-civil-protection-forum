@@ -69,6 +69,16 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
     },
+    /// Ground reconnaissance: one crew travels to a zone of the evacuation grid
+    /// (a code like `"F4"` or a named place) and, on arrival, reports once what
+    /// it sees there: the owner's map of that zone is updated at that instant.
+    Reconnoitre {
+        zone: String,
+        /// Role that receives the report when EXCON orders it directly;
+        /// players always send their own crews.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
     /// Evacuate every occupied building in a zone of the evacuation grid.
     EvacuateZone {
         zone: String,
@@ -166,6 +176,7 @@ pub const ALL_KINDS: &[&str] = &[
     "WaterDrop",
     "DeployEngine",
     "MonitorArea",
+    "Reconnoitre",
     "EvacuateZone",
     "EvacuateBuilding",
     "IssueWarning",
@@ -190,6 +201,7 @@ impl Command {
             Command::WaterDrop { .. } => "WaterDrop",
             Command::DeployEngine { .. } => "DeployEngine",
             Command::MonitorArea { .. } => "MonitorArea",
+            Command::Reconnoitre { .. } => "Reconnoitre",
             Command::EvacuateZone { .. } => "EvacuateZone",
             Command::EvacuateBuilding { .. } => "EvacuateBuilding",
             Command::IssueWarning { .. } => "IssueWarning",
@@ -230,6 +242,7 @@ impl Command {
             },
             Command::DeployEngine { at } => format!("Deploy engine at {}", loc(at)),
             Command::MonitorArea { zones, .. } => format!("Drone monitoring {}", zones.join(", ")),
+            Command::Reconnoitre { zone, .. } => format!("Ground reconnaissance of {zone}"),
             Command::WaterDrop { at } => format!("Water drop on {}", loc(at)),
             Command::EvacuateZone { zone, destination } => {
                 format!(
@@ -389,6 +402,10 @@ pub fn catalogue(allowed: &[String]) -> String {
             r#"{"type":"MonitorArea","zones":["F3-G4"]}  — send the monitoring drone over grid zones (codes like "F3", or a rectangle "F3-G4"; at most 4 zones in all). It flies from the staging base, then keeps the map of those zones updated every few minutes until its battery ends, and returns to recharge."#,
         ),
         (
+            "Reconnoitre",
+            r#"{"type":"Reconnoitre","zone":"F4"}  — send one ground crew to reconnoitre a grid zone (code like "F4" or a named place). It travels from the staging base by road or on foot; on arrival it reports once what it sees there (fire, buildings, roads, lines, units) and the map of that zone is updated at that time. The crew stays deployed until EXCON confirms its return. One zone per order: use several orders for several zones."#,
+        ),
+        (
             "AdvanceTime",
             r#"{"type":"AdvanceTime","minutes":60}  — skip simulated time."#,
         ),
@@ -501,6 +518,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 19);
+        assert_eq!(ALL_KINDS.len(), 20);
     }
 }

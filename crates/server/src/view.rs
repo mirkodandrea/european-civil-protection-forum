@@ -80,6 +80,7 @@ fn deployment(w: &sim::World, task: &sim::DeploymentTask) -> Deployment {
                 .get(&task.id)
                 .map(|m| m.zones.clone())
                 .unwrap_or_else(|| w.parse_monitor_zones(zones).unwrap_or_default()),
+            sim::Command::Reconnoitre { zone, .. } => w.parse_monitor_zones(std::slice::from_ref(zone)).unwrap_or_default(),
             _ => Vec::new(),
         },
     }

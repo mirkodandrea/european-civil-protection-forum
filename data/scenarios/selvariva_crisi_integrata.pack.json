@@ -29,7 +29,7 @@
       {
         "id": "ground_crews",
         "name": "Squadre AIB a terra",
-        "description": "Squadre per linee di controllo. Ogni unità opera entro il limite di lavoro del modello; l’effetto inizia dopo il trasferimento. Presidio, ricognizione a piedi e bonifica manuale restano iniziative narrative EXCON.",
+        "description": "Squadre per linee di controllo. Ogni unità opera entro il limite di lavoro del modello; l’effetto inizia dopo il trasferimento. Una squadra può anche fare una ricognizione (Reconnoitre) di una zona: all’arrivo riferisce una volta cosa vede e la mappa della direzione si aggiorna a quell’ora. Presidio e bonifica manuale restano iniziative narrative EXCON.",
         "speed_mps": 2.0
       },
       {
@@ -95,12 +95,13 @@
         "name": "Direzione dei soccorsi AIB e VVF",
         "level": "local",
         "language": "it",
-        "description": "Accorpa DOS, squadre AIB e VVF. Dispone di 4 squadre a terra, 2 autobotti e 1 drone di monitoraggio; nessun mezzo aereo all’inizio. Il drone (MonitorArea) aggiorna la tua mappa su fino a 4 zone contigue mentre è in posizione: scegli dove serve e quando, perché poi deve rientrare e ricaricarsi. Motiva priorità tra bosco e strutture, accesso, acqua, rifornimento e ritorno delle unità. Richiede rinforzi alla sala indicando capacità, luogo e ultimo orario utile. I VVF non svolgono pattugliamento. Ricognizione a terra, gestori elettrico/idrico, bonifica e limiti reali del volo sono gestiti narrativamente da EXCON; la propagazione e le missioni fisiche si leggono dal modello.",
+        "description": "Accorpa DOS, squadre AIB e VVF. Dispone di 4 squadre a terra, 2 autobotti e 1 drone di monitoraggio; nessun mezzo aereo all’inizio. Il drone (MonitorArea) aggiorna la tua mappa su fino a 4 zone contigue mentre è in posizione: scegli dove serve e quando, perché poi deve rientrare e ricaricarsi. Motiva priorità tra bosco e strutture, accesso, acqua, rifornimento e ritorno delle unità. Richiede rinforzi alla sala indicando capacità, luogo e ultimo orario utile. I VVF non svolgono pattugliamento. La ricognizione a terra (Reconnoitre) impegna una squadra AIB: raggiunge una zona e riferisce una volta cosa vede, poi resta impiegata finché l’EXCON non ne conferma il rientro. Gestori elettrico/idrico, bonifica e limiti reali del volo sono gestiti narrativamente da EXCON; la propagazione e le missioni fisiche si leggono dal modello.",
         "allowed_actions": [
           "CutFireLine",
           "DeployEngine",
           "WaterDrop",
-          "MonitorArea"
+          "MonitorArea",
+          "Reconnoitre"
         ],
         "resources": {
           "ground_crews": 4,

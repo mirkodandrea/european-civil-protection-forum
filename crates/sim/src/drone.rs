@@ -34,6 +34,8 @@ pub struct MonitorSample {
     pub reason: Option<String>,
     /// When the drone can fly again (End only).
     pub available_s: Option<i64>,
+    /// A ground reconnaissance report ([`Command::Reconnoitre`]), not a drone.
+    pub recon: bool,
 }
 
 /// Schedule of a drone on station, keyed by task id.
@@ -207,6 +209,30 @@ impl World {
             view,
             reason,
             available_s,
+            recon: false,
+        });
+    }
+
+    /// The zone a reconnaissance order names: a code (`"F4"`) or a named place.
+    pub(crate) fn recon_zone(&self, entry: &str) -> Result<String, String> {
+        self.zone_code(entry)
+            .or_else(|| self.place_zone(entry))
+            .ok_or_else(|| format!("unknown zone \"{}\" for a reconnaissance", entry.trim()))
+    }
+
+    /// A ground crew reports once what it sees over `zone` now, for `role`.
+    pub(crate) fn record_reconnaissance(&mut self, role: &str, zone: &str) {
+        let view = self.view();
+        self.d.monitor_samples.push(MonitorSample {
+            task: 0,
+            role: role.into(),
+            kind: SampleKind::Start,
+            t_s: self.time_s(),
+            zones: vec![zone.into()],
+            view,
+            reason: None,
+            available_s: None,
+            recon: true,
         });
     }
 

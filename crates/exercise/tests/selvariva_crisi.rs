@@ -57,6 +57,7 @@ fn the_fire_director_owns_a_drone_that_flies_in_the_announced_wind() {
     let ds = scn.role("direzione_soccorso").unwrap();
     assert_eq!(ds.resources.get("drones"), Some(&1));
     assert!(ds.allowed_actions.iter().any(|a| a == "MonitorArea"));
+    assert!(ds.allowed_actions.iter().any(|a| a == "Reconnoitre"), "the fire director can send a ground reconnaissance");
     let spec = scn.drone_spec("drones").unwrap();
     let windy = scn.msel.iter().find(|i| i.id == "SCS-05").unwrap();
     let kmh = windy.actions[0].command["wind_speed_kmh"].as_f64().unwrap() as f32;
