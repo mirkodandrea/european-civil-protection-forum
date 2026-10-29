@@ -32,7 +32,7 @@ const LAYERS: [(u8, &str); 8] = [
     (L_FOG, "l_fog"),
 ];
 
-/// Visible window in bitmap pixels: top-left `(ox, oy)`, width `SIZE / z`.
+/// Visible window in territory units: top-left `(ox, oy)`, width `Frame::fw / z`.
 #[derive(Clone, Copy, PartialEq)]
 pub struct View {
     z: f64,
@@ -45,24 +45,56 @@ impl View {
         ox: 0.,
         oy: 0.,
     };
-    fn clamp(&mut self, bh: f64) {
+    /// Keep the territory in view: an axis wider than the territory centres
+    /// it, a narrower one stays inside it.
+    fn clamp(&mut self, f: Frame) {
+        fn axis(o: f64, extent: f64, visible: f64) -> f64 {
+            if visible >= extent {
+                (extent - visible) / 2.
+            } else {
+                o.clamp(0., extent - visible)
+            }
+        }
         self.z = self.z.clamp(1., MAX_ZOOM);
-        self.ox = self.ox.clamp(0., SIZE - SIZE / self.z);
-        self.oy = self.oy.clamp(0., bh - bh / self.z);
+        self.ox = axis(self.ox, SIZE, f.fw / self.z);
+        self.oy = axis(self.oy, f.th, f.fh / self.z);
     }
-    /// Zoom by `f` keeping the bitmap point under the fractional cursor `(fx, fy)` fixed.
-    fn zoom_at(&mut self, f: f64, fx: f64, fy: f64, bh: f64) {
-        let px = self.ox + fx * SIZE / self.z;
-        let py = self.oy + fy * bh / self.z;
+    /// Zoom by `f` keeping the territory point under the fractional cursor `(fx, fy)` fixed.
+    fn zoom_at(&mut self, f: f64, fx: f64, fy: f64, fr: Frame) {
+        let px = self.ox + fx * fr.fw / self.z;
+        let py = self.oy + fy * fr.fh / self.z;
         self.z = (self.z * f).clamp(1., MAX_ZOOM);
-        self.ox = px - fx * SIZE / self.z;
-        self.oy = py - fy * bh / self.z;
-        self.clamp(bh);
+        self.ox = px - fx * fr.fw / self.z;
+        self.oy = py - fy * fr.fh / self.z;
+        self.clamp(fr);
     }
-    fn pan(&mut self, dfx: f64, dfy: f64, bh: f64) {
-        self.ox -= dfx * SIZE / self.z;
-        self.oy -= dfy * bh / self.z;
-        self.clamp(bh);
+    fn pan(&mut self, dfx: f64, dfy: f64, fr: Frame) {
+        self.ox -= dfx * fr.fw / self.z;
+        self.oy -= dfy * fr.fh / self.z;
+        self.clamp(fr);
+    }
+}
+/// The map viewport in territory units (`SIZE` wide, `th` tall): `(fw, fh)` is
+/// what the whole canvas shows at zoom 1. The canvas is any rectangle; the
+/// territory keeps its proportions, fits at zoom 1 and the spare width or
+/// height shows more terrain once zoomed in.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Frame {
+    th: f64,
+    fw: f64,
+    fh: f64,
+}
+impl Frame {
+    fn new(th: f64, css_w: f64, css_h: f64) -> Frame {
+        if css_w <= 0. || css_h <= 0. || th <= 0. {
+            return Frame { th, fw: SIZE, fh: th.max(1.) };
+        }
+        let a = css_w / css_h;
+        if a >= SIZE / th {
+            Frame { th, fw: th * a, fh: th }
+        } else {
+            Frame { th, fw: SIZE, fh: SIZE / a }
+        }
     }
 }
 #[derive(Default)]
@@ -131,8 +163,10 @@ pub fn situation_map(props: &MapProps) -> Html {
     let pinned = use_state(|| None::<(f64, f64)>);
     let geometry = geom(&props.stat);
     let bh = geometry.map(|g| g.3).unwrap_or(SIZE);
-    let bh_ref = use_mut_ref(|| bh);
-    *bh_ref.borrow_mut() = bh;
+    let bh_ref = use_mut_ref(|| Frame::new(bh, 0., 0.));
+    if bh_ref.borrow().th != bh {
+        *bh_ref.borrow_mut() = Frame::new(bh, 0., 0.);
+    }
     let current = *view.borrow();
     let pan_zoom = props.pan_zoom;
     let pz_ref = use_mut_ref(|| pan_zoom);
@@ -141,13 +175,15 @@ pub fn situation_map(props: &MapProps) -> Html {
         let view = view.clone();
         let redraw = tick.dispatcher();
         let stat = props.stat.clone();
+        let frame_ref = bh_ref.clone();
         use_effect_with(props.focus, move |focus| {
-            if let (Some((x, y, _)), Some((_, h, k, bh))) = (*focus, geom(&stat)) {
+            if let (Some((x, y, _)), Some((_, h, k, _))) = (*focus, geom(&stat)) {
+                let fr = *frame_ref.borrow();
                 let mut v = view.borrow_mut();
                 v.z = 3.;
-                v.ox = x * k - SIZE / (2. * v.z);
-                v.oy = (h - y) * k - bh / (2. * v.z);
-                v.clamp(bh);
+                v.ox = x * k - fr.fw / (2. * v.z);
+                v.oy = (h - y) * k - fr.fh / (2. * v.z);
+                v.clamp(fr);
                 drop(v);
                 redraw.dispatch(());
             }
@@ -169,8 +205,14 @@ pub fn situation_map(props: &MapProps) -> Html {
             ),
             {
                 let view = view.clone();
+                let frame_ref = bh_ref.clone();
                 move |(stat, v, simple, pending, lang, _, hidden, (selected, marked))| {
                     if let Some(canvas) = canvas.cast::<HtmlCanvasElement>() {
+                        // The viewport follows the canvas box; the view stays valid in it.
+                        let rect = canvas.get_bounding_client_rect();
+                        let fr = Frame::new(frame_ref.borrow().th, rect.width(), rect.height());
+                        *frame_ref.borrow_mut() = fr;
+                        view.borrow_mut().clamp(fr);
                         let _ = draw(
                             &canvas,
                             stat,
@@ -179,6 +221,7 @@ pub fn situation_map(props: &MapProps) -> Html {
                             pending.as_ref(),
                             lang,
                             *view.borrow(),
+                            fr,
                             *hidden,
                             selected,
                             marked,
@@ -288,9 +331,13 @@ pub fn situation_map(props: &MapProps) -> Html {
             if rect.width() <= 0. || rect.height() <= 0. {
                 return None;
             }
+            let fr = Frame::new(bh, rect.width(), rect.height());
             let v = *view.borrow();
-            let bx = v.ox + (cx - rect.left()) / rect.width() * SIZE / v.z;
-            let by = v.oy + (cy - rect.top()) / rect.height() * bh / v.z;
+            let bx = v.ox + (cx - rect.left()) / rect.width() * fr.fw / v.z;
+            let by = v.oy + (cy - rect.top()) / rect.height() * fr.fh / v.z;
+            if !(0. ..=SIZE).contains(&bx) || !(0. ..=bh).contains(&by) {
+                return None;
+            }
             Some((
                 (bx / k).round().clamp(0., w - 1.),
                 (h - by / k).round().clamp(0., h - 1.),
@@ -319,9 +366,10 @@ pub fn situation_map(props: &MapProps) -> Html {
                     .cast::<HtmlCanvasElement>()
                     .and_then(|c| {
                         let rect = c.get_bounding_client_rect();
-                        let (_, _, k, _) = geom(&stat)?;
+                        let (_, _, k, bh) = geom(&stat)?;
+                        let fr = Frame::new(bh, rect.width(), rect.height());
                         (rect.width() > 0.)
-                            .then_some(12. / (k * view.borrow().z * rect.width() / SIZE))
+                            .then_some(12. / (k * view.borrow().z * rect.width() / fr.fw))
                     })
                     .unwrap_or(0.);
                 let (building, road) = pick_static(&stat, x, y, tol, hidden, simple);
@@ -498,15 +546,17 @@ pub fn situation_map(props: &MapProps) -> Html {
     let fit_fire = {
         let view = view.clone();
         let redraw = tick.dispatcher();
+        let bh_ref = bh_ref.clone();
         Callback::from(move |_: MouseEvent| {
+            let bh = *bh_ref.borrow();
             if let Some((x0, y0, x1, y1)) = fire_box {
                 let (cx, cy) = ((x0 + x1) / 2., (y0 + y1) / 2.);
                 let pad = 1.4;
                 let mut v = view.borrow_mut();
-                v.z = (SIZE / ((x1 - x0) * pad).max(1.)).min(bh / ((y1 - y0) * pad).max(1.));
+                v.z = (bh.fw / ((x1 - x0) * pad).max(1.)).min(bh.fh / ((y1 - y0) * pad).max(1.));
                 v.z = v.z.clamp(1., MAX_ZOOM.min(6.));
-                v.ox = cx - SIZE / v.z / 2.;
-                v.oy = cy - bh / v.z / 2.;
+                v.ox = cx - bh.fw / v.z / 2.;
+                v.oy = cy - bh.fh / v.z / 2.;
                 v.clamp(bh);
                 drop(v);
                 redraw.dispatch(());
@@ -551,7 +601,7 @@ pub fn situation_map(props: &MapProps) -> Html {
         if props.tools {<div class="map-tools" role="toolbar" aria-label={t("map_tools")}>
             <button type="button" title={t("map_zoom_in")} aria-label={t("map_zoom_in")} onclick={zoom_button(1.5)} disabled={current.z >= MAX_ZOOM}>{"+"}</button>
             <button type="button" title={t("map_zoom_out")} aria-label={t("map_zoom_out")} onclick={zoom_button(1. / 1.5)} disabled={current.z <= 1.}>{"−"}</button>
-            <button type="button" title={t("map_reset")} aria-label={t("map_reset")} onclick={reset} disabled={current == View::HOME}>{"⟲"}</button>
+            <button type="button" title={t("map_reset")} aria-label={t("map_reset")} onclick={reset} disabled={current.z <= 1.0001}>{"⟲"}</button>
             <button type="button" title={t("map_fit_fire")} aria-label={t("map_fit_fire")} onclick={fit_fire} disabled={fire_box.is_none()}>{"🔥"}</button>
             <button type="button" title={t("map_fullscreen")} aria-label={t("map_fullscreen")} onclick={fullscreen}>{"⛶"}</button>
             <details class="map-layers"><summary title={t("map_layers")} aria-label={t("map_layers")}>{"☰"}</summary><div>
@@ -973,7 +1023,60 @@ fn label_font_px(zoom: f64) -> f64 {
     (12. + 1.1 * zoom.max(1.).ln()).min(14.5)
 }
 /// Zone codes: small, light, always drawn.
-const ZONE_FONT: &str = "600 11px system-ui";
+const ZONE_FONT: &str = "600 10px system-ui";
+/// A zone cell this wide on screen (CSS px) also shows its own code.
+const CELL_CODES_PX: f64 = 150.;
+/// A zone code on screen: an axis letter/number, or a cell's own code.
+#[derive(Debug, PartialEq)]
+struct ZoneMark {
+    text: String,
+    x: f64,
+    y: f64,
+    cell: bool,
+}
+/// Where zone codes go for zones `zs` CSS px wide whose territory starts at
+/// `origin` in a `cw`×`ch` viewport: letters along the top edge and numbers
+/// along the left edge of the visible territory; once cells are at least
+/// [`CELL_CODES_PX`] wide, each visible cell's code in its corner instead.
+fn zone_marks(zs: f64, origin: (f64, f64), (cols, rows): (u64, u64), (cw, ch): (f64, f64)) -> Vec<ZoneMark> {
+    let mut out = Vec::new();
+    if zs <= 0. {
+        return out;
+    }
+    let (right, bottom) = (origin.0 + cols as f64 * zs, origin.1 + rows as f64 * zs);
+    let (left, top) = (origin.0.max(0.), origin.1.max(0.));
+    let (right, bottom) = (right.min(cw), bottom.min(ch));
+    if right - left < 10. || bottom - top < 10. {
+        return out;
+    }
+    let (ay, ax) = (top + 8., left + 8.);
+    if zs >= CELL_CODES_PX {
+        // Zoomed in: each visible cell names itself; the axes would repeat it.
+        for rw in 0..rows {
+            for c in 0..cols {
+                let (l, t) = ((origin.0 + c as f64 * zs).max(left), (origin.1 + rw as f64 * zs).max(top));
+                let (r, b) = ((origin.0 + (c + 1) as f64 * zs).min(right), (origin.1 + (rw + 1) as f64 * zs).min(bottom));
+                if r - l >= 60. && b - t >= 40. {
+                    out.push(ZoneMark { text: format!("{}{}", (b'A' + c as u8) as char, rw + 1), x: l + 22., y: t + 22., cell: true });
+                }
+            }
+        }
+        return out;
+    }
+    for c in 0..cols {
+        let (l, r) = ((origin.0 + c as f64 * zs).max(left), (origin.0 + (c + 1) as f64 * zs).min(right));
+        if r - l >= 14. {
+            out.push(ZoneMark { text: ((b'A' + c as u8) as char).to_string(), x: (l + r) / 2., y: ay, cell: false });
+        }
+    }
+    for rw in 0..rows {
+        let (t, b) = ((origin.1 + rw as f64 * zs).max(top), (origin.1 + (rw + 1) as f64 * zs).min(bottom));
+        if b - t >= 14. && (t + b) / 2. > ay + 10. {
+            out.push(ZoneMark { text: (rw + 1).to_string(), x: ax, y: (t + b) / 2., cell: false });
+        }
+    }
+    out
+}
 /// A label as shown at `zoom`: long names are shortened at overview zoom.
 fn label_text(text: &str, zoom: f64) -> String {
     let max = if zoom < 1.6 { 18 } else if zoom < 3. { 28 } else { usize::MAX };
@@ -993,6 +1096,8 @@ fn draw_labels(
     ctx: &CanvasRenderingContext2d,
     canvas: &HtmlCanvasElement,
     vw: View,
+    css_per_unit: f64,
+    dpr: f64,
     zsize: f64,
     (zcols, zrows): (u64, u64),
     reqs: &[LabelReq],
@@ -1005,16 +1110,14 @@ fn draw_labels(
         return Ok(());
     }
     let (cw, ch) = (rect.width(), rect.height());
-    let sx = canvas.width() as f64 / cw;
-    let sy = canvas.height() as f64 / ch;
-    ctx.set_transform(sx, 0., 0., sy, 0., 0.)?;
-    let to_screen = |x: f64, y: f64| ((x - vw.ox) * vw.z / sx, (y - vw.oy) * vw.z / sy);
+    ctx.set_transform(dpr, 0., 0., dpr, 0., 0.)?;
+    let to_screen = |x: f64, y: f64| ((x - vw.ox) * css_per_unit, (y - vw.oy) * css_per_unit);
     let visible = |p: (f64, f64)| p.0 >= 0. && p.1 >= 0. && p.0 <= cw && p.1 <= ch;
     let fs = label_font_px(vw.z);
     let h = fs + 5.;
     let mut items: Vec<Item> = Vec::new();
     let mut texts: Vec<(String, bool)> = Vec::new();
-    let mut markers: Vec<Rect> = vec![Rect { x: cw - 200., y: ch - 46., w: 200., h: 46. }];
+    let mut markers: Vec<Rect> = vec![Rect { x: cw - 140., y: ch - 30., w: 140., h: 30. }];
     for b in badges {
         let p = to_screen(b.x, b.y);
         if visible(p) {
@@ -1047,32 +1150,27 @@ fn draw_labels(
         items.push(Item { w, h, anchor: p, prio: r.prio, forced: false, cands: vec![] });
         texts.push((shown, r.prio == 0));
     }
-    let n_named = items.len();
-    // Zone codes: centred in the visible part of the zone, moving to a corner on collision.
-    ctx.set_font(ZONE_FONT);
-    let (zw, zh) = (ctx.measure_text("W8")?.width() + 6., 15.);
-    for row in 0..zrows {
-        for col in 0..zcols {
-            let (l, t) = to_screen(col as f64 * zsize, row as f64 * zsize);
-            let (r, b) = to_screen((col + 1) as f64 * zsize, (row + 1) as f64 * zsize);
-            let (l, t, r, b) = (l.max(0.), t.max(0.), r.min(cw), b.min(ch));
-            if r - l < zw || b - t < zh {
-                continue;
-            }
-            let (cx, cy) = ((l + r) / 2. - zw / 2., (t + b) / 2. - zh / 2.);
-            let cands = vec![
-                (cx, cy),
-                (l + 3., t + 3.),
-                (r - zw - 3., t + 3.),
-                (l + 3., b - zh - 3.),
-                (r - zw - 3., b - zh - 3.),
-            ];
-            items.push(Item { w: zw, h: zh, anchor: (cx, cy), prio: 3, forced: true, cands });
-            texts.push((format!("{}{}", (b'A' + col as u8) as char, row + 1), false));
-        }
+    // Zone codes: column letters along the top and row numbers along the left
+    // edge of the visible territory (like chart axes); per-cell codes only when
+    // a cell is large on screen. No plates: small text with a thin halo.
+    let origin = to_screen(0., 0.);
+    let marks = zone_marks(zsize * css_per_unit, origin, (zcols, zrows), (cw, ch));
+    for m in &marks {
+        markers.push(Rect { x: m.x - 8., y: m.y - 7., w: 16., h: 14. });
     }
     let placed = place(&items, (cw, ch), &markers);
-    // Painting order: zone codes first (lowest), then labels by descending priority.
+    ctx.set_font(ZONE_FONT);
+    ctx.set_text_baseline("middle");
+    ctx.set_line_join("round");
+    ctx.set_line_width(3.);
+    ctx.set_stroke_style_str("rgba(255,255,255,.8)");
+    ctx.set_fill_style_str("rgba(18,43,44,.72)");
+    for m in &marks {
+        ctx.set_text_align(if m.cell { "left" } else { "center" });
+        ctx.stroke_text(&m.text, m.x, m.y)?;
+        ctx.fill_text(&m.text, m.x, m.y)?;
+    }
+    // Painting order: labels by descending priority.
     let mut order: Vec<usize> = (0..items.len()).filter(|&i| placed[i].is_some()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(items[i].prio));
     ctx.set_text_align("left");
@@ -1095,12 +1193,8 @@ fn draw_labels(
             ctx.set_fill_style_str("#122b2c");
             ctx.fill();
         }
-        let zone = i >= n_named;
-        // Light plates: zone codes barely tinted, names translucent, only
-        // critical names outlined.
-        ctx.set_fill_style_str(if zone {
-            "rgba(255,255,255,.5)"
-        } else if strong {
+        // Light plates: names translucent, only critical names outlined.
+        ctx.set_fill_style_str(if strong {
             "rgba(255,255,255,.9)"
         } else {
             "rgba(255,255,255,.72)"
@@ -1111,16 +1205,9 @@ fn draw_labels(
             ctx.set_line_width(1.);
             ctx.stroke_rect(rc.x + 0.5, rc.y + 0.5, rc.w - 1., rc.h - 1.);
         }
-        ctx.set_fill_style_str(if zone { "rgba(18,43,44,.8)" } else { "#122b2c" });
-        if zone {
-            ctx.set_font(ZONE_FONT);
-            ctx.set_text_align("center");
-            ctx.fill_text(txt, rc.x + rc.w / 2., rc.y + rc.h / 2. + 0.5)?;
-            ctx.set_text_align("left");
-        } else {
-            ctx.set_font(&format!("{} {fs}px system-ui", if strong { 650 } else { 500 }));
-            ctx.fill_text(txt, rc.x + 4., rc.y + rc.h / 2. + 0.5)?;
-        }
+        ctx.set_fill_style_str("#122b2c");
+        ctx.set_font(&format!("{} {fs}px system-ui", if strong { 650 } else { 500 }));
+        ctx.fill_text(txt, rc.x + 4., rc.y + rc.h / 2. + 0.5)?;
     }
     // Status badges on top, with a white halo.
     ctx.set_font("700 15px system-ui");
@@ -1146,6 +1233,7 @@ fn draw(
     pending: Option<&Value>,
     lang: &str,
     vw: View,
+    fr: Frame,
     hidden: u8,
     selected: &[String],
     marked: &[String],
@@ -1164,13 +1252,26 @@ fn draw(
     }
     let size = SIZE;
     let k = size / w;
-    canvas.set_width(size as u32);
-    canvas.set_height((h * k) as u32);
+    // The canvas bitmap matches its box (sharp at any size and pixel ratio);
+    // `sc` maps territory units to canvas pixels.
+    let rect = canvas.get_bounding_client_rect();
+    let (css_w, css_h) = if rect.width() > 0. && rect.height() > 0. {
+        (rect.width(), rect.height())
+    } else {
+        (size, h * k)
+    };
+    let dpr = window().device_pixel_ratio().clamp(1., 2.);
+    canvas.set_width((css_w * dpr).round() as u32);
+    canvas.set_height((css_h * dpr).round() as u32);
+    let sc = css_w * dpr / fr.fw * z;
     let ctx = canvas
         .get_context("2d")?
         .unwrap()
         .dyn_into::<CanvasRenderingContext2d>()?;
-    ctx.set_transform(z, 0., 0., z, -vw.ox * z, -vw.oy * z)?;
+    // Outside the territory: a quiet neutral margin.
+    ctx.set_fill_style_str("#dfe6e1");
+    ctx.fill_rect(0., 0., css_w * dpr, css_h * dpr);
+    ctx.set_transform(sc, 0., 0., sc, -vw.ox * sc, -vw.oy * sc)?;
     let raster = window()
         .document()
         .unwrap()
@@ -1347,7 +1448,7 @@ fn draw(
         }
     }
     ctx.set_line_width(u);
-    ctx.set_stroke_style_str("rgba(0,0,0,.25)");
+    ctx.set_stroke_style_str("rgba(0,0,0,.12)");
     for col in (0..=z["cols"].as_u64().unwrap_or(0)).filter(|_| on(L_GRID)) {
         ctx.begin_path();
         ctx.move_to(col as f64 * zsize, 0.);
@@ -1798,11 +1899,13 @@ fn draw(
         ctx.set_fill_style_str("#ffe000");
         ctx.fill();
     }
-    scale_bar(&ctx, k * vw.z, h * k, size)?;
+    scale_bar(&ctx, k * sc / dpr, (css_w, css_h), dpr)?;
     draw_labels(
         &ctx,
         canvas,
         vw,
+        sc / dpr,
+        dpr,
         zsize,
         (zcols, zrows),
         &reqs.into_inner(),
@@ -1814,21 +1917,21 @@ fn draw(
 fn scale_bar(
     ctx: &CanvasRenderingContext2d,
     px_per_m: f64,
-    bh: f64,
-    size: f64,
+    (size, bh): (f64, f64),
+    dpr: f64,
 ) -> Result<(), wasm_bindgen::JsValue> {
     let len_m = [10., 20., 50., 100., 200., 500., 1000., 2000., 5000., 10000.]
         .into_iter()
         .rev()
-        .find(|m| m * px_per_m <= 170.)
+        .find(|m| m * px_per_m <= 110.)
         .unwrap_or(10.);
-    ctx.set_transform(1., 0., 0., 1., 0., 0.)?;
+    ctx.set_transform(dpr, 0., 0., dpr, 0., 0.)?;
     let l = len_m * px_per_m;
-    let (x, y) = (size - 24. - l, bh - 18.);
-    ctx.set_fill_style_str("rgba(255,255,255,.8)");
-    ctx.fill_rect(x - 6., y - 22., l + 12., 32.);
+    let (x, y) = (size - 16. - l, bh - 10.);
+    ctx.set_fill_style_str("rgba(255,255,255,.7)");
+    ctx.fill_rect(x - 4., y - 16., l + 8., 22.);
     ctx.set_stroke_style_str("#122b2c");
-    ctx.set_line_width(2.);
+    ctx.set_line_width(1.5);
     ctx.begin_path();
     ctx.move_to(x, y - 6.);
     ctx.line_to(x, y);
@@ -1836,13 +1939,13 @@ fn scale_bar(
     ctx.line_to(x + l, y - 6.);
     ctx.stroke();
     ctx.set_fill_style_str("#122b2c");
-    ctx.set_font("14px system-ui");
+    ctx.set_font("11px system-ui");
     let label = if len_m >= 1000. {
         format!("{} km", len_m / 1000.)
     } else {
         format!("{len_m} m")
     };
-    ctx.fill_text(&label, x + 2., y - 9.)
+    ctx.fill_text(&label, x + 2., y - 7.)
 }
 
 #[cfg(test)]
@@ -1859,5 +1962,24 @@ mod label_tests {
         assert!(!label_shown("Margine nord di Roverechiare", 2, 1.));
         assert!(label_shown("Margine nord di Roverechiare", 2, 2.));
         assert!(label_shown("Pianalto", 2, 1.) && label_shown("Scuola di Roverechiare", 0, 1.));
+    }
+
+    #[test]
+    fn zone_codes_run_along_the_edges_and_reach_cells_only_when_zoomed() {
+        // Overview: 8 letters on top, 8 numbers on the left, no per-cell codes.
+        let overview = zone_marks(80., (100., 0.), (8, 8), (840., 640.));
+        assert_eq!(overview.iter().filter(|m| !m.cell).count(), 16);
+        assert!(overview.iter().all(|m| !m.cell));
+        assert_eq!(overview[0], ZoneMark { text: "A".into(), x: 140., y: 8., cell: false });
+        assert!(overview.iter().any(|m| m.text == "8" && (m.x - 108.).abs() < 0.1));
+        // Panned at mid zoom: axes only for the visible columns.
+        let mid = zone_marks(120., (-200., 0.), (8, 8), (500., 600.));
+        let letters: Vec<&str> = mid.iter().filter(|m| m.text.chars().all(|c| c.is_ascii_uppercase())).map(|m| m.text.as_str()).collect();
+        assert_eq!(letters, ["B", "C", "D", "E", "F"]);
+        // Zoomed: codes in the visible cells, no axes.
+        let zoomed = zone_marks(400., (-500., -300.), (8, 8), (800., 600.));
+        assert!(zoomed.iter().all(|m| m.cell));
+        assert!(zoomed.iter().any(|m| m.text == "C2"));
+        assert!(zoomed.iter().all(|m| m.x >= 0. && m.x <= 800. && m.y >= 0. && m.y <= 600.));
     }
 }

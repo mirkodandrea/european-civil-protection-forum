@@ -1,4 +1,4 @@
-// Invisible QA for always-visible zone codes in the tactical reply map.
+// Invisible QA for always-visible zone codes in the tactical reply map (axis letters/numbers at overview, per-cell codes when zoomed).
 // Uses a real EXCON inject and the ordinary player UI; no simulator state is mutated.
 const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
 const fs = require('fs');
@@ -50,7 +50,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
     };
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y, ...rest) {
       const canvas = this.canvas;
-      if (canvas?.id === 'work-map' && /^[A-H][1-8]$/.test(String(text))) {
+      if (canvas?.id === 'work-map' && /^([A-H]|[1-8]|[A-H][1-8])$/.test(String(text))) {
         const rect = canvas.getBoundingClientRect();
         const t = this.getTransform();
         const cssX = (t.a * x + t.e) * rect.width / canvas.width;
@@ -61,11 +61,11 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
           x: cssX, y: cssY, width: rect.width, height: rect.height,
           worldCenter: (() => {
             const world = worldTransforms.get(this);
-            if (!world) return null;
+            if (!world || !/^[A-H][1-8]$/.test(String(text))) return null;
             const col = String(text).charCodeAt(0) - 65;
             const row = Number(String(text).slice(1)) - 1;
-            const mapX = (col + 0.5) * canvas.width / 8;
-            const mapY = (row + 0.5) * canvas.height / 8;
+            const mapX = (col + 0.5) * 1200 / 8; // territory units (square 8x8 territory)
+            const mapY = (row + 0.5) * 1200 / 8;
             return {
               x: (world.a * mapX + world.e) * rect.width / canvas.width,
               y: (world.d * mapY + world.f) * rect.height / canvas.height,
@@ -84,7 +84,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
   const waitPaint = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const assertFontSize = (records, stage) => {
     assert(records.length > 0, `${stage}: instrumented zone codes were drawn`);
-    for (const record of records) assert(Math.abs(record.fontCSS - 11) < 0.2, `${stage}: ${record.code} perceived font ${record.fontCSS.toFixed(2)} CSS px`);
+    for (const record of records) assert(Math.abs(record.fontCSS - 10) < 0.2, `${stage}: ${record.code} perceived font ${record.fontCSS.toFixed(2)} CSS px`);
   };
   const saveFontEvidence = records => ({
     count: records.length,
