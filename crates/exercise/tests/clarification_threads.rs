@@ -124,7 +124,7 @@ fn closing_withdraws_an_unanswered_question_and_a_new_one_reopens() {
 fn clarification_without_inject_can_still_be_answered() {
     let mut ex = exercise();
     ex.start().unwrap();
-    let pid = ex.player_actions("mayor", "warn F4", vec![sim::Command::IssueWarning { zone: "F4".into() }], None).unwrap();
+    let pid = ex.player_actions("mayor", "warn F4", vec![sim::Command::IssueWarning { zone: "F4".into() }], None, exercise::BasisKind::OperationalJudgment).unwrap();
     ex.request_clarification(pid, "Why F4?").unwrap();
     let q = ex.deliver_clarification(pid, "Perche F4?", "Why F4?").unwrap();
     assert_eq!(ex.messages.iter().find(|m| m.id == q).unwrap().inject_id, None);

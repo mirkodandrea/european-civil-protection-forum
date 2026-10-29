@@ -17,7 +17,8 @@ quello corrente evidenziato.
   1. *Inject → narrativa*: EXCON invia, il Sindaco apre e risponde con una
      narrativa, EXCON approva in Risposte.
   2. *Suggerimenti AI al player*: la Polizia scrive la narrativa, arrivano i
-     suggerimenti automatici, li aggiunge e invia; EXCON vede le azioni.
+     suggerimenti automatici, ne associa uno (una sola azione per risposta),
+     indica il fondamento e invia; EXCON vede l’azione.
   3. *EXCON: suggerisci azioni*: su una narrativa senza azioni EXCON chiede i
      suggerimenti, li aggiunge, approva; il Sindaco vede l’esito.
   4. *Chiarimento*: EXCON chiede, il Sindaco risponde nel thread, EXCON chiude.

@@ -314,7 +314,6 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_master_chat,
                 post_reply,
                 post_player_actions,
-                narrative::submit,
                 narrative::outcome,
                 conversations::start,
                 conversations::post_message,
@@ -809,7 +808,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
                 } else { message.text.clone() };
                 Some(visible)
             }).collect::<Vec<_>>();
-            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "review": p.review, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "review":d.review, "rejected_actions":d.rejected_actions, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
+            json!({"id": p.id, "turn": p.turn, "t_s":p.t_s, "status": p.status, "original": p.original, "inject_id": p.inject_id, "reply_to": p.reply_to, "thread":thread, "narrative": p.narrative, "carries_actions": p.carries_actions, "commands": p.commands, "via_conversation": p.via_conversation, "communication": p.communication, "addressed_to": p.addressed_to, "narrative_outcomes":p.narrative_outcomes.iter().map(|o|json!({"text":o.player_text,"turn":o.turn,"t_s":o.t_s,"persona":ex.persona_name(o.persona.as_deref(),&player.language),"effects":o.interventions.iter().map(|x|x.description.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(), "declaration_kind": p.declaration_kind, "history": p.history, "clarification_request": p.clarification_request, "review": p.review, "decision": p.decision.as_ref().map(|d| json!({"approve":d.approve, "review":d.review, "rejected_actions":d.rejected_actions, "note":d.note, "t_s":d.t_s, "persona":ex.persona_name(d.persona.as_deref(),&player.language)})), "executions": p.executions, "evidence": p.evidence})
         })
         .collect();
     let inbox = ex

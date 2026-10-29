@@ -123,8 +123,29 @@ impl crate::player_view::PlayerView {
             });
         let answers_inject = selected_context.is_some_and(|m| m["kind"] == "inject");
         let has_narrative = !narrative_text.trim().is_empty();
-        // What the disabled "respond" button is waiting for.
-        let respond_missing = if self.state["phase"] != "orders" { Some("work_need_orders") } else if !has_narrative && staged.is_empty() { Some("work_need_response") } else if has_narrative && !answers_inject { Some("work_need_inject") } else { None };
+        // Communication or decision: an explicit choice (an action makes it a decision).
+        let work_kind = if staged.is_empty() { self.field("work:kind", "") } else { "decision".into() };
+        let decision = work_kind == "decision";
+        // Recipient: the fictitious sender of the inject, or real players.
+        let to_players_mode = self.field("work:to", "persona") == "players";
+        let to_players: Vec<String> = self.field("work:to_players", "").split(',').filter(|p| !p.is_empty()).map(String::from).collect();
+        let sender_name = selected_context
+            .map(|m| if m["persona"].is_string() { text(&m["persona"]).to_string() } else { self.name(text(&m["from"])) })
+            .unwrap_or_default();
+        // From a conversation only its participants can be addressed.
+        let player_choices: Vec<(String, String)> = match work_conversation.and_then(|cid| list(&self.state["linked_conversations"]).iter().find(|c| c["id"].as_u64() == Some(cid))) {
+            Some(c) => list(&c["participants"]).iter().map(text).filter(|p| *p != own).map(|p| (p.to_string(), self.name(p))).collect(),
+            None => self.contacts().iter().filter(|r| r["id"] != "master").map(|r| (text(&r["id"]).to_string(), text(&r["name"]).to_string())).collect(),
+        };
+        let work_basis_chosen = self.field("work:basis", "");
+        // What the disabled "send" button is waiting for.
+        let respond_missing = if self.state["phase"] != "orders" { Some("work_need_orders") }
+            else if !answers_inject { Some("work_need_inject") }
+            else if work_kind.is_empty() { Some("need_kind") }
+            else if !has_narrative && (!decision || staged.is_empty() || to_players_mode) { Some("need_text") }
+            else if decision && work_basis_chosen.is_empty() { Some("need_basis") }
+            else if to_players_mode && to_players.is_empty() { Some("need_players") }
+            else { None };
         // What the disabled "add action" button is waiting for.
         let work_missing = if work_allowed.is_empty() { Some("work_need_action") } else if pick != "none" && work_location.trim().is_empty() { Some("work_need_place") } else if pick == "line" && order_count == 0 { Some("work_need_second") } else if order_count == 0 { Some("work_need_place") } else { None };
         // Zone-type actions take grid codes, rectangles or named places; a building
@@ -163,11 +184,11 @@ impl crate::player_view::PlayerView {
         } else { String::new() };
         let selected_zones = if pick == "zones" { crate::place_pick::zones_of(&self.stat, &work_location) } else { Vec::new() };
         // What the response rests on; a PDF only goes with plans or laws.
-        let work_basis = self.field("work:basis", "operational_judgment");
+        let work_basis = work_basis_chosen.clone();
         let file_name = self.field("work:file_name", "");
         let file_size = self.field("work:file_size", "0").parse::<usize>().unwrap_or(0);
         let file_error = self.field("work:file_error", "");
-        let doc_allowed = work_basis != "operational_judgment";
+        let doc_allowed = work_basis == "plan" || work_basis == "law";
         let on_file = {
             let link = self.link.clone();
             Callback::from(move |e: Event| {
@@ -222,21 +243,54 @@ impl crate::player_view::PlayerView {
                 json!({"name": file_name.clone(), "content_type": "application/pdf", "data": self.field("work:file_data", "")})
             });
             let summary = staged.iter().map(|c| widgets::command_summary("en", c)).collect::<Vec<_>>().join("; ");
+            let (kind, players) = (work_kind.clone(), to_players_mode.then(|| to_players.clone()));
             self.cb(move |_| {
-                let mut body = json!({"commands":commands,"text":summary,"reply_to":parent,"conversation":work_conversation});
+                let decision = kind == "decision";
+                let mut body = json!({"kind":kind,"commands":if decision {commands.clone()} else {vec![]},"text":summary,"reply_to":parent,"conversation":work_conversation});
                 if !narrative.trim().is_empty() { body["narrative"] = json!(narrative); }
-                body["basis"] = json!(basis);
-                if let Some(attachment) = &attachment { body["attachment"] = attachment.clone(); }
+                if decision { body["basis"] = json!(basis); }
+                if let Some(players) = &players { body["to_players"] = json!(players); }
+                if let Some(attachment) = attachment.as_ref().filter(|_| decision) { body["attachment"] = attachment.clone(); }
                 let mut request = Action::post(format!("/api/player/{own}/actions"), body);
                 request.kind = ActionKind::WorkSubmit;
                 Msg::Action(request)
             })
         };
+        let pick_players = |id: String, on: bool| {
+            let current = to_players.clone();
+            self.cb(move |_| {
+                let mut next: Vec<String> = current.iter().filter(|p| **p != id).cloned().collect();
+                if !on { next.push(id.clone()) }
+                Msg::Field("work:to_players".into(), next.join(","))
+            })
+        };
         let work_editor = html! {            <section class="card" id="player-work">
+            <div class="work-block" data-work-block="recipient">
+                <h4 class="work-section">{i18n::t(l,"resp_to")}</h4>
+                <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"resp_to")}>
+                    <label class={classes!("basis-option",(!to_players_mode).then_some("is-selected"))}><input type="radio" name="work-to" id="to-sender" data-to="persona" checked={!to_players_mode} onchange={self.cb(|_|Msg::Field("work:to".into(),"persona".into()))}/><span>{i18n::tf(l,"resp_to_sender",&[&sender_name])}</span></label>
+                    <label class={classes!("basis-option",to_players_mode.then_some("is-selected"))}><input type="radio" name="work-to" id="to-players" data-to="players" checked={to_players_mode} disabled={player_choices.is_empty()} onchange={self.cb(|_|Msg::Field("work:to".into(),"players".into()))}/><span>{i18n::t(l,"resp_to_players")}</span></label>
+                </div>
+                if to_players_mode {<div class="work-players">{for player_choices.iter().map(|(id,name)|{let on=to_players.contains(id);html!{<label class="mt-check" key={id.clone()}><input type="checkbox" data-to-player={id.clone()} checked={on} onchange={pick_players(id.clone(),on)}/>{name.clone()}</label>}})}</div>}
+            </div>
+            <div class="work-block" data-work-block="kind">
+                <h4 class="work-section">{i18n::t(l,"resp_kind")}</h4>
+                <div class="basis-options kind-options" role="radiogroup" aria-label={i18n::t(l,"resp_kind")}>
+                    <label class={classes!("basis-option",(work_kind=="communication").then_some("is-selected"))}><input type="radio" name="work-kind" id="kind-communication" data-kind="communication" checked={work_kind=="communication"} disabled={!staged.is_empty()} onchange={self.cb(|_|Msg::Field("work:kind".into(),"communication".into()))}/><span><b>{i18n::t(l,"kind_comm")}</b><small>{i18n::t(l,"kind_comm_hint")}</small></span></label>
+                    <label class={classes!("basis-option",decision.then_some("is-selected"))}><input type="radio" name="work-kind" id="kind-decision" data-kind="decision" checked={decision} onchange={self.cb(|_|Msg::Field("work:kind".into(),"decision".into()))}/><span><b>{i18n::t(l,"kind_dec")}</b><small>{i18n::t(l,"kind_dec_hint")}</small></span></label>
+                </div>
+            </div>
+            <div class="work-block" data-work-block="narrative">
+                <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"resp_text")}</label></h4>
+                <p class="work-help" data-narrative-help="">{i18n::t(l,"resp_text_help")}</p>
+                <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={self.cb(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
+                if work_kind != "communication" {{self.view_suggestions(l, &staged)}}
+            </div>
+            if decision {
             <div class="work-block" data-work-block="basis">
-                <h4 class="work-section">{i18n::t(l,"step_basis")}</h4>
+                <h4 class="work-section">{format!("{} *",i18n::t(l,"step_basis"))}</h4>
                 <p class="work-help">{i18n::t(l,"basis_hint")}</p>
-                <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"step_basis")}>{for [("plan","basis_plan"),("law","basis_law"),("operational_judgment","basis_judgment")].into_iter().map(|(value,label)|html!{<label key={value} class={classes!("basis-option",(work_basis==value).then_some("is-selected"))}><input type="radio" name="work-basis" id={format!("basis-{value}")} value={value} checked={work_basis==value} onchange={self.cb(move |_|Msg::Field("work:basis".into(),value.into()))}/><span>{i18n::t(l,label)}</span></label>})}</div>
+                <div class="basis-options" role="radiogroup" aria-required="true" aria-label={i18n::t(l,"step_basis")}>{for [("plan","basis_plan"),("law","basis_law"),("operational_judgment","basis_judgment")].into_iter().map(|(value,label)|html!{<label key={value} class={classes!("basis-option",(work_basis==value).then_some("is-selected"))}><input type="radio" name="work-basis" id={format!("basis-{value}")} value={value} checked={work_basis==value} onchange={self.cb(move |_|Msg::Field("work:basis".into(),value.into()))}/><span>{i18n::t(l,label)}</span></label>})}</div>
                 <div class="work-attach" data-work-attach="">
                     <label for="work-pdf">{i18n::t(l,"doc_label")}</label>
                     if doc_allowed {
@@ -252,18 +306,11 @@ impl crate::player_view::PlayerView {
                     if !file_error.is_empty() {<p class="error" role="alert">{i18n::t(l,match file_error.as_str(){"doc_too_big"=>"doc_too_big","doc_not_pdf"=>"doc_not_pdf",_=>"doc_read_fail"})}</p>}
                 </div>
             </div>
-            <div class="work-block" data-work-block="narrative">
-                <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"step_narr")}</label></h4>
-                <p class="work-help" data-narrative-help="">{i18n::t(l,"narr_help")}</p>
-                <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={self.cb(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
-                <small class="muted">{i18n::t(l,"narrative_optional")}</small>
-                {self.view_suggestions(l, &staged)}
-            </div>
             <div class="work-block" data-work-block="actions">
-            <h4 class="work-section">{i18n::t(l,"step_actions")}</h4>
-            if staged.is_empty() {<p class="muted" data-staged-empty="">{i18n::t(l,"staged_none")}</p>}
+            <h4 class="work-section">{i18n::t(l,"sim_action")}</h4>
+            if staged.is_empty() {<p class="muted" data-staged-empty="">{i18n::t(l,"sim_action_none")}</p>}
             <ol class="staged-actions">{for staged.iter().enumerate().map(|(i,c)|html!{<li data-staged-action=""><span>{widgets::command_summary(l,c)}</span><button type="button" aria-label={i18n::t(l,"remove")} disabled={self.busy} onclick={self.cb(move |_|Msg::Unstage(i))}>{"×"}</button></li>})}</ol>
-            <details class="work-add" open=true><summary>{i18n::t(l,"add_action_title")}</summary>
+            <details class="work-add" open={staged.is_empty()}><summary>{i18n::t(l,"add_action_title")}</summary>
             <label for="work-action">{i18n::t(l,"action_type")}</label>
             <select id="work-action" value={work_action.clone()} onchange={{let old=work_action.clone();let loc=work_location.clone();self.batch(move |e|{let new=api::select(e);let mut m=vec![Msg::Field("work:notice".into(),String::new()),Msg::Field("work:anchor".into(),String::new())];if crate::place_pick::pick_for(&new)!=crate::place_pick::pick_for(&old)&&!loc.is_empty(){m.extend(["work:location","work:destination"].map(|k|Msg::Field(k.into(),String::new())));m.push(Msg::Field("work:target_field".into(),"work:location".into()));}m.push(Msg::Field("work:action".into(),new));m})}}>
                 {for work_allowed.iter().map(|v|html!{<option value={v.clone()} selected={*v==work_action}>{i18n::action(l,v)}</option>})}
@@ -288,16 +335,15 @@ impl crate::player_view::PlayerView {
             if pick=="line" && !crate::place_pick::is_zone_edge(&self.stat,&work_location) {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={self.cb(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
             if pick=="line" {<small class="muted work-hint">{i18n::t(l,"pick_hint_line")}</small>}
             if pick=="point" {<small class="muted work-hint">{i18n::t(l,"pick_hint_point")}</small>}
-            if work_conversation.is_none() {<label for="work-reply-to">{i18n::t(l,"reply_to")}</label>}
-            if work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={self.cb(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
             if work_action=="RequestReinforcement" {<label for="work-resource">{i18n::t(l,"resource_req")}</label><select id="work-resource" value={work_resource.clone()} onchange={self.cb(|e|Msg::Field("work:resource".into(),api::select(e)))}>{for self.stat["resource_types"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_resource}>{text(&r["name"])}</option>})}</select><label for="work-qty">{i18n::t(l,"quantity")}</label><input id="work-qty" type="number" min="1" value={work_qty} oninput={self.cb(|e|Msg::Field("work:qty".into(),api::input(e)))}/>}
             <button data-add-action="" disabled={self.busy||work_missing.is_some()} onclick={work_command}>{i18n::t(l,"add_action")}</button>
             if let Some(missing)=work_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}
             </details>
             </div>
+            }
             <div class="work-submit-bar">
-                <button class="primary" id="respond-submit" data-respond="" disabled={self.busy||respond_missing.is_some()} onclick={respond}>{i18n::t(l,"respond")}</button>
-                if let Some(missing)=respond_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}else{<small class="muted work-hint">{i18n::t(l,"respond_hint")}</small>}
+                <button class="primary" id="respond-submit" data-respond="" disabled={self.busy||respond_missing.is_some()} onclick={respond}>{i18n::t(l,"send_response")}</button>
+                if let Some(missing)=respond_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}else{<small class="muted work-hint">{i18n::t(l,if decision{"respond_hint"}else{"kind_comm_hint"})}</small>}
             </div>
         </section>};
         let mut view = self.state["map"].clone();
@@ -394,11 +440,10 @@ impl crate::player_view::PlayerView {
                 .map(|r| text(&r["name"]).to_string())
                 .unwrap_or(id.into())
         };
-        let open = self.cb(Msg::OpenWork);
         let can_act = self.state["phase"] == "orders" && !self.busy;
         html! {<>
         <main id="map-view" class="page tactical-view" hidden={self.active!="map"}>
-            <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div><div class="grow"/><button class="primary" id="new-player-action" disabled={!can_act} onclick={{let open=open.clone();Callback::from(move |_|open.emit(None))}}>{i18n::t(l,"new_action")}</button></section>
+            <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div></section>
             <section class="tactical-resources" id="resources" aria-label={i18n::t(l,"resources")}>{for self.state["resources"].as_object().into_iter().flatten().map(|(id,pool)|{let account=&self.state["resource_accounting"][id];html!{<div class="resource-token"><strong>{account["available"].to_string()}</strong><span>{resource_name(id)}<small>{i18n::tf(l,"res_of",&[&pool["total"].to_string(),&(account["committed"].as_u64().unwrap_or(0)+account["deployed"].as_u64().unwrap_or(0)).to_string()])}</small></span></div>}})}</section>
             <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
                 if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint")}</p>
@@ -409,7 +454,7 @@ impl crate::player_view::PlayerView {
                 {self.view_inject_panel(can_act,current_turn)}
             </section></div>
         </main>
-            if self.field("work:open","false")=="true"{<crate::inject_panel::ModalShell class={classes!("modal-backdrop","work-backdrop")} onkeydown={{let link=self.link.clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.emit(Msg::Field("work:open".into(),"false".into()));}})}}><section class="work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title"><header><h2 id="work-modal-title">{if let Some(message)=selected_context{if message["kind"]=="inject"{i18n::t(l,"reply_inject_title")}else{i18n::t(l,"reply_chat_title")}}else{i18n::t(l,"new_action_title")}}</h2><button aria-label={i18n::t(l,"close_reply")} disabled={self.busy} onclick={self.cb(|_|Msg::Field("work:open".into(),"false".into()))}>{i18n::t(l,"close")}</button></header>
+            if self.field("work:open","false")=="true"{<crate::inject_panel::ModalShell class={classes!("modal-backdrop","work-backdrop")} onkeydown={{let link=self.link.clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.emit(Msg::Field("work:open".into(),"false".into()));}})}}><section class="work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title"><header><h2 id="work-modal-title">{i18n::t(l,"respond_title")}</h2><button aria-label={i18n::t(l,"close_reply")} disabled={self.busy} onclick={self.cb(|_|Msg::Field("work:open".into(),"false".into()))}>{i18n::t(l,"close")}</button></header>
                 if let Some(message)=selected_context{<div class="work-context"><strong>{if message["kind"]=="inject"{text(&message["title"]).to_string()}else{self.name(text(&message["from"]))}}</strong><small>{text(&message["clock"])}</small><p>{text(if message["from"]==own && message["original"].is_string(){&message["original"]}else{&message["text"]})}</p>if message["kind"]=="inject"{<small>{format!("{}: {}",i18n::t(l,"reply_count"),response_count)}</small>}</div>}
                 if let Some(question)=clarifying_proposal.as_ref().and_then(|p|p["clarification_request"].as_str()){<div class="work-clarification" role="note" data-work-clarification={clarifying_proposal.as_ref().map(|p|p["id"].to_string()).unwrap_or_default()}><b>{format!("{} · {}",asker,i18n::t(l,"clarif_needed"))}</b><p>{question}</p>if let Some(p)=clarifying_proposal.as_ref(){<small class="muted">{text(&p["original"])}</small>}</div>}
                 <p class="work-approval-note">{i18n::t(l,"response_note")}</p>
@@ -475,7 +520,6 @@ impl crate::player_view::PlayerView {
             return html! {};
         }
         let open = fresh_suggestions(&result, staged);
-        let all = open.iter().map(|a| a["command"].clone()).collect::<Vec<_>>();
         html! {<div class={classes!("work-suggestions",stale.then_some("is-stale"))} data-work-suggestions={text(&result["status"]).to_string()} aria-live="polite">
             <b>{i18n::t(l,"sugg_title")}</b>
             if working {<p class="muted" data-suggestions-working="">{i18n::t(l,"sugg_working")}</p>}
@@ -492,7 +536,6 @@ impl crate::player_view::PlayerView {
                         <button type="button" data-add-suggestion={i.to_string()} disabled={self.busy} onclick={self.cb(move |_|Msg::StageActions(vec![cmd.clone()]))}>{i18n::t(l,"sugg_add")}</button>
                     </li>}
                 })}</ol>
-                if open.len()>1 {<button type="button" data-add-suggestions="" disabled={self.busy} onclick={self.cb(move |_|Msg::StageActions(all.clone()))}>{i18n::t(l,"sugg_add_all")}</button>}
             }
         </div>}
     }

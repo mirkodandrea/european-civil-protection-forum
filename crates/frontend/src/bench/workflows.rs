@@ -154,7 +154,7 @@ pub static BENCHES: &[BenchDef] = &[
         steps: &[
             Step { side: Column::Player("police"), text: ("apre l’inject e sceglie «Rispondi»", "opens the inject and picks “Reply”"), done: |w| w.field("police", "work:open") == "true" || w.latest("police").is_some() },
             Step { side: Column::Player("police"), text: ("scrive la narrativa (≥ 20 caratteri): arrivano i suggerimenti", "writes the narrative (≥ 20 characters): suggestions arrive"), done: |w| w.fake.trace.player_suggestions > 0 },
-            Step { side: Column::Player("police"), text: ("aggiunge le azioni suggerite", "adds the suggested actions"), done: |w| !w.field("police", "work:staged").is_empty() || w.latest("police").is_some_and(|p| !p.commands.is_empty()) },
+            Step { side: Column::Player("police"), text: ("associa un’azione suggerita (una sola per risposta)", "associates one suggested action (one per response)"), done: |w| !w.field("police", "work:staged").is_empty() || w.latest("police").is_some_and(|p| !p.commands.is_empty()) },
             Step { side: Column::Player("police"), text: ("invia: l’EXCON vede narrativa e azioni in Risposte", "sends: EXCON sees narrative and actions in Responses"), done: |w| w.latest("police").is_some_and(|p| p.narrative && !p.commands.is_empty()) },
         ],
     },

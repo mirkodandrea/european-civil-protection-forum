@@ -99,15 +99,17 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    mappa tattica sta a sinistra e l’elenco degli inject a destra. Un click su un
    inject apre al posto dell’elenco il dettaglio (indietro all’elenco, come nelle
    Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
-   conversazioni collegate e due azioni: **Rispondi** e **Nuova conversazione**.
-   Rispondi apre un modale quasi a schermo intero con mappa e modulo: una risposta
-   è una **narrazione facoltativa** più **zero o più azioni** (almeno una delle due).
-   Le azioni si aggiungono dal modulo strutturato oppure dai **suggerimenti AI**:
-   quando il player smette di scrivere la narrazione (pausa di 2,5 s, almeno 20
-   caratteri, una richiesta alla volta, nessun pulsante), l’AI la legge e propone
-   azioni del suo ruolo da aggiungere una per una o tutte insieme (vedi «Azioni
-   suggerite dall’AI» sotto). Il pulsante **Rispondi** invia tutto in una sola
-   volta. Ogni inject può ricevere più risposte.
+   conversazioni nate dall’inject (sotto le risposte) e due azioni: **Rispondi** e
+   **Avvia conversazione**. È l’unico percorso: niente «+ Nuova azione», niente
+   «Proponi azione» dalle chat, niente selettore «Rispondi a…» (vedi «Risposte per
+   inject» sotto). Rispondi apre un modale quasi a schermo intero con mappa e
+   modulo: destinatario (il mittente fittizio dell’inject o uno o più player),
+   tipo (**comunicazione** o **decisione/azione**), il testo «Descrivi la tua
+   risposta o decisione», e per una decisione il **fondamento** obbligatorio e al
+   più **una** azione di simulazione associata (dal modulo o dai **suggerimenti
+   AI**: quando il player smette di scrivere, pausa di 2,5 s, almeno 20 caratteri,
+   l’AI propone azioni del suo ruolo; associarne una sostituisce la precedente).
+   Ogni inject può ricevere più risposte.
 3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
    destinatario, badge delle approvazioni), ne controlla la fattibilità e decide:
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta con i suoi comandi; la
@@ -116,9 +118,9 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    `clarification_answered` e registrato). Modificando i
    parametri la fattibilità è ricalcolata in automatico (`/revalidate`).
    La tab Risposte mostra solo gli inject effettivamente inviati e, per ciascuno,
-   l'intero thread in ordine (inject, risposte, chiarimenti EXCON; le chat tra
-   player restano private). Rispondendo a un chiarimento il selettore
-   «Rispondi a inject» non è offerto: resta solo per le azioni indipendenti.
+   l'intero thread in ordine (inject, risposte con tipo, destinatario e stato,
+   chiarimenti EXCON) e sotto le conversazioni tra player nate dall’inject, con la
+   trascrizione.
 4. Le azioni approvate vengono eseguite o applicate durante l'avanzamento del
    tempo simulato. Le mappe, gli aggiornamenti ai ruoli, il registro e il debrief
    mostrano gli effetti.
@@ -200,6 +202,42 @@ l’approvazione non indica una missione completata. Il salvataggio della sessio
 (journal) li ripristina; il rollback ripristina il mondo e annulla esiti e interventi
 dei turni annullati.
 
+### Risposte per inject (playtest 28/10)
+
+Ogni invio con **Rispondi** è una proposta salvata nella storia dell’inject, anche
+senza effetti meccanici (`response_recorded` nel log), visibile al player e a EXCON.
+Corpo di `POST /api/player/<role>/actions`, oltre a `narrative`, `commands`,
+`reply_to`, `conversation`, `basis`, `attachment`:
+
+- `kind`: `communication` (solo informazione: stato `informational` subito, senza
+  fondamento, senza approvazione EXCON, senza azioni; non blocca il flusso) o
+  `decision` (fondamento obbligatorio — piano/procedura, legge/norma, giudizio
+  operativo — anche se l’azione è solo narrata; revisione EXCON). `kind` è
+  obbligatorio per ogni chiamante (422 se manca) e non c’è fondamento predefinito;
+  anche `Exercise::player_actions` richiede il fondamento esplicito.
+- `to_persona` / `to_players`: destinatario. Predefinito: il mittente fittizio
+  dell’inject (`addressed_to.persona`). Con `to_players` la risposta è anche
+  pubblicata, tradotta per ciascuno, in una conversazione collegata all’inject con
+  quei player (quella da cui si scrive, una esistente con gli stessi partecipanti o
+  una nuova) e il messaggio porta `proposal`.
+
+Stati mostrati (player ed EXCON, `i18n_risposte::response_state`): **Inviata**
+(comunicazione), **In valutazione** (`pending`), **Approvata**, **Eseguita**
+(`applied`), **Esito registrato** (EXCON ha registrato l’esito narrativo, ad es. la
+pubblicazione dell’avviso: evento distinto dall’approvazione), più chiarimento
+richiesto, approvata in parte, rifiutata, presa visione, non eseguita. Non c’è più
+«Approvata · esito in attesa».
+
+Una risposta data da una conversazione compare **una sola volta** in
+`inject_responses`: sotto la riga dell’inject di chi risponde se ne ha una copia,
+altrimenti sotto la riga dell’inject citato dalla conversazione (prima compariva due
+volte, attribuita anche a chi aveva aperto la conversazione). Ogni riga mostra le
+conversazioni sull’inject a cui partecipa il destinatario.
+
+Un messaggio in una conversazione («vado in ricognizione») è solo testo: non è mai
+interpretato né diventa una missione; per registrare una decisione si usa Rispondi.
+Test: `crates/exercise/tests/risposte.rs`, `crates/server/tests/risposte.rs`.
+
 ### Personaggi: i player non vedono mai «EXCON»
 
 Tutto ciò che EXCON scrive a un player (domande di chiarimento, note di
@@ -220,7 +258,9 @@ sull’inglese). La console EXCON continua a dire EXCON.
 ### Conversazioni collegate a un inject
 
 Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
-(`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
+(**Avvia conversazione** nel dettaglio dell’inject: scelta dei player e primo
+messaggio); poi prosegue come thread autonomo con l’inject citato in testa
+(riferimento fissato all’apertura) (`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
 testo originale e inglese, citazioni; `message_count`), mostrata espandibile in Risposte
 sotto l’inject. Il testo compare anche nel log (`conversation_message`), nel debrief e
@@ -307,10 +347,11 @@ l’AI manca la risposta è `status: ai_unavailable` e l’interfaccia lo dice.
   riferimento ma il contenuto non è più disponibile.
 
 
-API: `POST /api/player/<role>/actions {narrative?, commands?, text?, reply_to?,
-conversation?, basis?, attachment?}` (unica rotta di risposta; ricorda che serve almeno narrazione o un
-comando); `POST /api/player/<role>/narrative {text, reply_to}` resta per compatibilità
-(solo narrazione); `POST /api/player/<role>/conversations {delivery, participants,
+API: `POST /api/player/<role>/actions {kind, narrative?, commands?, text?, reply_to?,
+conversation?, basis?, attachment?, to_persona?, to_players?}` (unica rotta di
+risposta: `kind` obbligatorio, `basis` obbligatorio per `decision`, serve almeno
+narrazione o un comando; la vecchia `POST /api/player/<role>/narrative` è stata
+rimossa); `POST /api/player/<role>/conversations {delivery, participants,
 text}` e `POST /api/player/<role>/conversations/<id>/messages {text, reply_to?}`;
 `GET /api/player/<role>` espone `linked_conversations` (con `quote`, messaggi nella
 lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`

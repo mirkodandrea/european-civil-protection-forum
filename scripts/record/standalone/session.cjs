@@ -5,21 +5,19 @@
 //
 // Environment:
 //   TTX_STANDALONE_FILE  app to open (default web/standalone/ttx.html)
+//   TTX_URL              open a served standalone build instead (e.g. Trunk), with a fresh session
 //   TTX_DRY=1            no recording, no waiting for the voice: screenshots per caption in <out>/dry/
 //   TTX_AI=0             skip the OpenRouter key (manual drafts only)
 //
 // Every caption(id) marks where a narration line starts and waits until the previous one has been
 // spoken (like ../session.js), so the voice paces the session; compose.py lays audio and subtitles
-// on <out>/marks.json. The OpenRouter key from .env is typed into the (collapsed) settings before
-// the recording starts and never appears on screen.
+// on <out>/marks.json. The OpenRouter key from .env is typed into the launcher before the
+// recording starts and never appears on screen.
+//
+// Players answer injects only through "Rispondi" (recipient, communication or decision, basis,
+// one simulation action) and talk in conversations started from an inject.
 const { chromium } = require('../node_modules/playwright');
 
-/** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */
-async function launch(page) {
-  await page.locator('.launcher, [data-panel="master"] #turn-controls').first().waitFor({ state: 'attached', timeout: 60000 });
-  const button = page.locator('.launcher #resume-session, .launcher #start-session').first();
-  if (await button.count()) await button.click();
-}
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +31,7 @@ async function pickLanguage(scope, lang) {
 const ROOT = path.resolve(__dirname, '../../..');
 const OUT = path.resolve(process.argv[2] || './out');
 const NARRATION = new Map(JSON.parse(fs.readFileSync(process.argv[3] || path.join(OUT, 'narration.json'), 'utf8')).lines.map(l => [l.id, l]));
-const FILE = path.resolve(process.env.TTX_STANDALONE_FILE || path.join(ROOT, 'web/standalone/ttx.html'));
+const URL_ = process.env.TTX_URL || ('file://' + path.resolve(process.env.TTX_STANDALONE_FILE || path.join(ROOT, 'web/standalone/ttx.html')));
 const DRY = process.env.TTX_DRY === '1';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -68,22 +66,25 @@ const POINTER = `
   await context.addInitScript(POINTER);
   const page = await context.newPage();
   page.on('pageerror', e => { if (!/control flow/.test(e.message)) log('PAGEERROR', e.message.slice(0, 200)); });
-  await page.goto('file://' + FILE); await launch(page);
+  await page.goto(URL_);
+  // A fresh exercise every time: drop any saved session of this origin.
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+  await page.goto(URL_);
+  await page.locator('.launcher').waitFor({ timeout: 90000 });
 
   const M = page.locator('[data-panel="master"]');
   const P = role => page.locator(`[data-panel="${role}"]`);
   const tab = role => page.locator(`.role-tabs [data-role="${role}"]`);
-  await M.locator('#start').waitFor({ timeout: 60000 });
 
   // ---------------------------------------------------------------- setup (not recorded)
   const key = apiKey();
   if (key) {
-    await page.locator('.standalone-settings summary').click();
-    await page.locator('#openrouter-key').fill(key);
-    await page.locator('#configure-ai').click();
-    await page.locator('.standalone-settings summary').click();
+    await page.locator('#launch-openrouter-key').fill(key);
+    await page.locator('#launch-save-key').click();
     log('AI configured');
   } else log('AI off');
+  await page.locator('.launcher #start-session').click();
+  await M.locator('#start').waitFor({ timeout: 60000 });
   await page.addStyleTag({ content: '.notification-toasts{display:none!important}' });
   await page.getByLabel('Simulazione', { exact: true }).check();
   // Give the simulator more room: the 3D view is the point of the standalone version.
@@ -153,8 +154,9 @@ const POINTER = `
   const type = async (loc, text, delay = 28) => { await click(loc, { pause: 150 }); await loc.pressSequentially(text, { delay: DRY ? 0 : delay }); };
   const closeToasts = async () => { for (const x of await page.locator('[role=status] button, .toast button, [aria-label="Chiudi"]').all().catch(() => [])) await x.click().catch(() => {}); };
 
-  const sendInject = async title => {
-    await click(M.locator(`.planned-open[aria-label*="${title}"]`));
+  // Planned inject by title (Italian or English console).
+  const sendInject = async (...titles) => {
+    await click(M.locator(titles.map(t => `.planned-open[aria-label*="${t}"]`).join(', ')));
     const dlg = page.getByRole('dialog');
     await beat(1300);
     await click(dlg.getByRole('button', { name: /^Invia a/ }), { pause: 600 });
@@ -174,10 +176,35 @@ const POINTER = `
     const ok = M.locator('[data-due-confirm]');
     if (await ok.waitFor({ timeout: 1500 }).then(() => true, () => false)) await click(ok);
   };
-  const resolveTurn = async next => {
-    await click(M.locator('#resolve'));
-    await confirmAdvance();
-    await M.locator('#turn').filter({ hasText: next }).waitFor({ timeout: 180000 });
+  // "Advance" moves to the next planned inject or to the end of the turn: repeat until it closes.
+  const resolveTurn = async (next, timeout = 240000) => {
+    const until = Date.now() + timeout;
+    while (!(await M.locator('#turn').filter({ hasText: next }).count())) {
+      if (Date.now() > until) throw new Error('turn did not reach ' + next);
+      const go = M.locator('#advance-next:not([disabled])');
+      if (await go.count()) { await click(go); await confirmAdvance(); }
+      await sleep(1000);
+    }
+  };
+  // A player's inject (by title, Italian or English), then its Rispondi composer.
+  const openInject = async (role, ...titles) => {
+    const back = P(role).locator('[data-inject-back]');
+    if (await back.count()) await click(back, { pause: 300 });
+    const row = P(role).locator('[data-inject-row]').filter({ hasText: new RegExp(titles.join('|')) }).first();
+    await click(row, { pause: 600 });
+  };
+  const reply = async (role, ...titles) => {
+    await openInject(role, ...titles);
+    await click(P(role).locator('[data-reply-inject]'), { pause: 400 });
+    const w = P(role).locator('.work-modal');
+    await w.waitFor();
+    await click(w.locator('#kind-decision'), { pause: 300 });
+    return w;
+  };
+  const send = async (w, basis = 'operational_judgment') => {
+    await click(w.locator(`#basis-${basis}`), { pause: 400 });
+    await click(w.locator('[data-respond]'), { pause: 900 });
+    await w.waitFor({ state: 'hidden' });
   };
 
   try {
@@ -199,9 +226,9 @@ const POINTER = `
 
     // ------------------------------------------------------------ turn 1: injects
     await caption('injects');
-    await sendInject('Fire reported on Pine Hill');
-    await sendInject('School in session');
-    await sendInject('Fire behaviour estimate');
+    await sendInject('Fire reported on Pine Hill', 'Incendio segnalato');
+    await sendInject('School in session', 'Scuola in attività');
+    await sendInject('Fire behaviour estimate', 'Stima del comportamento');
     await closeToasts();
 
     // ------------------------------------------------------------ mayor
@@ -213,16 +240,16 @@ const POINTER = `
     await caption('mayor_inject');
     await beat(5500);
 
-    const W = P('mayor').locator('.work-modal');
+    let W = P('mayor').locator('.work-modal');
     const mayorEvacuation = async (captionId, followUp) => {
-      await click(P('mayor').locator('#new-player-action'));
-      await W.waitFor();
+      // The mayor answers the school inject with Rispondi: a decision with one action.
+      W = await reply('mayor', 'School in session', 'Scuola in attività');
       if (captionId) await caption(captionId);
       // The narrative alone is enough: the AI reads it and suggests actions to add.
       await type(W.locator('#response-narrative'), 'Evacuare la scuola primaria di Pineta verso il centro sportivo di Valverde e avvisare la popolazione di Pineta.');
       let ai = false;
       if (key) {
-        const add = W.locator('[data-add-suggestions], [data-add-suggestion="0"]').first();
+        const add = W.locator('[data-add-suggestion="0"]');
         let quiet = null;
         for (let i = 0; i < 90 && !ai; i++) {
           await sleep(500); ai = await add.isEnabled().catch(() => false);
@@ -231,7 +258,7 @@ const POINTER = `
         // The wait for the model after the voice has finished is shown sped up (compose.py).
         if (!DRY && quiet !== null && Date.now() - t0 - quiet > 2500) speedups.push({ from: quiet + 600, to: Date.now() - t0 - 400, factor: 8 });
         log('AI suggestions usable:', ai);
-        if (ai) { waitEnd = Date.now(); if (followUp) await caption(followUp); await beat(1500); await shot('ai_draft'); await click(add, { pause: 900 }); await click(W.locator('[data-respond]'), { pause: 900 }); }
+        if (ai) { waitEnd = Date.now(); if (followUp) await caption(followUp); await beat(1500); await shot('ai_draft'); await click(add, { pause: 900 }); await send(W); }
       }
       if (!ai) {
         // Fallback: the structured form (same command the AI would have produced).
@@ -239,9 +266,8 @@ const POINTER = `
         await W.locator('#work-location').selectOption({ label: 'Pineta Primary School' });
         if (followUp) await caption(followUp);
         await click(W.locator('[data-add-action]'), { pause: 500 });
-        await click(W.locator('[data-respond]'), { pause: 900 });
+        await send(W);
       }
-      await W.waitFor({ state: 'hidden' });
     };
     await mayorEvacuation('mayor_ai', 'ai_draft');
 
@@ -249,9 +275,7 @@ const POINTER = `
     await click(tab('fire_commander'), { pause: 400 });
     await click(P('fire_commander').locator('[data-view="map"]'));
     await caption('fire_action');
-    await click(P('fire_commander').locator('#new-player-action'));
-    const F = P('fire_commander').locator('.work-modal');
-    await F.waitFor();
+    let F = await reply('fire_commander', 'Fire reported on Pine Hill', 'Incendio segnalato');
     await F.locator('#work-action').selectOption('CutFireLine');
     await beat(600);
     const fmap = F.locator('canvas#work-map');
@@ -261,25 +285,24 @@ const POINTER = `
     await mapClick(fmap, 0.80, 0.40);
     await beat(800);
     await click(F.locator('[data-add-action]'), { pause: 500 });
-    await click(F.locator('[data-respond]'), { pause: 900 });
-    await F.waitFor({ state: 'hidden' });
-    await click(P('fire_commander').locator('#new-player-action'));
-    await F.waitFor();
+    await send(F, 'plan');
+    F = await reply('fire_commander', 'Fire reported on Pine Hill', 'Incendio segnalato');
     await F.locator('#work-action').selectOption('WaterDrop');
     await mapClick(F.locator('canvas#work-map'), 0.80, 0.31);
     await click(F.locator('[data-add-action]'), { pause: 500 });
-    await click(F.locator('[data-respond]'), { pause: 900 });
-    await F.waitFor({ state: 'hidden' });
+    await send(F, 'plan');
 
-    // ------------------------------------------------------------ chat
+    // ------------------------------------------------------------ conversation from the inject
     await caption('chat');
-    await click(P('fire_commander').locator('[data-view="chat"]'));
-    await click(P('fire_commander').locator('[data-contact="mayor"]'));
-    await type(P('fire_commander').locator('#text'), 'Mayor, we are cutting a fire line north of Pineta. Keep the north road clear for my crews.');
-    await click(P('fire_commander').locator('#send'), { pause: 1000 });
+    await openInject('fire_commander', 'Fire reported on Pine Hill', 'Incendio segnalato');
+    await click(P('fire_commander').locator('[data-new-conversation]'));
+    await click(P('fire_commander').locator('[data-conv-person="mayor"]'), { pause: 300 });
+    await type(P('fire_commander').locator('#conv-first'), 'Mayor, we are cutting a fire line north of Pineta. Keep the north road clear for my crews.');
+    await click(P('fire_commander').locator('[data-create-conversation]'), { pause: 1000 });
     await click(tab('mayor'));
-    await click(P('mayor').locator('[data-view="chat"]'));
-    await click(P('mayor').locator('[data-contact="fire_commander"]'));
+    await click(P('mayor').locator('[data-view="map"]'));
+    await openInject('mayor', 'Fire reported on Pine Hill', 'Incendio segnalato');
+    await click(P('mayor').locator('[data-conv-row]'), { pause: 600 });
     await beat(5000);
 
     // ------------------------------------------------------------ regional CP: extra bus
@@ -287,17 +310,14 @@ const POINTER = `
     await click(tab('regional_cp'));
     await pickLanguage(P('regional_cp'), 'hy');
     await click(P('regional_cp').locator('[data-view="map"]'));
-    await click(P('regional_cp').locator('#new-player-action'));
-    const R = P('regional_cp').locator('.work-modal');
-    await R.waitFor();
+    let R = await reply('regional_cp', 'Fire reported on Pine Hill', 'Incendio segnalato');
     await R.locator('#work-action').selectOption('RequestReinforcement');
     await beat(400);
     await R.locator('#work-resource').selectOption('buses');
     await R.locator('#work-qty').fill('1');
     await beat(1200);
     await click(R.locator('[data-add-action]'), { pause: 500 });
-    await click(R.locator('[data-respond]'), { pause: 900 });
-    await R.waitFor({ state: 'hidden' });
+    await send(R);
 
     // ------------------------------------------------------------ EXCON review
     const dlgx = page.locator('.response-dialog');
@@ -313,7 +333,7 @@ const POINTER = `
     await click(tab('master'));
     await click(M.locator('[data-view="risposte"]'));
     await caption('review');
-    await openRow({ hasText: 'School in session' });
+    await openRow({ hasText: /School in session|Scuola in attività/ });
     await beat(5000);
     await caption('bus');
     await beat(2500);
@@ -342,37 +362,36 @@ const POINTER = `
     await shot('speed_set');
     await tool.getByRole('button', { name: 'Chiudi' }).click().catch(() => {});
     await caption('resolve1');
-    await click(M.locator('#resolve'));
-    await confirmAdvance();
-    await M.locator('#turn').filter({ hasText: 'Turno 2' }).waitFor({ timeout: 240000 });
+    await click(M.locator('[data-view="timeline"]'));
+    await resolveTurn(/Turno 2|Turn 2/);
     await beat(2000);
     await caption('turn1_end');
     await click(tab('mayor'));
     await click(P('mayor').locator('[data-view="function"]'));
-    await P('mayor').locator('h2', { hasText: 'Riepiloghi' }).scrollIntoViewIfNeeded();
+    await P('mayor').locator('h2', { hasText: /Riepiloghi|Summaries/ }).first().scrollIntoViewIfNeeded().catch(() => {});
     await beat(6000);
 
     // ------------------------------------------------------------ turn 2
     await click(tab('master'));
     await click(M.locator('[data-view="timeline"]'));
     await caption('turn2');
-    await sendInject('Wind strengthening');
-    await sendInject('Northern Road congestion');
+    await sendInject('Wind strengthening', 'Il vento si rafforza');
+    await sendInject('Northern Road congestion', 'Congestione sulla Strada Nord');
     await click(tab('mayor'));
     await click(P('mayor').locator('[data-view="map"]'));
+    // The school inject belongs to turn 1: show that turn's injects.
+    await P('mayor').locator('#player-timeline header select').selectOption('1');
     await mayorEvacuation('mayor_retry', null);
     await caption('regional');
     await click(tab('regional_cp'));
     await click(P('regional_cp').locator('[data-view="map"]'));
-    await click(P('regional_cp').locator('#new-player-action'));
-    await R.waitFor();
+    R = await reply('regional_cp', 'Wind strengthening', 'Il vento si rafforza');
     await R.locator('#work-action').selectOption('RequestReinforcement');
     await R.locator('#work-resource').selectOption('ground_crews');
     await R.locator('#work-qty').fill('2');
     await beat(1200);
     await click(R.locator('[data-add-action]'), { pause: 500 });
-    await click(R.locator('[data-respond]'), { pause: 900 });
-    await R.waitFor({ state: 'hidden' });
+    await send(R);
     await click(tab('master'));
     await click(M.locator('[data-view="risposte"]'));
     await caption('approve2');
@@ -383,9 +402,8 @@ const POINTER = `
       await approveInDialog();
       await closeDlg();
     }
-    await click(M.locator('#resolve'));
-    await confirmAdvance();
-    await M.locator('#turn').filter({ hasText: 'Turno 3' }).waitFor({ timeout: 240000 });
+    await click(M.locator('[data-view="timeline"]'));
+    await resolveTurn(/Turno 3|Turn 3/);
     await beat(1500);
     await caption('history');
     await click(M.locator('[data-view="history"]'));

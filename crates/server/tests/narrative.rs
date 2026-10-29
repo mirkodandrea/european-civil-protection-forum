@@ -69,8 +69,8 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
     let (status, body) = call(
         &c,
         "mayor",
-        "/api/player/mayor/narrative",
-        Some(json!({"text":"Attivo assistenza psicologica","reply_to":parent})),
+        "/api/player/mayor/actions",
+        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Attivo assistenza psicologica","reply_to":parent})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -127,12 +127,12 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
 #[tokio::test]
 async fn narrative_routes_reject_other_roles_injects_and_executable_payloads() {
     let (c, _, parent, _) = fixture(true).await;
-    let body = json!({"text":"Support","reply_to":parent});
+    let body = json!({"kind":"decision","basis":"operational_judgment","narrative":"Support","reply_to":parent});
     assert_eq!(
         call(
             &c,
             "fire_commander",
-            "/api/player/mayor/narrative",
+            "/api/player/mayor/actions",
             Some(body.clone())
         )
         .await
@@ -143,19 +143,25 @@ async fn narrative_routes_reject_other_roles_injects_and_executable_payloads() {
         call(
             &c,
             "fire_commander",
-            "/api/player/fire_commander/narrative",
+            "/api/player/fire_commander/actions",
             Some(body.clone())
         )
         .await
         .0,
         Status::BadRequest
     );
-    let mut injected = body;
+    // An EXCON-only command is outside the role's authority.
+    let mut injected = body.clone();
     injected["commands"] = json!([{"type":"Ignite","at":"F4"}]);
+    assert_ne!(
+        call(&c, "mayor", "/api/player/mayor/actions", Some(injected)).await.0,
+        Status::Ok
+    );
+    // `kind` is required: without it the request is refused.
+    let mut no_kind = body;
+    no_kind.as_object_mut().unwrap().remove("kind");
     assert_eq!(
-        call(&c, "mayor", "/api/player/mayor/narrative", Some(injected))
-            .await
-            .0,
+        call(&c, "mayor", "/api/player/mayor/actions", Some(no_kind)).await.0,
         Status::UnprocessableEntity
     );
 }
@@ -166,8 +172,8 @@ async fn unavailable_translation_still_delivers_original_narrative_for_excon_rev
     let (status, got) = call(
         &c,
         "mayor",
-        "/api/player/mayor/narrative",
-        Some(json!({"text":"Richiedo supporto psicologico","reply_to":parent})),
+        "/api/player/mayor/actions",
+        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Richiedo supporto psicologico","reply_to":parent})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{got}");

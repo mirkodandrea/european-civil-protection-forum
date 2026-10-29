@@ -4,6 +4,23 @@ use exercise::*;
 use sim::Command;
 use std::{collections::BTreeMap, sync::Arc};
 
+
+/// A narrated decision (basis: operational judgement), as `Rispondi` sends it.
+fn narrated(ex: &mut Exercise, role: &str, text: &str, parent: u64, text_en: &str, failed: bool) -> anyhow::Result<u64> {
+    ex.player_response(
+        role,
+        exercise::response::PlayerResponse {
+            kind: exercise::ResponseKind::Decision,
+            basis: Some(exercise::BasisKind::OperationalJudgment),
+            narrative: Some(text.into()),
+            narrative_en: text_en.into(),
+            translation_failed: failed,
+            reply_to: Some(parent),
+            ..Default::default()
+        },
+    )
+}
+
 fn fixture(sender: &str) -> (Exercise, u64) {
     let mut ex = Exercise::new(
         sim::World::new(
@@ -29,8 +46,7 @@ fn fixture(sender: &str) -> (Exercise, u64) {
 }
 
 fn approved_narrative(ex: &mut Exercise, parent: u64) -> u64 {
-    let p = ex
-        .player_narrative("mayor", "Attivo supporto", parent, "Activate support", false)
+    let p = narrated(ex, "mayor", "Attivo supporto", parent, "Activate support", false)
         .unwrap();
     ex.decide(
         p,
@@ -75,8 +91,7 @@ fn persona_defaults_to_the_inject_sender_then_the_scenario_default() {
 #[test]
 fn clarification_and_decision_are_spoken_as_the_chosen_persona() {
     let (mut ex, parent) = fixture("112 Dispatch");
-    let p = ex
-        .player_narrative("mayor", "Attivo supporto", parent, "Activate support", false)
+    let p = narrated(&mut ex, "mayor", "Attivo supporto", parent, "Activate support", false)
         .unwrap();
     ex.request_clarification(p, "Which shelter?").unwrap();
     // No explicit persona: the inject sender.

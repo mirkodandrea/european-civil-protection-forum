@@ -1,4 +1,5 @@
-//! Translation-only narrative initiatives; EXCON owns approval and outcomes.
+//! Player responses (`/api/player/<role>/actions`) and EXCON narrative outcomes.
+//! Translation only; EXCON owns approval and outcomes.
 #[cfg(target_arch = "wasm32")]
 use crate::browser::Json;
 use crate::{access::Principal, bad, ApiResult, AppState};
@@ -6,49 +7,6 @@ use crate::{access::Principal, bad, ApiResult, AppState};
 use crate::body::Json;
 use serde::Deserialize;
 use serde_json::json;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SubmitBody {
-    text: String,
-    reply_to: u64,
-}
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    rocket::post("/api/player/<role>/narrative", data = "<body>")
-)]
-pub(crate) async fn submit(
-    _principal: Principal,
-    s: AppState,
-    role: String,
-    body: Json<SubmitBody>,
-) -> ApiResult {
-    if !matches!(&_principal, Principal::Master)
-        && !matches!(&_principal, Principal::Player {role:r} if r==&role)
-    {
-        return Err(bad("only this player may submit the initiative"));
-    }
-    let Json(body) = body;
-    let (language, turn, revision) = {
-        let ex = s.lock();
-        ex.validate_narrative(&role, &body.text, body.reply_to)?;
-        (ex.language_of(&role), ex.turn, ex.clock_control.revision)
-    };
-    let (english, failed) = if language == "en" {
-        (body.text.clone(), false)
-    } else {
-        match s.llm.translate_to_english(&body.text, &language).await {
-            Ok(text) => (text, false),
-            Err(_) => (body.text.clone(), true),
-        }
-    };
-    let mut ex = s.lock();
-    if ex.turn != turn || ex.clock_control.revision != revision {
-        return Err(bad("exercise changed during translation; send again"));
-    }
-    let pid = ex.player_narrative(&role, &body.text, body.reply_to, &english, failed)?;
-    Ok(Json(json!({"proposal":pid,"translation_failed":failed})))
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -160,12 +118,20 @@ pub(crate) struct ResponseBody {
     /// Linked conversation the response comes out of.
     #[serde(default)]
     pub conversation: Option<u64>,
-    /// What the response is based on: plans, laws or operational judgement.
+    /// What the response is based on: required for a decision.
     #[serde(default)]
     pub basis: Option<exercise::BasisKind>,
     /// PDF of the plan or law cited (plan/law basis only).
     #[serde(default)]
     pub attachment: Option<AttachmentBody>,
+    /// "communication" (no approval, no basis) or "decision" (basis required).
+    pub kind: exercise::ResponseKind,
+    /// Fictitious sender answered (default: the inject's sender).
+    #[serde(default)]
+    pub to_persona: Option<String>,
+    /// Real players the response goes to instead.
+    #[serde(default)]
+    pub to_players: Vec<String>,
 }
 
 /// A file inside a JSON body: base64 data, checked before it is decoded.
@@ -205,23 +171,27 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
         conversation: body.conversation,
         basis: body.basis,
         document: body.attachment.map(AttachmentBody::decode).transpose()?,
+        kind: body.kind,
+        to_persona: body.to_persona,
+        to_players: body.to_players,
         ..Default::default()
     };
-    let (language, turn, revision) = {
+    let (language, targets, turn, revision) = {
         let ex = s.lock();
         ex.validate_player_response(&role, &response)?;
-        (ex.language_of(&role), ex.turn, ex.clock_control.revision)
+        let targets = response
+            .to_players
+            .iter()
+            .map(|p| (p.clone(), ex.language_of(p)))
+            .collect::<Vec<_>>();
+        (ex.language_of(&role), targets, ex.turn, ex.clock_control.revision)
     };
     if let Some(text) = response.narrative.clone() {
-        let (english, failed) = if language == "en" {
-            (text, false)
-        } else {
-            match s.llm.translate_to_english(&text, &language).await {
-                Ok(t) => (t, false),
-                Err(_) => (text, true),
-            }
-        };
+        // Players addressed directly read it in their own language.
+        let (english, texts, failed) =
+            crate::conversations::translations(&s, &text, &language, &targets).await;
         response.narrative_en = english;
+        response.texts = texts;
         response.translation_failed = failed;
     }
     let failed = response.translation_failed;

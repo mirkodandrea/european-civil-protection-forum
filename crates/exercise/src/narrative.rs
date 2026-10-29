@@ -45,37 +45,6 @@ pub struct NarrativeOutcome {
 }
 
 impl Exercise {
-    pub fn validate_narrative(&self, role: &str, text: &str, reply_to: u64) -> Result<()> {
-        self.validate_chat(role, MASTER, text, true)?;
-        let parent = self.validate_action_reference(role, reply_to)?;
-        if parent.kind != MsgKind::Inject || parent.to != role {
-            bail!("a narrative initiative must answer an inject delivered to your role");
-        }
-        Ok(())
-    }
-
-    /// No parsing or invented commands; translation is supplied by the controller.
-    pub fn player_narrative(
-        &mut self,
-        role: &str,
-        text: &str,
-        reply_to: u64,
-        text_en: &str,
-        translation_failed: bool,
-    ) -> Result<u64> {
-        self.validate_narrative(role, text, reply_to)?;
-        self.player_response(
-            role,
-            crate::response::PlayerResponse {
-                narrative: Some(text.into()),
-                narrative_en: text_en.into(),
-                translation_failed,
-                reply_to: Some(reply_to),
-                ..Default::default()
-            },
-        )
-    }
-
     pub fn validate_narrative_outcome(&self, pid: u64, text: &str) -> Result<String> {
         self.validate_outcome(pid, text, 0)
     }

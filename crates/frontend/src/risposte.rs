@@ -215,21 +215,46 @@ fn dialog(props: &RisposteProps, r: &Value, roles: &[Value], pdf: &UseStateHandl
     </section></crate::inject_panel::ModalShell>}
 }
 
-/// A narrative proposal already decided that belongs to this delivery.
+/// A narrative proposal already decided that belongs to this row (the model
+/// lists each response under exactly one row, see `decided_proposals`).
 fn approved_for(r: &Value, p: &Value) -> bool {
     p["narrative"] == true
         && ["approved", "applied", "failed"].contains(&text(&p["status"]))
-        && p["inject_id"] == r["delivery_id"]
-        && (p["source"]["role"] == r["role"]
-            || (p["via_conversation"].is_number() && p["reply_to"] == r["inject_message_id"]))
+        && list(&r["decided_proposals"]).iter().any(|d| d["id"] == p["id"])
 }
 
-fn basis_name(kind: &str) -> &'static str {
-    match kind {
-        "plan" | "procedure" => crate::i18n::ex("Piani"),
-        "law" => crate::i18n::ex("Leggi"),
-        _ => crate::i18n::ex("Giudizi operativi"),
+/// State, kind and recipient of the response a thread message carries.
+fn response_line(r: &Value, m: &Value, roles: &[Value]) -> Html {
+    let Some(reply) = list(&r["replies"]).iter().find(|x| x["id"] == m["id"]) else { return html! {} };
+    let resp = &reply["response"];
+    if resp.is_null() {
+        return html! {};
     }
+    let en = crate::i18n_excon::is_en();
+    let lang = if en { "en" } else { "it" };
+    let key = crate::i18n_risposte::response_state(resp);
+    let to = &resp["addressed_to"];
+    let recipient = if list(&to["players"]).is_empty() {
+        text(&to["persona"]).to_string()
+    } else {
+        list(&to["players"]).iter().map(|x| role_name(roles, text(x))).collect::<Vec<_>>().join(", ")
+    };
+    html! {<div class="response-line" data-response-line={m["id"].to_string()}>
+        <span class="pill kind">{crate::i18n::t(lang, if resp["communication"] == true { "kind_tag_comm" } else { "kind_tag_dec" })}</span>
+        if !recipient.is_empty() {<span class="pill">{crate::i18n::tf(lang, "resp_to_label", &[&recipient])}</span>}
+        if reply["from"] != r["role"] {<span class="pill">{crate::exfmt!("da {}", "from {}", role_name(roles, text(&reply["from"])))}</span>}
+        <span class={classes!("pill","response-state",crate::i18n_risposte::state_tone(key))} data-response-state={key}>{crate::i18n::t(lang, key)}</span>
+    </div>}
+}
+
+/// Same wording as the player's composer: Piano o procedura / Legge o norma / Giudizio operativo.
+fn basis_name(kind: &str) -> &'static str {
+    let lang = if crate::i18n_excon::is_en() { "en" } else { "it" };
+    crate::i18n::t(lang, match kind {
+        "plan" | "procedure" => "basis_plan",
+        "law" => "basis_law",
+        _ => "basis_judgment",
+    })
 }
 
 /// What a reply rests on and the PDF behind it, with the button that opens it.
@@ -239,7 +264,7 @@ fn basis_chip(basis: &Value, document: &Value, on_pdf: &Callback<(u64, String)>)
     }
     let doc = document.as_object().map(|_| (document["id"].as_u64().unwrap_or(0), text(&document["name"]).to_string()));
     html! {<div class="reply-basis" data-reply-basis={text(basis).to_string()}>
-        <span class="pill reply-basis-kind">{format!("{}: {}",crate::i18n::ex("Base della risposta"),basis_name(text(basis)))}</span>
+        <span class="pill reply-basis-kind">{crate::exfmt!("Fondamento: {}","Basis: {}",basis_name(text(basis)))}</span>
         if let Some((id,name))=doc{<button type="button" class="reply-doc" data-open-pdf={id.to_string()} onclick={{let on_pdf=on_pdf.clone();let name=name.clone();Callback::from(move |_|on_pdf.emit((id,name.clone())))}}>{format!("PDF · {name}")}</button>}
     </div>}
 }
@@ -283,6 +308,7 @@ fn transcript(cid: u64, conv: Option<&Value>, roles: &[Value]) -> Html {
     html! {<details class="conversation-transcript" data-conversation-transcript={cid.to_string()}><summary>{crate::exfmt!("Trascrizione ({} messaggi)","Transcript ({} messages)",messages.len())}</summary>
         <ol>{for messages.iter().map(|m|html!{<li key={m["id"].to_string()} data-conv-message={m["id"].to_string()}><small>{format!("{} · {}",text(&m["clock"]),role_name(roles,text(&m["from"])))}</small>
             <p>{if en||text(&m["original"]).is_empty(){text(&m["text_en"])}else{text(&m["original"])}}</p>
+            if m["proposal"].is_number(){<small class="pill conv-response-tag">{crate::exfmt!("Risposta registrata #{}","Recorded response #{}",m["proposal"])}</small>}
             if m["reply_to"].is_number(){<small>{crate::exfmt!("In risposta a #{}","In reply to #{}",m["reply_to"])}</small>}</li>})}</ol></details>}
 }
 
@@ -336,6 +362,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value], on_pdf: &Callb
                 <div class="thread-head"><b class="thread-from">{crate::render::role_label(roles,from)}</b><span class="thread-arrow" aria-hidden="true">{"→"}</span><span class="thread-to">{crate::render::role_label(roles,text(&m["to"]))}</span><span class="pill thread-kind">{kind_label(kind)}</span><div class="grow"/><time>{text(&m["clock"])}</time></div>
                 if !text(&m["title"]).is_empty(){<b class="thread-title">{text(&m["title"])}</b>}
                 <p class="thread-text">{text(&m["text"])}</p>
+                {response_line(r,m,roles)}
                 {basis_chip(&m["basis"],&m["document"],on_pdf)}
                 if !original.is_empty()&&original!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",original)}</small>}
                 if m["reply_to"].is_number(){<small class="thread-reply-to">{crate::exfmt!("In risposta al messaggio #{}","In reply to message #{}",m["reply_to"])}</small>}
@@ -345,7 +372,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value], on_pdf: &Callb
             let cid=c["id"].as_u64().unwrap_or(0);
             let people=list(&c["participants"]).iter().map(|x|role_name(roles,text(x))).collect::<Vec<_>>().join(", ");
             html!{<div key={cid} class="response-via-block" data-linked-conversation={cid.to_string()}>
-                <p class="muted response-via">{crate::exfmt!("Conversazione #{} ({})","Conversation #{} ({})",cid,people)}</p>
+                <p class="muted response-via">{crate::exfmt!("Conversazione #{} nata dall’inject ({})","Conversation #{} started from the inject ({})",cid,people)}</p>
                 {transcript(cid,Some(c),roles)}</div>}
         })}
         {for list(&r["clarification_threads"]).iter().map(|c|{

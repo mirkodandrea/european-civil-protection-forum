@@ -346,6 +346,18 @@ impl Fake {
             }
             (true, ["api", "player", role, "actions"]) if who == *role => {
                 let commands = b["commands"].as_array().cloned().unwrap_or_default();
+                // Same rules as `exercise::response`: a communication carries
+                // no action and needs no approval; a decision needs its basis.
+                let communication = b["kind"] == "communication";
+                if communication && !commands.is_empty() {
+                    return Err("una comunicazione non porta azioni".into());
+                }
+                if b["kind"] != "communication" && b["kind"] != "decision" {
+                    return Err("kind richiesto: communication o decision".into());
+                }
+                if b["kind"] == "decision" && !b["basis"].is_string() {
+                    return Err("una decisione richiede il fondamento".into());
+                }
                 let pid = self.respond(
                     role,
                     &body_text(&b, "narrative"),
@@ -353,6 +365,9 @@ impl Fake {
                     b["reply_to"].as_u64(),
                     b["conversation"].as_u64(),
                 )?;
+                if communication {
+                    self.proposal_mut(pid)?.status = "informational";
+                }
                 Ok(json!({"proposal": pid, "translation_failed": false}))
             }
             (true, ["api", "player", role, "reply"]) if who == *role => {
@@ -816,11 +831,14 @@ mod tests {
                 "mayor",
                 "/api/player/mayor/actions",
                 Some(
-                    json!({"narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
+                    json!({"kind": "decision", "basis": "operational_judgment", "narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
                 ),
             )
             .unwrap();
         let pid = r["proposal"].as_u64().unwrap();
+        // `kind` is required, and a decision needs its basis.
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"narrative": "x", "reply_to": inject}))).is_err());
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"kind": "decision", "narrative": "x", "reply_to": inject}))).is_err());
         let m = f.master();
         let row = m["inject_responses"]
             .as_array()

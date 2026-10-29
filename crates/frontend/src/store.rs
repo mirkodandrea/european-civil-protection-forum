@@ -33,6 +33,9 @@ thread_local! {
     static LAST_SAVED: Cell<(usize, usize, i64)> = const { Cell::new((0, 0, 0)) };
     static FROZEN: Cell<bool> = const { Cell::new(false) };
     static SAVE_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Scenario chosen in the launcher when the browser blocks storage: the
+    /// exercise still starts (nothing is persisted).
+    static CHOSEN: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn storage() -> Option<web_sys::Storage> {
@@ -103,6 +106,10 @@ pub fn activate(id: &str) -> Result<(), String> {
 
 /// Chosen in the launcher: the next exercise starts from `id`, without the saved session.
 pub fn choose(id: &str) -> Result<(), String> {
+    if storage().is_none() {
+        CHOSEN.with(|c| *c.borrow_mut() = Some(id.to_string()));
+        return Ok(());
+    }
     set(ACTIVE_KEY, id)?;
     remove(SESSION_KEY);
     Ok(())
@@ -265,7 +272,9 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
         Ok(())
     }
     fn active(&self) -> Option<String> {
-        get(ACTIVE_KEY).filter(|id| self.load(id).is_some())
+        get(ACTIVE_KEY)
+            .or_else(|| CHOSEN.with(|c| c.borrow().clone()))
+            .filter(|id| self.load(id).is_some())
     }
     fn set_active(&self, id: &str) -> Result<(), String> {
         set(ACTIVE_KEY, id)

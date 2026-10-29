@@ -107,6 +107,9 @@ const SENT_KEYS: &[&str] = &[
     "work:sugg",
     "work:sugg_for",
     "work:sugg_busy",
+    "work:kind",
+    "work:to",
+    "work:to_players",
 ];
 
 pub fn set_staged(fields: &mut BTreeMap<String, String>, staged: Vec<Value>) {
@@ -122,12 +125,13 @@ fn staged_of(fields: &BTreeMap<String, String>) -> Vec<Value> {
         .and_then(|v| serde_json::from_str(v).ok())
         .unwrap_or_default()
 }
-/// Add commands to the response being composed (`Msg::StageActions`).
+/// Set the response's simulation action (`Msg::StageActions`). A response
+/// carries at most one: a new one replaces the previous. An action makes the
+/// response a decision.
 pub fn stage(fields: &mut BTreeMap<String, String>, commands: Vec<Value>) {
-    let mut staged = staged_of(fields);
-    staged.extend(commands);
-    staged.truncate(32);
-    set_staged(fields, staged);
+    let Some(last) = commands.into_iter().last() else { return };
+    set_staged(fields, vec![last]);
+    fields.insert("work:kind".into(), "decision".into());
     // The form (or an AI suggestion) has been turned into a staged action.
     for key in ["work:location", "work:destination"] {
         fields.remove(key);
@@ -164,12 +168,32 @@ pub fn open_work(fields: &mut BTreeMap<String, String>, parent: String) -> bool 
             "work:sugg_for",
             "work:location",
             "work:destination",
+            "work:kind",
+            "work:to",
+            "work:to_players",
         ] {
             fields.remove(key);
         }
     }
     fields.insert("work:reply_to".into(), parent);
     fields.insert("work:open".into(), "true".into());
+    reset
+}
+/// `Msg::OpenWorkConv`: answer the inject quoted by conversation `conv`
+/// (its delivery `parent`) from inside it. The recipients default to the
+/// other participants, whom the conversation is with.
+pub fn open_work_conv(fields: &mut BTreeMap<String, String>, state: &Value, own: &str, parent: String, conv: String) -> bool {
+    let reset = open_work(fields, parent);
+    let others: Vec<String> = list(&state["linked_conversations"])
+        .iter()
+        .find(|c| c["id"].to_string() == conv)
+        .map(|c| list(&c["participants"]).iter().map(text).filter(|p| *p != own).map(String::from).collect())
+        .unwrap_or_default();
+    if reset || !fields.contains_key("work:to") {
+        fields.insert("work:to".into(), "players".into());
+        fields.insert("work:to_players".into(), others.join(","));
+    }
+    fields.insert("work:conversation".into(), conv);
     reset
 }
 /// `Msg::OpenInjectDetail`: a row of the inject list (empty: back to the list).
@@ -227,11 +251,15 @@ mod tests {
                 json!({"type":"CloseRoad","road":"r1"}),
             ],
         );
-        unstage(&mut f, 0);
+        // One action per response: the last one wins, and it makes a decision.
         assert_eq!(staged_of(&f), vec![json!({"type":"CloseRoad","road":"r1"})]);
+        assert_eq!(f.get("work:kind").map(String::as_str), Some("decision"));
         // Reopening the same message keeps the draft; another one resets it.
         assert!(!open_work(&mut f, "7".into()));
         assert_eq!(staged_of(&f).len(), 1);
+        unstage(&mut f, 0);
+        assert!(staged_of(&f).is_empty());
+        stage(&mut f, vec![json!({"type":"IssueWarning","zone":"F4"})]);
         assert!(open_work(&mut f, "8".into()));
         assert!(staged_of(&f).is_empty());
         response_sent(&mut f);
@@ -240,5 +268,11 @@ mod tests {
         open_inject_detail(&mut f, "3".into());
         conversation_started(&mut f, Some(2));
         assert_eq!(f.get("inj:conv").map(String::as_str), Some("2"));
+        // From a conversation the response goes to the other participants.
+        let state = json!({"linked_conversations":[{"id":2,"participants":["regional_cp","fire_commander","mayor"]}]});
+        open_work_conv(&mut f, &state, "fire_commander", "9".into(), "2".into());
+        assert_eq!(f.get("work:to").map(String::as_str), Some("players"));
+        assert_eq!(f.get("work:to_players").map(String::as_str), Some("regional_cp,mayor"));
+        assert_eq!(f.get("work:conversation").map(String::as_str), Some("2"));
     }
 }

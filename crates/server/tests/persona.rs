@@ -58,7 +58,7 @@ async fn players_see_personas_and_never_excon_across_the_response_flow() {
         &c,
         "mayor",
         "/api/player/mayor/actions",
-        Some(json!({"narrative":"Attivo assistenza","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Attivo assistenza","reply_to":parent})),
     )
     .await;
     assert_eq!(st, Status::Ok, "{body}");
@@ -164,7 +164,7 @@ async fn a_refused_outcome_action_leaves_the_world_and_the_outcome_untouched() {
         &c,
         "mayor",
         "/api/player/mayor/actions",
-        Some(json!({"narrative":"Attivo assistenza","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Attivo assistenza","reply_to":parent})),
     )
     .await;
     let id = body["proposal"].as_u64().unwrap();

@@ -37,6 +37,7 @@ pub mod conversations;
 pub mod narrative;
 pub mod persona;
 pub mod response;
+pub use response::{Addressee, ResponseKind};
 pub mod summaries;
 pub mod threads;
 pub mod planned;
@@ -387,6 +388,12 @@ pub struct Proposal {
     /// Linked conversation (see [`conversations`]) the response came out of.
     /// It is the only way a player who never received the inject can answer it.
     pub via_conversation: Option<u64>,
+    /// A plain communication (see [`response::ResponseKind`]): stored in the
+    /// inject's history, never reviewed or executed (status `Informational`).
+    pub communication: bool,
+    /// Who the response was addressed to: the fictitious sender EXCON plays,
+    /// or real players (delivered through a linked conversation).
+    pub addressed_to: response::Addressee,
     pub narrative_outcomes: Vec<narrative::NarrativeOutcome>,
     pub resource_limit_draft: Option<Value>,
     pub evidence: Option<DecisionEvidence>,
@@ -1368,6 +1375,7 @@ impl Exercise {
         text: &str,
         commands: Vec<Command>,
         reply_to: Option<u64>,
+        basis: BasisKind,
     ) -> Result<u64> {
         self.validate_chat(role, MASTER, text, true)?;
         if commands.is_empty() || commands.len() > 32 {
@@ -1379,6 +1387,8 @@ impl Exercise {
                 text: text.into(),
                 commands,
                 reply_to,
+                kind: response::ResponseKind::Decision,
+                basis: Some(basis),
                 ..Default::default()
             },
         )
@@ -1480,6 +1490,8 @@ impl Exercise {
             carries_actions: false,
             excon_actions: false,
             via_conversation: None,
+            communication: false,
+            addressed_to: Default::default(),
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence,
@@ -1651,6 +1663,8 @@ impl Exercise {
             carries_actions: false,
             excon_actions: false,
             via_conversation: None,
+            communication: false,
+            addressed_to: Default::default(),
             narrative_outcomes: Vec::new(),
             resource_limit_draft: None,
             evidence: None,

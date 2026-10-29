@@ -1,6 +1,23 @@
 use exercise::*;
 use serde_json::json;
 use std::{collections::BTreeMap, sync::Arc};
+
+/// A narrated decision (basis: operational judgement), as `Rispondi` sends it.
+fn narrated(ex: &mut Exercise, role: &str, text: &str, parent: u64, text_en: &str, failed: bool) -> anyhow::Result<u64> {
+    ex.player_response(
+        role,
+        exercise::response::PlayerResponse {
+            kind: exercise::ResponseKind::Decision,
+            basis: Some(exercise::BasisKind::OperationalJudgment),
+            narrative: Some(text.into()),
+            narrative_en: text_en.into(),
+            translation_failed: failed,
+            reply_to: Some(parent),
+            ..Default::default()
+        },
+    )
+}
+
 fn fixture() -> (Exercise, u64) {
     let mut ex = Exercise::new(
         sim::World::new(
@@ -25,7 +42,7 @@ fn fixture() -> (Exercise, u64) {
     (ex, ids[0])
 }
 fn submit(ex: &mut Exercise, parent: u64) -> u64 {
-    ex.player_narrative(
+    narrated(ex,
         "mayor",
         "Attivo supporto psicologico",
         parent,
@@ -116,14 +133,11 @@ fn narrative_questions_keep_the_original_initiative_and_rejection_blocks_outcome
 #[test]
 fn explicit_narrative_path_cannot_bypass_operational_validation_or_role_visibility() {
     let (mut ex, parent) = fixture();
-    assert!(ex
-        .player_narrative("fire_commander", "search", parent, "search", false)
+    assert!(narrated(&mut ex, "fire_commander", "search", parent, "search", false)
         .is_err());
-    assert!(ex
-        .player_narrative("mayor", " ", parent, "search", false)
+    assert!(narrated(&mut ex, "mayor", " ", parent, "search", false)
         .is_err());
-    assert!(ex
-        .player_narrative("mayor", &"x".repeat(8001), parent, "search", false)
+    assert!(narrated(&mut ex, "mayor", &"x".repeat(8001), parent, "search", false)
         .is_err());
     let p = submit(&mut ex, parent);
     let command = sim::Command::IssueWarning { zone: "F4".into() };
