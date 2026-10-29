@@ -399,7 +399,6 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
-        ("POST", "/api/player/<role>/narrative") => narrative::submit(principal.clone(), s.clone(), captures["role"].into(), decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/master/proposals/<id>/narrative-outcome") => narrative::outcome(principal.clone(), s.clone(), captures["id"].parse().map_err(|_| bad("invalid proposal id"))?, decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/player/<role>/conversations") => conversations::start(principal.clone(), s.clone(), captures["role"].into(), decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
         ("POST", "/api/player/<role>/conversations/<id>/messages") => conversations::post_message(principal.clone(), s.clone(), captures["role"].into(), captures["id"].parse().map_err(|_| bad("invalid conversation id"))?, decode(body.clone().ok_or_else(|| bad("request body required"))?)?).await,
@@ -738,7 +737,6 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/chat"),
     ("POST", "/api/player/<role>/reply"),
     ("POST", "/api/player/<role>/actions"),
-    ("POST", "/api/player/<role>/narrative"),
     ("POST", "/api/player/<role>/conversations"),
     ("POST", "/api/player/<role>/conversations/<id>/messages"),
     ("POST", "/api/master/proposals/<id>/narrative-outcome"),

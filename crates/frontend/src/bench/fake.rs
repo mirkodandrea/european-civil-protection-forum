@@ -352,6 +352,9 @@ impl Fake {
                 if communication && !commands.is_empty() {
                     return Err("una comunicazione non porta azioni".into());
                 }
+                if b["kind"] != "communication" && b["kind"] != "decision" {
+                    return Err("kind richiesto: communication o decision".into());
+                }
                 if b["kind"] == "decision" && !b["basis"].is_string() {
                     return Err("una decisione richiede il fondamento".into());
                 }
@@ -828,11 +831,14 @@ mod tests {
                 "mayor",
                 "/api/player/mayor/actions",
                 Some(
-                    json!({"narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
+                    json!({"kind": "decision", "basis": "operational_judgment", "narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
                 ),
             )
             .unwrap();
         let pid = r["proposal"].as_u64().unwrap();
+        // `kind` is required, and a decision needs its basis.
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"narrative": "x", "reply_to": inject}))).is_err());
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"kind": "decision", "narrative": "x", "reply_to": inject}))).is_err());
         let m = f.master();
         let row = m["inject_responses"]
             .as_array()

@@ -612,7 +612,7 @@ fn named_place_fire_line_player_action_terminates() {
     let mut ex = exercise();
     ex.start().unwrap();
     let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"Pineta Fuel Station","to":"Pineta Primary School"})).unwrap();
-    let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea tagliafuoco · Pineta Fuel Station", vec![cmd], None, exercise::BasisKind::OperationalJudgment).unwrap();
     assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
 }
 
@@ -637,7 +637,7 @@ fn factory_operational_fire_line_validation_is_fast() {
     ex.start().unwrap();
     let t = std::time::Instant::now();
     let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":"F4","to":"G4"})).unwrap();
-    let pid = ex.player_actions("fire_commander", "Linea · F4", vec![cmd], None).unwrap();
+    let pid = ex.player_actions("fire_commander", "Linea · F4", vec![cmd], None, exercise::BasisKind::OperationalJudgment).unwrap();
     assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
     assert!(t.elapsed() < std::time::Duration::from_secs(5), "validation took {:?}", t.elapsed());
 }
@@ -661,7 +661,7 @@ fn factory_operational_fire_line_reply_to_inject_is_fast() {
     let t = std::time::Instant::now();
     for (from, to) in [("Pineta Fuel Station", "Pineta Primary School"), ("F5", "H5")] {
         let cmd: Command = serde_json::from_value(json!({"type":"CutFireLine","from":from,"to":to})).unwrap();
-        let pid = ex.player_actions("fire_commander", "Linea", vec![cmd], Some(parent)).unwrap();
+        let pid = ex.player_actions("fire_commander", "Linea", vec![cmd], Some(parent), exercise::BasisKind::OperationalJudgment).unwrap();
         assert_eq!(ex.proposal(pid).unwrap().verdicts.len(), 1);
         eprintln!("{from}->{to}: {:?} verdict={:?}", t.elapsed(), ex.proposal(pid).unwrap().verdicts[0]);
     }

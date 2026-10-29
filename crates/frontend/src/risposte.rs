@@ -247,12 +247,14 @@ fn response_line(r: &Value, m: &Value, roles: &[Value]) -> Html {
     </div>}
 }
 
+/// Same wording as the player's composer: Piano o procedura / Legge o norma / Giudizio operativo.
 fn basis_name(kind: &str) -> &'static str {
-    match kind {
-        "plan" | "procedure" => crate::i18n::ex("Piani"),
-        "law" => crate::i18n::ex("Leggi"),
-        _ => crate::i18n::ex("Giudizi operativi"),
-    }
+    let lang = if crate::i18n_excon::is_en() { "en" } else { "it" };
+    crate::i18n::t(lang, match kind {
+        "plan" | "procedure" => "basis_plan",
+        "law" => "basis_law",
+        _ => "basis_judgment",
+    })
 }
 
 /// What a reply rests on and the PDF behind it, with the button that opens it.
@@ -262,7 +264,7 @@ fn basis_chip(basis: &Value, document: &Value, on_pdf: &Callback<(u64, String)>)
     }
     let doc = document.as_object().map(|_| (document["id"].as_u64().unwrap_or(0), text(&document["name"]).to_string()));
     html! {<div class="reply-basis" data-reply-basis={text(basis).to_string()}>
-        <span class="pill reply-basis-kind">{format!("{}: {}",crate::i18n::ex("Base della risposta"),basis_name(text(basis)))}</span>
+        <span class="pill reply-basis-kind">{crate::exfmt!("Fondamento: {}","Basis: {}",basis_name(text(basis)))}</span>
         if let Some((id,name))=doc{<button type="button" class="reply-doc" data-open-pdf={id.to_string()} onclick={{let on_pdf=on_pdf.clone();let name=name.clone();Callback::from(move |_|on_pdf.emit((id,name.clone())))}}>{format!("PDF · {name}")}</button>}
     </div>}
 }

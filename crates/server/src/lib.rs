@@ -314,7 +314,6 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_master_chat,
                 post_reply,
                 post_player_actions,
-                narrative::submit,
                 narrative::outcome,
                 conversations::start,
                 conversations::post_message,

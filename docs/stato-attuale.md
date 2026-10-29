@@ -212,8 +212,9 @@ Corpo di `POST /api/player/<role>/actions`, oltre a `narrative`, `commands`,
 - `kind`: `communication` (solo informazione: stato `informational` subito, senza
   fondamento, senza approvazione EXCON, senza azioni; non blocca il flusso) o
   `decision` (fondamento obbligatorio — piano/procedura, legge/norma, giudizio
-  operativo — anche se l’azione è solo narrata; revisione EXCON). Senza `kind`
-  (client precedenti) è una decisione con fondamento predefinito «giudizio operativo».
+  operativo — anche se l’azione è solo narrata; revisione EXCON). `kind` è
+  obbligatorio per ogni chiamante (422 se manca) e non c’è fondamento predefinito;
+  anche `Exercise::player_actions` richiede il fondamento esplicito.
 - `to_persona` / `to_players`: destinatario. Predefinito: il mittente fittizio
   dell’inject (`addressed_to.persona`). Con `to_players` la risposta è anche
   pubblicata, tradotta per ciascuno, in una conversazione collegata all’inject con
@@ -346,10 +347,11 @@ l’AI manca la risposta è `status: ai_unavailable` e l’interfaccia lo dice.
   riferimento ma il contenuto non è più disponibile.
 
 
-API: `POST /api/player/<role>/actions {narrative?, commands?, text?, reply_to?,
-conversation?, basis?, attachment?}` (unica rotta di risposta; ricorda che serve almeno narrazione o un
-comando); `POST /api/player/<role>/narrative {text, reply_to}` resta per compatibilità
-(solo narrazione); `POST /api/player/<role>/conversations {delivery, participants,
+API: `POST /api/player/<role>/actions {kind, narrative?, commands?, text?, reply_to?,
+conversation?, basis?, attachment?, to_persona?, to_players?}` (unica rotta di
+risposta: `kind` obbligatorio, `basis` obbligatorio per `decision`, serve almeno
+narrazione o un comando; la vecchia `POST /api/player/<role>/narrative` è stata
+rimossa); `POST /api/player/<role>/conversations {delivery, participants,
 text}` e `POST /api/player/<role>/conversations/<id>/messages {text, reply_to?}`;
 `GET /api/player/<role>` espone `linked_conversations` (con `quote`, messaggi nella
 lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`

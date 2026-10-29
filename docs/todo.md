@@ -106,13 +106,10 @@ chiarimento reale, ricontrollo automatico, `superseded`, retry LLM. Da fare:
   (coperto solo da test unitari); il rifiuto dal modale non è stato provato fino
   in fondo.
 - Risposte per inject (playtest 28/10): le stringhe nuove (`i18n_risposte.rs`)
-  esistono solo in italiano e inglese; le altre lingue ripiegano sull’inglese.
-  `scripts/qa/threaded-actions.cjs` e la registrazione
-  `scripts/record/standalone/session.cjs` usano ancora «+ Nuova azione» e il
-  selettore «Rispondi a…», rimossi: vanno riscritti sul percorso Rispondi. Il P0
-  «azione narrata non registrata» non si riproduce sul percorso principale
-  (Rispondi dal dettaglio inject): la risposta è salvata e visibile; il percorso
-  ambiguo («+ Nuova azione» con inject scelto automaticamente) è stato tolto.
+  esistono solo in italiano e inglese; le altre lingue ripiegano sull’inglese. Il
+  P0 «azione narrata non registrata» non si riproduce sul percorso principale
+  (Rispondi dal dettaglio inject); il percorso ambiguo («+ Nuova azione» con
+  inject scelto automaticamente) è stato tolto.
 - Ricontrollo: solo automatico (nessun pulsante "Ricontrolla"); ogni ricontrollo
   scrive un evento nel log; il test sul caso "raggio del tubo oltre 60 m" richiede
   il modello operativo (il test usa un'evacuazione con pochi autobus).

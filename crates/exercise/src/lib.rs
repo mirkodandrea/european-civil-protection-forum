@@ -1375,6 +1375,7 @@ impl Exercise {
         text: &str,
         commands: Vec<Command>,
         reply_to: Option<u64>,
+        basis: BasisKind,
     ) -> Result<u64> {
         self.validate_chat(role, MASTER, text, true)?;
         if commands.is_empty() || commands.len() > 32 {
@@ -1386,6 +1387,8 @@ impl Exercise {
                 text: text.into(),
                 commands,
                 reply_to,
+                kind: response::ResponseKind::Decision,
+                basis: Some(basis),
                 ..Default::default()
             },
         )

@@ -59,9 +59,8 @@ pub struct PlayerResponse {
     pub basis: Option<BasisKind>,
     /// PDF of the plan or law the response cites; needs a plan/law basis.
     pub document: Option<PdfUpload>,
-    /// Communication or decision; `None` (older clients) is a decision whose
-    /// basis defaults to operational judgement.
-    pub kind: Option<ResponseKind>,
+    /// Communication or decision (required by the API; a decision needs `basis`).
+    pub kind: ResponseKind,
     /// Fictitious sender the response answers (default: the inject's sender).
     pub to_persona: Option<String>,
     /// Real players the response goes to instead of the fictitious sender.
@@ -76,7 +75,7 @@ impl PlayerResponse {
         self.narrative.as_deref().filter(|t| !t.trim().is_empty())
     }
     pub fn is_communication(&self) -> bool {
-        self.kind == Some(ResponseKind::Communication)
+        self.kind == ResponseKind::Communication
     }
 }
 
@@ -103,7 +102,7 @@ impl Exercise {
             bail!("a response needs a narrative or at least one action");
         }
         match r.kind {
-            Some(ResponseKind::Communication) => {
+            ResponseKind::Communication => {
                 if !r.commands.is_empty() {
                     bail!("a communication carries no simulator action: send it as a decision");
                 }
@@ -112,7 +111,7 @@ impl Exercise {
                 }
             }
             // The basis is required for every decision, even a narrated one.
-            Some(ResponseKind::Decision) if r.basis.is_none() => {
+            ResponseKind::Decision if r.basis.is_none() => {
                 bail!("a decision needs its basis: plan or procedure, law or operational judgement");
             }
             _ => {}
@@ -230,15 +229,6 @@ impl Exercise {
             ),
             None => (None, Vec::new()),
         };
-        let evidence = match (r.reply_to, narrative.is_some(), r.commands.is_empty()) {
-            (Some(_), false, _) => Some(DecisionEvidence::judgment(
-                "Structured operational decision",
-            )),
-            (Some(_), true, false) => Some(DecisionEvidence::judgment(
-                "Narrative response with structured operational decision",
-            )),
-            _ => None,
-        };
         let evidence = match r.basis {
             Some(kind) => Some(DecisionEvidence {
                 basis: DecisionBasis {
@@ -250,11 +240,10 @@ impl Exercise {
                 },
                 attachments: Vec::new(),
             }),
-            None => evidence,
+            // Only a communication has no basis (validated above).
+            None => None,
         };
         let communication = r.is_communication();
-        // A communication rests on nothing to review: no default basis.
-        let evidence = if communication && r.basis.is_none() { None } else { evidence };
         // Default recipient: the fictitious sender of the inject being answered.
         let addressed_to = Addressee {
             persona: if r.to_players.is_empty() {

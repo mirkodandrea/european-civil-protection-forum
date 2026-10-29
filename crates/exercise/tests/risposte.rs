@@ -56,14 +56,14 @@ fn a_narrated_decision_is_stored_reviewed_and_published_as_distinct_events() {
     let bulletin = inject(&mut ex, "Servizio meteo", &["mayor"], "Bollettino incendi: pericolosità alta")[0];
     let warning = "Pubblichiamo un avviso alla popolazione: niente fuochi, evitare i boschi";
     // A decision without its basis is refused, with nothing stored.
-    let no_basis = PlayerResponse { kind: Some(ResponseKind::Decision), ..text(warning, bulletin) };
+    let no_basis = PlayerResponse { kind: ResponseKind::Decision, ..text(warning, bulletin) };
     assert!(ex.player_response("mayor", no_basis).is_err());
     assert!(ex.proposals.is_empty());
     let p = ex
         .player_response(
             "mayor",
             PlayerResponse {
-                kind: Some(ResponseKind::Decision),
+                kind: ResponseKind::Decision,
                 basis: Some(BasisKind::OperationalJudgment),
                 ..text(warning, bulletin)
             },
@@ -99,13 +99,13 @@ fn a_communication_is_stored_without_approval_and_carries_no_action() {
     let mut ex = exercise();
     let bulletin = inject(&mut ex, "Servizio meteo", &["mayor"], "Bollettino")[0];
     let action = PlayerResponse {
-        kind: Some(ResponseKind::Communication),
+        kind: ResponseKind::Communication,
         commands: vec![sim::Command::IssueWarning { zone: "F4".into() }],
         ..text("Ricevuto", bulletin)
     };
     assert!(ex.player_response("mayor", action).is_err(), "an action makes it a decision");
     let p = ex
-        .player_response("mayor", PlayerResponse { kind: Some(ResponseKind::Communication), ..text("Ricevuto, seguiamo", bulletin) })
+        .player_response("mayor", PlayerResponse { kind: ResponseKind::Communication, ..text("Ricevuto, seguiamo", bulletin) })
         .unwrap();
     let prop = ex.proposal(p).unwrap();
     assert!(prop.communication);
@@ -143,7 +143,7 @@ fn a_conversation_from_an_inject_leads_to_a_recorded_decision() {
         .player_response(
             "fire_commander",
             PlayerResponse {
-                kind: Some(ResponseKind::Decision),
+                kind: ResponseKind::Decision,
                 basis: Some(BasisKind::Procedure),
                 conversation: Some(cid),
                 to_players: vec!["regional_cp".into()],
@@ -180,7 +180,7 @@ fn a_response_from_a_conversation_is_listed_once_under_the_responders_own_row() 
     let (cid, _) = ex
         .start_linked_conversation("regional_cp", coord, &["fire_commander".into(), "mayor".into()], "Che fate?", "What now?", &BTreeMap::new(), false)
         .unwrap();
-    let decide = |t: &str| PlayerResponse { kind: Some(ResponseKind::Decision), basis: Some(BasisKind::OperationalJudgment), conversation: Some(cid), ..text(t, coord) };
+    let decide = |t: &str| PlayerResponse { kind: ResponseKind::Decision, basis: Some(BasisKind::OperationalJudgment), conversation: Some(cid), ..text(t, coord) };
     let p = ex.player_response("fire_commander", decide("Elicottero")).unwrap();
     // The mayor never received the inject: the conversation is their only way.
     let q = ex.player_response("mayor", decide("Avviso")).unwrap();
@@ -197,7 +197,7 @@ fn rispondi_to_a_player_opens_or_reuses_the_conversation_with_them() {
     let mut ex = exercise();
     let parent = inject(&mut ex, "Servizio meteo", &["mayor"], "Bollettino")[0];
     let to_cp = |t: &str| PlayerResponse {
-        kind: Some(ResponseKind::Communication),
+        kind: ResponseKind::Communication,
         to_players: vec!["regional_cp".into()],
         texts: BTreeMap::from([("regional_cp".into(), format!("[en] {t}"))]),
         ..text(t, parent)
