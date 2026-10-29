@@ -4,7 +4,7 @@
 // a plain communication and the fire-line endpoints on a narrow screen.
 // OpenRouter is intercepted locally before the fixture key is configured; no
 // external model calls are possible. One page: each standalone page owns its exercise.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');

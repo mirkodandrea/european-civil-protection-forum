@@ -1,6 +1,6 @@
 // Invisible standalone settings fixture: no server, no live AI, no credentials.
 // file:// build, or TTX_QA_URL for a Trunk server.
-const {chromium} = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const {chromium} = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');

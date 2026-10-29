@@ -1,6 +1,6 @@
 // Invisible QA for the read-only player Function view on the live standalone app.
 // OpenRouter is intercepted in-browser; no external model request is sent.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');

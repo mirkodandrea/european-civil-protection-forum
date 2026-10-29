@@ -165,7 +165,7 @@ prepares a batch of real exercise states, saves PNGs and an HTML review report;
 
 Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone codes** from the map grid (`F4`), as zone edges for fire lines (`F4:N`), or as coordinates.
 
-`scripts/demo_session.sh` plays a full two-turn session through the API; `scripts/record/record.sh` plays one in the browser and records the demo video (Italian, English and Armenian players; an AI prompt; a clarification; reinforcements).
+`scripts/demo_session.sh` plays a full two-turn session through the API. The narrated demo-video pipeline has been removed for now; `.claude/skills/demo-video-recording` records how to rebuild it.
 
 ## Layout
 
@@ -181,7 +181,7 @@ crates/frontend         Yew Rust/WebAssembly UI (chat, canvas maps, EXCON, evalu
 crates/viz              Bevy big-screen renderer (3D terrain, vegetation, fire, live turn view, HUD)
 crates/app              the `ttx` binary
 web/dist/               Generated HTML entry points, CSS, WebAssembly and loader (Trunk build)
-scripts/record          scripted + recorded browser session and video composition (Playwright, ffmpeg)
+scripts/qa              browser QA scripts (Playwright; npm ci --prefix scripts/qa)
 assets/models           Blender vegetation, town and articulated PBR unit bakes
 data/scenarios          generated scenario JSON
 docs/                   high-level capabilities and open topics
@@ -201,7 +201,6 @@ The server tests play the whole EXCON ↔ player ↔ LLM loop over HTTP with a m
 
 - [docs/stato-attuale.md](docs/stato-attuale.md): specifica di alto livello delle capacità presenti
 - [docs/todo.md](docs/todo.md): pochi temi ancora da definire
-- [scripts/record/README.md](scripts/record/README.md): come registrare una sessione demo
 
 The implementation and detailed behavior can be read from the source code.
 

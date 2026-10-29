@@ -49,8 +49,8 @@ build su main e dev). Poi:
 ```sh
 OPENROUTER_API_KEY='' TTX_LLM_CASSETTE='' ./scripts/build_standalone.sh
 cargo test --locked --release -p server -p exercise -p llm
-npm ci --prefix scripts/record
-scripts/record/node_modules/.bin/playwright install chromium
+npm ci --prefix scripts/qa
+scripts/qa/node_modules/.bin/playwright install chromium
 TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone.cjs
 TTX_BROWSER_CHANNEL=chromium node scripts/qa/standalone-settings.cjs
 ```

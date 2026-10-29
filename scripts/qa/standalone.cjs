@@ -1,6 +1,6 @@
 // Invisible fixture. One standalone app (file:// build, or TTX_QA_URL for a Trunk
 // server), real WASM model, no server or external AI.
-const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'playwright');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),{execFileSync}=require('child_process');
 
 /** The start-of-session language gate; a no-op when this session already answered it. */

@@ -1,6 +1,6 @@
 // Invisible standalone player conversations QA. OpenRouter is intercepted locally;
 // the fixture key is never sent to a real service or written to the manifest.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');

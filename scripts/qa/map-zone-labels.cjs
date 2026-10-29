@@ -1,6 +1,6 @@
 // Invisible QA for always-visible zone codes in the tactical reply map (axis letters/numbers at overview, per-cell codes when zoomed).
 // Uses a real EXCON inject and the ordinary player UI; no simulator state is mutated.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');

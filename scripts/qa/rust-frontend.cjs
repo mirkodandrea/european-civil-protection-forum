@@ -1,5 +1,5 @@
 // Invisible end-to-end fixture for the Rust/Wasm frontend; real APIs, no external AI.
-const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'playwright');
 const {spawn}=require('child_process');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict');
 const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(cwd,'runs/rust-frontend-advanced');

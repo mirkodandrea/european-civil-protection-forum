@@ -1,7 +1,0 @@
-{
-  "name": "ttx-recording",
-  "private": true,
-  "description": "Scripted, recorded TTX session (Playwright) — see scripts/record/README.md",
-  "scripts": { "session": "node session.js" },
-  "dependencies": { "playwright": "1.63.0" }
-}

@@ -1,5 +1,5 @@
 // Two real embedded maps, their editor references, activation and saved-session replay.
-const {chromium}=require('../record/node_modules/playwright');
+const {chromium}=require('playwright');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 
 /** The launcher shown before the exercise: resume the saved session, else start the selected scenario. */

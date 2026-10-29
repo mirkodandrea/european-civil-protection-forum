@@ -1,5 +1,5 @@
 // Invisible browser fixture: real API commands, paused decision time, no live LLM.
-const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'playwright');
 const {spawn}=require('child_process');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict');
 const cwd=path.resolve(__dirname,'../..'),out=process.env.TTX_QA_OUT||path.join(cwd,'runs/chat-interface-review');

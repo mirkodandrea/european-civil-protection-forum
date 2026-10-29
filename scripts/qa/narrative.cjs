@@ -3,7 +3,7 @@
 // outcome as a persona with an intervention; approval and outcome are distinct
 // states. Runs on the standalone app (TTX_QA_URL, e.g. a Trunk server; default
 // the single-file build); no external model.
-const { chromium } = require(process.env.TTX_PLAYWRIGHT || '../record/node_modules/playwright');
+const { chromium } = require(process.env.TTX_PLAYWRIGHT || 'playwright');
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');

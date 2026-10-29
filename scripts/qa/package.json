@@ -1,0 +1,8 @@
+{
+  "name": "ttx-qa",
+  "private": true,
+  "description": "Browser QA scripts (Playwright), see docs/standalone-pages.md",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

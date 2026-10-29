@@ -80,11 +80,11 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: scripts/record/package-lock.json
+          cache-dependency-path: scripts/qa/package-lock.json
       - name: Install browser fixture dependencies
         if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         run: |
-          npm ci --prefix scripts/record
+          npm ci --prefix scripts/qa
           # Ubuntu's runner image includes Chrome and its system libraries.
           google-chrome --version
       - name: Verify the app offline with real commands

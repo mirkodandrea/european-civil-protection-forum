@@ -4,7 +4,7 @@
 // --features standalone,bench` + any static server) and pass its URL:
 //   TTX_BENCH_URL=http://127.0.0.1:8080/ node scripts/qa/bench.cjs
 // TTX_QA_OUT: screenshot directory (default runs/bench-review/<time>).
-const {chromium}=require(process.env.TTX_PLAYWRIGHT||'../record/node_modules/playwright');
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'playwright');
 const fs=require('fs'),path=require('path'),assert=require('assert/strict');
 
 const base=(process.env.TTX_BENCH_URL||'http://127.0.0.1:8080/').replace(/\?.*$/,'');
