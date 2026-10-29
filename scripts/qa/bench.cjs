@@ -89,6 +89,10 @@ const benches={
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');
     await excon.locator('[data-linked-conversation]').first().waitFor();
+    // The response opens the conversation it came from in the viewer.
+    await excon.locator('.response-dialog [data-inspect-conversation]').first().click();
+    await excon.locator('.conv-viewer [data-conv-message]').first().waitFor();
+    await excon.locator('[data-close-conv-viewer]').click();
     await excon.locator('[data-approve]').click();
   },
   async decide(page){

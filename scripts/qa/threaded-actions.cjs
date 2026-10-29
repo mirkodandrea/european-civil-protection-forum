@@ -126,7 +126,7 @@ const supportedText = 'Issue a warning for the selected zone';
     assert.equal(await pending(), 1);
 
     // EXCON reviews it under the mayor's row, with the conversation below the replies.
-    await master.locator('[data-response]').filter({ hasText: /Mayor|Sindaco/ }).locator('button').click();
+    await master.locator('[data-response]').filter({ hasText: /Mayor|Sindaco/ }).locator('.response-row').click();
     const dialog = master.locator('.response-dialog');
     await dialog.locator('[data-response-state="rs_review"]').waitFor();
     await dialog.locator('[data-linked-conversation]').waitFor();

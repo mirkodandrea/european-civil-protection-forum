@@ -456,7 +456,7 @@ impl crate::player_view::PlayerView {
     /// The inject as a quoted card (conversation context).
     fn quoted_inject(&self, l: &str, m: Option<&Value>) -> Html {
         let Some(m) = m else { return html! {} };
-        html! {<blockquote class="conv-quote" data-conv-quote={m["id"].to_string()}><small><b>{i18n::t(l,"inject")}</b>{format!(" · {} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&self.name(text(&m["from"]))]))}</small><b>{text(&m["title"])}</b><p>{text(&m["text"])}</p></blockquote>}
+        quote_card(&m["id"], i18n::t(l, "inject"), &format!(" · {} · {}", text(&m["clock"]), i18n::tf(l, "from", &[&self.name(text(&m["from"]))])), text(&m["title"]), text(&m["text"]))
     }
 
     fn view_conversation(&self, can_act: bool, it: &Item, c: &Value) -> Html {
@@ -499,12 +499,10 @@ impl crate::player_view::PlayerView {
                     let id=m["id"].as_u64().unwrap_or(0);
                     let quote=m["reply_to"].as_u64().and_then(cited);
                     let body=if mine&&m["original"].is_string(){text(&m["original"])}else{text(&m["text"])};
-                    html!{<li class={classes!("inj-msg",if mine{"mine"}else{"theirs"})} data-conv-message={id.to_string()}>
-                        <small><b>{if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))}}</b>{format!(" · {}",text(&m["clock"]))}</small>
-                        if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
-                        <p>{body}</p>
+                    let who=if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))};
+                    conv_bubble(mine,m,&who,quote,body,html!{<>
                         if let Some(pid)=m["proposal"].as_u64(){{self.conv_response_tag(l,pid)}}
-                        <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></li>}
+                        <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></>})
                 })}
                 {for list(&c["responses"]).iter().map(|r|{
                     let by=if r["by"]==own{i18n::t(l,"thread_you").to_string()}else{self.name(text(&r["by"]))};
@@ -522,7 +520,23 @@ impl crate::player_view::PlayerView {
     }
 }
 
-fn excerpt(message: &str) -> String {
+/// The inject a linked conversation is about, as a quoted card. Shared by the
+/// player's conversation and the EXCON conversation viewer.
+pub fn quote_card(id: &Value, label: &str, meta: &str, title: &str, body: &str) -> Html {
+    html! {<blockquote class="conv-quote" data-conv-quote={id.to_string()}><small><b>{label.to_string()}</b>{meta.to_string()}</small><b>{title.to_string()}</b><p>{body.to_string()}</p></blockquote>}
+}
+
+/// One message of a linked conversation: author and time, the cited message,
+/// the text and any `extra` (response tag, cite button).
+pub fn conv_bubble(mine: bool, m: &Value, who: &str, quote: Option<(String, String)>, body: &str, extra: Html) -> Html {
+    html! {<li key={m["id"].to_string()} class={classes!("inj-msg",if mine{"mine"}else{"theirs"})} data-conv-message={m["id"].to_string()}>
+        <small><b>{who.to_string()}</b>{format!(" · {}",text(&m["clock"]))}</small>
+        if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
+        <p>{body.to_string()}</p>
+        {extra}</li>}
+}
+
+pub fn excerpt(message: &str) -> String {
     let mut chars = message.chars();
     let head = chars.by_ref().take(120).collect::<String>();
     if chars.next().is_some() {

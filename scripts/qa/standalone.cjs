@@ -82,7 +82,7 @@ const origin=url.startsWith('http')?new URL(url).origin:null;
   // The mayor answers the targeted inject with the warning; EXCON approves it in Risposte.
   await respond('mayor','Mayor fixture',async w=>{await w.locator('#work-action').selectOption('IssueWarning');await w.locator('#work-location').fill('F4');});
   console.log('player proposal submitted');
-  await select('risposte');await master.locator('[data-response]').filter({hasText:'Mayor fixture'}).filter({hasText:/Sindaco|Mayor/}).locator('button').click();
+  await select('risposte');await master.locator('[data-response]').filter({hasText:'Mayor fixture'}).filter({hasText:/Sindaco|Mayor/}).locator('.response-row').click();
   const proposal=master.locator('.response-dialog [data-proposal]').first();await proposal.locator('[data-approve]').click();
   await master.locator('.response-dialog [data-response-state="rs_approved"]').waitFor();
   await master.locator('.response-dialog').getByRole('button',{name:/^(Chiudi|Close)$/}).first().click();
