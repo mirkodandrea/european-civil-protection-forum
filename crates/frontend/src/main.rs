@@ -27,6 +27,7 @@ mod i18n_review;
 mod i18n_reply;
 mod i18n_risposte;
 mod pdf_view;
+mod proposal_drafts;
 mod place_pick;
 mod player_view;
 mod map;

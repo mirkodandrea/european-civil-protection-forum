@@ -188,7 +188,11 @@ player il modulo e la mappa del player (menu del ruolo, più zone, rettangoli,
 luoghi, bordi `F4:N`, strade ed edifici da elenco; più zone diventano più ordini);
 per i comandi EXCON lo strumento del Controllo che li costruisce (mappa o meteo).
 I campi che lo strumento non imposta (es. destinazione, larghezza) restano; i
-comandi senza editor (es. `AdjustResource`) aprono i parametri. Il pulsante diventa
+comandi senza editor (es. `AdjustResource`) aprono i parametri.
+Messaggi e inject proposti compaiono come «Messaggi/Inject che partiranno»
+(mittente → destinatario, titolo e testo modificabili; per gli inject destinatari
+«Tutti i player» o ruoli scelti) e i limiti di risorse come tabella per risorsa,
+generale e per fase (`proposal_drafts.rs`); il JSON resta in «Dettagli tecnici». Il pulsante diventa
 «Approva N di M azioni». Una proposta senza azioni offre «Prendi atto». Nota,
 persona e pulsanti di decisione stanno in fondo; il JSON dei comandi, le azioni non
 interpretabili e la cronologia sono in «Dettagli tecnici», chiusi per default.

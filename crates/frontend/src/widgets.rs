@@ -518,6 +518,9 @@ pub fn proposal(props: &ProposalProps) -> Html {
         Some(("muted proposal-ack-hint",crate::i18n::ex("Nessuna azione da eseguire: puoi prendere atto (la nota è la risposta al player), chiedere un chiarimento o rifiutare.").to_string()))
     }else{None};
     let from_player=p["source"]["kind"]=="player";
+    let set_comms={let comms=comms.clone();Callback::from(move|v:String|comms.set(v))};
+    let set_injects={let injects=injects.clone();Callback::from(move|v:String|injects.set(v))};
+    let set_limits={let limits=limits.clone();Callback::from(move|v:String|limits.set(v))};
     let tool_modal=match (*tool_edit,&props.common){
         (Some(i),Some(common)) if i<commands.len()&&editable=>{
             let original=commands[i].clone();
@@ -628,9 +631,9 @@ pub fn proposal(props: &ProposalProps) -> Html {
         </div>
         if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<p class="danger proposal-invalid">{crate::exfmt!("{} azioni non interpretabili: vedi i dettagli tecnici.","{} actions could not be read: see the technical details.",list(&p["invalid"]).len())}</p>}
         if !rejected_actions.is_empty(){<div class="rejected-actions" data-rejected-actions=""><b>{crate::i18n::ex("Azioni non approvate")}</b><ul>{for rejected_actions.iter().map(|r|html!{<li data-rejected-action={r["index"].to_string()}><span>{command_summary_in(lang,&r["command"],&stat)}</span>if !text(&r["note"]).is_empty(){<small class="muted">{format!(" · {}: {}",crate::i18n::ex("Motivo"),text(&r["note"]))}</small>}</li>})}</ul></div>}
-        if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
-        if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
-        if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
+        if editable&&!list(&p["communication_drafts"]).is_empty(){{crate::proposal_drafts::communications(&comms,&props.roles,props.busy,&set_comms)}}
+        if editable&&!list(&p["inject_drafts"]).is_empty(){{crate::proposal_drafts::injects(&injects,&props.roles,props.busy,&set_injects)}}
+        if editable&&!p["resource_limit_draft"].is_null(){{crate::proposal_drafts::limits(&limits,&stat,props.busy,&set_limits)}}
         if !narrative||editable {<footer class="proposal-decision">
         if (!narrative||editable)&&props.common.is_some() {<PersonaPicker stat={props.common.as_ref().map(|c|c.stat.clone()).unwrap_or_default()} value={(*persona).clone()} onchange={{let persona=persona.clone();Callback::from(move|v|persona.set(v))}} disabled={props.busy||!editable}/>}
         <label class="proposal-note"><span>{crate::i18n::ex("Nota per il player (richiesta per rifiutare o chiedere un chiarimento)")}</span><input data-note="" aria-label={crate::i18n::ex("Nota EXCON")} value={(*note).clone()} oninput={{let note=note.clone();Callback::from(move |e|{let v=api::input(e);save_note(id,&v);note.set(v)})}}/></label>
@@ -644,6 +647,9 @@ pub fn proposal(props: &ProposalProps) -> Html {
         <details class="proposal-tech" data-proposal-tech=""><summary>{crate::i18n::ex("Dettagli tecnici")}</summary>
             if editable&&!narrative{<details class="manual-commands"><summary>{crate::i18n::ex("Modifica o aggiungi comandi JSON (interpretazione manuale EXCON)")}</summary><textarea data-manual-commands="" aria-label={crate::i18n::ex("Comandi manuali EXCON")} value={pretty(&json!(*commands))} oninput={{let commands=commands.clone();let error=error.clone();Callback::from(move |e|match serde_json::from_str::<Vec<Value>>(&api::input(e)){Ok(next)=>{commands.set(next);error.set(String::new());},Err(e)=>error.set(crate::exfmt!("Comandi non validi: {e}","Invalid commands: {e}"))})}}/></details>}
             if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<div class="danger">{crate::render::render_value("",&p["invalid"])}</div>}
+            if editable&&!list(&p["communication_drafts"]).is_empty(){<label>{crate::i18n::ex("Comunicazioni da revisionare")}<textarea value={(*comms).clone()} oninput={{let comms=comms.clone();Callback::from(move|e|comms.set(api::input(e)))}}/></label>}
+            if editable&&!list(&p["inject_drafts"]).is_empty(){<label>{crate::i18n::ex("Inject proposti")}<textarea value={(*injects).clone()} oninput={{let injects=injects.clone();Callback::from(move|e|injects.set(api::input(e)))}}/></label>}
+            if editable&&!p["resource_limit_draft"].is_null(){<label>{crate::i18n::ex("Limiti di risorse proposti")}<textarea value={(*limits).clone()} oninput={{let limits=limits.clone();Callback::from(move|e|limits.set(api::input(e)))}}/></label>}
             {details(crate::i18n::ex("Cronologia ed esiti effettivi"),&json!({"history":p["history"],"executions":p["executions"]}))}
         </details>
         {tool_modal}
