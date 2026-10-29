@@ -195,6 +195,7 @@ const POINTER = `
       await beat(wait);
     }
     await caption('start');
+    await require('../../qa/standalone-languages.cjs').confirmLanguages(page, { mayor: 'it', regional_cp: 'hy' });
     await click(M.locator('#start'), { pause: 1500 });
 
     // ------------------------------------------------------------ turn 1: injects

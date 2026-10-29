@@ -78,6 +78,7 @@ const supportedText = 'Issue a warning for the selected zone';
     assert.equal(await page.locator('#openrouter-key').inputValue(), '', 'fixture credential clears after setup');
     await page.locator('.standalone-settings summary').click();
     await page.getByLabel('Simulazione', { exact: true }).uncheck();
+    await require('./standalone-languages.cjs').confirmLanguages(page, { mayor: 'en', fire_commander: 'en' });
     await master.locator('#start').click();
     await master.locator('#turn').filter({ hasText: 'orders' }).waitFor();
 
