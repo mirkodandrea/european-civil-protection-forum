@@ -759,15 +759,38 @@ pub struct BadgeProps {
 #[function_component(SuggestionBadge)]
 pub fn suggestion_badge(props: &BadgeProps) -> Html {
     let count = use_state(|| 0usize);
-    {
+    let inflight = use_mut_ref(|| false);
+    let refresh = {
         let count = count.clone();
-        use_effect_with(props.generation, move |_| {
+        let inflight = inflight.clone();
+        Callback::from(move |_: ()| {
+            if *inflight.borrow() {
+                return;
+            }
+            *inflight.borrow_mut() = true;
             let c = count.clone();
+            let inflight = inflight.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(v) = call("/api/master/situation/suggestions", None).await {
                     c.set(v["count"].as_u64().unwrap_or(0) as usize);
                 }
+                *inflight.borrow_mut() = false;
             });
+        })
+    };
+    {
+        // The alerts depend on the background turn preview and on EXCON marks,
+        // which settle after the generation changes: poll while mounted too.
+        let refresh = refresh.clone();
+        use_effect_with((), move |_| {
+            let tick = Interval::new(4000, move || refresh.emit(()));
+            move || drop(tick)
+        });
+    }
+    {
+        let refresh = refresh.clone();
+        use_effect_with(props.generation, move |_| {
+            refresh.emit(());
             || ()
         });
     }
