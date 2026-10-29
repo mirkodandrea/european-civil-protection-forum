@@ -462,9 +462,63 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
     doc
 }
 
+/// Parameters an action of type `kind` needs before it can run, given the
+/// (possibly partial) JSON object `params` (without `"type"`). Empty when the
+/// action is complete; unknown kinds report `"type"`. A fire line needs either
+/// `along` or both `from` and `to`; optional fields are never reported.
+/// Used to show an AI suggestion as incomplete instead of guessing its values.
+pub fn missing_params(kind: &str, params: &serde_json::Value) -> Vec<&'static str> {
+    let present = |k: &str| {
+        params.get(k).is_some_and(|v| match v {
+            serde_json::Value::Null => false,
+            serde_json::Value::String(s) => !s.trim().is_empty(),
+            serde_json::Value::Array(a) => !a.is_empty(),
+            _ => true,
+        })
+    };
+    let required: &[&'static str] = match kind {
+        "CutFireLine" => {
+            if present("along") {
+                return Vec::new();
+            }
+            return ["from", "to"].into_iter().filter(|k| !present(k)).collect();
+        }
+        "WaterDrop" | "DeployEngine" | "Ignite" => &["at"],
+        "MonitorArea" => &["zones"],
+        "Reconnoitre" | "EvacuateZone" | "IssueWarning" => &["zone"],
+        "EvacuateBuilding" | "OpenShelter" | "SetBuildingStatus" => &["building"],
+        "CloseRoad" | "ReopenRoad" => &["road"],
+        "RequestReinforcement" => &["resource", "qty"],
+        "Extinguish" => &["area"],
+        "SetWeather" => &[],
+        "ReturnResource" => &["allocation", "qty"],
+        "SetDeploymentTravel" => &["role", "resource", "at", "speed_mps"],
+        "AdjustResource" => &["role", "resource", "delta"],
+        "AdvanceTime" => &["minutes"],
+        _ => return vec!["type"],
+    };
+    required.iter().copied().filter(|k| !present(k)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_params_names_what_an_action_still_needs() {
+        use serde_json::json;
+        assert_eq!(missing_params("CutFireLine", &json!({})), vec!["from", "to"]);
+        assert_eq!(missing_params("CutFireLine", &json!({"from": "E3"})), vec!["to"]);
+        assert!(missing_params("CutFireLine", &json!({"from": "E3", "to": "F3"})).is_empty());
+        assert!(missing_params("CutFireLine", &json!({"along": "F4:N"})).is_empty());
+        assert_eq!(missing_params("DeployEngine", &json!({"at": ""})), vec!["at"]);
+        assert_eq!(missing_params("RequestReinforcement", &json!({"resource": "engines"})), vec!["qty"]);
+        assert_eq!(missing_params("Teleport", &json!({})), vec!["type"]);
+        // Every catalogue kind is known.
+        for kind in ALL_KINDS {
+            assert!(!missing_params(kind, &json!({})).contains(&"type"), "{kind}");
+        }
+    }
 
     #[test]
     fn json_round_trip_and_shapes() {
