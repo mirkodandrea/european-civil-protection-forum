@@ -176,9 +176,14 @@ EXCON, altrimenti i comandi della proposta; `note` ammette il sinonimo `reason`)
   della sessione ripete il corpo della richiesta, e i campi nuovi hanno valori
   predefiniti (sessioni salvate prima restano leggibili).
 
-Nella console (Risposte) ogni azione ha la casella «Approva questa azione» e, se
-esclusa, un motivo facoltativo per il player; il pulsante diventa «Approva N di M
-azioni». Una proposta senza azioni offre «Prendi atto».
+Nella console (Risposte) la scheda di una proposta mostra la richiesta del player,
+l'interpretazione e, sotto «Cosa succede se approvi», una riga leggibile per azione
+(luoghi come zona e luogo vicino, edifici per nome) con l'esito della verifica.
+Ogni riga ha la casella «Approva questa azione» e, se esclusa, un motivo facoltativo
+per il player; «Modifica» apre i parametri dell'azione. Il pulsante diventa
+«Approva N di M azioni». Una proposta senza azioni offre «Prendi atto». Nota,
+persona e pulsanti di decisione stanno in fondo; il JSON dei comandi, le azioni non
+interpretabili e la cronologia sono in «Dettagli tecnici», chiusi per default.
 
 ### Risposte con narrazione e azioni
 
