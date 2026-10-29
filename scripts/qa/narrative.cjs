@@ -24,6 +24,7 @@ const url = process.env.TTX_QA_URL || ('file://' + path.join(root, process.env.T
     await page.goto(url);
     if (url.startsWith('http')) { await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); }); await page.goto(url); }
     await page.locator('.launcher #start-session').click();
+    await require('./standalone-languages.cjs').confirmLanguages(page);
     await master.locator('#start').click();
     await master.locator('#turn').filter({ hasText: /orders|ordini/ }).waitFor();
     // EXCON sends a custom inject to the mayor only.

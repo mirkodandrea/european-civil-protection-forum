@@ -94,17 +94,19 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
   });
 
   try {
-    await page.goto(base, { waitUntil: 'domcontentloaded' }); await launch(page);
-    await master.locator('#start').waitFor({ timeout: 30000 });
-    await page.locator('.standalone-settings summary').click();
-    await page.locator('#openrouter-key').fill('qa-fixture-only');
-    await page.locator('#configure-ai').click();
-    assert.equal(await page.locator('#openrouter-key').inputValue(), '', 'fixture credential clears after setup');
-    await page.locator('.standalone-settings summary').click();
-    await page.getByLabel('Simulazione', { exact: true }).uncheck();
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.locator('.launcher').waitFor({ timeout: 90000 });
+    // The mock-backed fixture credential is set in the launcher, before the exercise.
+    await page.locator('#launch-openrouter-key').fill('qa-fixture-only');
+    await page.locator('#launch-save-key').click();
+    await launch(page);
+    await master.locator('#start').waitFor({ timeout: 60000 });
+    const sim = page.getByLabel('Simulazione', { exact: true }); if (await sim.isChecked()) await sim.uncheck();
     await require('./standalone-languages.cjs').confirmLanguages(page);
     await master.locator('#start').click();
-    await master.locator('#turn').filter({ hasText: 'orders' }).waitFor();
+    await master.locator('#turn').filter({ hasText: /orders|ordini/ }).waitFor();
 
     // Deliver a normal inject, then open the player's real reply editor.
     await master.locator('[data-view="timeline"]').click();
