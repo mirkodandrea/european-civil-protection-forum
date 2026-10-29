@@ -54,3 +54,32 @@ async fn translate_and_parse_live() {
     assert!(p.actions.iter().any(|a| a["type"] == "EvacuateZone"));
     assert!(!p.messages.is_empty());
 }
+
+/// Playtest 28/10: an invitation to avoid burning must not become a ban.
+#[tokio::test]
+async fn invitation_keeps_its_force_live() {
+    let Some(llm) = live() else { return };
+    let g = serde_json::json!({"places": ["Pineta"], "map": "zones A1..H8"});
+    let reply = "Il Comune invita la popolazione della zona F4 a evitare abbruciamenti e accensioni di fuochi all'aperto.";
+    let p = llm
+        .parse_reply(llm::tasks::ReplyInput {
+            role_id: "mayor",
+            role_name: "Mayor of Valverde",
+            role_description: "local authority",
+            language: "it",
+            catalogue: "- {\"type\":\"IssueWarning\",\"zone\":\"F4\"}",
+            other_roles: &[],
+            gazetteer: &g,
+            digest: &serde_json::json!({"clock": "Day 1 13:30"}),
+            history: &[],
+            reply,
+        })
+        .await
+        .unwrap();
+    eprintln!("{p:#?}");
+    assert_eq!(llm::fidelity::escalation(reply, &p.translation_en), None);
+    assert!(!p.summary.starts_with("CHECK WORDING"));
+    for q in &p.quotes {
+        assert!(q.is_empty() || llm::fidelity::quote_in(reply, q), "{q}");
+    }
+}

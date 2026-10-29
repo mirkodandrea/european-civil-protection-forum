@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 pub mod cassette;
+pub mod fidelity;
 pub mod tasks;
 
 pub use tasks::{InjectDraft, ParsedReply, RoleMessage};
