@@ -946,6 +946,16 @@ body:has(.bench){height:100dvh;overflow:hidden}.bench{height:100dvh;display:flex
 /* EXCON Situazione: the map takes the wide column beside the impact table. */
 .sit-grid{grid-template-columns:minmax(0,1.6fr) minmax(380px,1fr)}.sit-grid .sit-sugg{grid-column:1/-1;max-height:none}
 .sit-map .mapview{height:max(380px,calc(100dvh - 360px))}
+/* Situazione never scrolls as a whole: the head stays, the grid fills the section; map fills its card, tables scroll inside their cards. */
+main.page.sit-page{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.sit-page>.sit-head{flex:none}
+.sit-page>.sit-grid{flex:1 1 0;min-height:0;grid-template-columns:minmax(0,1.6fr) minmax(380px,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"map table" "map sugg";align-items:stretch}
+.sit-grid>.sit-map{grid-area:map}.sit-grid>.sit-table{grid-area:table}.sit-grid>.sit-sugg{grid-area:sugg;grid-column:auto;max-height:none}
+.sit-grid>.card{min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.sit-grid>.sit-sugg{overflow:auto}
+.sit-map>.mapbox{flex:1 1 0;min-height:0;display:flex;overflow:hidden}
+.sit-map .mapbox>.mapview{flex:1 1 auto;height:auto;min-height:0}
+.sit-table>.sit-scroll{flex:1 1 0;min-height:0;max-height:none;overflow:auto}
 @media(max-width:1050px){.tactical-view:not([hidden]){overflow:auto}.tactical-view .tactical-grid{flex:none;grid-template-rows:auto auto}.tactical-grid>.card{overflow:visible}.tactical-map>.mapbox{flex:none}.tactical-map>.mapbox>.mapview{height:60vh}.sit-grid{grid-template-columns:minmax(0,1fr)}}
 .mapview:fullscreen{width:100vw;height:100dvh;border-radius:0}
 /* Player action form: zone selection tools. */
