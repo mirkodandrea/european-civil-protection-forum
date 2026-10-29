@@ -110,6 +110,10 @@ chiarimento reale, ricontrollo automatico, `superseded`, retry LLM. Da fare:
   P0 «azione narrata non registrata» non si riproduce sul percorso principale
   (Rispondi dal dettaglio inject); il percorso ambiguo («+ Nuova azione» con
   inject scelto automaticamente) è stato tolto.
+- Standalone: dopo «Rimuovi chiave» e ricaricamento, la sessione ripresa può
+  ancora indicare «AI configurata da .env» (l’AI risulta disponibile pur senza
+  chiave salvata né chiave di build); `scripts/qa/standalone-settings.cjs`
+  verifica solo che la chiave salvata sia sparita. Da chiarire.
 - Ricontrollo: solo automatico (nessun pulsante "Ricontrolla"); ogni ricontrollo
   scrive un evento nel log; il test sul caso "raggio del tubo oltre 60 m" richiede
   il modello operativo (il test usa un'evacuazione con pochi autobus).
