@@ -5,6 +5,7 @@ mod action_form;
 mod bench;
 mod advanced;
 mod controllo;
+mod conv_viewer;
 mod api;
 mod chat;
 mod clarify;

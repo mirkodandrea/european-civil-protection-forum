@@ -973,3 +973,13 @@ main.page.sit-page{display:flex;flex-direction:column;overflow:hidden;min-height
 .zone-chips .chip{padding:2px 8px;font-size:12px;border-radius:12px;background:#dcebe2;border-color:#b8d1c3}
 .bench-col .page{padding:8px}.bench-col .tactical-view{height:auto}.bench-col .tactical-grid{grid-template-columns:minmax(0,1fr)}.bench-col .tactical-map,.bench-col .work-modal-map,.bench-col .tactical-resources{display:none}.bench-col .modal-backdrop,.bench-col .modal-backdrop.work-backdrop{position:fixed;inset:31px 0 0 0;padding:8px;align-items:flex-start}.bench-col .work-modal,.bench-col .inject-modal{width:100%;max-width:none;height:auto;max-height:calc(100% - 4px);overflow:auto}.bench-col .work-modal-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto}.bench-col .response-cols{grid-template-columns:minmax(0,1fr)}
 .reply-step{display:flex;flex-direction:column;gap:10px}.reply-step-options{display:grid;grid-template-columns:1fr 1fr;gap:10px}.reply-step-option{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:10px 12px}.reply-step-option small{color:var(--muted)}
+/* EXCON Risposte: badge of the player conversations on an inject and their viewer (selector on the left). */
+.response-item{position:relative}.response-item.has-convs .response-row{padding-bottom:38px}
+.conv-badge{position:absolute;right:14px;bottom:10px;min-height:0;height:auto;line-height:1.3;border-radius:999px;padding:3px 10px;font-size:12px;border:1px solid #3b7dd8;background:#eef6ff;color:#1f4f99;cursor:pointer}.conv-badge:hover{background:#dcebff}
+.conv-inspect{margin:4px 0 2px;padding:3px 10px;font-size:13px;border-color:#3b7dd8;color:#1f4f99;background:#eef6ff}.response-line .conv-inspect{margin:0;padding:1px 8px;font-size:12px}
+.inject-modal.conv-viewer{width:min(1100px,94vw);height:min(820px,90dvh);max-height:90dvh;display:flex;flex-direction:column;overflow:hidden;padding:18px 20px}
+.conv-viewer-cols{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;flex:1;min-height:0;margin-top:12px}
+.conv-viewer-list{display:flex;flex-direction:column;gap:6px;overflow:auto;padding-right:6px;border-right:1px solid var(--line)}
+.conv-viewer-item{display:grid;gap:3px;justify-items:start;text-align:left;padding:9px 11px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--line)}.conv-viewer-item small{color:var(--muted)}
+.conv-viewer-item.active{border-color:#3b7dd8;border-left-color:#3b7dd8;background:#eef6ff}
+.conv-viewer-thread{min-height:0;overflow:auto;display:flex;flex-direction:column;background:#f4f7f5;border-radius:10px}.conv-viewer-thread .inj-chat{flex:none;overflow:visible}

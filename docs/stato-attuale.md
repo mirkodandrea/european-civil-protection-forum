@@ -126,8 +126,11 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    parametri la fattibilità è ricalcolata in automatico (`/revalidate`).
    La tab Risposte mostra solo gli inject effettivamente inviati e, per ciascuno,
    l'intero thread in ordine (inject, risposte con tipo, destinatario e stato,
-   chiarimenti EXCON) e sotto le conversazioni tra player nate dall’inject, con la
-   trascrizione.
+   chiarimenti EXCON) e sotto le conversazioni tra player nate dall’inject. Un badge
+   «💬 N conversazioni» sulla riga apre il visore delle conversazioni (selettore
+   verticale a sinistra, una conversazione alla volta a destra, con gli stessi widget
+   della conversazione del player); nel dialogo della risposta **Ispeziona la
+   conversazione** apre direttamente quella da cui la risposta è nata.
 4. Le azioni approvate vengono eseguite o applicate durante l'avanzamento del
    tempo simulato. Le mappe, gli aggiornamenti ai ruoli, il registro e il debrief
    mostrano gli effetti.
@@ -274,8 +277,8 @@ Chi ha ricevuto un inject può aprire una conversazione con uno o più altri pla
 messaggio); poi prosegue come thread autonomo con l’inject citato in testa
 (riferimento fissato all’apertura) (`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
-testo originale e inglese, citazioni; `message_count`), mostrata espandibile in Risposte
-sotto l’inject. Il testo compare anche nel log (`conversation_message`), nel debrief e
+testo originale e inglese, citazioni; `message_count`), nel visore delle conversazioni
+di Risposte (badge sulla riga dell’inject o **Ispeziona la conversazione** sulla risposta). Il testo compare anche nel log (`conversation_message`), nel debrief e
 nelle evidenze del valutatore (`linked_conversations`). Ogni messaggio può citare un messaggio precedente della
 conversazione o l’inject. Regola di visibilità dell’inject: chi entra in una
 conversazione su un inject che non ha ricevuto lo legge citato in testa alla
