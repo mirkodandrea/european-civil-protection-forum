@@ -75,7 +75,9 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
     .await;
     assert_eq!(status, Status::Ok, "{body}");
     let id = body["proposal"].as_u64().unwrap();
-    assert!(tasks.lock().unwrap().iter().all(|t| t == "translate"));
+    // Besides translation, only the EXCON-side reading (suggestions for the
+    // EXCON, never executed by itself) may look at the narrative.
+    assert!(tasks.lock().unwrap().iter().all(|t| t == "translate" || t == "review_reply"));
     let (_, master) = call(&c, "master", "/api/master", None).await;
     assert_eq!(master["proposals"][0]["narrative"], true);
     assert_eq!(
@@ -122,7 +124,7 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
         .lock()
         .unwrap()
         .iter()
-        .all(|t| t == "translate" || t == "feedback"));
+        .all(|t| matches!(t.as_str(), "translate" | "feedback" | "review_reply")));
 }
 #[tokio::test]
 async fn narrative_routes_reject_other_roles_injects_and_executable_payloads() {

@@ -18,6 +18,75 @@ La bozza è indipendente dall’esercitazione. I salvataggi sono territori JSON
 nella libreria nativa oppure territori in localStorage nel browser, disponibili
 anche all’editor pack e all’avvio dell’esercitazione. Vedi [uso e limiti](scenari.md#editor-scenario-3d).
 
+## Solo l’EXCON agisce: azioni dalle risposte (2026-10-29)
+
+I player **non propongono azioni**: ricevono inject e messaggi e rispondono **a
+parole**. Nessun modulo d’azione, nessuna proposta da approvare, nessuno stato di
+approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con un
+`Command` applicato da `sim::World::apply`.
+
+- **Pagina del player**: mappa della situazione; inject e messaggi con risposta
+  libera (`POST /api/player/<role>/actions` con `kind: "communication"`, stato
+  «Inviata»); accanto al testo la **guida alla risposta** (cosa, dove — zona come
+  F4, lato di zona F4:N, luogo o coordinate —, con quali mezzi, entro quando, chi
+  si informa, con un esempio) e il materiale di decisione del ruolo (competenze e
+  risorse disponibili ora; descrizione e missioni nella scheda Funzione). Un clic
+  sulla mappa scrive nella risposta la zona o l’edificio. La stessa guida, in una
+  riga, sta sopra la risposta a una domanda della sala operativa.
+- **Lettura AI per l’EXCON** (`llm::tasks::review_reply`, `exercise::reply_review`,
+  `server::review`): ogni risposta di un player a un inject è letta per intero
+  (inject, risposta, domande inviate, risposte) fuori dal mutex. L’AI propone
+  azioni **solo dal catalogo** (`sim::Command`), ciascuna con la **fonte** (ruolo e
+  parole citate, verificate sul testo dei player: senza citazione l’azione è
+  scartata), i **parametri** e le **note** (ETA, fattibilità, incongruenze). Ogni
+  suggerimento ha la verifica di fattibilità del simulatore.
+- **Incompleti**: un suggerimento a cui mancano parametri obbligatori del suo
+  comando (`sim::missing_params`, es. `CutFireLine` senza `from`/`to` né `along`)
+  resta in lista come **incompleto** con i campi mancanti evidenziati: mai
+  scartato, mai indovinato. I completi si eseguono subito, senza aspettare i
+  chiarimenti.
+- **Domande**: l’AI scrive **una** domanda per player che raccoglie tutte le
+  lacune, nella lingua del player e con la voce del personaggio EXCON (mittente
+  dell’inject o `default_persona`), richiamando la guida alla risposta; se il
+  modello non la scrive, una domanda standard (it/en) copre comunque ogni lacuna.
+  **Ogni domanda è una bozza**: l’EXCON la modifica e la invia con un clic
+  (`POST /api/master/review/send/<id>`); nulla parte da solo, nemmeno le domande
+  banali. Può anche scrivere una domanda propria (`ask`) o scartarla (`discard`).
+  L’AI può proporre una domanda a un **altro ruolo** (incongruenza tra ruoli: il
+  DOS usa il bulldozer del Comune → chiedere al Sindaco?), sempre come bozza.
+- **Risposta e rilettura**: la risposta del player alla domanda (stesso box
+  «Rispondi», `reply_to` = la domanda) è collegata alla domanda; l’AI rilegge tutto
+  il thread e la console mostra la **differenza** (completate / modificate / nuove).
+  Le decisioni già prese restano: un’azione eseguita non cambia mai, una ignorata
+  resta ignorata se la rilettura dice lo stesso, i valori modificati dall’EXCON
+  restano e l’AI completa solo ciò che manca. Le letture vecchie sono scartate
+  (revisione).
+- **Console EXCON** (Risposte, in alto, «Azioni dalle risposte»): un gruppo per
+  risposta (ruolo, inject, risposta in una riga, stato della lettura, differenza),
+  una riga compatta per suggerimento con lo stato leggibile a colpo d’occhio —
+  **Completa**, **Incompleta** (con «Mancano: …»), **Incompleta · domanda da
+  rivedere**, **Incompleta · attende risposta**, **Eseguita**, **Non eseguita**,
+  **Ignorata** — e i pulsanti Esegui / Modifica / Ignora; il dettaglio apre i
+  parametri modificabili, le note AI e il risultato. Le domande hanno gli stati
+  **Domanda da rivedere**, **Inviata · attende risposta**, **Risposta ricevuta**.
+  «Chiudi revisione» chiude il ciclo quando l’EXCON vuole (le bozze non inviate
+  sono scartate); domande aperte e azioni da decidere restano visibili anche nel
+  pannello del turno (chip «N domande aperte · M azioni da decidere») e nel badge
+  della scheda Risposte.
+- **Esecuzione**: `POST /api/master/review/execute/<id>` (eventuali `params`
+  modificati) costruisce il `Command`, lo verifica per il ruolo che lo esegue
+  (risorse e autorità di quel ruolo) e lo applica subito; un’azione non fattibile
+  non parte e resta da modificare. Il log registra `action_executed` con
+  `review_item`, ruolo, citazione. Il rollback dimentica le revisioni dei turni
+  annullati.
+- **Zone come luoghi**: un lato di zona (`F4:N`) vale anche come luogo puntuale
+  (un quinto verso il centro della zona dal punto medio del lato).
+- Le vecchie proposte con approvazione restano nel modello e nell’API (proposte
+  dell’EXCON da prompt, fixture, banco), ma la pagina del player non le produce
+  più. Test: `crates/exercise/tests/reply_review.rs` (scenario di accettazione),
+  `crates/server/tests/reply_review.rs`, `llm::tasks` (fedeltà della lettura),
+  `frontend::tactical` (nessun controllo d’azione nella pagina del player).
+
 ## Situazione EXCON: impatto, anteprima di fine turno, allerte
 
 La scheda **Situazione** (solo EXCON, solo desktop) mostra a EXCON l'effetto dell'incendio e cosa accadrà entro la fine del turno, così può scrivere gli inject in anticipo. **Gli inject restano manuali**: nulla viene inviato o pianificato da solo.
@@ -38,9 +107,10 @@ attuale rappresenta un incendio boschivo nella valle sintetica di Valverde.
 - **EXCON** prepara e invia inject, controlla l'esercitazione e il tempo,
   assegna risorse, approva o rifiuta le azioni dei partecipanti e può intervenire
   direttamente nel modello.
-- **Partecipanti** agiscono entro il ruolo, le autorizzazioni, le informazioni
-  e le risorse definiti dallo scenario. Possono comunicare in linguaggio libero
-  nella propria lingua.
+- **Partecipanti** decidono entro il ruolo, le autorizzazioni, le informazioni
+  e le risorse definiti dallo scenario, ma non agiscono sul mondo: rispondono in
+  linguaggio libero nella propria lingua e l’EXCON attua le azioni (vedi «Solo
+  l’EXCON agisce»).
 - **Valutatori** dispongono di una vista in sola lettura delle evidenze e del
   debrief.
 

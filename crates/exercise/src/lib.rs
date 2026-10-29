@@ -38,6 +38,7 @@ pub mod conversations;
 pub mod narrative;
 pub mod persona;
 pub mod response;
+pub mod reply_review;
 pub use response::{Addressee, ResponseKind};
 pub mod summaries;
 pub mod threads;
@@ -583,6 +584,8 @@ pub struct Exercise {
     pub disabled_actions: BTreeMap<String, i64>,
     /// Situation suggestions the EXCON dismissed, sent or planned (id -> mark).
     pub suggestion_marks: BTreeMap<String, suggestions::SuggestionMark>,
+    /// EXCON review of player replies: AI action suggestions and questions (see [`reply_review`]).
+    pub review: reply_review::Board,
     /// Bumped whenever the world is restored (the fire is reseeded), so a preview made before is not reused.
     pub(crate) restore_epoch: u32,
     pub world: World,
@@ -668,6 +671,7 @@ impl Exercise {
             skipped_injects: BTreeMap::new(),
             disabled_actions: BTreeMap::new(),
             suggestion_marks: BTreeMap::new(),
+            review: Default::default(),
             restore_epoch: 0,
             world,
             turn: 0,
@@ -1063,6 +1067,7 @@ impl Exercise {
         self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
         self.rollback_narrative_outcomes(turn);
+        self.rollback_reviews(turn);
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
         self.restore_epoch += 1;

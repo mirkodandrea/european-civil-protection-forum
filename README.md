@@ -10,9 +10,9 @@ The current capabilities are summarized in [docs/stato-attuale.md](docs/stato-at
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
 - a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread as a 32-run Monte Carlo ensemble (the fire is the set of cells reached by at least half of the runs), buildings with occupants, approved deployed teams travelling on the simulation clock, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, second by second;
-- an **EXCON** web console: injects (MSEL), turn control, approval of every player action, god-mode map tools, AI prompts, commands by code, rollback;
+- an **EXCON** web console: injects (MSEL), turn control, actions suggested from the players' replies (executed, edited or ignored by the EXCON; players never act), god-mode map tools, AI prompts, commands by code, rollback;
 - **player** web pages (tablets): role-specific inbox in the player's own language, free-text replies;
-- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash-1017`) that translates injects, turns replies into candidate commands, drafts clarification questions when orders are vague, and translates recorded feedback and situation updates.
+- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash-1017`) that translates injects, reads each reply thread into catalogue actions for the EXCON, drafts clarification questions (always reviewed by the EXCON before sending) when orders are vague, and translates recorded feedback and situation updates.
 
 > Humans decide. Rules constrain. The model simulates. AI mediates. The EXCON approves.
 

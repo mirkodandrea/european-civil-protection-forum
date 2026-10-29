@@ -38,6 +38,7 @@ mod maptest;
 mod notifications;
 mod render;
 mod risposte;
+mod review_board;
 mod situation;
 mod staged_commands;
 mod scenario_editor;
@@ -141,10 +142,6 @@ impl Default for Draft {
         }
     }
 }
-/// Pause in typing after which the narrative is read for action suggestions.
-const SUGGEST_PAUSE_MS: u32 = 2500;
-/// Shorter narratives are not worth a suggestion request.
-const SUGGEST_MIN_CHARS: usize = 20;
 pub struct Bootstrap {
     access: Value,
     stat: Value,
@@ -183,7 +180,6 @@ pub struct App {
     refresh_again: bool,
     drafts: BTreeMap<String, Draft>,
     /// Debounce of the automatic action suggestions on the narrative.
-    suggest_timer: Option<gloo_timers::callback::Timeout>,
     seen: BTreeMap<String, u64>,
     fields: BTreeMap<String, String>,
     responses: BTreeMap<String, Value>,
@@ -242,13 +238,6 @@ pub enum Msg {
     OpenWork(Option<String>),
     /// Answer the inject delivery `.0` from the linked conversation `.1`.
     OpenWorkConv(String, String),
-    /// Add commands to the response being composed.
-    StageActions(Vec<Value>),
-    Unstage(usize),
-    /// The narrative stopped changing: ask for action suggestions.
-    Suggest,
-    /// Suggestions for the narrative `.0` (see `/api/player/<role>/suggest-actions`).
-    Suggested(String, Result<Value, String>),
     CloseInject,
     View(String),
     Field(String, String),
@@ -273,26 +262,6 @@ impl App {
             l if !l.is_empty() => l.to_string(),
             _ => "it".into(),
         }
-    }
-    /// Actions collected so far for the response being composed.
-    fn staged(&self) -> Vec<Value> {
-        self.fields
-            .get("work:staged")
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or_default()
-    }
-    /// (Re)start the pause after which the narrative gets action suggestions.
-    fn schedule_suggest(&mut self, ctx: &Context<Self>) {
-        let link = ctx.link().clone();
-        self.suggest_timer = Some(gloo_timers::callback::Timeout::new(SUGGEST_PAUSE_MS, move || {
-            link.send_message(Msg::Suggest)
-        }));
-    }
-    fn field(&self, key: &str, default: &str) -> String {
-        self.fields
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| default.into())
     }
     fn draft(&self) -> Draft {
         self.drafts.get(&self.selected).cloned().unwrap_or_default()
@@ -533,7 +502,6 @@ impl Component for App {
             lang_chosen,
             refresh_again: false,
             drafts: BTreeMap::new(),
-            suggest_timer: None,
             seen: BTreeMap::new(),
             fields: BTreeMap::new(),
             responses: BTreeMap::new(),
@@ -788,7 +756,6 @@ impl Component for App {
                             }
                             ActionKind::WorkSubmit => {
                                 player_view::response_sent(&mut self.fields);
-                                self.suggest_timer = None;
                                 self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
                             }
                             ActionKind::ConvStart => {
@@ -808,50 +775,8 @@ impl Component for App {
                 }
                 self.request_refresh(ctx);
             }
-            Msg::Suggest => {
-                self.suggest_timer = None;
-                let narrative = self.field("work:narrative", "");
-                if self.is_master()
-                    || self.state["phase"] != "orders"
-                    || self.field("work:open", "false") != "true"
-                    || narrative.trim().chars().count() < SUGGEST_MIN_CHARS
-                    || narrative == self.field("work:sugg_for", "")
-                    || !self.field("work:sugg_busy", "").is_empty()
-                {
-                    return false;
-                }
-                self.fields.insert("work:sugg_busy".into(), "1".into());
-                let body = json!({
-                    "narrative": narrative,
-                    "reply_to": self.field("work:reply_to", "").parse::<u64>().ok(),
-                    "conversation": self.field("work:conversation", "").parse::<u64>().ok(),
-                    "staged": self.staged(),
-                });
-                let (token, path) = (self.token.clone(), format!("/api/player/{}/suggest-actions", self.own));
-                ctx.link().send_future(async move {
-                    Msg::Suggested(narrative, api::request(&token, &path, Some(body)).await)
-                });
-            }
-            Msg::Suggested(narrative, result) => {
-                self.fields.remove("work:sugg_busy");
-                if self.field("work:open", "false") != "true" {
-                    return false;
-                }
-                if narrative != self.field("work:narrative", "") {
-                    // The player kept writing: suggest for the newer text.
-                    self.schedule_suggest(ctx);
-                    return false;
-                }
-                let value = result.unwrap_or_else(|e| json!({"status": "ai_unavailable", "actions": [], "failure": e}));
-                self.fields.insert("work:sugg".into(), value.to_string());
-                self.fields.insert("work:sugg_for".into(), narrative);
-            }
-            Msg::StageActions(commands) => player_view::stage(&mut self.fields, commands),
-            Msg::Unstage(index) => player_view::unstage(&mut self.fields, index),
             Msg::OpenWorkConv(parent, conversation) => {
-                if player_view::open_work_conv(&mut self.fields, &self.state, &self.own, parent, conversation) {
-                    self.suggest_timer = None;
-                }
+                player_view::open_work_conv(&mut self.fields, &self.state, &self.own, parent, conversation);
                 self.error.clear();
                 focus_when_rendered("#response-narrative", 10);
             }
@@ -859,9 +784,7 @@ impl Component for App {
                 let parent = parent
                     .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
                     .unwrap_or_default();
-                if player_view::open_work(&mut self.fields, parent) {
-                    self.suggest_timer = None;
-                }
+                player_view::open_work(&mut self.fields, parent);
                 self.error.clear();
                 focus_when_rendered("#response-narrative", 10);
             }
@@ -973,9 +896,6 @@ impl Component for App {
                 self.mark_seen();
             }
             Msg::Field(key, value) => {
-                if key == "work:narrative" && !self.is_master() && self.fields.get(&key) != Some(&value) {
-                    self.schedule_suggest(ctx);
-                }
                 if key.starts_with("draft:") {
                     let selected = self.selected.clone();
                     let own = self.own.clone();
@@ -1062,7 +982,9 @@ impl Component for App {
             } else if id == "map" && !self.is_master() && !self.is_evaluator() {
                 self.inject_todo(ctx)
             } else if id == "risposte" && self.is_master() {
-                risposte::pending_count(&self.master)
+                // Legacy approvals, plus what the reply review waits on the EXCON for.
+                let c = &self.master["reply_review"]["counts"];
+                risposte::pending_count(&self.master) + (c["complete"].as_u64().unwrap_or(0) + c["drafts"].as_u64().unwrap_or(0)) as usize
             } else {
                 0
             };

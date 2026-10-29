@@ -30,7 +30,7 @@ pub mod travel;
 pub use drone::{MonitorSample, MonitorState, SampleKind};
 pub use travel::{DeploymentTask, TaskStatus, TravelSetting};
 
-pub use command::{catalogue, catalogue_for, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
+pub use command::{catalogue, catalogue_for, missing_params, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
 pub use fire::FireOptions;
 
 /// Sub-step of [`World::advance`], seconds. Buildings, evacuations, roads and
