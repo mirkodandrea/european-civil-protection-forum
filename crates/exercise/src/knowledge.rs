@@ -718,7 +718,7 @@ impl Exercise {
             .ok_or_else(|| anyhow::anyhow!("unknown role {role}"))?;
         let full = self.world.static_view();
         Ok(
-            json!({"id":full["id"], "name":full["name"], "grid":full["grid"], "zones":full["zones"], "fuel":full["fuel"],
+            json!({"id":full["id"], "name":full["name"], "grid":full["grid"], "zones":full["zones"], "fuel":full["fuel"], "fuel_names":full["fuel_names"],
             "buildings":self.world.scn.buildings.iter().map(|b| json!({"id":b.id,"kind":b.kind,"name":b.name,"pos":b.pos,"size":b.size})).collect::<Vec<_>>(),
             "roads":self.world.scn.roads.iter().map(|r| json!({"id":r.id,"name":r.name,"points":r.points})).collect::<Vec<_>>(),
             "places":full["places"], "roles":[own],

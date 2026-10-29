@@ -292,7 +292,7 @@ pub(crate) fn draw(
                     } else {
                         ui.small("Tieni premuto sulla mappa per dipingere.");
                         egui::ComboBox::from_label("Combustibile")
-                            .selected_text(e.fuel.to_string())
+                            .selected_text(d.scene.fuel_name(e.fuel))
                             .show_ui(ui, |ui| {
                                 if d.scene.fuel_definitions.is_empty() {
                                     for n in 1..=7 {

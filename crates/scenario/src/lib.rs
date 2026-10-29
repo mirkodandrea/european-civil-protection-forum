@@ -1107,6 +1107,18 @@ impl Scenario {
         self.fuel[self.grid.index(c)]
     }
 
+    /// Display name of a fuel class: the scenario table when present, the
+    /// legacy names otherwise.
+    pub fn fuel_name(&self, id: i32) -> String {
+        if self.fuel_definitions.is_empty() {
+            return fuel::name(id).into();
+        }
+        self.fuel_definitions
+            .iter()
+            .find(|f| f.id == id)
+            .map_or_else(|| "unknown".into(), |f| f.name.clone())
+    }
+
     pub fn elevation_at(&self, c: Cell) -> f32 {
         self.dem[self.grid.index(c)]
     }
@@ -1173,6 +1185,15 @@ pub fn format_clock(clock_s: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fuel_names_come_from_the_scenario_table_when_present() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        assert_eq!(s.fuel_name(fuel::CONIFERS), "conifers");
+        s.fuel_definitions = serde_json::from_str(include_str!("../data/fuels_eu12.json")).unwrap();
+        assert_eq!(s.fuel_name(12), "conifers - high susceptibility");
+        assert_eq!(s.fuel_name(99), "unknown");
+    }
+
     #[test]
     fn retired_communication_keys_are_ignored_by_old_scenarios() {
         let s = synthetic::generate(synthetic::DEFAULT_SEED);
