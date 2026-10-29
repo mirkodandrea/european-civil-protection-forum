@@ -7,6 +7,8 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use yew::prelude::*;
 
+const PENDING: &str = "pending:proposal:";
+const CLARIFY: &str = "clarify:proposal:";
 /// `Action` needs the EXCON (or player) to do something: its toast stays until handled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Priority {
@@ -55,6 +57,12 @@ impl Notice {
     fn group(mut self, group: String) -> Self {
         self.group = Some(group);
         self
+    }
+    /// Cleared by the state of the thing it announces, not by looking at a view.
+    fn status_bound(&self) -> bool {
+        self.group
+            .as_deref()
+            .is_some_and(|g| g.starts_with(PENDING) || g.starts_with(CLARIFY))
     }
     fn from_spec(key: String, spec: Spec, clock: &str) -> Self {
         let mut n = Self::new(key, spec.title, spec.detail, clock, spec.view);
@@ -133,11 +141,32 @@ impl NotificationFeed {
             }
         }
     }
+    /// Opening a view shows everything notified for it. Notices bound to a status
+    /// (a pending proposal, a clarification) are cleared only by `resolve_group`;
+    /// conversation notices only by reading the thread, unless the view is not the chat
+    /// itself (the EXCON gets chat messages inside the replies view).
     pub fn read_view(&mut self, view: &str) {
         for n in &mut self.items {
-            if n.view == view && n.peer.is_none() && n.priority == Priority::Info {
+            if n.view == view
+                && !n.status_bound()
+                && (n.peer.is_none() || view != "chat")
+            {
                 n.read = true;
             }
+        }
+    }
+    /// Clear the status-bound notices of `prefix` whose group is no longer live
+    /// (the proposal was handled, superseded or rolled back).
+    pub fn resolve_missing(&mut self, prefix: &str, live: &BTreeSet<String>) {
+        let gone: Vec<String> = self
+            .items
+            .iter()
+            .filter_map(|n| n.group.as_deref())
+            .filter(|g| g.starts_with(prefix) && !live.contains(*g))
+            .map(String::from)
+            .collect();
+        for g in gone {
+            self.resolve_group(&g);
         }
     }
     pub fn mark_all_read(&mut self) {
@@ -247,7 +276,7 @@ fn pending_proposal_spec(p: &Value, name: &dyn Fn(&str) -> String) -> Option<Spe
     Some(
         Spec::new(title, text(&p["original"]).into(), "risposte")
             .action()
-            .group(format!("pending:proposal:{}", p["id"])),
+            .group(format!("{PENDING}{}", p["id"])),
     )
 }
 impl Spec {
@@ -528,11 +557,11 @@ impl App {
         if master_view {
             // The EXCON is notified only of proposals waiting for review, until they are handled.
             let name = |id: &str| self.name(id);
-            let mut handled = Vec::new();
+            let mut live = BTreeSet::new();
             for p in list(&master["proposals"]) {
-                let pending = p["status"] == "pending";
                 match pending_proposal_spec(p, &name) {
                     Some(spec) => {
+                        live.insert(format!("{PENDING}{}", p["id"]));
                         let rounds = list(&p["history"])
                             .iter()
                             .filter(|h| h["status"] == "pending")
@@ -543,16 +572,18 @@ impl App {
                             "",
                         ));
                     }
-                    None if !pending => handled.push(format!("pending:proposal:{}", p["id"])),
                     None => {}
                 }
             }
-            for group in handled {
-                self.notifications.resolve_group(&group);
-            }
+            // Handled, superseded or rolled-back proposals no longer ask for review.
+            self.notifications.resolve_missing(PENDING, &live);
         } else {
+            let mut live = BTreeSet::new();
             for p in list(&state["proposals"]) {
                 let status = text(&p["status"]);
+                if status == "needs_clarification" {
+                    live.insert(format!("{CLARIFY}{}", p["id"]));
+                }
                 if ["superseded", "parsing", "pending", "informational"].contains(&status) {
                     continue;
                 }
@@ -572,12 +603,14 @@ impl App {
                     "map",
                 );
                 if status == "needs_clarification" {
-                    n = n.action();
+                    n = n.action().group(format!("{CLARIFY}{}", p["id"]));
                 } else {
                     n.read = visible && self.active == "map";
                 }
                 candidates.push(n);
             }
+            // Answered, withdrawn or rolled-back clarifications stop asking for action.
+            self.notifications.resolve_missing(CLARIFY, &live);
         }
         for summary in list(&state["turn_summaries"])
             .iter()
@@ -893,6 +926,8 @@ mod tests {
         assert_eq!(feed.unread_actions(), 1);
         feed.read_view("chat");
         assert_eq!(feed.unread_actions(), 1);
+        feed.resolve_missing(PENDING, &BTreeSet::from(["pending:proposal:1".to_string()]));
+        assert_eq!(feed.unread_actions(), 1);
         feed.resolve_group("pending:proposal:1");
         assert_eq!(feed.unread_actions(), 0);
         assert_eq!(feed.toasts, vec!["i"]);
@@ -903,5 +938,38 @@ mod tests {
         feed.ingest(vec![]);
         feed.ingest(vec![item("a").action(), item("b"), item("c"), item("d")]);
         assert_eq!(feed.toasts, vec!["a", "c", "d"]);
+    }
+    #[test]
+    fn opening_a_view_clears_its_action_notices_but_not_status_bound_ones() {
+        let mut feed = NotificationFeed::default();
+        feed.ingest(vec![]);
+        let mut failed = item("f").action();
+        failed.view = "history".into();
+        let mut pending = item("p").action().group("pending:proposal:1".into());
+        pending.view = "history".into();
+        feed.ingest(vec![failed, pending]);
+        feed.read_view("history");
+        assert_eq!(feed.unread_actions(), 1);
+        feed.resolve_missing(PENDING, &BTreeSet::new());
+        assert_eq!(feed.unread(), 0);
+    }
+    #[test]
+    fn excon_chat_notices_clear_with_their_view_but_player_threads_need_the_thread() {
+        let mut feed = NotificationFeed::default();
+        feed.ingest(vec![]);
+        let mut a = item("a");
+        a.view = "risposte".into();
+        a.peer = Some("mayor".into());
+        a.message = Some(1);
+        let mut b = item("b");
+        b.peer = Some("mayor".into());
+        b.message = Some(2);
+        feed.ingest(vec![a, b]);
+        feed.read_view("risposte");
+        assert_eq!(feed.unread(), 1);
+        feed.read_view("chat");
+        assert_eq!(feed.unread(), 1);
+        feed.read_thread("mayor", 2);
+        assert_eq!(feed.unread(), 0);
     }
 }
