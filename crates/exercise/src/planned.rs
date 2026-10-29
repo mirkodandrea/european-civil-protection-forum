@@ -78,6 +78,13 @@ impl Exercise {
         rows.into_iter().map(|r| r.2).collect()
     }
 
+    /// `role` has its own copy of the delivery event `inject_id`.
+    pub(crate) fn received_inject(&self, role: &str, inject_id: u64) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.kind == MsgKind::Inject && m.inject_id == Some(inject_id) && m.to == role)
+    }
+
     /// One row per (inject delivery, recipient): the inject, the player's
     /// replies in that thread and any proposal still awaiting EXCON review.
     pub fn inject_responses(&self) -> Vec<Value> {
@@ -89,10 +96,14 @@ impl Exercise {
                 let delivery = m.inject_id.unwrap();
                 // A response a conversation participant (who may not have
                 // received the inject) gave through a linked conversation.
+                // It sits here only when the responder has no copy of their
+                // own: otherwise it belongs to their own row (never twice).
                 let via = |proposal: Option<u64>| {
-                    proposal
-                        .and_then(|pid| self.proposal(pid))
-                        .is_some_and(|p| p.via_conversation.is_some() && p.reply_to == Some(m.id))
+                    proposal.and_then(|pid| self.proposal(pid)).is_some_and(|p| {
+                        p.via_conversation.is_some()
+                            && p.reply_to == Some(m.id)
+                            && !self.received_inject(p.source.label(), delivery)
+                    })
                 };
                 let replies: Vec<Value> = self
                     .messages
@@ -106,6 +117,11 @@ impl Exercise {
                         json!({"id": r.id, "reply_to": r.reply_to, "clock": r.clock,
                         "t_s": r.t_s, "text": r.text_excon.as_ref().unwrap_or(&r.text_en), "original": r.original,
                         "proposal": r.proposal, "from": r.from,
+                        "response": r.proposal.and_then(|pid| self.proposal(pid)).map(|p| json!({
+                            "status": p.status, "review": p.review, "communication": p.communication,
+                            "addressed_to": p.addressed_to, "narrative": p.narrative,
+                            "actions": p.commands.len(), "outcomes": p.narrative_outcomes.len(),
+                            "executed": p.executions.iter().filter(|e| e.ok).count()})),
                         "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation),
                         "basis": self.basis_of(r.proposal), "document": r.proposal.and_then(|pid| self.document_of(pid))})
                     })
@@ -194,7 +210,10 @@ impl Exercise {
                 json!({
                     "thread": thread,
                     "conversations": self.master_linked_conversations().into_iter()
-                        .filter(|c| c["delivery"] == m.id).collect::<Vec<_>>(),
+                        
+                        // Every conversation on this inject the recipient takes part in.
+                        .filter(|c| c["inject_id"] == delivery && list_has(&c["participants"], &m.to))
+                        .collect::<Vec<_>>(),
                     "clarification_threads": threads,
                     "inject_message_id": m.id, "delivery_id": delivery,
                     "id_inject": self.delivery_msel.get(&delivery),
@@ -205,4 +224,8 @@ impl Exercise {
             })
             .collect()
     }
+}
+
+fn list_has(v: &Value, role: &str) -> bool {
+    v.as_array().is_some_and(|a| a.iter().any(|x| x == role))
 }

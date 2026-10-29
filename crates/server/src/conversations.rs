@@ -21,7 +21,7 @@ fn own(principal: &Principal, role: &str) -> Result<(), crate::ApiError> {
 
 /// English working copy plus the text for each recipient's language.
 /// Participants who share the sender's language get the literal text.
-async fn translations(
+pub(crate) async fn translations(
     s: &AppState,
     text: &str,
     sender_language: &str,
