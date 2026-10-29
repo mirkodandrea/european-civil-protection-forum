@@ -1,6 +1,7 @@
 #[cfg(feature = "standalone")]
 mod editor3d;
 mod action_form;
+mod action_pick;
 #[cfg(feature = "bench")]
 mod bench;
 mod advanced;

@@ -151,6 +151,15 @@ mod recheck_tests {
 mod summary_tests {
     use super::*;
     #[test]
+    fn player_actions_edit_with_the_player_form() {
+        let warn = json!({"type":"IssueWarning","zone":"F4"});
+        assert_eq!(editor_for(&warn, true), Some("player"));
+        assert_eq!(editor_for(&warn, false), Some("warn"));
+        assert_eq!(editor_for(&json!({"type":"DeployEngine","at":"Pineta"}), false), Some("player"));
+        assert_eq!(editor_for(&json!({"type":"Ignite","at":{"x":1.0,"y":2.0}}), true), Some("ignite"));
+        assert_eq!(editor_for(&json!({"type":"AdjustResource"}), false), None);
+    }
+    #[test]
     fn summary_names_places_with_the_scenario() {
         let stat = json!({"zones":{"cols":8,"rows":8,"size_m":750.0},"buildings":[{"id":7,"name":"Scuola","pos":[0.0,0.0]}],
             "places":[{"name":"Selvariva","pos":[3500.0,2280.0],"radius_m":500.0}]});
@@ -344,7 +353,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let excluded = use_state(Excluded::new);
     // Actions whose parameters are open for editing.
     let editing = use_state(std::collections::BTreeSet::<usize>::new);
-    // Action being edited with its Controllo tool (map or weather form).
+    // Action being edited with its Controllo tool (map or weather form) or the player's form.
     let tool_edit = use_state(|| Option::<usize>::None);
     {
         // Indices only hold for the list they were chosen in.
@@ -508,6 +517,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
     }else if no_actions{
         Some(("muted proposal-ack-hint",crate::i18n::ex("Nessuna azione da eseguire: puoi prendere atto (la nota è la risposta al player), chiedere un chiarimento o rifiutare.").to_string()))
     }else{None};
+    let from_player=p["source"]["kind"]=="player";
     let tool_modal=match (*tool_edit,&props.common){
         (Some(i),Some(common)) if i<commands.len()&&editable=>{
             let original=commands[i].clone();
@@ -518,7 +528,13 @@ pub fn proposal(props: &ProposalProps) -> Html {
                 if let Some(c)=next.get_mut(i){*c=crate::controllo::keep_extra_fields(c,&edited);}
                 commands.set(next);tool_edit.set(None);
             })};
-            match crate::controllo::tool_for(&original){
+            let replace_all={let (commands,tool_edit)=(commands.clone(),tool_edit.clone());Callback::from(move |edited:Vec<Value>|{
+                let mut next=(*commands).clone();
+                if i<next.len()&&!edited.is_empty(){next.splice(i..=i,edited);}
+                commands.set(next);tool_edit.set(None);
+            })};
+            match editor_for(&original,from_player){
+                Some("player")=>html!{<crate::action_pick::ActionPickModal key={format!("{id}:{i}:player")} command={original.clone()} role={text(&p["source"]["role"]).to_string()} common={common.clone()} oncommands={replace_all}/>},
                 Some("weather")=>{let w=&common.state["world"]["weather"];let f=|k:&str|original[k].as_f64().or(w[k].as_f64());
                     html!{<crate::controllo::WeatherModal title={crate::controllo::tool_label("weather")} common={common.clone()} dir={f("wind_dir_deg").unwrap_or(0.)} speed={f("wind_speed_kmh").unwrap_or(10.)} moisture={f("moisture_pct").unwrap_or(10.)} oncommand={Some(replace)}/>}}
                 Some(tool)=>html!{<crate::controllo::MapToolModal key={format!("{id}:{i}:{tool}")} tool={tool} common={common.clone()} initial={Some(original.clone())} oncommand={Some(replace)}/>},
@@ -580,7 +596,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
             let reason={let excluded=excluded.clone();Callback::from(move |e|{let mut next=(*excluded).clone();next.insert(i,api::input(e));excluded.set(next);})};
             let open=editing.contains(&i);
             // The Controllo tool when one builds this command, else the parameter fields.
-            let with_tool=props.common.is_some()&&crate::controllo::tool_for(cmd).is_some();
+            let with_tool=props.common.is_some()&&editor_for(cmd,from_player).is_some();
             let edit={let (editing,tool_edit)=(editing.clone(),tool_edit.clone());Callback::from(move |_|{if with_tool{tool_edit.set(Some(i));return;}let mut next=(*editing).clone();if !next.remove(&i){next.insert(i);}editing.set(next);})};
             let params=command_params_in(lang,cmd,&stat);
             html!{<li class={classes!("command-card",left_out.is_some().then_some("excluded"))} data-command-card={i.to_string()}>
@@ -592,7 +608,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
                     Some(v) if v[i]["verdict"]=="ok"=>html!{<small class="verdict-ok">{format!("✓ {}",if list(&v[i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&v[i]["notes"]).iter().map(|n|crate::render::localize_note(text(n))).collect::<Vec<_>>().join(" · ")})}</small>},
                     Some(v)=>html!{<small class="danger verdict-bad">{format!("⚠ {}",text(&v[i]["reason"]))}</small>},
                 }}</span>
-                if editable{<button type="button" class="action-edit" data-edit-action={i.to_string()} data-edit-tool={with_tool.then(||crate::controllo::tool_for(cmd).unwrap_or_default())} aria-expanded={(!with_tool).then(||open.to_string())} title={with_tool.then_some(crate::i18n::ex("Modifica con lo strumento del Controllo"))} disabled={props.busy} onclick={edit}>{if open{crate::i18n::ex("Chiudi")}else{crate::i18n::ex("Modifica")}}</button>}
+                if editable{<button type="button" class="action-edit" data-edit-action={i.to_string()} data-edit-tool={with_tool.then(||editor_for(cmd,from_player).unwrap_or_default())} aria-expanded={(!with_tool).then(||open.to_string())} title={with_tool.then_some(crate::i18n::ex("Modifica sulla mappa"))} disabled={props.busy} onclick={edit}>{if open{crate::i18n::ex("Chiudi")}else{crate::i18n::ex("Modifica")}}</button>}
             </div>
             if let Some(r)=left_out.clone(){<input class="reject-reason" data-reject-reason={i.to_string()} maxlength="500" aria-label={crate::i18n::ex("Motivo per il player (facoltativo)")} placeholder={crate::i18n::ex("Motivo per il player (facoltativo)")} value={r} disabled={props.busy} oninput={reason}/>}
             if open{<div class="action-fields">{for cmd.as_object().into_iter().flatten().filter(|(k,_)|k.as_str()!="type").map(|(key,value)|{
@@ -632,6 +648,16 @@ pub fn proposal(props: &ProposalProps) -> Html {
         </details>
         {tool_modal}
     </section>}
+}
+/// How an action is edited: a player's action with the player's own form
+/// (role menu, zones, places, edges), else the Controllo tool that builds it
+/// (map or weather); `None` keeps the parameter fields.
+pub fn editor_for(cmd: &Value, from_player: bool) -> Option<&'static str> {
+    let player = crate::action_pick::PLAYER_ACTIONS.contains(&text(&cmd["type"]));
+    if from_player && player {
+        return Some("player");
+    }
+    crate::controllo::tool_for(cmd).or_else(|| player.then_some("player"))
 }
 pub fn preview(value: &Value) -> Html {
     html! {<div class="preview"><h3>{crate::i18n::ex("Effetto immediato previsto")}</h3>
