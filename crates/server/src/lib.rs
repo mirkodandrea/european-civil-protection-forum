@@ -51,6 +51,7 @@ pub mod persist;
 #[cfg(not(target_arch = "wasm32"))]
 mod body;
 mod action_suggestions;
+mod review;
 pub mod flow;
 mod forecast;
 mod situation;
@@ -310,6 +311,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_presence,
                 action_suggestions::player,
                 action_suggestions::excon,
+                review::post,
                 post_player_chat,
                 post_master_chat,
                 post_reply,
@@ -741,6 +743,7 @@ async fn get_master(principal: Principal, s: AppState) -> ApiResult {
         "inject_responses": ex.inject_responses(),
         "linked_conversations": ex.master_linked_conversations(),
         "clarification_threads": ex.clarification_threads(),
+        "reply_review": ex.review_view(),
         "sent_injects": ex.sent_injects,
         "messages": messages,
         "log": log,
@@ -841,7 +844,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
-        "clarification_threads": ex.player_clarification_threads(&role),
+        "clarification_threads": ex.player_clarification_threads(&role).into_iter().chain(ex.player_review_threads(&role)).collect::<Vec<_>>(),
         "linked_conversations": ex.player_linked_conversations(&role),
     });
     scenario::glossary::localize_value(&mut view, &map);
@@ -1140,6 +1143,37 @@ async fn post_reply(
     b: Json<ReplyBody>,
 ) -> ApiResult {
     let Json(b) = b;
+    // An answer to a reviewed question: linked to it, and the AI reads the thread again.
+    let reviewed = {
+        let ex = s.lock();
+        ex.review_question_for(&role, b.reply_to)
+            .map(|_| (ex.language_of(&role), ex.turn, ex.clock_control.revision))
+    };
+    if let Some((language, turn, revision)) = reviewed {
+        let mut failed = false;
+        let text_en = if language == "en" || b.text.trim().is_empty() {
+            b.text.clone()
+        } else {
+            match s.llm.translate_to_english(&b.text, &language).await {
+                Ok(text) => text,
+                Err(_) => {
+                    failed = true;
+                    b.text.clone()
+                }
+            }
+        };
+        let (message, proposal) = {
+            let mut ex = s.lock();
+            if ex.turn != turn || ex.clock_control.revision != revision {
+                return Err(bad("exercise changed during translation; send again"));
+            }
+            ex.answer_review_question(&role, &b.text, b.reply_to, &text_en, failed)?
+        };
+        tokio::spawn(review::read(s.clone(), proposal));
+        return Ok(Json(
+            json!({"message": message, "proposal": proposal, "answered": true, "translation_failed": failed}),
+        ));
+    }
     // An answer to an EXCON question is a message to the EXCON: translated, never interpreted.
     let answering = {
         let ex = s.lock();

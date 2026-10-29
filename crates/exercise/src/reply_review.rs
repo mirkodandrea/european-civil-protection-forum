@@ -121,10 +121,12 @@ pub struct ReviewQuestion {
     pub id: u64,
     pub proposal: u64,
     pub to: String,
-    /// English working copy (what the EXCON reviews and edits).
-    pub text_en: String,
-    /// Text delivered in the player's language (once sent).
-    pub text: Option<String>,
+    /// In the recipient's language: what the EXCON reviews, edits and sends verbatim.
+    pub text: String,
+    /// The recipient's language.
+    pub language: String,
+    /// English working copy, made when the question is sent.
+    pub text_en: Option<String>,
     /// Suggestions it asks about.
     pub about: Vec<u64>,
     /// Addressed to another role than the reply's author.
@@ -351,7 +353,7 @@ impl Exercise {
                 continue;
             }
             let asked = q.message.and_then(|id| self.messages.iter().find(|m| m.id == id));
-            thread.push(json!({"kind": "question", "question": q.id, "to": q.to, "clock": asked.map(|m| m.clock.clone()), "text": q.text_en, "about": q.about}));
+            thread.push(json!({"kind": "question", "question": q.id, "to": q.to, "clock": asked.map(|m| m.clock.clone()), "text": q.text_en.clone().unwrap_or_else(|| q.text.clone()), "about": q.about}));
             if let Some(a) = q.answer.and_then(|id| self.messages.iter().find(|m| m.id == id)) {
                 thread.push(json!({"kind": "answer", "question": q.id, "from": a.from, "clock": a.clock, "text": a.text_en, "original": a.original}));
                 words.push(a.original.clone().unwrap_or_else(|| a.text.clone()));
@@ -370,7 +372,7 @@ impl Exercise {
             .scn
             .roles
             .iter()
-            .map(|role| json!({"id": role.id, "name": role.name, "allowed_actions": role.allowed_actions, "resources": self.world.d.pools.get(&role.id)}))
+            .map(|role| json!({"id": role.id, "name": role.name, "language": self.language_of(&role.id), "allowed_actions": role.allowed_actions, "resources": self.world.d.pools.get(&role.id)}))
             .collect::<Vec<_>>();
         // Other replies to the same inject, for cross-role inconsistencies.
         let others = self
@@ -716,7 +718,8 @@ impl Exercise {
         for (to, text, mut about, reason, template) in drafts {
             about.sort_unstable();
             about.dedup();
-            let text = if template { self.template_question(&about) } else { text };
+            let language = self.language_of(&to);
+            let text = if template { self.template_question(&about, &language) } else { text };
             let id = self.id();
             let persona = self.persona_for(None, self.proposal(pid).and_then(|p| p.inject_id));
             self.review.questions.push(ReviewQuestion {
@@ -724,8 +727,9 @@ impl Exercise {
                 proposal: pid,
                 cross_role: to != author,
                 to,
-                text_en: text,
-                text: None,
+                text,
+                language,
+                text_en: None,
                 about,
                 reason,
                 template,
@@ -740,17 +744,20 @@ impl Exercise {
         Ok(())
     }
 
-    /// One English question listing what each suggestion still needs.
-    fn template_question(&self, about: &[u64]) -> String {
+    /// One question listing what each suggestion still needs (Italian for
+    /// Italian players, English otherwise; the EXCON reviews it before sending).
+    fn template_question(&self, about: &[u64], language: &str) -> String {
+        let it = language == "it";
         let parts: Vec<String> = about
             .iter()
             .filter_map(|id| self.review.items.iter().find(|i| i.id == *id))
-            .map(|i| format!("{}: {}", action_noun(&i.kind), i.missing.iter().map(|m| field_question(&i.kind, m)).collect::<Vec<_>>().join(", ")))
+            .map(|i| format!("{}: {}", action_noun(&i.kind, it), i.missing.iter().map(|m| field_question(&i.kind, m, it)).collect::<Vec<_>>().join(", ")))
             .collect();
-        format!(
-            "To proceed, please specify — {}. As in the reply guidance: where (zone like F4, a place or coordinates), with which resources and by when.",
-            parts.join("; ")
-        )
+        if it {
+            format!("Per procedere ci servono questi dettagli — {}. Come nella guida alla risposta: dove (zona come F4, un luogo o coordinate), con quali mezzi ed entro quando.", parts.join("; "))
+        } else {
+            format!("To proceed, please specify — {}. As in the reply guidance: where (zone like F4, a place or coordinates), with which resources and by when.", parts.join("; "))
+        }
     }
 
     /// The EXCON edits a suggestion's parameters (and optionally its executing role).
@@ -865,12 +872,12 @@ impl Exercise {
     }
 
     /// The EXCON writes a question of its own (a draft, reviewed like the AI's).
-    pub fn add_review_question(&mut self, pid: u64, to: &str, text_en: &str) -> Result<u64> {
+    pub fn add_review_question(&mut self, pid: u64, to: &str, text: &str) -> Result<u64> {
         let r = self.review(pid).ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
         if !self.players.contains_key(to) {
             bail!("unknown role {to}");
         }
-        let text = text_en.trim();
+        let text = text.trim();
         if text.is_empty() || text.chars().count() > MAX_QUESTION {
             bail!("the question needs 1–{MAX_QUESTION} characters");
         }
@@ -881,8 +888,9 @@ impl Exercise {
             id,
             proposal: pid,
             to: to.into(),
-            text_en: text.into(),
-            text: None,
+            text: text.into(),
+            language: self.language_of(to),
+            text_en: None,
             about: Vec::new(),
             cross_role: to != author,
             reason: String::new(),
@@ -898,9 +906,11 @@ impl Exercise {
         Ok(id)
     }
 
-    /// What an EXCON-reviewed draft will say: `(recipient, English text,
-    /// persona)`, with the EXCON's edits applied. Nothing is sent.
-    pub fn review_question_to_send(&self, qid: u64, text_en: Option<&str>, persona: Option<&str>) -> Result<(String, String, Option<String>)> {
+    /// What an EXCON-reviewed draft will say: `(recipient, text in the
+    /// recipient's language, persona)`, with the EXCON's edits applied.
+    /// Nothing is sent: the caller makes the English copy, then calls
+    /// [`Exercise::send_review_question`].
+    pub fn review_question_to_send(&self, qid: u64, text: Option<&str>, persona: Option<&str>) -> Result<(String, String, Option<String>)> {
         let q = self.review.questions.iter().find(|q| q.id == qid).ok_or_else(|| anyhow::anyhow!("unknown question {qid}"))?;
         if q.state != QuestionState::Draft {
             bail!("question {qid} is not a draft");
@@ -908,7 +918,7 @@ impl Exercise {
         if self.phase != Phase::Orders {
             bail!("questions are sent while the turn is open");
         }
-        let text = text_en.unwrap_or(&q.text_en).trim().to_string();
+        let text = text.unwrap_or(&q.text).trim().to_string();
         if text.is_empty() || text.chars().count() > MAX_QUESTION {
             bail!("the question needs 1–{MAX_QUESTION} characters");
         }
@@ -916,10 +926,10 @@ impl Exercise {
         Ok((q.to.clone(), text, self.persona_for(persona, inject).or(q.persona.clone())))
     }
 
-    /// The EXCON sends a reviewed draft (`text` in the player's language,
-    /// `text_en` the reviewed English). The only way a question leaves.
+    /// The EXCON sends a reviewed draft: `text` exactly as reviewed, in the
+    /// player's language, with its English copy. The only way a question leaves.
     pub fn send_review_question(&mut self, qid: u64, text: &str, text_en: &str, persona: Option<String>) -> Result<u64> {
-        let (to, _, _) = self.review_question_to_send(qid, Some(text_en), persona.as_deref())?;
+        let (to, _, _) = self.review_question_to_send(qid, Some(text), persona.as_deref())?;
         let pid = self.review.questions.iter().find(|q| q.id == qid).map(|q| q.proposal).expect("question");
         let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown reply {pid}"))?;
         // In the inject's thread of the recipient, when they received it.
@@ -931,8 +941,8 @@ impl Exercise {
         self.set_message_persona(mid, persona.clone());
         let q = self.question_mut(qid)?;
         q.state = QuestionState::Sent;
-        q.text_en = text_en.trim().into();
-        q.text = Some(text.into());
+        q.text_en = Some(text_en.trim().into());
+        q.text = text.trim().into();
         q.message = Some(mid);
         q.persona = persona;
         self.converse(&to, "user", format!("[{}] QUESTION from {who}:\n{text_en}", self.world.clock()));
@@ -1164,7 +1174,7 @@ fn params_of(c: &Command) -> Value {
     v
 }
 
-/// "Cut fire line from ? to ?" for an incomplete suggestion.
+/// "CutFireLine (from ?, to ?)" for an incomplete suggestion (EXCON only).
 fn describe_partial(kind: &str, params: &Value, missing: &[String]) -> String {
     let known = params
         .as_object()
@@ -1172,40 +1182,44 @@ fn describe_partial(kind: &str, params: &Value, missing: &[String]) -> String {
         .unwrap_or_default();
     let gaps = missing.iter().map(|m| format!("{m} ?")).collect::<Vec<_>>().join(", ");
     match (known.is_empty(), gaps.is_empty()) {
-        (true, _) => format!("{} ({gaps})", action_noun(kind)),
-        (false, true) => format!("{} ({known})", action_noun(kind)),
-        (false, false) => format!("{} ({known}; {gaps})", action_noun(kind)),
+        (true, _) => format!("{kind} ({gaps})"),
+        (false, true) => format!("{kind} ({known})"),
+        (false, false) => format!("{kind} ({known}; {gaps})"),
     }
 }
 
-fn action_noun(kind: &str) -> &'static str {
-    match kind {
-        "CutFireLine" => "the fire line",
-        "WaterDrop" => "the water drop",
-        "DeployEngine" => "the team deployment",
-        "MonitorArea" => "the drone monitoring",
-        "Reconnoitre" => "the reconnaissance",
-        "EvacuateZone" => "the evacuation",
-        "EvacuateBuilding" => "the building evacuation",
-        "IssueWarning" => "the warning",
-        "CloseRoad" => "the road closure",
-        "ReopenRoad" => "the road reopening",
-        "OpenShelter" => "the shelter",
-        "RequestReinforcement" => "the reinforcement request",
-        _ => "the action",
-    }
+/// What a template question calls the action, in Italian or English.
+fn action_noun(kind: &str, it: bool) -> &'static str {
+    let (i, e) = match kind {
+        "CutFireLine" => ("la linea tagliafuoco", "the fire line"),
+        "WaterDrop" => ("il lancio d’acqua", "the water drop"),
+        "DeployEngine" => ("l’invio della squadra", "the team deployment"),
+        "MonitorArea" => ("il monitoraggio con drone", "the drone monitoring"),
+        "Reconnoitre" => ("la ricognizione", "the reconnaissance"),
+        "EvacuateZone" => ("l’evacuazione", "the evacuation"),
+        "EvacuateBuilding" => ("l’evacuazione dell’edificio", "the building evacuation"),
+        "IssueWarning" => ("l’avviso", "the warning"),
+        "CloseRoad" => ("la chiusura della strada", "the road closure"),
+        "ReopenRoad" => ("la riapertura della strada", "the road reopening"),
+        "OpenShelter" => ("il punto di accoglienza", "the shelter"),
+        "RequestReinforcement" => ("la richiesta di rinforzi", "the reinforcement request"),
+        _ => ("l’azione", "the action"),
+    };
+    if it { i } else { e }
 }
 
-fn field_question(kind: &str, field: &str) -> &'static str {
-    match (kind, field) {
-        ("CutFireLine", "from") => "between which points (start)",
-        ("CutFireLine", "to") => "between which points (end)",
-        (_, "at") => "where exactly",
-        (_, "zone") | (_, "zones") => "which zone",
-        (_, "road") => "which road",
-        (_, "building") => "which building",
-        (_, "resource") => "which resource",
-        (_, "qty") => "how many",
-        _ => "the missing details",
-    }
+/// What a template question asks for a missing field.
+fn field_question(kind: &str, field: &str, it: bool) -> &'static str {
+    let (i, e) = match (kind, field) {
+        ("CutFireLine", "from") => ("tra quali punti (inizio)", "between which points (start)"),
+        ("CutFireLine", "to") => ("tra quali punti (fine)", "between which points (end)"),
+        (_, "at") => ("dove esattamente", "where exactly"),
+        (_, "zone") | (_, "zones") => ("quale zona", "which zone"),
+        (_, "road") => ("quale strada", "which road"),
+        (_, "building") => ("quale edificio", "which building"),
+        (_, "resource") => ("quale risorsa", "which resource"),
+        (_, "qty") => ("quanti", "how many"),
+        _ => ("i dettagli mancanti", "the missing details"),
+    };
+    if it { i } else { e }
 }

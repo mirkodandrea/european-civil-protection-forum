@@ -400,7 +400,7 @@ impl Llm {
                     json!({"only": providers, "allow_fallbacks": false, "require_parameters": true, "data_collection": "deny"})
                 };
                 // Reasoning only where the answer is a set of candidate commands.
-                if matches!(task, "parse_reply" | "suggest_actions") {
+                if matches!(task, "parse_reply" | "suggest_actions" | "review_reply") {
                     body["reasoning"] = json!({"enabled": true});
                 }
                 if json_mode {

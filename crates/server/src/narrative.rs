@@ -200,5 +200,9 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
         return Err(bad("exercise changed during translation; send again"));
     }
     let pid = ex.player_response(&role, response)?;
+    // Players never propose actions: the AI reads the reply for the EXCON.
+    if ex.reviewable(pid) {
+        tokio::spawn(crate::review::read(s.clone(), pid));
+    }
     Ok(Json(json!({"proposal":pid,"translation_failed":failed})))
 }

@@ -631,6 +631,7 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/review/<op>/<id>") => review::post(principal.clone(), s.clone(), captures["op"].to_string(), captures["id"].parse().map_err(|_| bad("invalid id"))?, decode(body.clone().unwrap_or_else(|| serde_json::json!({})))?).await,
         ("POST", "/api/player/<role>/suggest-actions") => {
             action_suggestions::player(
                 principal.clone(),
@@ -769,6 +770,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/rollback"),
     ("POST", "/api/master/end"),
     ("POST", "/api/master/settings"),
+    ("POST", "/api/master/review/<op>/<id>"),
     ("POST", "/api/player/<role>/suggest-actions"),
     ("POST", "/api/master/proposals/<id>/suggest-actions"),
     ("POST", "/api/master/forecast"),

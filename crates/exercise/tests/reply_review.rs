@@ -117,9 +117,11 @@ fn the_acceptance_scenario_runs_end_to_end() {
 
     // EXCON reviews and sends the question.
     let q = ex.review.questions.iter().find(|q| q.state == QuestionState::Draft).unwrap().id;
-    let (to, text_en, persona) = ex.review_question_to_send(q, None, None).unwrap();
+    let (to, text, persona) = ex.review_question_to_send(q, None, None).unwrap();
     assert_eq!(to, "fire_commander");
-    let asked = ex.send_review_question(q, &text_en, &text_en, persona).unwrap();
+    assert_eq!(text, "Per la linea tagliafuoco: tra quali punti e con quali mezzi?", "sent as reviewed");
+    let asked = ex.send_review_question(q, &text, "For the fire line: between which points and with which means?", persona).unwrap();
+    assert_eq!(ex.messages.last().unwrap().text, text);
     assert_eq!(clarifications(&ex), 1);
     let threads = ex.player_review_threads("fire_commander");
     assert_eq!(threads.len(), 1);
@@ -219,7 +221,13 @@ fn a_gap_the_model_does_not_ask_about_gets_a_template_question() {
     let q: Vec<_> = ex.review.questions.iter().collect();
     assert_eq!(q.len(), 1);
     assert!(q[0].template && q[0].state == QuestionState::Draft);
-    assert!(q[0].text_en.contains("fire line"), "{}", q[0].text_en);
+    // In the recipient's language (the DOS plays in English here).
+    assert!(q[0].text.contains("fire line"), "{}", q[0].text);
+    ex.set_language("fire_commander", "it").unwrap();
+    let rev = ex.begin_review(pid).unwrap();
+    ex.ingest_reading(pid, rev, Reading::default()).unwrap();
+    let draft = ex.review.questions.iter().find(|q| q.state == QuestionState::Draft).unwrap();
+    assert!(draft.text.contains("linea tagliafuoco") && draft.text.contains("tra quali punti"), "{}", draft.text);
     assert_eq!(clarifications(&ex), 0);
 }
 
