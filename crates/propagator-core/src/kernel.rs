@@ -19,7 +19,7 @@ use crate::tiles::{local_index, TileGrid, FLAG_FIRE, FLAG_SPOT_GEN, FLAG_SPOT_RE
 
 // 8-connected neighbour lattice
 pub const N_NEIGHBOURS: usize = 8;
-const NEIGHBOURS: [(i64, i64); N_NEIGHBOURS] = [
+pub(crate) const NEIGHBOURS: [(i64, i64); N_NEIGHBOURS] = [
     (-1, -1),
     (-1, 0),
     (-1, 1),
@@ -228,12 +228,13 @@ pub fn advance_front_until(
             let (transition_time, ros, fli) = calculate_fire_behavior(
                 shared, idx_from, idx_to, dh, dist, angle, moist, w_dir, w_speed,
             );
-            real.heap.push(
+            real.heap.push_from(
                 time + transition_time,
                 row_to as i32,
                 col_to as i32,
                 ros as f32,
                 fli as f32,
+                neighbour as u8,
             );
         }
 

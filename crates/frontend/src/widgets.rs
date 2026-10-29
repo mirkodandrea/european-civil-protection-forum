@@ -38,6 +38,7 @@ pub fn command_name(s: &str) -> &str {
         "RequestReinforcement" => crate::i18n::ex("Richiedere rinforzi"),
         "Ignite" => crate::i18n::ex("Innescare un incendio"),
         "Extinguish" => crate::i18n::ex("Spegnere un’area"),
+        "ExtinguishArea" => crate::i18n::ex("Spegnere un’area disegnata"),
         "ReturnResource" => crate::i18n::ex("Restituire risorse"),
         "SetWeather" => crate::i18n::ex("Modificare il meteo"),
         "SetBuildingStatus" => crate::i18n::ex("Aggiornare lo stato di un edificio"),

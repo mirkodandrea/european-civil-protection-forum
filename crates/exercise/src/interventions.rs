@@ -6,7 +6,7 @@ use crate::{Exercise, Phase, MASTER};
 
 pub(crate) struct Intervention { pub snapshot:WorldSnapshot, pub generation:u64, pub log_seq:u64, pub command:Command }
 
-pub fn physical(cmd:&Command)->bool { matches!(cmd,Command::Ignite {..}|Command::Extinguish {..}|Command::SetWeather {..}|Command::CutFireLine {..}|Command::WaterDrop {..}|Command::SetBuildingStatus {..}) }
+pub fn physical(cmd:&Command)->bool { matches!(cmd,Command::Ignite {..}|Command::Extinguish {..}|Command::ExtinguishArea {..}|Command::SetWeather {..}|Command::CutFireLine {..}|Command::WaterDrop {..}|Command::SetBuildingStatus {..}) }
 
 impl Exercise {
     pub fn preview_commands(&self,commands:&[Command])->Result<Value> {

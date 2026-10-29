@@ -9,6 +9,23 @@ scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](
 - Modellare più viaggi per autobus nella stessa evacuazione, con riuso dei mezzi
   e tempi di completamento.
 
+## Spegnimento senza togliere vegetazione (decisioni aperte)
+
+`ExtinguishArea` (area disegnata dall'EXCON) spegne il fuoco senza toccare la
+vegetazione. Restano da decidere:
+
+- **Velocità di spegnimento** (domanda di Sabrina): ora è istantaneo
+  all'applicazione. Una velocità impostata dall'EXCON (es. ettari/ora, o un
+  fronte che avanza nel poligono) richiede un compito progressivo in `sim`
+  integrato sul tempo simulato.
+- Gli altri percorsi che cambiano ancora la vegetazione (combustibile →
+  non vegetato): `Extinguish` su zona/cerchio (`FireSim::extinguish_cells`,
+  anche sulle celle in fiamme), `CutFireLine` istantanea e progressiva
+  (`FireSim::fire_line`). Da decidere se `Extinguish` debba usare la nuova
+  regola; la linea tagliafuoco per definizione toglie combustibile.
+- Aggiungere lo strumento anche ai comandi allegati alle narrazioni e alle
+  azioni degli inject (`staged_commands.rs`, `action_form.rs`), oggi esclusi.
+
 ## Problemi emersi dal playthrough del 2026-10-23
 
 - ~~Blocco della scheda con `CutFireLine`~~ (risolto). Con lo scenario factory e il

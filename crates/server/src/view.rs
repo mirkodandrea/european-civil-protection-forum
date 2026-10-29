@@ -325,6 +325,14 @@ fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f
             Area::Named(n) => zone(n).or_else(|| w.scn.resolve_place(n).map(|p| (p, 250.0))),
             Area::Circle { at, radius_m } => w.resolve_loc(at).ok().map(|p| (p, *radius_m)),
         },
+        C::ExtinguishArea { polygon } => w.resolve_polygon(polygon).ok().map(|poly| {
+            let c = sim::polygon_centroid(&poly);
+            let r = poly
+                .iter()
+                .map(|p| ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt())
+                .fold(0.0, f32::max);
+            (c, r)
+        }),
         _ => None,
     }
 }
