@@ -346,6 +346,15 @@ impl Fake {
             }
             (true, ["api", "player", role, "actions"]) if who == *role => {
                 let commands = b["commands"].as_array().cloned().unwrap_or_default();
+                // Same rules as `exercise::response`: a communication carries
+                // no action and needs no approval; a decision needs its basis.
+                let communication = b["kind"] == "communication";
+                if communication && !commands.is_empty() {
+                    return Err("una comunicazione non porta azioni".into());
+                }
+                if b["kind"] == "decision" && !b["basis"].is_string() {
+                    return Err("una decisione richiede il fondamento".into());
+                }
                 let pid = self.respond(
                     role,
                     &body_text(&b, "narrative"),
@@ -353,6 +362,9 @@ impl Fake {
                     b["reply_to"].as_u64(),
                     b["conversation"].as_u64(),
                 )?;
+                if communication {
+                    self.proposal_mut(pid)?.status = "informational";
+                }
                 Ok(json!({"proposal": pid, "translation_failed": false}))
             }
             (true, ["api", "player", role, "reply"]) if who == *role => {

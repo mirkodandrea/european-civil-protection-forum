@@ -2,7 +2,9 @@
 //! EXCON and evaluator views never call this (App::lang is always "it" for them).
 pub use crate::i18n_excon::{ex, is_en, set_ui_lang_if_visible, with_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
-    if let Some(s) = crate::i18n_review::lookup(lang, key) {
+    if let Some(s) = crate::i18n_risposte::lookup(lang, key) {
+        s
+    } else if let Some(s) = crate::i18n_review::lookup(lang, key) {
         s
     } else if let Some(s) = crate::i18n_lobby::lookup(lang, key) {
         s
@@ -15,6 +17,7 @@ pub fn t(lang: &str, key: &'static str) -> &'static str {
             .or_else(|| crate::i18n_lang::lookup(lang, key))
             .or_else(|| crate::i18n_function::lookup(lang, key))
             .or_else(|| crate::i18n_place::lookup(lang, key))
+            .or_else(|| crate::i18n_risposte::fallback(key))
             .unwrap_or_else(|| en(key))
     }
 }

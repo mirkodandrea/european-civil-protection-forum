@@ -38,6 +38,7 @@ const benches={
     await openInject(page,'mayor');await done(page,2);
     await mayor.locator('[data-reply-inject]').click();
     await mayor.locator('#response-narrative').fill('Apriamo il centro operativo comunale e informiamo la popolazione.');
+    await mayor.locator('#kind-decision').check();await mayor.locator('#basis-operational_judgment').check();
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');await excon.locator('[data-approve]').click();
   },
@@ -45,8 +46,9 @@ const benches={
     const police=col(page,'police');
     await openInject(page,'police');await police.locator('[data-reply-inject]').click();await done(page,1);
     await police.locator('#response-narrative').fill('Chiudiamo la SP12 ai curiosi e avvisiamo la zona E3.');
-    await police.locator('[data-add-suggestions]').click();await done(page,2);await done(page,3);
-    await police.locator('[data-respond]').click();
+    await police.locator('[data-add-suggestion="0"]').click();await done(page,2);
+    await police.locator('#basis-operational_judgment').check();
+    await police.locator('[data-respond]').click();await done(page,3);
     await col(page,'excon').locator('[data-response$=":police"] [data-reply-state="Pending"]').waitFor();
   },
   async 'excon-suggest'(page){
@@ -83,6 +85,7 @@ const benches={
     await mayor.locator('[data-conversation] [data-conv-message]').nth(1).waitFor();
     await mayor.locator('[data-respond-from-conversation]').click();
     await mayor.locator('#response-narrative').fill('D’accordo con la Polizia: SP12 chiusa, poi evacuiamo F4.');
+    await mayor.locator('#kind-decision').check();await mayor.locator('#basis-operational_judgment').check();
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');
     await excon.locator('[data-linked-conversation]').first().waitFor();

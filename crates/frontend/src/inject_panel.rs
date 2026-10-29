@@ -49,22 +49,13 @@ fn outcome(l: &str, it: &Item) -> Outcome {
     let Some(latest) = it.proposals.iter().rev().find(|p| p["status"] != "superseded").or(it.proposals.last()) else {
         return if it.guest { o("conv_via_guest", "wait", false) } else { o("inj_todo", "action", true) };
     };
-    if latest["narrative"] == true && latest["carries_actions"] != true && latest["status"] == "approved" {
-        return o(if list(&latest["narrative_outcomes"]).is_empty() {"narrative_approved"} else {"narrative_resolved"}, "done", false);
-    }
-    match (text(&latest["review"]), text(&latest["status"])) {
-        ("acknowledged", _) => return o("st_acknowledged", "done", false),
-        ("partially_approved", "approved" | "applied") => return o("st_partially_approved", "partial", false),
-        _ => {}
-    }
-    match text(&latest["status"]) {
-        "rejected" => o("st_rejected", "bad", true),
-        "failed" => o("st_failed", "bad", false),
-        "approved" | "applied" => o("st_approved", "done", false),
-        "needs_clarification" => o("clarif_needed", "action", true),
-        _ if it.threads.iter().any(|t| has_status(t, "awaiting_excon")) => o("inj_clar_wait", "wait", false),
-        _ if !it.threads.is_empty() && it.threads.iter().all(|t| has_status(t, "closed")) => o("thread_closed", "wait", false),
-        _ => o("inj_sent", "wait", false),
+    let key = crate::i18n_risposte::response_state(latest);
+    match key {
+        "rs_review" if it.threads.iter().any(|t| has_status(t, "awaiting_excon")) => o("inj_clar_wait", "wait", false),
+        "rs_review" if !it.threads.is_empty() && it.threads.iter().all(|t| has_status(t, "closed")) => o("thread_closed", "wait", false),
+        "clarif_needed" => o(key, "action", true),
+        "st_rejected" => o(key, "bad", true),
+        _ => o(key, crate::i18n_risposte::state_tone(key), false),
     }
 }
 
@@ -94,6 +85,8 @@ struct Ev {
     /// Actions declared next to a narrative (a plain action response is its own
     /// text), or each action's verdict after a partial approval (`false` = not approved).
     actions: Vec<(String, bool)>,
+    /// Responses only: communication or decision, and to whom.
+    meta: String,
 }
 
 /// The conversation of an inject in order: each proposal is followed by
@@ -106,7 +99,7 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         let p = text(&v["persona"]);
         if p.is_empty() { name("master") } else { p.to_string() }
     };
-    let ev = |kind, who: String, clock: String, text: &str| Ev { kind, who, clock, text: text.to_string(), status: String::new(), executions: Value::Null, actions: Vec::new() };
+    let ev = |kind, who: String, clock: String, text: &str| Ev { kind, who, clock, text: text.to_string(), status: String::new(), executions: Value::Null, actions: Vec::new(), meta: String::new() };
     let mut out = Vec::new();
     if let Some(m) = it.msg {
         let from = if m["persona"].is_string() { persona(m) } else { name(text(&m["from"])) };
@@ -131,8 +124,12 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
                 (format!("✗ {} · {}{}", crate::widgets::command_summary(l, &r["command"]), i18n::t(l, "act_not_approved"), if note.is_empty() { String::new() } else { format!(": {note}") }), false)
             }));
         }
-        let shown = if p["narrative"]==true && p["carries_actions"]!=true && status=="approved" {if list(&p["narrative_outcomes"]).is_empty(){"narrative_approved"}else{"narrative_resolved"}} else if p["review"]=="acknowledged" {"acknowledged"} else if partial && status=="approved" {"partially_approved"} else {status};
-        out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
+        let shown = crate::i18n_risposte::response_state(p);
+        let to = &p["addressed_to"];
+        let recipient = if list(&to["players"]).is_empty() { text(&to["persona"]).to_string() } else { list(&to["players"]).iter().map(|r| name(text(r))).collect::<Vec<_>>().join(", ") };
+        let meta = format!("{}{}", i18n::t(l, if p["communication"] == true { "kind_tag_comm" } else { "kind_tag_dec" }),
+            if recipient.is_empty() { String::new() } else { format!(" · {}", i18n::tf(l, "resp_to_label", &[&recipient])) });
+        out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, meta, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
         let note = text(&p["decision"]["note"]);
         if !note.is_empty() {
             let kind = if status == "rejected" { Kind::Reason } else { Kind::Decision };
@@ -166,7 +163,7 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
 /// One line for the list: who, when and a short text of the last event.
 fn last_line(l: &str, e: &Ev) -> (String, String, String) {
     match e.kind {
-        Kind::Proposal => (e.who.clone(), e.clock.clone(), format!("{} ({})", e.text, i18n::status(l, &e.status).to_lowercase())),
+        Kind::Proposal => (e.who.clone(), e.clock.clone(), format!("{} ({})", e.text, i18n::t(l, state_key(&e.status)).to_lowercase())),
         // The row already names the sender and the time of the inject.
         Kind::Inject => (String::new(), String::new(), e.text.clone()),
         Kind::Reason => (i18n::tf(l, "inj_rejected_by", &[&e.who]), e.clock.clone(), e.text.clone()),
@@ -314,13 +311,12 @@ impl crate::player_view::PlayerView {
     fn view_inject_thread(&self, can_act: bool, it: &Item) -> Html {
         let l = self.lang();
         let l = l.as_str();
-        let o = outcome(l, it);
         let chat: Vec<Html> = events(l, it, &|id: &str| self.name(id))
             .into_iter()
             .map(|e| {
                 let (mine, cls, tag): (bool, String, Option<Html>) = match e.kind {
                     Kind::Inject => (false, "inject".into(), Some(html! {<span class="pill kind">{i18n::t(l,"inject")}</span>})),
-                    Kind::Proposal => (true, format!("proposal st-{}", e.status), Some(html! {<span class={classes!("pill",(e.status=="rejected").then_some("bad"))}>{i18n::status(l,&e.status)}</span>})),
+                    Kind::Proposal => (true, format!("proposal st-{}", e.status), Some(html! {<><span class="pill kind" data-response-kind="">{e.meta.clone()}</span><span class={classes!("pill","response-state",crate::i18n_risposte::state_tone(state_key(&e.status)))} data-response-state={e.status.clone()}>{i18n::t(l,state_key(&e.status))}</span></>})),
                     Kind::Decision => (false, "decision".into(), None),
                     Kind::Reason => (false, "decision rejected".into(), Some(html! {<span class="pill bad">{i18n::t(l,"reason")}</span>})),
                     Kind::Answer => (true, "reply".into(), None),
@@ -355,7 +351,7 @@ impl crate::player_view::PlayerView {
             // The answer is a plain message to the exercise controllers; a changed action is a new action.
             html! {<footer class="inj-composer">{self.clarify_composer(can_act,t,html!{})}</footer>}
         } else if let Some(m) = it.msg {
-            let label = if o.tone == "bad" { "reply_again" } else if it.proposals.is_empty() { "reply" } else { "another_reply" };
+            let label = "reply";
             let open = self.cb(Msg::OpenWork);
             let open_via = self.cb(|(parent, conv): (String, String)| Msg::OpenWorkConv(parent, conv));
             let id = m["id"].to_string();
@@ -367,7 +363,7 @@ impl crate::player_view::PlayerView {
                 else if it.threads.iter().any(|t| has_status(t,"awaiting_excon")){<small class="muted" role="status">{i18n::t(l,"thread_wait")}</small>}
                 <div class="grow"/>
                 if !it.guest {<button data-new-conversation="" onclick={start}>{i18n::t(l,"conv_new")}</button>}
-                <button class={classes!("reply-inject",it.proposals.is_empty().then_some("primary"))} disabled={!can_act||(it.guest&&via.is_none())} data-reply-inject={id.clone()} onclick={Callback::from(move |_|match &via{Some((p,c))=>open_via.emit((p.clone(),c.clone())),None=>open.emit(Some(id.clone()))})}>{i18n::t(l,label)}</button></footer>}
+                <button class={classes!("reply-inject","primary")} disabled={!can_act||(it.guest&&via.is_none())} data-reply-inject={id.clone()} onclick={Callback::from(move |_|match &via{Some((p,c))=>open_via.emit((p.clone(),c.clone())),None=>open.emit(Some(id.clone()))})}>{i18n::t(l,label)}</button></footer>}
         } else {
             html! {}
         };
@@ -376,6 +372,14 @@ impl crate::player_view::PlayerView {
             {convs}
             {composer}
         </>}
+    }
+
+    /// "Risposta registrata · <state>" on a conversation message that delivered a response.
+    fn conv_response_tag(&self, l: &str, pid: u64) -> Html {
+        let state = list(&self.state["proposals"]).iter().find(|p| p["id"] == pid)
+            .map(crate::i18n_risposte::response_state)
+            .or_else(|| list(&self.state["linked_conversations"]).iter().flat_map(|c| list(&c["responses"]).iter()).find(|r| r["id"] == pid).map(crate::i18n_risposte::response_state));
+        html! {<small class="pill conv-response-tag" data-conv-response-tag={pid.to_string()}>{match state { Some(k) => format!("{} · {}", i18n::t(l, "conv_response_tag"), i18n::t(l, k)), None => i18n::t(l, "conv_response_tag").to_string() }}</small>}
     }
 
     /// Display names of the other participants of a conversation.
@@ -475,19 +479,20 @@ impl crate::player_view::PlayerView {
                         <small><b>{if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))}}</b>{format!(" · {}",text(&m["clock"]))}</small>
                         if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
                         <p>{body}</p>
+                        if let Some(pid)=m["proposal"].as_u64(){{self.conv_response_tag(l,pid)}}
                         <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></li>}
                 })}
                 {for list(&c["responses"]).iter().map(|r|{
                     let by=if r["by"]==own{i18n::t(l,"thread_you").to_string()}else{self.name(text(&r["by"]))};
-                    html!{<li class="inj-sys" data-conv-response={r["id"].to_string()}>{i18n::tf(l,"conv_response_line",&[&by,i18n::status(l,text(&r["status"]))])}</li>}
+                    html!{<li class="inj-sys" data-conv-response={r["id"].to_string()}>{i18n::tf(l,"conv_response_line",&[&by,i18n::t(l,crate::i18n_risposte::response_state(r))])}</li>}
                 })}</ol>
             </div>
             <footer class="inj-composer conv-composer">
                 if let Some((who,what))=reply_id.and_then(cited){<div class="chat-reply-composer" data-reply-preview={reply.clone()}><div><b>{i18n::tf(l,"replying_to",&[&who])}</b><p>{what}</p></div><button type="button" class="chat-reply-cancel" onclick={self.cb(|_|Msg::Field("inj:conv_reply".into(),String::new()))}>{i18n::t(l,"cancel_reply")}</button></div>}
                 <textarea id="conv-text" maxlength="8000" aria-label={i18n::t(l,"message")} placeholder={i18n::t(l,"write")} value={draft.clone()} oninput={self.cb(|e|Msg::Field("inj:conv_text".into(),crate::api::input(e)))}/>
                 <div class="row"><small class="literal-translation-hint">{i18n::t(l,"literal_translation_hint")}</small><div class="grow"/>
-                    <button data-respond-from-conversation="" disabled={!can_act||it.msg.is_none()} onclick={respond}>{i18n::t(l,"conv_respond")}</button>
-                    <button class="primary" data-send-conversation="" disabled={self.busy||draft.trim().is_empty()} onclick={send}>{i18n::t(l,"send")}</button></div>
+                    <button class="primary" data-respond-from-conversation="" disabled={!can_act||it.msg.is_none()} onclick={respond}>{i18n::t(l,"conv_respond")}</button>
+                    <button data-send-conversation="" disabled={self.busy||draft.trim().is_empty()} onclick={send}>{i18n::t(l,"send")}</button></div>
             </footer>
         </>}
     }
@@ -533,7 +538,7 @@ mod tests {
         assert_eq!(outcome("en", &item(vec![&ack], vec![])).label, "Acknowledged · nothing to execute");
         let name = |id: &str| id.to_string();
         let ev = events("it", &item(vec![&partial], vec![]), &name);
-        assert_eq!(ev[0].status, "partially_approved");
+        assert_eq!(ev[0].status, "st_partially_approved");
         assert_eq!(ev[0].actions.len(), 2);
         assert!(ev[0].actions[0].1 && ev[0].actions[0].0.contains("Approvata"));
         assert!(!ev[0].actions[1].1 && ev[0].actions[1].0.contains("not threatened"), "{:?}", ev[0].actions);
@@ -568,5 +573,24 @@ mod tests {
         let closed = json!({"id":1,"status":"closed","entries":[]});
         it.threads = vec![&closed];
         assert_eq!(line(&it).2, "Chiarimento chiuso");
+    }
+}
+
+/// Message key of a response state carried in `Ev::status` (already a key).
+fn state_key(status: &str) -> &'static str {
+    match status {
+        "rs_sent" => "rs_sent",
+        "rs_review" => "rs_review",
+        "rs_approved" => "rs_approved",
+        "rs_executed" => "rs_executed",
+        "rs_outcome" => "rs_outcome",
+        "clarif_needed" => "clarif_needed",
+        "st_rejected" => "st_rejected",
+        "st_acknowledged" => "st_acknowledged",
+        "st_superseded" => "st_superseded",
+        "st_rolled_back" => "st_rolled_back",
+        "st_failed" => "st_failed",
+        "st_partially_approved" => "st_partially_approved",
+        _ => "rs_review",
     }
 }

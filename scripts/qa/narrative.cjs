@@ -39,6 +39,9 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     await player.locator('[data-reply-inject]').click();
     const work = player.locator('.work-modal');
     await work.locator('#response-narrative').fill('Activate psychological support for families at the shelter.');
+    // A narrated decision: explicit kind and its basis are required.
+    await work.locator('#kind-decision').check();
+    await work.locator('#basis-operational_judgment').check();
     await player.screenshot({ path: path.join(out, 'player-narrative-desktop.png') });
     await work.locator('[data-respond]').click();
     await work.waitFor({ state: 'hidden' });

@@ -22,6 +22,7 @@ mod i18n_lobby;
 mod label_layout;
 mod i18n_review;
 mod i18n_reply;
+mod i18n_risposte;
 mod pdf_view;
 mod player_view;
 mod map;
@@ -829,8 +830,11 @@ impl Component for App {
             Msg::StageActions(commands) => player_view::stage(&mut self.fields, commands),
             Msg::Unstage(index) => player_view::unstage(&mut self.fields, index),
             Msg::OpenWorkConv(parent, conversation) => {
-                Component::update(self, ctx, Msg::OpenWork(Some(parent)));
-                self.fields.insert("work:conversation".into(), conversation);
+                if player_view::open_work_conv(&mut self.fields, &self.state, &self.own, parent, conversation) {
+                    self.suggest_timer = None;
+                }
+                self.error.clear();
+                focus_when_rendered("#response-narrative", 10);
             }
             Msg::OpenWork(parent) => {
                 let parent = parent

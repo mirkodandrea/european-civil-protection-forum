@@ -185,9 +185,8 @@ impl Bench {
                 self.errors.remove(&role);
             }
             Msg::OpenWorkConv(parent, conversation) => {
-                player_view::open_work(self.fields_of(&role), parent);
-                self.fields_of(&role)
-                    .insert("work:conversation".into(), conversation);
+                let state = with_fake(|f| f.handle(&role, &format!("/api/player/{role}"), None)).unwrap_or_default();
+                player_view::open_work_conv(self.fields_of(&role), &state, &role, parent, conversation);
             }
             Msg::OpenInjectDetail(key) => {
                 player_view::open_inject_detail(self.fields_of(&role), key)
