@@ -34,8 +34,10 @@ automaticamente solo nello stesso browser.
 All’apertura dev mostra un launcher prima di costruire esercitazione e
 interfaccia: riprendere la sessione salvata, scegliere lo scenario di una nuova
 esercitazione (la sessione salvata viene eliminata), impostare la lingua della
-console EXCON e la chiave OpenRouter, o cancellare i dati salvati. Le lingue
-dei ruoli sono quelle assegnate nello scenario e non vengono chieste.
+console EXCON e la chiave OpenRouter, o cancellare i dati salvati. Ogni nuova
+esercitazione chiede la lingua nella scheda di ciascun ruolo (quella dello
+scenario è proposta); l’EXCON avvia quando tutti hanno scelto, o con “Avvia
+comunque”.
 “Salva e inizia nuova sessione” dalle Impostazioni riparte direttamente,
 senza launcher.
 

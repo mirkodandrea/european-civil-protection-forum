@@ -25,6 +25,11 @@ pub struct SavedSession {
     pub tape: Vec<(String, String)>,
     /// Simulated seconds reached when saved.
     pub end_t_s: i64,
+    /// Participants chose their language before the start (journal holds
+    /// their choices). Sessions saved before this existed kept the
+    /// scenario's languages and replay that way.
+    #[serde(default)]
+    pub language_choice: bool,
 }
 
 thread_local! {
@@ -36,6 +41,13 @@ thread_local! {
     /// Scenario chosen in the launcher when the browser blocks storage: the
     /// exercise still starts (nothing is persisted).
     static CHOSEN: RefCell<Option<String>> = const { RefCell::new(None) };
+    static LANGUAGE_CHOICE: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Whether the running session asks participants for their language
+/// (see [`SavedSession::language_choice`]).
+pub fn set_language_choice(on: bool) {
+    LANGUAGE_CHOICE.with(|c| c.set(on));
 }
 
 fn storage() -> Option<web_sys::Storage> {
@@ -372,6 +384,7 @@ pub fn autosave(state: &server::AppState, force: bool) {
         journal,
         tape,
         end_t_s,
+        language_choice: LANGUAGE_CHOICE.with(Cell::get),
     };
     let result = serde_json::to_string(&session)
         .map_err(|e| e.to_string())

@@ -60,7 +60,14 @@ fn initialize() -> Result<server::AppState, String> {
         .map(|s| s.pack.clone())
         .or_else(|| scenarios.next_pack())
         .ok_or("nessuno scenario disponibile")?;
-    let exercise = (scenarios.build)(&pack).map_err(|e| e.to_string())?;
+    let mut exercise = (scenarios.build)(&pack).map_err(|e| e.to_string())?;
+    // Every new exercise asks each participant for a language again (the
+    // scenario's is proposed), whoever plays the role this time.
+    let language_choice = session.as_ref().is_none_or(|s| s.language_choice);
+    if language_choice {
+        exercise = exercise.with_language_choice();
+    }
+    crate::store::set_language_choice(language_choice);
     scenarios.set_running(&pack);
     let mut state = server::browser::new(exercise, Some(scenarios));
     if let Some(key) = saved_key().or_else(|| {
@@ -80,8 +87,8 @@ fn initialize() -> Result<server::AppState, String> {
 }
 
 /// Opening screen: pick the scenario (or resume the saved session) and set
-/// the options before the exercise and its interface are built. Role
-/// languages are the scenario's; only the EXCON console language is chosen.
+/// the options before the exercise and its interface are built. The EXCON
+/// console language is chosen here; each role chooses its own in its tab.
 #[function_component(Standalone)]
 pub fn standalone() -> Html {
     let launched = use_state(crate::store::take_autostart);
@@ -194,7 +201,7 @@ fn launcher(props: &LauncherProps) -> Html {
               let id = p.id.clone();
               html!{<label class={classes!("launcher-scenario",(*selected==p.id).then_some("active"))}><input type="radio" name="launch-scenario" value={p.id.clone()} checked={*selected==p.id} onchange={{let selected=selected.clone();Callback::from(move |_|selected.set(id.clone()))}}/><span><strong>{&p.name}</strong>if !p.description.is_empty(){<br/><span class="muted">{&p.description}</span>}</span></label>}
             })}</div>
-            <p class="muted">{"Le lingue dei partecipanti sono quelle assegnate ai ruoli nello scenario."}if saved.is_some(){{" La sessione salvata verrà eliminata."}}</p>
+            <p class="muted">{"Ogni partecipante sceglie la propria lingua nella scheda del ruolo; quella dello scenario è proposta."}if saved.is_some(){{" La sessione salvata verrà eliminata."}}</p>
             <button id="start-session" class={classes!(saved.is_none().then_some("primary"))} onclick={start}>{"Avvia nuova esercitazione"}</button>
           </section>
           <section class="card" id="launch-options"><h2>{"Opzioni"}</h2>

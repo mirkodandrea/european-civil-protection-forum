@@ -19,6 +19,7 @@ mod i18n_help;
 mod i18n_place;
 mod i18n_lang;
 mod i18n_lobby;
+mod i18n_more;
 mod label_layout;
 mod i18n_review;
 mod i18n_reply;
@@ -448,9 +449,10 @@ impl Component for App {
         #[cfg(not(feature = "standalone"))]
         let token = ctx.props().token.clone().unwrap_or_else(api::token);
         let key = token.clone();
-        // Standalone roles keep the scenario's languages and the EXCON picks its
-        // own in the launcher. On the server the EXCON choice is per browser
-        // session; players confirm theirs on the server (`language_confirmed`).
+        // Players confirm their language on the exercise (`language_confirmed`,
+        // asked again for every new exercise, standalone included). The
+        // standalone EXCON picks its own in the launcher; on the server the
+        // EXCON choice is per browser session and asked again after a restart.
         let lang_chosen = cfg!(feature = "standalone") || session_flag(&format!("ttx_lang_ok_{token}"));
         ctx.link().send_future(async move {
             let result = async {
@@ -618,6 +620,16 @@ impl Component for App {
                 match result {
                     Ok((state, master)) => {
                         self.update_notifications(ctx, &state, &master);
+                        // A restarted exercise (back to the briefing) asks the EXCON
+                        // console language again: someone else may run it now.
+                        // Standalone picks it in the launcher.
+                        let restarted = !self.state.is_null() && self.state["phase"] != "briefing" && state["phase"] == "briefing";
+                        if restarted && self.is_master() && !cfg!(feature = "standalone") {
+                            if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+                                let _ = s.remove_item(&format!("ttx_lang_ok_{}", self.token));
+                            }
+                            self.lang_chosen = false;
+                        }
                         self.state = state;
                         // From now on the server's `language_confirmed` decides the gate
                         // (a deleted session asks again).
@@ -1078,9 +1090,16 @@ impl Component for App {
             let options = if self.is_master() { api::EXCON_LANGUAGES } else { api::LANGUAGES };
             // The scenario's language for this role is the proposed one.
             let proposed = if self.is_master() { self.excon_lang.clone() } else { text(&self.state["player"]["language"]).to_string() };
+            let buttons = html! {<div class="row" id="language-gate">{for options.iter().map(|(id, name)| { let id = id.to_string(); html!{<button class={classes!((id==proposed).then_some("primary"))} data-lang={id.clone()} onclick={ctx.link().callback(move |_| Msg::PickLang(id.clone()))}>{*name}</button>} })}</div>};
+            // Standalone: one tab per role, so the question stays inside the role's
+            // panel (a full-page modal would hide the role tabs).
+            if cfg!(feature = "standalone") {
+                return html! {<main class="page"><section class="card" id="await-start" aria-labelledby="lang-gate-title">
+                    <h2 id="lang-gate-title">{format!("{} · Language / Lingua", self.name(&self.own))}</h2>{buttons}
+                </section></main>};
+            }
             return html! {<div class="modal-backdrop"><section class="inject-modal" role="dialog" aria-modal="true" aria-labelledby="lang-gate-title">
-                <h2 id="lang-gate-title">{"Language / Lingua"}</h2>
-                <div class="row" id="language-gate">{for options.iter().map(|(id, name)| { let id = id.to_string(); html!{<button class={classes!((id==proposed).then_some("primary"))} data-lang={id.clone()} onclick={ctx.link().callback(move |_| Msg::PickLang(id.clone()))}>{*name}</button>} })}</div>
+                <h2 id="lang-gate-title">{"Language / Lingua"}</h2>{buttons}
             </section></div>};
         }
         html! {<>

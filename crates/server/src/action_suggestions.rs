@@ -169,7 +169,7 @@ async fn run(
         "status": if check.actions.is_empty() { "none" } else { "ready" },
         "role": context.role,
         "actions": check.actions,
-        "dropped": check.dropped,
+        "dropped": check.dropped + suggested.dropped,
         "summary": suggested.summary.chars().take(500).collect::<String>(),
     }))
 }

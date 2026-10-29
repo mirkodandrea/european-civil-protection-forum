@@ -62,6 +62,7 @@ const origin=url.startsWith('http')?new URL(url).origin:null;
   assert.equal(await page.getByLabel('Simulazione',{exact:true}).isChecked(),false,'simulation view starts disabled');
   assert(await page.locator('.standalone-simulation').isHidden());
   await page.screenshot({path:path.join(out,'desktop.png')});
+  await require('./standalone-languages.cjs').confirmLanguages(page,{mayor:'en',regional_cp:'en'});
   await master.locator('#start').click();await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor();
   await select('mayor');await pickLanguage(mayor,'en');
   assert.equal(await mayor.locator('[data-view="chat"]').count(),0,'players have no exercise-control chat');

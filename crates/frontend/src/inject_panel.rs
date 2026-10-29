@@ -148,8 +148,12 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         if p["status"] != "rolled_back" {
             for outcome in list(&p["narrative_outcomes"]) {
                 // What EXCON changed in the world is shown with the narrative.
-                let effects = list(&outcome["effects"]).iter().map(|x| text(x).to_string()).collect::<Vec<_>>().join("; ");
-                let body = if effects.is_empty() || effects == text(&outcome["text"]) { text(&outcome["text"]).to_string() } else { format!("{} ({})", text(&outcome["text"]), effects) };
+                // English server descriptions are replaced by the player-language command summaries.
+                let english = list(&outcome["effects"]).iter().map(|x| text(x).to_string()).collect::<Vec<_>>().join("; ");
+                let localized = list(&outcome["effect_commands"]).iter().map(|c| crate::widgets::command_summary(l, c)).collect::<Vec<_>>().join("; ");
+                let effects = if localized.is_empty() { english.clone() } else { localized };
+                let said = text(&outcome["text"]);
+                let body = if said.is_empty() || said == english || said == effects { if effects.is_empty() { said.to_string() } else { effects } } else if effects.is_empty() { said.to_string() } else { format!("{said} ({effects})") };
                 out.push(ev(Kind::Decision, persona(outcome), format_offset(outcome["t_s"].as_i64().unwrap_or(0)), &body));
             }
         }

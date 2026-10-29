@@ -1,13 +1,23 @@
 //! English strings for the EXCON console, keyed by the Italian source text.
 //! The console language is a per-browser choice, so a thread-local is enough
 //! (wasm is single-threaded); the page reloads when it changes.
+//!
+//! A player panel sets its own language here too: any language other than
+//! Italian reads the English text (never Italian), and the player languages
+//! with an `i18n_more` entry for that English text read their own.
 use std::cell::Cell;
-thread_local! { static EN: Cell<bool> = const { Cell::new(false) }; }
+thread_local! { static LANG: Cell<&'static str> = const { Cell::new("it") }; }
+/// Whether the UI reads anything but Italian (English texts and templates).
 pub fn is_en() -> bool {
-    EN.with(|c| c.get())
+    LANG.with(|c| c.get()) != "it"
 }
 pub fn set_ui_lang(lang: &str) {
-    EN.with(|c| c.set(lang == "en"));
+    let code = crate::api::LANGUAGES
+        .iter()
+        .map(|(id, _)| *id)
+        .find(|id| *id == lang)
+        .unwrap_or("en");
+    LANG.with(|c| c.set(code));
 }
 /// Standalone mounts one `App` per role, all alive at once. Only the visible
 /// one may own the global language, otherwise a hidden panel re-rendering in
@@ -19,23 +29,30 @@ pub fn set_ui_lang_if_visible(visible: bool, lang: &str) {
 }
 /// Runs `f` under `lang`, restoring the previous global language afterwards.
 pub fn with_ui_lang<R>(lang: &str, f: impl FnOnce() -> R) -> R {
-    let previous = is_en();
+    let previous = LANG.with(|c| c.get());
     set_ui_lang(lang);
     let out = f();
-    EN.with(|c| c.set(previous));
+    LANG.with(|c| c.set(previous));
     out
 }
-/// Translates an Italian console string when the console language is English.
+/// Translates an Italian console string when the UI language is not Italian.
 pub fn ex(it: &'static str) -> &'static str {
-    if EN.with(|c| c.get()) {
-        en(it).or_else(|| crate::i18n_reply::ex_en(it)).unwrap_or(it)
-    } else {
-        it
+    match LANG.with(|c| c.get()) {
+        "it" => it,
+        lang => {
+            let english = en(it).or_else(|| crate::i18n_reply::ex_en(it));
+            match english {
+                Some(e) if lang != "en" => crate::i18n_more::lookup(lang, e).unwrap_or(e),
+                Some(e) => e,
+                None => it,
+            }
+        }
     }
 }
 pub fn en(it: &str) -> Option<&'static str> {
     Some(match it {
         "Iniziativa narrativa" => "Narrative initiative",
+        "Testo originale del player" => "Player's original text",
         "Avvia comunque" => "Start anyway",
         "Invio in corso…" => "Sending…",
         "Attendi la fine degli invii in corso" => "Wait for the sends in progress to finish",
@@ -1061,6 +1078,17 @@ mod lang_tests {
         set_ui_lang_if_visible(true, "en");
         set_ui_lang_if_visible(false, "it");
         assert!(is_en());
+        set_ui_lang("it");
+    }
+    #[test]
+    fn other_player_languages_never_read_italian() {
+        set_ui_lang("fr");
+        assert!(is_en(), "templates fall back to English");
+        let shown = ex("Iniziativa narrativa");
+        assert_ne!(shown, "Iniziativa narrativa");
+        assert_eq!(shown, crate::i18n_more::lookup("fr", "Narrative initiative").unwrap_or("Narrative initiative"));
+        with_ui_lang("it", || assert_eq!(ex("Iniziativa narrativa"), "Iniziativa narrativa"));
+        assert!(is_en(), "the previous language is restored");
         set_ui_lang("it");
     }
 }

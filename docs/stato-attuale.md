@@ -80,13 +80,18 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    congelato al momento dell’invio. Le altre conversazioni restano private.
    L’AI traduce letteralmente i messaggi senza interpretarli come azioni. Un
    filtro lessicale blocca insulti e volgarità prima di tradurre o consegnare il
-   testo, lasciando la bozza modificabile al mittente. Con il server ogni
-   partecipante conferma la lingua all’apertura (quella del ruolo nello scenario
-   è proposta; `Exercise::with_language_choice`) e attende poi l’avvio. L’EXCON
+   testo, lasciando la bozza modificabile al mittente. Ogni nuova
+   esercitazione (avvio, riavvio, nuovo scenario; server e standalone) chiede
+   a ogni partecipante la lingua, anche se il ruolo è ora di un’altra persona:
+   quella del ruolo nello scenario è proposta (`Exercise::with_language_choice`),
+   poi il player attende l’avvio. Nello standalone la richiesta compare nella
+   scheda di ciascun ruolo; le sessioni salvate prima di questa modifica
+   (`SavedSession::language_choice` assente) si riprendono con le lingue dello
+   scenario. Sul server la lingua della console EXCON è chiesta di nuovo quando
+   l’esercitazione torna al briefing (riavvio). L’EXCON
    vede chi manca accanto ad “Avvia esercitazione”, che resta disabilitato
    finché tutti hanno scelto; “Avvia comunque” (`POST /api/master/start
-   {force:true}`) parte senza attendere. Nello standalone valgono le lingue
-   dello scenario, senza richiesta. La scheda iniziale
+   {force:true}`) parte senza attendere. La scheda iniziale
    “Funzione” è in sola lettura: descrive ruolo, capacità e
    asset, distingue risorse disponibili, prenotate e impiegate e raccoglie i
    riepiloghi AI dei turni conclusi. La tab Conversazioni conta i messaggi non
@@ -310,7 +315,8 @@ Il vecchio assistente «Descrivi le azioni con l’assistente AI» (bozza privat
 `POST /api/player/<role>/draft` + `/draft/submit`, task LLM `prepare_decision`,
 `exercise::drafts`) è stato rimosso. Al suo posto un solo task LLM,
 `suggest_actions` (`llm::tasks::SuggestScope`), con due ambiti; il modello
-risponde `{actions, reasons, summary}` in JSON, l’esercitazione lo valida
+risponde `{actions, quotes, reasons, summary}` in JSON (citazioni: vedi
+«Fedeltà delle formulazioni AI»), l’esercitazione lo valida
 (`Exercise::check_suggestions`: solo `Command` validi del ruolo autore, niente
 doppioni né azioni già nella risposta/proposta, verdetto di fattibilità dopo le
 proposte approvate) e **nulla cambia**: i suggerimenti sono bozze che un umano
@@ -359,6 +365,48 @@ lingua del ruolo, `responses`), `GET /api/master` espone `linked_conversations`
 `conversation` delle proposte. `POST /api/master/proposals/<id>/narrative-outcome
 {text, language?}` registra l’esito. Limite noto: i partecipanti si fissano alla
 creazione.
+
+## Fedeltà delle formulazioni AI (playtest 28/10)
+
+Un invito comunale a evitare abbruciamenti era diventato «divieto di
+abbruciamento (Issue warning to zone F4)». Regole e controlli (`llm::fidelity`):
+
+- I prompt di `parse_reply`, `suggest_actions`, traduzioni, riepilogo di turno e
+  aggiornamento di situazione includono `FIDELITY_RULES`: quantità, condizioni,
+  luoghi e forza giuridica restano quelli del player (un invito resta un invito;
+  divieto/ordinanza/obbligo solo se il player li dichiara), nessun contenuto,
+  luogo o potere inventato; un’intenzione («manderò una squadra») è
+  un’intenzione; una narrazione non è eseguita dal simulatore.
+- Ogni azione proposta dall’AI porta una **citazione letterale** (`quotes`) del
+  testo del player: se la citazione non compare nel testo l’azione è scartata
+  (contata in `dropped`); i suggerimenti mostrano la citazione davanti al motivo
+  («parole del player» → motivo). Un’azione senza citazione è ancora accettata.
+- `parse_reply` classifica la `modality` (decisione, intenzione, invito,
+  richiesta, resoconto, domanda) ed etichetta il riepilogo per l’EXCON
+  («Intention (not executed): …», «Invitation/appeal (not a ban or order): …»).
+  Resoconti e domande non producono azioni; in chat diretta solo le decisioni.
+- Un riepilogo, motivo o messaggio con lessico vincolante (ban, divieto,
+  vietato, ordinanza, obbligo, Verbot, interdiction…, non negato) assente dal
+  testo del player è sostituito dalle parole del player; una traduzione inglese
+  che lo introduce è segnalata con «CHECK WORDING».
+- La scheda della proposta EXCON mostra anche il **testo originale del player**
+  accanto alla traduzione.
+- Gli effetti di un esito narrativo nella vista player sono descritti nella
+  lingua del player (`effect_commands`), non con la descrizione inglese del server.
+
+Test offline in `crates/llm/src/{fidelity,tasks}.rs`; prova dal vivo
+`TTX_LIVE_LLM=1 cargo test -p llm --test live`.
+
+## Traduzioni dell’interfaccia player
+
+Le stringhe player sono chiavi di `i18n.rs` (it/en) con le altre lingue nei
+cataloghi `i18n_lang`, `i18n_reply`, … e in `i18n_more.json` (generato da
+`scripts/i18n/player_catalogue.py`, con `--check` elenca le mancanze). I testi
+scritti in linea come coppia italiano/inglese passano da `i18n::pair`. I test di
+`i18n_more` falliscono se una chiave o una coppia manca in una lingua, o se una
+schermata solo player usa il catalogo EXCON (`ex`, `exfmt!`) o un ramo
+italiano/inglese. `ex()` in un pannello player non italiano mostra l’inglese
+(o la traduzione di `i18n_more`), mai l’italiano.
 
 ## Banco di prova (sviluppo)
 

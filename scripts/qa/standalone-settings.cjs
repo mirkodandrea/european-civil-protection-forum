@@ -73,6 +73,7 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
       requests++;
       await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({choices: [{message: {content: JSON.stringify({actions:[{type:'IssueWarning', zone:'F4'}], reasons:['warn F4'], summary:'Warning for F4'})}}]})});
     });
+    await require('./standalone-languages.cjs').confirmLanguages(page);
     await page.locator('[data-panel="master"] [data-view="timeline"]').click();
     await page.locator('[data-panel="master"] #start').click();
     // The mayor answers an inject: EXCON sends the first planned one.

@@ -36,7 +36,7 @@ async function launch(page) {
   const form=page.locator('#scenario-form');
   assert.equal(await form.locator('input[disabled]').first().inputValue(),'selvariva_basin');
   await page.reload(); await launch(page);await ready();
-  await master.locator('#start').click();await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor();
+  await require('./standalone-languages.cjs').confirmLanguages(page);await master.locator('#start').click();await master.locator('#turn').filter({hasText:/orders|ordini/}).waitFor();
   // Autosave must bind the journal to this map, even across a full reload.
   await page.waitForFunction(()=>JSON.parse(localStorage.getItem('ttx.standalone.session')||'null')?.pack.base==='selvariva_basin');
   let session=await page.evaluate(()=>JSON.parse(localStorage.getItem('ttx.standalone.session')));

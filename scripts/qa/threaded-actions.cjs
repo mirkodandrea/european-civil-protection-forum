@@ -71,6 +71,7 @@ const supportedText = 'Issue a warning for the selected zone';
     await page.locator('.launcher #start-session').click();
     await master.locator('#start').waitFor({ timeout: 60000 });
     const sim = page.getByLabel('Simulazione', { exact: true }); if (await sim.isChecked()) await sim.uncheck();
+    await require('./standalone-languages.cjs').confirmLanguages(page, { mayor: 'en', fire_commander: 'en' });
     await master.locator('#start').click();
     await master.locator('#turn').filter({ hasText: /orders|ordini/ }).waitFor();
 
