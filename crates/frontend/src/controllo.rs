@@ -145,6 +145,65 @@ pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
     }
 }
 
+/// The map tool that edits a command, when one does (`SetWeather` uses the weather form).
+pub fn tool_for(cmd: &Value) -> Option<&'static str> {
+    Some(match text(&cmd["type"]) {
+        "Ignite" => "ignite",
+        "WaterDrop" => "drop",
+        "Extinguish" if cmd["area"].is_object() => "extcircle",
+        "Extinguish" => "extzone",
+        "IssueWarning" => "warn",
+        "EvacuateZone" => "evac",
+        "MonitorArea" if list(&cmd["zones"]).len() <= 1 => "drone",
+        "CutFireLine" if cmd["along"].is_null() => "line",
+        "SetBuildingStatus" => "bstatus",
+        "SetWeather" => "weather",
+        _ => return None,
+    })
+}
+
+/// The map picks that rebuild `cmd` with its tool (see [`build_command`]):
+/// points `{x, y, zone}`, zones `{zone}`, buildings `{x, y, building_id}`.
+/// Named locations (a place name instead of a point) give no pick.
+pub fn initial_points(cmd: &Value, stat: &Value) -> Vec<Value> {
+    let point = |v: &Value| -> Option<Value> {
+        let (x, y) = (v["x"].as_f64()?, v["y"].as_f64()?);
+        Some(json!({"x": x, "y": y, "zone": crate::place_pick::zone_at(stat, x, y).unwrap_or_default()}))
+    };
+    let zone = |v: &Value| v.as_str().filter(|z| !z.is_empty()).map(|z| json!({"zone": z}));
+    let picks = match text(&cmd["type"]) {
+        "Ignite" | "WaterDrop" => vec![point(&cmd["at"])],
+        "Extinguish" if cmd["area"].is_object() => vec![point(&cmd["area"]["at"])],
+        "Extinguish" => vec![zone(&cmd["area"])],
+        "IssueWarning" | "EvacuateZone" => vec![zone(&cmd["zone"])],
+        "MonitorArea" => vec![zone(&cmd["zones"][0])],
+        "CutFireLine" => vec![point(&cmd["from"]), point(&cmd["to"])],
+        "SetBuildingStatus" => {
+            let id = text(&cmd["building"]).trim_start_matches('#');
+            vec![list(&stat["buildings"]).iter().find(|b| b["id"].to_string() == id).and_then(|b| {
+                Some(json!({"x": b["pos"][0].as_f64()?, "y": b["pos"][1].as_f64()?, "building_id": b["id"]}))
+            })]
+        }
+        _ => vec![],
+    };
+    // Partial picks would mix an old point with a new one: all or nothing.
+    picks.iter().all(Option::is_some).then(|| picks.into_iter().flatten().collect()).unwrap_or_default()
+}
+
+/// `edited` (built by a tool) with the fields of `original` the tool does not
+/// set, such as an evacuation destination or a fire-line width.
+pub fn keep_extra_fields(original: &Value, edited: &Value) -> Value {
+    let mut out = edited.clone();
+    if let (Some(o), Some(e)) = (original.as_object(), out.as_object_mut()) {
+        for (k, v) in o {
+            if !e.contains_key(k) {
+                e.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    out
+}
+
 #[derive(Clone, PartialEq)]
 pub enum FieldKind {
     Text,
@@ -249,6 +308,8 @@ pub fn modal(p: &ModalProps) -> Html {
         Callback::from(move |e: KeyboardEvent| {
             if e.key() == "Escape" && !busy {
                 e.prevent_default();
+                // A tool opened from another dialog (e.g. Risposte) closes alone.
+                e.stop_propagation();
                 onclose.emit(());
             }
         })
@@ -316,6 +377,9 @@ pub struct MapToolProps {
     /// Replaces the situation map: gets the map-click callback and the pending point.
     #[prop_or_default]
     pub map_for: Option<MapFactory>,
+    /// Command being edited: the form starts from its picks and parameters.
+    #[prop_or_default]
+    pub initial: Option<Value>,
 }
 
 /// Builds a point-picking map for [`MapToolModal`] when no live situation exists.
@@ -330,9 +394,13 @@ impl PartialEq for MapFactory {
 pub fn map_tool_modal(p: &MapToolProps) -> Html {
     let c = &p.common;
     let tool = p.tool.as_str();
-    let points = use_state(Vec::<Value>::new);
-    let radius = use_state(|| if tool == "extcircle" { "150".to_string() } else { "80".to_string() });
-    let damage = use_state(|| "destroyed".to_string());
+    let initial = p.initial.clone().unwrap_or_default();
+    let points = use_state(|| initial_points(&initial, &c.stat));
+    let radius = use_state(|| {
+        let r = if tool == "extcircle" { initial["area"]["radius_m"].as_f64() } else { initial["radius_m"].as_f64() };
+        r.map(|r| format!("{r:.0}")).unwrap_or_else(|| if tool == "extcircle" { "150".to_string() } else { "80".to_string() })
+    });
+    let damage = use_state(|| initial["damage"].as_str().unwrap_or("destroyed").to_string());
     let params = CmdParams { radius_m: radius.trim().parse().unwrap_or(0.), damage: (*damage).clone() };
     let cmd = build_command(tool, &points, &params, &c.stat);
     let radius_bad = matches!(tool, "ignite" | "extcircle") && !(if tool == "ignite" { 40.0..=2000.0 } else { 10.0..=5000.0 }).contains(&params.radius_m);
@@ -348,6 +416,9 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
     let zone_tool = matches!(tool, "extzone" | "evac" | "warn" | "drone");
     let pending = if zone_tool {
         points.first().map(|v| json!({"zone": v["zone"]}))
+    } else if tool == "line" && !points.is_empty() {
+        // Both ends, joined once the second is picked.
+        Some(json!({"points": points.iter().map(|v| json!([v["x"], v["y"]])).collect::<Vec<_>>()}))
     } else {
         points.last().cloned()
     };
@@ -365,7 +436,7 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
             .sqrt();
             crate::exfmt!("Linea di {:.0} m", "Line of {:.0} m", d)
         } else {
-            crate::exfmt!("Punto selezionato: x {:.0} m · y {:.0} m", "Selected point: x {:.0} m · y {:.0} m", first["x"].as_f64().unwrap_or(0.), first["y"].as_f64().unwrap_or(0.))
+            crate::exfmt!("Punto selezionato: {}", "Selected point: {}", crate::place_pick::point_label(&c.stat, first["x"].as_f64().unwrap_or(0.), first["y"].as_f64().unwrap_or(0.)))
         }
     } else {
         ex(map_hint(tool, 0)).to_string()
@@ -889,6 +960,32 @@ mod tests {
         let mut with_id = c;
         with_id["building_id"] = json!(3);
         assert_eq!(build_command("bstatus", &[with_id], &p, &stat).unwrap()["building"], json!("#3"));
+    }
+    #[test]
+    fn edited_commands_start_from_their_own_picks() {
+        let stat = json!({"zones":{"cols":8,"rows":8,"size_m":750.0},"buildings":[{"id":7,"pos":[500.0,500.0]}]});
+        for cmd in [
+            json!({"type":"CutFireLine","from":{"x":100.0,"y":100.0},"to":{"x":400.0,"y":100.0}}),
+            json!({"type":"WaterDrop","at":{"x":510.0,"y":495.0}}),
+            json!({"type":"Ignite","at":{"x":510.0,"y":495.0},"radius_m":120.0}),
+            json!({"type":"Extinguish","area":{"at":{"x":510.0,"y":495.0},"radius_m":150.0}}),
+            json!({"type":"Extinguish","area":"B2"}),
+            json!({"type":"EvacuateZone","zone":"F4"}),
+            json!({"type":"IssueWarning","zone":"F4"}),
+            json!({"type":"MonitorArea","zones":["F4"]}),
+            json!({"type":"SetBuildingStatus","building":"#7","damage":"destroyed"}),
+        ] {
+            let tool = tool_for(&cmd).unwrap();
+            let radius = cmd["radius_m"].as_f64().or(cmd["area"]["radius_m"].as_f64()).unwrap_or(80.);
+            let p = CmdParams { radius_m: radius, damage: "destroyed".into() };
+            assert_eq!(build_command(tool, &initial_points(&cmd, &stat), &p, &stat).as_ref(), Some(&cmd), "{cmd}");
+        }
+        // Named places and zone edges keep the parameter fields.
+        assert_eq!(tool_for(&json!({"type":"CutFireLine","along":"F4:N"})), None);
+        assert!(initial_points(&json!({"type":"WaterDrop","at":"Pineta"}), &stat).is_empty());
+        assert_eq!(tool_for(&json!({"type":"DeployEngine","at":{"x":1.0,"y":2.0}})), None);
+        let kept = keep_extra_fields(&json!({"type":"EvacuateZone","zone":"F4","destination":"Palestra"}), &json!({"type":"EvacuateZone","zone":"G4"}));
+        assert_eq!(kept, json!({"type":"EvacuateZone","zone":"G4","destination":"Palestra"}));
     }
     #[test]
     fn fields_body_types_and_arrays() {

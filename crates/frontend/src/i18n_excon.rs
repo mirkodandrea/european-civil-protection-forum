@@ -268,6 +268,7 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Cosa succede se approvi" => "What happens if you approve",
         "Modifica" => "Edit",
         "Dettagli tecnici" => "Technical details",
+        "Modifica con lo strumento del Controllo" => "Edit with the Control tool",
         "Nota EXCON" => "EXCON note",
         "Thread collegato" => "Linked thread",
         "Per rifiutare o chiedere un chiarimento scrivi una nota per il player." => "To reject or ask for clarification, write a note for the player.",

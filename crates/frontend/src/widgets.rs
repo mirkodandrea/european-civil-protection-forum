@@ -344,12 +344,15 @@ pub fn proposal(props: &ProposalProps) -> Html {
     let excluded = use_state(Excluded::new);
     // Actions whose parameters are open for editing.
     let editing = use_state(std::collections::BTreeSet::<usize>::new);
+    // Action being edited with its Controllo tool (map or weather form).
+    let tool_edit = use_state(|| Option::<usize>::None);
     {
         // Indices only hold for the list they were chosen in.
-        let (excluded, editing) = (excluded.clone(), editing.clone());
+        let (excluded, editing, tool_edit) = (excluded.clone(), editing.clone(), tool_edit.clone());
         use_effect_with(commands.len(), move |_| {
             excluded.set(Excluded::new());
             editing.set(Default::default());
+            tool_edit.set(None);
         });
     }
     {
@@ -505,6 +508,25 @@ pub fn proposal(props: &ProposalProps) -> Html {
     }else if no_actions{
         Some(("muted proposal-ack-hint",crate::i18n::ex("Nessuna azione da eseguire: puoi prendere atto (la nota è la risposta al player), chiedere un chiarimento o rifiutare.").to_string()))
     }else{None};
+    let tool_modal=match (*tool_edit,&props.common){
+        (Some(i),Some(common)) if i<commands.len()&&editable=>{
+            let original=commands[i].clone();
+            let onclose={let tool_edit=tool_edit.clone();Callback::from(move |_|tool_edit.set(None))};
+            let common=CommonProps{onclose,..common.clone()};
+            let replace={let (commands,tool_edit)=(commands.clone(),tool_edit.clone());Callback::from(move |edited:Value|{
+                let mut next=(*commands).clone();
+                if let Some(c)=next.get_mut(i){*c=crate::controllo::keep_extra_fields(c,&edited);}
+                commands.set(next);tool_edit.set(None);
+            })};
+            match crate::controllo::tool_for(&original){
+                Some("weather")=>{let w=&common.state["world"]["weather"];let f=|k:&str|original[k].as_f64().or(w[k].as_f64());
+                    html!{<crate::controllo::WeatherModal title={crate::controllo::tool_label("weather")} common={common.clone()} dir={f("wind_dir_deg").unwrap_or(0.)} speed={f("wind_speed_kmh").unwrap_or(10.)} moisture={f("moisture_pct").unwrap_or(10.)} oncommand={Some(replace)}/>}}
+                Some(tool)=>html!{<crate::controllo::MapToolModal key={format!("{id}:{i}:{tool}")} tool={tool} common={common.clone()} initial={Some(original.clone())} oncommand={Some(replace)}/>},
+                None=>Html::default(),
+            }
+        }
+        _=>Html::default(),
+    };
     html! {<section class={classes!("proposal-inline",(p["status"]=="superseded").then_some("superseded"))} data-proposal={id.to_string()}>
         <div class="proposal-head"><b>{if narrative{crate::i18n::ex("Iniziativa narrativa")}else if has_narrative{crate::i18n::ex("Risposta: narrazione e azioni")}else{crate::i18n::ex("Azioni proposte")}}</b><span class={classes!("pill","pending",format!("review-{}",text(&p["review"])))} data-review={text(&p["review"]).to_string()}>{if p["status"]=="superseded"{crate::i18n::ex("sostituita")}else if p["status"]=="needs_clarification"&&p["clarification_request"].is_string(){crate::i18n::ex("in attesa di chiarimento")}else if narrative&&p["status"]=="approved"{crate::i18n::ex(if list(&p["narrative_outcomes"]).is_empty(){"Approvata · esito EXCON in attesa"}else{"Esito narrativo registrato"})}else{api::proposal_status(p)}}</span></div>
         if p["status"]=="superseded"{<p class="muted proposal-superseded" data-superseded="">{if p["superseded_by"].is_number(){crate::exfmt!("Sostituita dalla proposta #{}","Superseded by proposal #{}",p["superseded_by"])}else{crate::i18n::ex("sostituita").to_string()}}</p>}
@@ -557,7 +579,9 @@ pub fn proposal(props: &ProposalProps) -> Html {
             let toggle={let excluded=excluded.clone();Callback::from(move |e:Event|{use yew::TargetCast;let on=e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();let mut next=(*excluded).clone();if on{next.remove(&i);}else{next.insert(i,String::new());}excluded.set(next);})};
             let reason={let excluded=excluded.clone();Callback::from(move |e|{let mut next=(*excluded).clone();next.insert(i,api::input(e));excluded.set(next);})};
             let open=editing.contains(&i);
-            let edit={let editing=editing.clone();Callback::from(move |_|{let mut next=(*editing).clone();if !next.remove(&i){next.insert(i);}editing.set(next);})};
+            // The Controllo tool when one builds this command, else the parameter fields.
+            let with_tool=props.common.is_some()&&crate::controllo::tool_for(cmd).is_some();
+            let edit={let (editing,tool_edit)=(editing.clone(),tool_edit.clone());Callback::from(move |_|{if with_tool{tool_edit.set(Some(i));return;}let mut next=(*editing).clone();if !next.remove(&i){next.insert(i);}editing.set(next);})};
             let params=command_params_in(lang,cmd,&stat);
             html!{<li class={classes!("command-card",left_out.is_some().then_some("excluded"))} data-command-card={i.to_string()}>
             <div class="action-row">
@@ -568,7 +592,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
                     Some(v) if v[i]["verdict"]=="ok"=>html!{<small class="verdict-ok">{format!("✓ {}",if list(&v[i]["notes"]).is_empty(){crate::i18n::ex("azione valida").into()}else{list(&v[i]["notes"]).iter().map(|n|crate::render::localize_note(text(n))).collect::<Vec<_>>().join(" · ")})}</small>},
                     Some(v)=>html!{<small class="danger verdict-bad">{format!("⚠ {}",text(&v[i]["reason"]))}</small>},
                 }}</span>
-                if editable{<button type="button" class="action-edit" data-edit-action={i.to_string()} aria-expanded={open.to_string()} disabled={props.busy} onclick={edit}>{if open{crate::i18n::ex("Chiudi")}else{crate::i18n::ex("Modifica")}}</button>}
+                if editable{<button type="button" class="action-edit" data-edit-action={i.to_string()} data-edit-tool={with_tool.then(||crate::controllo::tool_for(cmd).unwrap_or_default())} aria-expanded={(!with_tool).then(||open.to_string())} title={with_tool.then_some(crate::i18n::ex("Modifica con lo strumento del Controllo"))} disabled={props.busy} onclick={edit}>{if open{crate::i18n::ex("Chiudi")}else{crate::i18n::ex("Modifica")}}</button>}
             </div>
             if let Some(r)=left_out.clone(){<input class="reject-reason" data-reject-reason={i.to_string()} maxlength="500" aria-label={crate::i18n::ex("Motivo per il player (facoltativo)")} placeholder={crate::i18n::ex("Motivo per il player (facoltativo)")} value={r} disabled={props.busy} oninput={reason}/>}
             if open{<div class="action-fields">{for cmd.as_object().into_iter().flatten().filter(|(k,_)|k.as_str()!="type").map(|(key,value)|{
@@ -606,6 +630,7 @@ pub fn proposal(props: &ProposalProps) -> Html {
             if !p["invalid"].is_null()&&!list(&p["invalid"]).is_empty(){<div class="danger">{crate::render::render_value("",&p["invalid"])}</div>}
             {details(crate::i18n::ex("Cronologia ed esiti effettivi"),&json!({"history":p["history"],"executions":p["executions"]}))}
         </details>
+        {tool_modal}
     </section>}
 }
 pub fn preview(value: &Value) -> Html {
