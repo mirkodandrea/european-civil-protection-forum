@@ -1,45 +1,33 @@
 //! Map legend with shapes and textures next to colours (colour-blind safe).
-//! Self-contained strings (Italian / English; other languages fall back to English).
+//! Strings are Italian/English pairs; other player languages come from `i18n_more`.
 //! The glyphs and textures here mirror what `map.rs` draws.
+use crate::i18n::pair;
 use yew::prelude::*;
 
 pub fn lg(lang: &str, key: &'static str) -> &'static str {
-    let en = lang != "it" || crate::i18n::is_en();
-    match (key, en) {
-        ("fire", false) => "Fronte attivo",
-        ("fire", true) => "Active fire front",
-        ("burnt", false) => "Area bruciata",
-        ("burnt", true) => "Burnt area",
-        ("possible", false) => "Possibile (ensemble)",
-        ("possible", true) => "Possible (ensemble)",
-        ("water", false) => "Acqua / ritardante",
-        ("water", true) => "Water / retardant",
-        ("line", false) => "Linea di contenimento",
-        ("line", true) => "Containment line",
-        ("forecast", false) => "Previsione",
-        ("forecast", true) => "Forecast",
-        ("cut", false) => "Strada tagliata dal fuoco",
-        ("cut", true) => "Road cut by fire",
-        ("police_closure", false) => "Chiusura polizia",
-        ("police_closure", true) => "Police closure",
-        ("threatened", false) => "Edificio minacciato",
-        ("threatened", true) => "Threatened building",
-        ("damaged", false) => "Danneggiato",
-        ("damaged", true) => "Damaged",
-        ("destroyed", false) => "Distrutto",
-        ("destroyed", true) => "Destroyed",
-        ("evacuating", false) => "In evacuazione",
-        ("evacuating", true) => "Evacuating",
-        ("evacuated", false) => "Evacuato",
-        ("evacuated", true) => "Evacuated",
-        ("unit", false) => "Risorsa (rettangolo)",
-        ("unit", true) => "Resource (rectangle)",
-        ("target", false) => "Destinazione missione",
-        ("target", true) => "Mission target",
-        ("reported", false) => "Incendio segnalato",
-        ("reported", true) => "Reported fire",
-        ("title", false) => "Legenda",
-        ("title", true) => "Legend",
+    // The EXCON console passes "it" and may read English.
+    let l = match lang {
+        "it" if crate::i18n::is_en() => "en",
+        other => other,
+    };
+    match key {
+        "fire" => pair(l, "Fronte attivo", "Active fire front"),
+        "burnt" => pair(l, "Area bruciata", "Burnt area"),
+        "possible" => pair(l, "Possibile (ensemble)", "Possible (ensemble)"),
+        "water" => pair(l, "Acqua / ritardante", "Water / retardant"),
+        "line" => pair(l, "Linea di contenimento", "Containment line"),
+        "forecast" => pair(l, "Previsione", "Forecast"),
+        "cut" => pair(l, "Strada tagliata dal fuoco", "Road cut by fire"),
+        "police_closure" => pair(l, "Chiusura polizia", "Police closure"),
+        "threatened" => pair(l, "Edificio minacciato", "Threatened building"),
+        "damaged" => pair(l, "Danneggiato", "Damaged"),
+        "destroyed" => pair(l, "Distrutto", "Destroyed"),
+        "evacuating" => pair(l, "In evacuazione", "Evacuating"),
+        "evacuated" => pair(l, "Evacuato", "Evacuated"),
+        "unit" => pair(l, "Risorsa (rettangolo)", "Resource (rectangle)"),
+        "target" => pair(l, "Destinazione missione", "Mission target"),
+        "reported" => pair(l, "Incendio segnalato", "Reported fire"),
+        "title" => pair(l, "Legenda", "Legend"),
         _ => "",
     }
 }

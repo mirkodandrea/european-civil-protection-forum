@@ -208,13 +208,6 @@ impl NotificationFeed {
         timers
     }
 }
-fn tr<'a>(lang: &str, it: &'a str, en: &'a str) -> &'a str {
-    if lang == "it" {
-        it
-    } else {
-        en
-    }
-}
 fn mission_changed(previous: &[Value], task: &Value) -> bool {
     !previous
         .iter()
@@ -508,11 +501,11 @@ impl App {
                 "map"
             };
             let title = if is_chat {
-                format!("{} · {}", tr(lang, "Messaggio", "Message"), self.name(peer))
+                format!("{} · {}", crate::i18n::pair(lang, "Messaggio", "Message"), self.name(peer))
             } else if !text(&m["title"]).is_empty() {
                 text(&m["title"]).to_string()
             } else {
-                tr(lang, "Aggiornamento ricevuto", "Update received").into()
+                crate::i18n::pair(lang, "Aggiornamento ricevuto", "Update received").into()
             };
             let mut n = Notice::new(
                 format!("message:{}", m["id"]),
@@ -571,7 +564,7 @@ impl App {
                     format!("proposal:{}:{status}:{rounds}", p["id"]),
                     format!(
                         "{} · {}",
-                        tr(lang, "Proposta", "Proposal"),
+                        crate::i18n::pair(lang, "Proposta", "Proposal"),
                         if p["narrative"]==true&&status=="approved" {i18n::status(lang, "narrative_approved")}else{i18n::proposal_status(lang, p)}
                     ),
                     text(&p["original"]).into(),
@@ -594,7 +587,7 @@ impl App {
                 format!("summary:{}:{}", summary["id"], summary["status"]),
                 format!(
                     "{} {} · {}",
-                    tr(lang, "Riepilogo turno", "Turn recap"),
+                    crate::i18n::pair(lang, "Riepilogo turno", "Turn recap"),
                     summary["turn"],
                     i18n::summary_status(lang, text(&summary["status"]))
                 ),
@@ -618,7 +611,7 @@ impl App {
                 ),
                 format!(
                     "{} · {}",
-                    tr(lang, "Missione", "Mission"),
+                    crate::i18n::pair(lang, "Missione", "Mission"),
                     i18n::mission_status(lang, text(&task["status"]))
                 ),
                 text(&task["detail"]).into(),
@@ -638,12 +631,12 @@ impl App {
             self.notifications.sequence += 1;
             let phase = text(&state["phase"]);
             let detail = match phase {
-                "orders" => tr(
+                "orders" => crate::i18n::pair(
                     lang,
                     "Puoi rispondere e proporre azioni",
                     "You can respond and propose actions",
                 ),
-                "resolving" => tr(
+                "resolving" => crate::i18n::pair(
                     lang,
                     "Gli ordini approvati vengono simulati",
                     "Approved orders are being simulated",
@@ -671,8 +664,8 @@ impl App {
             let view = if master_view { "advanced" } else { "function" };
             let n = Notice::new(
                 format!("resources:{}", self.notifications.sequence),
-                tr(lang, "Risorse aggiornate", "Resources updated").into(),
-                tr(
+                crate::i18n::pair(lang, "Risorse aggiornate", "Resources updated").into(),
+                crate::i18n::pair(
                     lang,
                     "Disponibilità e impieghi aggiornati",
                     "Availability and deployments updated",
@@ -720,7 +713,7 @@ impl App {
         let l = self.lang();
         let n = Notice::new(
             format!("failure:{}", self.notifications.sequence),
-            tr(&l, "Operazione non riuscita", "Operation failed").into(),
+            crate::i18n::pair(&l, "Operazione non riuscita", "Operation failed").into(),
             self.error.clone(),
             "",
             &self.active,
@@ -738,18 +731,18 @@ impl App {
         let l = lang.as_str();
         let unread = self.notifications.unread();
         html! {<div class="notification-hub">
-            <button type="button" class="notification-bell" data-notification-bell="true" aria-label={format!("{} · {} {}",tr(l,"Notifiche","Notifications"),unread,tr(l,"non lette","unread"))} aria-controls={format!("notification-panel-{}",self.own)} aria-expanded={self.notifications.open.to_string()} onclick={ctx.link().callback(|_|Msg::ToggleNotifications)}><span aria-hidden="true">{"🔔"}</span>if unread>0{<span class={classes!("unread",(self.notifications.unread_actions()>0).then_some("urgent"))} data-notification-count="true">{unread}</span>}</button>
-            if self.notifications.open {<button type="button" class="notification-backdrop" tabindex="-1" aria-label={tr(l,"Chiudi notifiche","Close notifications")} onclick={ctx.link().callback(|_|Msg::ToggleNotifications)}/><section class="notification-panel" id={format!("notification-panel-{}",self.own)} data-notification-panel="true" role="region" aria-label={tr(l,"Notifiche","Notifications")} onkeydown={ctx.link().batch_callback(|e:KeyboardEvent|if e.key()=="Escape"{Some(Msg::ToggleNotifications)}else{None})}>
-                <header><strong>{tr(l,"Notifiche","Notifications")}</strong><button type="button" data-mark-notifications-read="true" disabled={unread==0} onclick={ctx.link().callback(|_|Msg::ReadNotifications)}>{tr(l,"Segna tutte lette","Mark all read")}</button></header>
-                if self.notifications.items.is_empty(){<p class="muted">{tr(l,"Nessuna notifica","No notifications")}</p>}
-                <ol>{for self.notifications.items.iter().rev().map(|n|{let key=n.key.clone();html!{<li key={key.clone()}><button type="button" data-open-notification={key.clone()} class={classes!("notification-item",(!n.read).then_some("unread-event"),(n.priority==Priority::Action).then_some("needs-action"))} onclick={ctx.link().callback(move |_|Msg::OpenNotification(key.clone()))}><strong>{&n.title}</strong><small>{if n.priority==Priority::Action&&!n.read{format!("{} · {}",tr(l,"Richiede azione","Needs action"),n.clock)}else{n.clock.clone()}}</small><span>{&n.detail}</span></button></li>}})}</ol>
+            <button type="button" class="notification-bell" data-notification-bell="true" aria-label={format!("{} · {} {}",crate::i18n::pair(l,"Notifiche","Notifications"),unread,crate::i18n::pair(l,"non lette","unread"))} aria-controls={format!("notification-panel-{}",self.own)} aria-expanded={self.notifications.open.to_string()} onclick={ctx.link().callback(|_|Msg::ToggleNotifications)}><span aria-hidden="true">{"🔔"}</span>if unread>0{<span class={classes!("unread",(self.notifications.unread_actions()>0).then_some("urgent"))} data-notification-count="true">{unread}</span>}</button>
+            if self.notifications.open {<button type="button" class="notification-backdrop" tabindex="-1" aria-label={crate::i18n::pair(l,"Chiudi notifiche","Close notifications")} onclick={ctx.link().callback(|_|Msg::ToggleNotifications)}/><section class="notification-panel" id={format!("notification-panel-{}",self.own)} data-notification-panel="true" role="region" aria-label={crate::i18n::pair(l,"Notifiche","Notifications")} onkeydown={ctx.link().batch_callback(|e:KeyboardEvent|if e.key()=="Escape"{Some(Msg::ToggleNotifications)}else{None})}>
+                <header><strong>{crate::i18n::pair(l,"Notifiche","Notifications")}</strong><button type="button" data-mark-notifications-read="true" disabled={unread==0} onclick={ctx.link().callback(|_|Msg::ReadNotifications)}>{crate::i18n::pair(l,"Segna tutte lette","Mark all read")}</button></header>
+                if self.notifications.items.is_empty(){<p class="muted">{crate::i18n::pair(l,"Nessuna notifica","No notifications")}</p>}
+                <ol>{for self.notifications.items.iter().rev().map(|n|{let key=n.key.clone();html!{<li key={key.clone()}><button type="button" data-open-notification={key.clone()} class={classes!("notification-item",(!n.read).then_some("unread-event"),(n.priority==Priority::Action).then_some("needs-action"))} onclick={ctx.link().callback(move |_|Msg::OpenNotification(key.clone()))}><strong>{&n.title}</strong><small>{if n.priority==Priority::Action&&!n.read{format!("{} · {}",crate::i18n::pair(l,"Richiede azione","Needs action"),n.clock)}else{n.clock.clone()}}</small><span>{&n.detail}</span></button></li>}})}</ol>
             </section>}
         </div>}
     }
     pub fn view_notification_toasts(&self, ctx: &Context<Self>) -> Html {
         let lang = self.lang();
         html! {<aside class="notification-toasts" aria-live="polite" aria-atomic="false">{for self.notifications.toasts.iter().filter_map(|key| self.notifications.items.iter().find(|n| &n.key == key)).map(|n|{
-            let key=n.key.clone();let dismiss=key.clone();html!{<div class={classes!("notification-toast",(n.priority==Priority::Action).then_some("needs-action"))} data-notification-toast={key.clone()} key={key.clone()}><button type="button" data-open-notification={key.clone()} onclick={ctx.link().callback(move |_|Msg::OpenNotification(key.clone()))}><strong>{&n.title}</strong><span>{&n.detail}</span></button><button type="button" class="dismiss-toast" aria-label={tr(&lang,"Chiudi notifica","Dismiss notification")} onclick={ctx.link().callback(move |_|Msg::DismissToast(dismiss.clone()))}>{"×"}</button></div>}
+            let key=n.key.clone();let dismiss=key.clone();html!{<div class={classes!("notification-toast",(n.priority==Priority::Action).then_some("needs-action"))} data-notification-toast={key.clone()} key={key.clone()}><button type="button" data-open-notification={key.clone()} onclick={ctx.link().callback(move |_|Msg::OpenNotification(key.clone()))}><strong>{&n.title}</strong><span>{&n.detail}</span></button><button type="button" class="dismiss-toast" aria-label={crate::i18n::pair(&lang,"Chiudi notifica","Dismiss notification")} onclick={ctx.link().callback(move |_|Msg::DismissToast(dismiss.clone()))}>{"×"}</button></div>}
         })}</aside>}
     }
 }

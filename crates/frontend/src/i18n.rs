@@ -15,7 +15,18 @@ pub fn t(lang: &str, key: &'static str) -> &'static str {
             .or_else(|| crate::i18n_lang::lookup(lang, key))
             .or_else(|| crate::i18n_function::lookup(lang, key))
             .or_else(|| crate::i18n_place::lookup(lang, key))
+            .or_else(|| crate::i18n_more::lookup(lang, key))
             .unwrap_or_else(|| en(key))
+    }
+}
+/// A player-visible text written inline as an Italian/English pair: other
+/// languages read it from `i18n_more` by its English text (English when
+/// missing; `i18n_more::tests` flags the gap).
+pub fn pair(lang: &str, it: &'static str, en: &'static str) -> &'static str {
+    match lang {
+        "it" => it,
+        "en" => en,
+        other => crate::i18n_more::lookup(other, en).unwrap_or(en),
     }
 }
 /// Localized command field name (`zone`, `qty`, ...); unknown names pass through.
@@ -415,7 +426,7 @@ fn it(key: &'static str) -> &'static str {
         _ => key,
     }
 }
-fn en(key: &'static str) -> &'static str {
+pub(crate) fn en(key: &'static str) -> &'static str {
     match key {
         "st_pending" => "To be reviewed",
         "st_parsing" => "AI interpreting…",
