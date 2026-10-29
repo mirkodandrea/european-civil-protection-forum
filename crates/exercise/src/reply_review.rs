@@ -1318,17 +1318,25 @@ impl Exercise {
                 .count()
         };
         let i = |s: ItemState| self.review.items.iter().filter(|i| i.state == s).count();
+        let infeasible = self
+            .review
+            .items
+            .iter()
+            .filter(|i| i.state == ItemState::Complete && matches!(i.verdict, Some(Verdict::Rejected { .. })))
+            .count();
         json!({
             "drafts": q(QuestionState::Draft),
             "awaiting_answer": q(QuestionState::Sent),
-            "complete": i(ItemState::Complete),
+            // Executable now; complete but refused by the simulator is "infeasible".
+            "complete": i(ItemState::Complete) - infeasible,
+            "infeasible": infeasible,
             "incomplete": i(ItemState::Incomplete),
             "reading": self.review.reviews.iter().filter(|r| r.status == ReviewStatus::Reading).count(),
         })
     }
 
     /// The board as the EXCON console shows it, newest reply first. Each
-    /// suggestion carries a `display` state: complete, incomplete,
+    /// suggestion carries a `display` state: complete, infeasible, incomplete,
     /// question_draft, awaiting_answer, executed, failed or ignored.
     pub fn review_view(&self) -> Value {
         let reviews = self
@@ -1348,6 +1356,8 @@ impl Exercise {
                         let display = match i.state {
                             ItemState::Incomplete if questions.iter().any(|q| q.state == QuestionState::Sent && q.about.contains(&i.id)) => "awaiting_answer",
                             ItemState::Incomplete if questions.iter().any(|q| q.state == QuestionState::Draft && q.about.contains(&i.id)) => "question_draft",
+                            // Every parameter known, but the simulator refuses it now.
+                            ItemState::Complete if matches!(i.verdict, Some(Verdict::Rejected { .. })) => "infeasible",
                             ItemState::Complete => "complete",
                             ItemState::Incomplete => "incomplete",
                             ItemState::Executed => "executed",

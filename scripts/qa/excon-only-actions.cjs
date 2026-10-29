@@ -126,16 +126,24 @@ function reading(user, gazetteer) {
 
     // 3. Complete suggestions run at once: open the first, fix the place if
     // the simulator says it is not feasible, execute both.
+    // The simulator may refuse the AI's place (hose reach from a road): the
+    // EXCON edits it, trying the places a director would, until it runs.
+    const places = ['F4', 'Pineta', 'Valverde', 'E5', 'F5', 'E6', 'Valverde Town Hall'];
     for (let k = 0; k < 2; k++) {
-      const row = board.locator('[data-review-item]').filter({ has: master.locator('[data-review-execute]') }).first();
-      const warn = await row.locator('.rv-warn').count();
-      if (warn) {
-        await row.locator('[data-review-details]').click();
-        await row.locator('[data-review-field$=":at"]').fill('F4');
-        if (k === 0) await shot('05-excon-edit-parameters');
+      const id = await board.locator('[data-review-item][data-review-state="infeasible"], [data-review-item][data-review-state="complete"]').first().getAttribute('data-review-item');
+      const row = board.locator(`[data-review-item="${id}"]`);
+      for (const place of places) {
+        if (await row.getAttribute('data-review-state') === 'complete') await row.locator('[data-review-execute]').click();
+        else {
+          if (!(await row.locator('[data-review-field$=":at"]').count())) await row.locator('[data-review-details]').click();
+          await row.locator('[data-review-field$=":at"]').fill(place);
+          if (k === 0 && place === places[0]) await shot('05-excon-edit-parameters');
+          await row.locator('[data-review-execute]').click();
+        }
+        await page.waitForTimeout(500);
+        if (await row.getAttribute('data-review-state') === 'executed') break;
       }
-      await row.locator('[data-review-execute]').click();
-      await page.waitForTimeout(500);
+      assert.equal(await row.getAttribute('data-review-state'), 'executed', 'a team runs once the place is feasible');
     }
     await shot('06-excon-executed');
     const executed = await board.locator('[data-review-state="executed"]').count();
@@ -178,7 +186,9 @@ function reading(user, gazetteer) {
     await board.locator('[data-review]').filter({ hasText: /Evacuiamo/ }).locator('[data-review-item]').nth(2).waitFor({ timeout: 20000 });
     await shot('11-excon-mayor-suggestions');
     const group = board.locator('[data-review]').filter({ hasText: /Evacuiamo/ });
-    for (const b of await group.locator('[data-review-execute]:not([disabled])').all()) { await b.click(); await page.waitForTimeout(400); }
+    for (let k = 0; k < 3 && await group.locator('[data-review-execute]:not([disabled])').count(); k++) {
+      await group.locator('[data-review-execute]:not([disabled])').first().click(); await page.waitForTimeout(500);
+    }
     await shot('12-excon-mayor-executed');
 
     // Timeline: the turn panel keeps open questions in sight.

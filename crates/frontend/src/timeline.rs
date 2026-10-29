@@ -700,15 +700,15 @@ struct TurnPanelProps {
 /// stay visible, above all before closing the turn); opens Risposte.
 fn review_chip(counts: &Value, onview: &Callback<String>) -> Html {
     let n = |k: &str| counts[k].as_u64().unwrap_or(0);
-    let (questions, actions) = (n("drafts") + n("awaiting_answer"), n("complete") + n("incomplete"));
+    let (questions, actions) = (n("drafts") + n("awaiting_answer"), n("complete") + n("infeasible") + n("incomplete"));
     if questions + actions == 0 {
         return Html::default();
     }
     let v = onview.clone();
     html! {<button class="tp-review" id="tp-review" title={crate::exfmt!("Apri Risposte: azioni suggerite dalle risposte e domande ai player","Open Responses: actions suggested by the replies and questions to players")} onclick={Callback::from(move |_|v.emit("risposte".into()))}>
-        if questions>0{<span><b>{questions}</b>{crate::exfmt!(" domande aperte"," open questions")}</span>}
+        if questions>0{<span><b>{questions}</b>{if questions==1{crate::exfmt!(" domanda aperta"," open question")}else{crate::exfmt!(" domande aperte"," open questions")}}</span>}
         if questions>0&&actions>0{{" · "}}
-        if actions>0{<span><b>{actions}</b>{crate::exfmt!(" azioni da decidere"," actions to decide")}</span>}
+        if actions>0{<span><b>{actions}</b>{if actions==1{crate::exfmt!(" azione da decidere"," action to decide")}else{crate::exfmt!(" azioni da decidere"," actions to decide")}}</span>}
     </button>}
 }
 

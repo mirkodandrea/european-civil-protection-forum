@@ -37,6 +37,7 @@ fn lang() -> &'static str {
 pub fn item_state(display: &str) -> (&'static str, &'static str) {
     match display {
         "complete" => (tr("Completa", "Complete"), "ok"),
+        "infeasible" => (tr("Completa · non fattibile ora", "Complete · not feasible now"), "bad"),
         "incomplete" => (tr("Incompleta", "Incomplete"), "gap"),
         "question_draft" => (tr("Incompleta · domanda da rivedere", "Incomplete · question to review"), "gap"),
         "awaiting_answer" => (tr("Incompleta · attende risposta", "Incomplete · awaiting answer"), "wait"),
@@ -82,6 +83,42 @@ pub fn fields_for(kind: &str) -> &'static [&'static str] {
     }
 }
 
+/// "Dopo la risposta: 1 completata · 2 nuove" (only what happened).
+fn diff_line(completed: usize, changed: usize, new: usize) -> String {
+    let part = |n: usize, one: (&'static str, &'static str), many: (&'static str, &'static str)| match n {
+        0 => None,
+        1 => Some(format!("1 {}", tr(one.0, one.1))),
+        n => Some(format!("{n} {}", tr(many.0, many.1))),
+    };
+    let parts: Vec<String> = [
+        part(completed, ("completata", "completed"), ("completate", "completed")),
+        part(changed, ("modificata", "changed"), ("modificate", "changed")),
+        part(new, ("nuova", "new"), ("nuove", "new")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    format!("{}{}", tr("Dopo la risposta: ", "After the answer: "), parts.join(" · "))
+}
+
+/// Name of a command field in the console language.
+fn field_label(f: &str) -> &str {
+    match f {
+        "along" => tr("Lungo il lato (es. F4:N)", "Along the side (e.g. F4:N)"),
+        _ => crate::i18n::field(lang(), f),
+    }
+}
+
+/// Known parameters in one line (`Da E3 · A F3`), or "nessun parametro".
+fn params_line(params: &Value) -> String {
+    let parts: Vec<String> = params.as_object().into_iter().flatten().map(|(k, v)| format!("{} {}", field_label(k), param_text(v))).collect();
+    if parts.is_empty() {
+        tr("nessun parametro", "no parameters").into()
+    } else {
+        parts.join(" · ")
+    }
+}
+
 /// A parameter as the editor shows it: points as `x,y`, lists joined.
 pub fn param_text(v: &Value) -> String {
     match v {
@@ -121,7 +158,7 @@ fn summary(item: &Value) -> String {
         .filter(|f| item["params"].get(**f).is_some() || missing.contains(f))
         .map(|f| {
             let v = param_text(&item["params"][*f]);
-            format!("{} {}", crate::i18n::field(l, f), if v.is_empty() { "?".into() } else { v })
+            format!("{} {}", field_label(f), if v.is_empty() { "?".into() } else { v })
         })
         .collect();
     format!("{} · {}", crate::i18n::action(l, kind), parts.join(" · "))
@@ -162,13 +199,13 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
         Callback::from(move |_: MouseEvent| a.emit(Action::post(path.clone(), body.clone())))
     };
     html! {<section class="card review-board" id="review-board" aria-labelledby="review-board-title">
-        <header class="rv-head"><h2 id="review-board-title">{tr("Azioni dalle risposte","Actions from the replies")}</h2>
-            <span class="pill rv-tone-ok" hidden={n("complete")==0} data-review-count="complete">{crate::exfmt!("{} da eseguire","{} to execute",n("complete"))}</span>
-            <span class="pill rv-tone-gap" hidden={n("drafts")==0} data-review-count="drafts">{crate::exfmt!("{} domande da rivedere","{} questions to review",n("drafts"))}</span>
-            <span class="pill rv-tone-wait" hidden={n("awaiting_answer")==0} data-review-count="awaiting">{crate::exfmt!("{} in attesa di risposta","{} awaiting an answer",n("awaiting_answer"))}</span>
+        <header class="rb-head"><h2 id="review-board-title">{tr("Azioni dalle risposte","Actions from the replies")}</h2>
+            <span class="pill rb-tone-ok" hidden={n("complete")==0} data-review-count="complete">{crate::exfmt!("{} da eseguire","{} to execute",n("complete"))}</span>
+            <span class="pill rb-tone-gap" hidden={n("drafts")==0} data-review-count="drafts">{if n("drafts")==1{tr("1 domanda da rivedere","1 question to review").to_string()}else{crate::exfmt!("{} domande da rivedere","{} questions to review",n("drafts"))}}</span>
+            <span class="pill rb-tone-wait" hidden={n("awaiting_answer")==0} data-review-count="awaiting">{crate::exfmt!("{} in attesa di risposta","{} awaiting an answer",n("awaiting_answer"))}</span>
             <span class="pill" hidden={n("reading")==0}>{tr("L’AI sta leggendo…","The AI is reading…")}</span>
         </header>
-        <p class="muted rv-intro">{tr("I player rispondono solo a parole. L’AI propone azioni del catalogo con la fonte; nulla accade finché non premi Esegui, e nessuna domanda parte senza Invia.","Players reply in words only. The AI proposes catalogue actions with their source; nothing happens until you press Execute, and no question leaves without Send.")}</p>
+        <p class="muted rb-intro">{tr("I player rispondono solo a parole. L’AI propone azioni del catalogo con la fonte; nulla accade finché non premi Esegui, e nessuna domanda parte senza Invia.","Players reply in words only. The AI proposes catalogue actions with their source; nothing happens until you press Execute, and no question leaves without Send.")}</p>
         if reviews.is_empty(){<p class="muted">{tr("Nessuna risposta dei player da valutare.","No player replies to review.")}</p>}
         {for reviews.iter().map(|r|{
             let pid=r["proposal"].as_u64().unwrap_or(0);
@@ -176,22 +213,22 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
             let diff=&r["diff"];
             let (dc,dch,dn)=(list(&diff["completed"]).len(),list(&diff["changed"]).len(),list(&diff["new"]).len());
             let closed=status=="closed";
-            html!{<article class={classes!("rv-group",closed.then_some("is-closed"))} key={pid} data-review={pid.to_string()}>
-                <div class="rv-source">
+            html!{<article class={classes!("rb-group",closed.then_some("is-closed"))} key={pid} data-review={pid.to_string()}>
+                <div class="rb-source">
                     <span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span>
-                    <span class="rv-inject"><b>{text(&r["inject_title"])}</b><small>{format!(" · {}",text(&r["reply_clock"]))}</small></span>
-                    <q class="rv-reply" title={text(&r["reply"]).to_string()}>{text(&r["reply"])}</q>
+                    <span class="rb-inject"><b>{text(&r["inject_title"])}</b><small>{format!(" · {}",text(&r["reply_clock"]))}</small></span>
+                    <q class="rb-reply" title={text(&r["reply"]).to_string()}>{text(&r["reply"])}</q>
                     <div class="grow"/>
-                    if status=="reading"{<span class="pill rv-tone-wait" data-review-status="reading">{tr("lettura AI…","AI reading…")}</span>}
-                    if status=="failed"{<span class="pill rv-tone-bad" data-review-status="failed" title={text(&r["error"]).to_string()}>{tr("AI non disponibile: usa Controllo","AI unavailable: use Controllo")}</span>}
-                    if closed{<span class="pill rv-tone-off">{tr("revisione chiusa","review closed")}</span>}
-                    if r["revision"].as_u64().unwrap_or(1)>1&&(dc+dch+dn)>0{<span class="pill rv-diff" data-review-diff="">{crate::exfmt!("Dopo la risposta: {} completate · {} modificate · {} nuove","After the answer: {} completed · {} changed · {} new",dc,dch,dn)}</span>}
-                    <button class="rv-mini" disabled={props.busy||status=="reading"} onclick={post(format!("/api/master/review/reread/{pid}"),json!({}))} title={tr("L’AI rilegge l’intero thread","The AI reads the whole thread again")}>{tr("Rileggi","Re-read")}</button>
-                    if !closed{<button class="rv-mini" disabled={props.busy} data-review-close={pid.to_string()} onclick={post(format!("/api/master/review/close/{pid}"),json!({}))}>{tr("Chiudi revisione","Close review")}</button>}
+                    if status=="reading"{<span class="pill rb-tone-wait" data-review-status="reading">{tr("lettura AI…","AI reading…")}</span>}
+                    if status=="failed"{<span class="pill rb-tone-bad" data-review-status="failed" title={text(&r["error"]).to_string()}>{tr("AI non disponibile: usa Controllo","AI unavailable: use Controllo")}</span>}
+                    if closed{<span class="pill rb-tone-off">{tr("revisione chiusa","review closed")}</span>}
+                    if r["revision"].as_u64().unwrap_or(1)>1&&(dc+dch+dn)>0{<span class="pill rb-diff" data-review-diff="">{diff_line(dc,dch,dn)}</span>}
+                    <button class="rb-mini" disabled={props.busy||status=="reading"} onclick={post(format!("/api/master/review/reread/{pid}"),json!({}))} title={tr("L’AI rilegge l’intero thread","The AI reads the whole thread again")}>{tr("Rileggi","Re-read")}</button>
+                    if !closed{<button class="rb-mini" disabled={props.busy} data-review-close={pid.to_string()} onclick={post(format!("/api/master/review/close/{pid}"),json!({}))}>{tr("Chiudi revisione","Close review")}</button>}
                 </div>
-                if !text(&r["summary"]).is_empty(){<p class="rv-summary muted">{text(&r["summary"])}</p>}
-                if list(&r["items"]).is_empty()&&status=="ready"{<p class="muted rv-none">{tr("Nessuna azione del catalogo in questa risposta.","No catalogue action in this reply.")}</p>}
-                <ol class="rv-items">{for list(&r["items"]).iter().map(|i|{
+                if !text(&r["summary"]).is_empty(){<p class="rb-summary muted">{text(&r["summary"])}</p>}
+                if list(&r["items"]).is_empty()&&status=="ready"{<p class="muted rb-none">{tr("Nessuna azione del catalogo in questa risposta.","No catalogue action in this reply.")}</p>}
+                <ol class="rb-items">{for list(&r["items"]).iter().map(|i|{
                     let id=i["id"].as_u64().unwrap_or(0);
                     let display=text(&i["display"]);
                     let (label,tone)=item_state(display);
@@ -204,63 +241,63 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
                     let typed=|f:&str|edits.get(&format!("p:{id}:{f}")).cloned();
                     let params={let mut p=i["params"].as_object().cloned().unwrap_or_default();for f in fields{if let Some(v)=typed(f){if v.trim().is_empty(){p.remove(*f);}else{p.insert((*f).into(),param_value(f,&v));}}}Value::Object(p)};
                     let edited=fields.iter().any(|f|typed(f).is_some());
-                    let can_run=!props.busy&&!decided&&display!="ignored"&&(missing.is_empty()||edited);
+                    let can_run=!props.busy&&!decided&&display!="ignored"&&((missing.is_empty()&&!rejected)||edited);
                     let run_body=if edited{json!({"params":params})}else{json!({})};
-                    html!{<li key={id} class={classes!("rv-item",format!("rv-{tone}"))} data-review-item={id.to_string()} data-review-state={display.to_string()}>
-                        <div class="rv-row">
-                            <span class={classes!("pill","rv-state",format!("rv-tone-{tone}"))}>{label}</span>
-                            <span class="rv-what"><b>{summary(i)}</b>
+                    html!{<li key={id} class={classes!("rb-item",format!("rb-{tone}"))} data-review-item={id.to_string()} data-review-state={display.to_string()}>
+                        <div class="rb-row">
+                            <span class={classes!("pill","rb-state",format!("rb-tone-{tone}"))}>{label}</span>
+                            <span class="rb-what"><b>{summary(i)}</b>
                                 <small>{crate::exfmt!("esegue: {}","executed by: {}",role_name(&roles,text(&i["role"])))}{if i["source_role"]!=i["role"]{crate::exfmt!(" · detto da {}"," · said by {}",role_name(&roles,text(&i["source_role"])))}else{String::new()}}</small></span>
-                            if !missing.is_empty(){<span class="rv-missing" data-review-missing={missing.join(",")}>{crate::exfmt!("Mancano: {}","Missing: {}",missing.iter().map(|m|crate::i18n::field(lang(),m).to_string()).collect::<Vec<_>>().join(", "))}</span>}
-                            if let Some(c)=change_label(text(&i["change"])){<span class="pill rv-diff">{c}</span>}
-                            if rejected&&!decided{<span class="rv-warn" title={text(&i["verdict"]["reason"]).to_string()}>{format!("⚠ {}",text(&i["verdict"]["reason"]))}</span>}
+                            if !missing.is_empty(){<span class="rb-missing" data-review-missing={missing.join(",")}>{crate::exfmt!("Mancano: {}","Missing: {}",missing.iter().map(|m|field_label(m).to_string()).collect::<Vec<_>>().join(", "))}</span>}
+                            if let Some(c)=change_label(text(&i["change"])){<span class="pill rb-diff">{c}</span>}
+                            if rejected&&!decided{<span class="rb-warn" title={text(&i["verdict"]["reason"]).to_string()}>{format!("⚠ {}",text(&i["verdict"]["reason"]))}</span>}
                             <div class="grow"/>
-                            if !decided&&display!="ignored"{<button class="primary rv-run" data-review-execute={id.to_string()} disabled={!can_run} onclick={post(format!("/api/master/review/execute/{id}"),run_body.clone())}>{tr("Esegui","Execute")}</button>}
-                            <button class="rv-mini" aria-expanded={is_open.to_string()} data-review-details={id.to_string()} onclick={toggle}>{if is_open{tr("Chiudi","Close")}else if decided{tr("Dettagli","Details")}else{tr("Modifica","Edit")}}</button>
-                            if display=="ignored"{<button class="rv-mini" disabled={props.busy} onclick={post(format!("/api/master/review/restore/{id}"),json!({}))}>{tr("Ripristina","Restore")}</button>}
-                            else if !decided{<button class="rv-mini" disabled={props.busy} data-review-ignore={id.to_string()} onclick={post(format!("/api/master/review/ignore/{id}"),json!({}))}>{tr("Ignora","Ignore")}</button>}
+                            if !decided&&display!="ignored"{<button class="primary rb-run" data-review-execute={id.to_string()} disabled={!can_run} onclick={post(format!("/api/master/review/execute/{id}"),run_body.clone())}>{tr("Esegui","Execute")}</button>}
+                            <button class="rb-mini" aria-expanded={is_open.to_string()} data-review-details={id.to_string()} onclick={toggle}>{if is_open{tr("Chiudi","Close")}else if decided{tr("Dettagli","Details")}else{tr("Modifica","Edit")}}</button>
+                            if display=="ignored"{<button class="rb-mini" disabled={props.busy} onclick={post(format!("/api/master/review/restore/{id}"),json!({}))}>{tr("Ripristina","Restore")}</button>}
+                            else if !decided{<button class="rb-mini" disabled={props.busy} data-review-ignore={id.to_string()} onclick={post(format!("/api/master/review/ignore/{id}"),json!({}))}>{tr("Ignora","Ignore")}</button>}
                         </div>
-                        <small class="rv-quote">{format!("«{}»",text(&i["quote"]))}</small>
-                        if is_open{<div class="rv-details">
-                            if !decided{<div class="rv-fields">{for fields.iter().map(|f|{
+                        <small class="rb-quote">{format!("«{}»",text(&i["quote"]))}</small>
+                        if is_open{<div class="rb-details">
+                            if !decided{<div class="rb-fields">{for fields.iter().map(|f|{
                                 let key=format!("p:{id}:{f}");
                                 let value=edits.get(&key).cloned().unwrap_or_else(||param_text(&i["params"][*f]));
                                 let gap=missing.contains(f)&&value.trim().is_empty();
-                                html!{<label class={classes!("rv-field",gap.then_some("is-missing"))}><span>{crate::i18n::field(lang(),f)}{if gap{" *"}else{""}}</span>
+                                html!{<label class={classes!("rb-field",gap.then_some("is-missing"))}><span>{field_label(f)}{if gap{" *"}else{""}}</span>
                                     <input data-review-field={format!("{id}:{f}")} value={value} placeholder={if gap{tr("da chiedere o da inserire","to ask or to fill in")}else{""}} oninput={set(key)}/></label>}
                             })}
-                            <button class="rv-mini" disabled={props.busy||!edited} onclick={post(format!("/api/master/review/edit/{id}"),json!({"params":params}))}>{tr("Salva e verifica","Save and check")}</button></div>}
-                            if !list(&i["notes"]).is_empty(){<ul class="rv-notes">{for list(&i["notes"]).iter().map(|n|html!{<li>{text(n)}</li>})}</ul>}
-                            if i["previous"].is_object(){<small class="muted">{crate::exfmt!("Prima: {}","Before: {}",i["previous"])}</small>}
+                            <button class="rb-mini" disabled={props.busy||!edited} onclick={post(format!("/api/master/review/edit/{id}"),json!({"params":params}))}>{tr("Salva e verifica","Save and check")}</button></div>}
+                            if !list(&i["notes"]).is_empty(){<ul class="rb-notes">{for list(&i["notes"]).iter().map(|n|html!{<li>{text(n)}</li>})}</ul>}
+                            if i["previous"].is_object(){<small class="muted">{crate::exfmt!("Prima: {}","Before: {}",params_line(&i["previous"]))}</small>}
                             if let Some(ex)=i["execution"].as_object(){<small class={classes!(if ex.get("ok")==Some(&json!(true)){"muted"}else{"danger"})}>{format!("{} · {}",text(&i["execution"]["command"]["type"]),text(&i["execution"]["detail"]))}</small>}
                         </div>}
                     </li>}
                 })}</ol>
-                <div class="rv-questions">{for list(&r["questions"]).iter().filter(|q|q["state"]!="discarded").map(|q|{
+                <div class="rb-questions">{for list(&r["questions"]).iter().filter(|q|q["state"]!="discarded").map(|q|{
                     let qid=q["id"].as_u64().unwrap_or(0);
                     let state=text(&q["state"]);
                     let (label,tone)=question_state(state);
                     let key=format!("q:{qid}");
                     let draft=edits.get(&key).cloned().unwrap_or_else(||text(&q["text"]).to_string());
                     let about:Vec<String>=list(&q["about"]).iter().filter_map(|a|list(&r["items"]).iter().find(|i|i["id"]==*a)).map(summary).collect();
-                    html!{<div key={qid} class={classes!("rv-question",format!("rv-{tone}"))} data-review-question={qid.to_string()} data-question-state={state.to_string()}>
-                        <div class="rv-row">
-                            <span class={classes!("pill","rv-state",format!("rv-tone-{tone}"))}>{label}</span>
-                            <span class="rv-what"><b>{crate::exfmt!("{} → {}","{} → {}",text(&q["persona_name"]),role_name(&roles,text(&q["to"])))}</b>
+                    html!{<div key={qid} class={classes!("rb-question",format!("rb-{tone}"))} data-review-question={qid.to_string()} data-question-state={state.to_string()}>
+                        <div class="rb-row">
+                            <span class={classes!("pill","rb-state",format!("rb-tone-{tone}"))}>{label}</span>
+                            <span class="rb-what"><b>{crate::exfmt!("{} → {}","{} → {}",text(&q["persona_name"]),role_name(&roles,text(&q["to"])))}</b>
                                 if !about.is_empty(){<small>{crate::exfmt!("su: {}","about: {}",about.join("; "))}</small>}</span>
-                            if q["cross_role"]==true{<span class="pill rv-tone-gap" title={text(&q["reason"]).to_string()}>{tr("ad altro ruolo","to another role")}</span>}
+                            if q["cross_role"]==true{<span class="pill rb-tone-gap" title={text(&q["reason"]).to_string()}>{tr("ad altro ruolo","to another role")}</span>}
                             if q["template"]==true{<span class="pill">{tr("domanda standard","standard question")}</span>}
                         </div>
                         if state=="draft"{<>
-                            <textarea class="rv-qtext" data-review-qtext={qid.to_string()} value={draft.clone()} oninput={set(key.clone())}/>
-                            <div class="rv-row"><small class="muted">{crate::exfmt!("Parte così com’è, nella lingua del player ({}).","Sent as written, in the player's language ({}).",text(&q["language"]))}</small>
+                            <textarea class="rb-qtext" data-review-qtext={qid.to_string()} value={draft.clone()} oninput={set(key.clone())}/>
+                            <div class="rb-row"><small class="muted">{crate::exfmt!("Parte così com’è, nella lingua del player ({}).","Sent as written, in the player's language ({}).",text(&q["language"]))}</small>
                                 if !text(&q["reason"]).is_empty()&&q["cross_role"]!=true{<small class="muted">{text(&q["reason"])}</small>}
                                 <div class="grow"/>
-                                <button class="rv-mini" disabled={props.busy} data-review-discard={qid.to_string()} onclick={post(format!("/api/master/review/discard/{qid}"),json!({}))}>{tr("Scarta","Discard")}</button>
+                                <button class="rb-mini" disabled={props.busy} data-review-discard={qid.to_string()} onclick={post(format!("/api/master/review/discard/{qid}"),json!({}))}>{tr("Scarta","Discard")}</button>
                                 <button class="primary" disabled={props.busy||draft.trim().is_empty()} data-review-send={qid.to_string()} onclick={post(format!("/api/master/review/send/{qid}"),json!({"text":draft}))}>{tr("Invia","Send")}</button></div>
-                        </>}else{<p class="rv-qsent">{text(&q["text"])}<small class="muted">{format!(" · {}",text(&q["sent_clock"]))}</small></p>}
-                        if q["answer_text"].is_object(){<p class="rv-answer" data-review-answer={qid.to_string()}><b>{tr("Risposta: ","Answer: ")}</b>{text(&q["answer_text"]["original"]).to_string()}<small class="muted">{format!(" · {}",text(&q["answer_text"]["clock"]))}</small></p>}
-                        if state=="sent"{<div class="rv-row"><div class="grow"/><button class="rv-mini" disabled={props.busy} onclick={post(format!("/api/master/review/discard/{qid}"),json!({}))}>{tr("Ritira la domanda","Withdraw the question")}</button></div>}
+                        </>}else{<p class="rb-qsent">{text(&q["text"])}<small class="muted">{format!(" · {}",text(&q["sent_clock"]))}</small></p>}
+                        if q["answer_text"].is_object(){<p class="rb-answer" data-review-answer={qid.to_string()}><b>{tr("Risposta: ","Answer: ")}</b>{text(&q["answer_text"]["original"]).to_string()}<small class="muted">{format!(" · {}",text(&q["answer_text"]["clock"]))}</small></p>}
+                        if state=="sent"{<div class="rb-row"><div class="grow"/><button class="rb-mini" disabled={props.busy} onclick={post(format!("/api/master/review/discard/{qid}"),json!({}))}>{tr("Ritira la domanda","Withdraw the question")}</button></div>}
                     </div>}
                 })}
                 if !closed{{ask_form(pid,&r["role"],&roles,&edits,&props.action,props.busy)}}
@@ -300,10 +337,10 @@ fn ask_form(pid: u64, author: &Value, roles: &[Value], edits: &UseStateHandle<BT
             edits.set(next);
         })
     };
-    html! {<details class="rv-ask"><summary>{tr("+ Scrivi una domanda","+ Write a question")}</summary>
-        <div class="rv-row"><label>{tr("A ","To ")}<select onchange={on_to}>{for roles.iter().map(|r|{let id=text(&r["id"]).to_string();html!{<option value={id.clone()} selected={id==to}>{text(&r["name"]).to_string()}</option>}})}</select></label></div>
+    html! {<details class="rb-ask"><summary>{tr("+ Scrivi una domanda","+ Write a question")}</summary>
+        <div class="rb-row"><label>{tr("A ","To ")}<select onchange={on_to}>{for roles.iter().map(|r|{let id=text(&r["id"]).to_string();html!{<option value={id.clone()} selected={id==to}>{text(&r["name"]).to_string()}</option>}})}</select></label></div>
         <textarea value={txt.clone()} oninput={on_text} placeholder={tr("Nella lingua del player. Diventa una bozza da rivedere.","In the player's language. It becomes a draft to review.")}/>
-        <div class="rv-row"><div class="grow"/><button disabled={busy||txt.trim().is_empty()} onclick={add}>{tr("Aggiungi bozza","Add draft")}</button></div>
+        <div class="rb-row"><div class="grow"/><button disabled={busy||txt.trim().is_empty()} onclick={add}>{tr("Aggiungi bozza","Add draft")}</button></div>
     </details>}
 }
 
@@ -312,7 +349,7 @@ mod tests {
     use super::*;
     #[test]
     fn states_are_legible_and_distinct() {
-        let labels: Vec<_> = ["complete", "incomplete", "question_draft", "awaiting_answer", "executed", "failed", "ignored"].iter().map(|d| item_state(d).0).collect();
+        let labels: Vec<_> = ["complete", "infeasible", "incomplete", "question_draft", "awaiting_answer", "executed", "failed", "ignored"].iter().map(|d| item_state(d).0).collect();
         let mut unique = labels.clone();
         unique.sort();
         unique.dedup();

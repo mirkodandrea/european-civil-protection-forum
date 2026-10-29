@@ -158,7 +158,6 @@ impl crate::player_view::PlayerView {
                     <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"reply_text_label")}</label></h4>
                     <p class="work-help" data-narrative-help="">{i18n::t(l,"reply_text_help")}</p>
                     <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"reply_ph")} value={narrative_text.clone()} oninput={self.cb(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
-                    <small class="muted">{i18n::t(l,"map_inserts_place")}</small>
                 </div>
                 {self.reply_guidance(l, false)}
             </div>
