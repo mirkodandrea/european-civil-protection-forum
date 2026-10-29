@@ -530,6 +530,27 @@ applicano subito, anche mentre il tempo scorre. Nessun salvataggio. Dettagli:
 - Avanzamento del tempo, aggiornamenti della situazione, rollback e registrazione
   degli eventi.
 
+**Spegnimento di un'area disegnata** (EXCON, strumento Controllo «Spegni area
+disegnata», comando `ExtinguishArea {polygon: [LOC, …]}`, almeno 3 vertici):
+l'EXCON clicca i vertici sulla mappa (numerati, area chiusa e ombreggiata,
+«Togli ultimo vertice»); all'applicazione il fuoco dentro il poligono si spegne
+**subito**, in tutte le 32 realizzazioni, **senza cambiare la vegetazione**. In
+PROPAGATOR una cella si propaga nell'istante in cui si accende, mettendo in coda
+gli eventi di accensione dei vicini: lo spegnimento
+(`propagator_core::Propagator::extinguish`) cancella gli eventi in coda *verso*
+le celle dell'area e quelli di propagazione per contatto *da* esse (ogni evento
+del fronte ricorda la direzione di provenienza), e le accensioni programmate
+nell'area. Le celle già bruciate restano bruciate (combustibile consumato): le
+celle in fiamme del fuoco «reale» appaiono bruciate e senza fiamme; per ogni
+cella si registra l'istante di spegnimento, e le realizzazioni che l'avevano
+raggiunta prima non contano più per la probabilità, così anche l'alone scompare.
+Il combustibile non bruciato resta: se un fronte ancora vivo fuori dall'area la
+raggiunge **dopo** lo spegnimento, può riaccenderla (contata da capo). Le faville
+già in volo (spotting, spento per default) atterrano comunque. Lo stato vive nel
+checkpoint del core e in `FireSnapshot` (rollback e «Correggi ultimo
+intervento»). Fixture visiva: `scripts/visual-fixtures/extinguish-area.json`. Diverso da «Spegni zona» / «Spegni area circolare» (`Extinguish`),
+che rendono il terreno non combustibile.
+
 Le azioni disponibili e i loro effetti dipendono dallo scenario e dalla modalità
 del modello. Il modello operativo aggiunge routing stradale, code, viaggi,
 interventi progressivi, risorse fisiche limitate e altri effetti operativi; il
@@ -581,7 +602,7 @@ Fixture: `scripts/visual-fixtures/suppression.json` (autobotte a 8 min, lancio a
 - Mappa interattiva (EXCON e giocatori): zoom/pan (rotellina, trascinamento, pinch, tastiera), ispezione hover/tocco, livelli, inquadra incendio, schermo intero, barra di scala. Per i giocatori l’ispezione mostra solo le celle riferite (fog of war): altrove «non riferito». Pagina di prova: `/maptest.html` (dati sintetici, selettori funzioni e zone abilitate).
 - Controllo dei livelli della mappa 2D (`crates/frontend/src/map_layers.rs`): il pulsante ☰ nella colonna di strumenti apre un piccolo riquadro a caselle raggruppate. *Sfondo*: sfondo vegetazione/combustibile (spento = fondo chiaro neutro, così strade, edifici, luoghi, fuoco, zone e squadre risaltano), griglia, codici di zona (assi sui bordi e codici nelle celle), nebbia. *Territorio*: strade, edifici, etichette. *Incendio*: fronte e area bruciata, alone di incertezza dell'ensemble, segnalazioni e stime, previsione. *Operazioni*: squadre e droni, linee tagliafuoco/lanci/acqua, chiusure stradali e zone allertate. «Mostra tutto» ripristina; il pulsante è evidenziato se qualche livello è spento. La scelta è solo di presentazione, resta nel local storage del browser per contesto di mappa (`ttx.map_layers.<id>`: le due mappe del giocatore, quadro tattico e Rispondi, la condividono; le mappe EXCON hanno ciascuna la propria) e senza storage vale per la pagina. Con i livelli spenti il clic restituisce comunque la zona (edifici e strade nascosti non vengono selezionati). Testi it/en nel catalogo, fr/de/es nel modulo, altre lingue in inglese.
 
-- Console EXCON unificata (“Controllo”): mappa interattiva più un elenco ricercabile di 29 strumenti, ciascuno con il proprio tooltip, che si aprono in modali dedicati (con mappa per la scelta dei punti). Gli strumenti sulla mappa applicano subito il comando (nessuna anteprima; “Correggi ultimo intervento” annulla l’ultimo). Il meteo si riduce a vento e umidità del combustibile. Informazioni ai ruoli, previsione e missioni restano raggiungibili dall’elenco. Le informazioni ai ruoli si rivelano per zona e per livello (incendio, edifici, strade, linee e lanci, squadre) con `POST /api/master/knowledge {role, source, zones, layers}`; il giocatore vede il resto velato (fog of war, `known_zones`). `GET /api/master` espone `role_knowledge`. Gli occupanti degli edifici restano sempre nascosti. Gli inject del MSEL possono rivelare mappa con azioni `reveal` (stima approssimata dell'incendio con errore deterministico, oppure zone/livelli esatti, anche per regola «in fiamme + adiacenti»; vedi `docs/scenari.md`); il banner della mappa del giocatore mostra ora e fonte dell'ultimo dato e la sua età in minuti simulati. A fine turno l'EXCON può aggiornare a mano le mappe dei ruoli (`POST /api/master/knowledge/refresh`). Aperto: un inject inviato in più riprese esegue le rivelazioni solo per i ruoli del primo invio.
+- Console EXCON unificata (“Controllo”): mappa interattiva più un elenco ricercabile di 30 strumenti, ciascuno con il proprio tooltip, che si aprono in modali dedicati (con mappa per la scelta dei punti). Gli strumenti sulla mappa applicano subito il comando (nessuna anteprima; “Correggi ultimo intervento” annulla l’ultimo). Il meteo si riduce a vento e umidità del combustibile. Informazioni ai ruoli, previsione e missioni restano raggiungibili dall’elenco. Le informazioni ai ruoli si rivelano per zona e per livello (incendio, edifici, strade, linee e lanci, squadre) con `POST /api/master/knowledge {role, source, zones, layers}`; il giocatore vede il resto velato (fog of war, `known_zones`). `GET /api/master` espone `role_knowledge`. Gli occupanti degli edifici restano sempre nascosti. Gli inject del MSEL possono rivelare mappa con azioni `reveal` (stima approssimata dell'incendio con errore deterministico, oppure zone/livelli esatti, anche per regola «in fiamme + adiacenti»; vedi `docs/scenari.md`); il banner della mappa del giocatore mostra ora e fonte dell'ultimo dato e la sua età in minuti simulati. A fine turno l'EXCON può aggiornare a mano le mappe dei ruoli (`POST /api/master/knowledge/refresh`). Aperto: un inject inviato in più riprese esegue le rivelazioni solo per i ruoli del primo invio.
 
 - MSEL unificato (redesign EXCON): `InjectTemplate.event` (default vuoto) raggruppa gli inject. `GET /api/master` e `/api/state` espongono `planned_injects` (cronologico: `id_inject`, `title`, `event`, `scenario_time`, `scenario_time_s`, `recipients_planned`, `sent_to`, `not_yet_sent_to`); `GET /api/master` espone anche `inject_responses` (per consegna e ruolo: `replies`, `pending_proposals`). `POST /api/master/msel/<id>/send` accetta `{"recipients":[ruoli]}` (default: destinatari pianificati); i ruoli che hanno già ricevuto l’inject sono saltati in silenzio.
 - Azioni pianificate (`Scenario.timeline`, `exercise::actions`): world changes sulla timeline MSEL, indipendenti dagli inject. A ogni avanzamento del tempo EXCON decide Esegui/Salta/Rinvia per quelle che cadono nella finestra; la durata del turno è una proprietà dello scenario (`turn_minutes`) e la scheda Timeline dell'editor mostra inject e azioni su un'unica asse oraria con fasce di turno e trascinamento; vedi `docs/scenari.md`.

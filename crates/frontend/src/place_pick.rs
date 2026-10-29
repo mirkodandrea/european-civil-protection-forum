@@ -27,7 +27,7 @@ pub fn pick_for(action: &str) -> &'static str {
 }
 
 /// EXCON-only command kinds (`sim::MASTER_ONLY`; the server build has no `sim`).
-const MASTER_ONLY: [&str; 8] = ["Ignite", "Extinguish", "SetWeather", "SetBuildingStatus", "AdjustResource", "ReturnResource", "SetDeploymentTravel", "AdvanceTime"];
+const MASTER_ONLY: [&str; 9] = ["Ignite", "Extinguish", "ExtinguishArea", "SetWeather", "SetBuildingStatus", "AdjustResource", "ReturnResource", "SetDeploymentTravel", "AdvanceTime"];
 
 /// Action kinds a player may choose: the role's `allowed_actions`, in order,
 /// without duplicates and without EXCON-only kinds.

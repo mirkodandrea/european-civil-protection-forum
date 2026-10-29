@@ -260,3 +260,131 @@ fn intensity_and_flame_length_are_physical() {
     assert_eq!(fire::flame_length_m(0.0), 0.0);
     assert!((fire::flame_length_m(10_000.0) - 5.4).abs() < 0.2);
 }
+
+fn square(c: Pos, half: f32) -> Vec<Pos> {
+    vec![
+        [c[0] - half, c[1] - half],
+        [c[0] + half, c[1] - half],
+        [c[0] + half, c[1] + half],
+        [c[0] - half, c[1] + half],
+    ]
+}
+
+#[test]
+fn polygon_cells_follow_the_outline() {
+    let scn = scenario();
+    let f = FireSim::new(&scn, 1).unwrap();
+    let cs = scn.grid.cellsize;
+    // Centred on a cell corner so the square holds exactly 10 × 10 centres.
+    let c = [(IGN[0] / cs).round() * cs, (IGN[1] / cs).round() * cs];
+    assert_eq!(f.cells_in_polygon(&square(c, 5.0 * cs)).len(), 100);
+    // A right triangle holds about half of its bounding square.
+    let tri = f.cells_in_polygon(&[
+        [c[0] - 5.0 * cs, c[1] - 5.0 * cs],
+        [c[0] + 5.0 * cs, c[1] - 5.0 * cs],
+        [c[0] - 5.0 * cs, c[1] + 5.0 * cs],
+    ]);
+    assert!((40..=60).contains(&tri.len()), "{}", tri.len());
+    assert!(f.cells_in_polygon(&[c, [c[0] + 100.0, c[1]]]).is_empty());
+}
+
+#[test]
+fn extinguish_area_puts_the_fire_out_without_touching_fuel() {
+    let scn = scenario();
+    let mut f = started(&scn, 1);
+    f.advance(20 * 60).unwrap();
+    let veg = f.vegetation().to_vec();
+    assert!(f.burning_cells() > 0);
+    let cells = f.cells_in_polygon(&square(IGN, 1500.0));
+    let out = f.extinguish_area(&cells).unwrap();
+    assert!(out > 0);
+    assert_eq!(f.burning_cells(), 0);
+    for c in &cells {
+        assert_eq!(f.probability()[scn.grid.index(*c)], 0.0, "halo kept {c:?}");
+    }
+    let area = f.burned_area_ha();
+    f.advance(60 * 60).unwrap();
+    assert_eq!(f.burning_cells(), 0, "fire regrew after being put out");
+    assert!((f.burned_area_ha() - area).abs() < 1e-9);
+    assert!(f.probability().iter().all(|p| *p == 0.0), "halo regrew");
+    // No fuel break, no vegetation change.
+    assert!(f.cleared().iter().all(|c| !c));
+    assert_eq!(f.vegetation(), &veg[..]);
+    assert_eq!(f.vegetation(), &scn.fuel[..]);
+}
+
+#[test]
+fn extinguish_area_leaves_the_fire_outside_alone() {
+    let scn = scenario();
+    let mut f = started(&scn, 1);
+    f.advance(30 * 60).unwrap();
+    let reference = f.clone();
+    // Half of the fire: everything west of the ignition point.
+    let h = scn.grid.height_m();
+    let inside = f.cells_in_polygon(&[[0.0, 0.0], [IGN[0], 0.0], [IGN[0], h], [0.0, h]]);
+    f.extinguish_area(&inside).unwrap();
+    let mut is_inside = vec![false; scn.grid.len()];
+    for c in &inside {
+        is_inside[scn.grid.index(*c)] = true;
+    }
+    for i in 0..scn.grid.len() {
+        if is_inside[i] {
+            assert_ne!(f.state()[i], CellFire::Burning);
+        } else {
+            assert_eq!(f.state()[i], reference.state()[i]);
+            assert_eq!(f.probability()[i], reference.probability()[i]);
+        }
+    }
+    assert!(f.burning_cells() > 0, "fire east of the line should keep burning");
+}
+
+#[test]
+fn extinguished_ground_ahead_of_the_front_can_still_burn() {
+    // The fuel stays: putting out a patch before the front gets there does
+    // not make a fuel break, unlike the zone/circle Extinguish.
+    let scn = scenario();
+    let mut probe = started(&scn, 1);
+    probe.advance(10 * 60).unwrap();
+    let early: Vec<CellFire> = probe.state().to_vec();
+    probe.advance(50 * 60).unwrap();
+    let cols = scn.grid.cols;
+    let target = (0..scn.grid.len())
+        .find(|&i| {
+            let q = scn.cell_centre(scenario::Cell { row: i / cols, col: i % cols });
+            let d = ((q[0] - IGN[0]).powi(2) + (q[1] - IGN[1]).powi(2)).sqrt();
+            early[i] == CellFire::Unburnt && probe.state()[i] != CellFire::Unburnt && d > IGN_R + 150.0
+        })
+        .expect("a cell the front reaches between 10 and 60 min");
+    let at = scn.cell_centre(scenario::Cell { row: target / cols, col: target % cols });
+
+    let mut f = started(&scn, 1);
+    f.advance(10 * 60).unwrap();
+    let patch = f.cells_in_polygon(&square(at, 40.0));
+    f.extinguish_area(&patch).unwrap();
+    f.advance(120 * 60).unwrap();
+    assert!(
+        patch.iter().any(|c| f.cell_state(*c) != CellFire::Unburnt),
+        "the patch kept its fuel, the front should cross it"
+    );
+}
+
+#[test]
+fn extinguish_area_rolls_back() {
+    let scn = scenario();
+    let mut f = started(&scn, 1);
+    f.advance(15 * 60).unwrap();
+    let snap = f.snapshot();
+    let state = f.state().to_vec();
+    let prob = f.probability().to_vec();
+    let cells = f.cells_in_polygon(&square(IGN, 1500.0));
+    f.extinguish_area(&cells).unwrap();
+    f.advance(30 * 60).unwrap();
+    assert_eq!(f.burning_cells(), 0);
+    f.restore(&snap, 7).unwrap();
+    assert_eq!(f.state(), &state[..]);
+    assert_eq!(f.probability(), &prob[..]);
+    let area = f.burned_area_ha();
+    f.advance(30 * 60).unwrap();
+    assert!(f.burned_area_ha() > area, "restored fire does not continue");
+    assert!(f.burning_cells() > 0);
+}

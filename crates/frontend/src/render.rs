@@ -295,6 +295,11 @@ pub fn summarize_command(c: &Value) -> Option<String> {
             exfmt!("Innesco in {}{}", "Ignite at {}{}", fmt_loc(&c["at"]), r)
         }
         "Extinguish" => exfmt!("Spegnimento in {}", "Extinguish {}", fmt_loc(&c["area"])),
+        "ExtinguishArea" => exfmt!(
+            "Spegnimento dell’area disegnata ({} vertici, vegetazione invariata)",
+            "Extinguish the drawn area ({} vertices, vegetation unchanged)",
+            c["polygon"].as_array().map_or(0, |a| a.len())
+        ),
         "SetWeather" => fmt_weather(c),
         "SetBuildingStatus" => {
             let mut p = vec![];

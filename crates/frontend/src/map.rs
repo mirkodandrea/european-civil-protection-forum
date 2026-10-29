@@ -1870,16 +1870,25 @@ fn draw(
             }
         }
     }
-    // Points picked by an action form (one point, or the two ends of a line).
-    if let Some(points) = pending.and_then(|p| p["points"].as_array()) {
-        let pts: Vec<(f64, f64)> = points
+    // Points picked by an action form (one point, the two ends of a line, or
+    // the vertices of a drawn area when `closed`).
+    if let Some(p) = pending.filter(|p| p["points"].is_array()) {
+        let pts: Vec<(f64, f64)> = list(&p["points"])
             .iter()
             .filter_map(|q| Some((q[0].as_f64()? * k, (h - q[1].as_f64()?) * k)))
             .collect();
+        let closed = p["closed"] == true && pts.len() >= 3;
         if pts.len() >= 2 {
             ctx.begin_path();
             ctx.move_to(pts[0].0, pts[0].1);
-            ctx.line_to(pts[1].0, pts[1].1);
+            for q in &pts[1..] {
+                ctx.line_to(q.0, q.1);
+            }
+            if closed {
+                ctx.close_path();
+                ctx.set_fill_style_str("rgba(40,120,220,.22)");
+                ctx.fill();
+            }
             ctx.set_stroke_style_str("#122b2c");
             ctx.set_line_width(7. * s);
             ctx.stroke();
@@ -1895,7 +1904,7 @@ fn draw(
             ctx.set_stroke_style_str("#122b2c");
             ctx.set_line_width(2. * s);
             ctx.stroke();
-            label(if i == 0 { "1" } else { "2" }, *x, *y, 0);
+            label(&(i + 1).to_string(), *x, *y, 0);
         }
     }
     // A zone edge (`F4:N`) picked for a fire line.

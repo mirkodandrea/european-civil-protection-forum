@@ -121,6 +121,12 @@ pub enum Command {
     Extinguish {
         area: Area,
     },
+    /// Put the fire out inside a polygon drawn by the EXCON (at least three
+    /// vertices). Only the fire is affected: fuel and vegetation stay as
+    /// they are, so unburnt ground there can burn again later.
+    ExtinguishArea {
+        polygon: Vec<Loc>,
+    },
     SetWeather {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wind_dir_deg: Option<f64>,
@@ -163,6 +169,7 @@ pub enum Command {
 pub const MASTER_ONLY: &[&str] = &[
     "Ignite",
     "Extinguish",
+    "ExtinguishArea",
     "SetWeather",
     "SetBuildingStatus",
     "AdjustResource",
@@ -186,6 +193,7 @@ pub const ALL_KINDS: &[&str] = &[
     "RequestReinforcement",
     "Ignite",
     "Extinguish",
+    "ExtinguishArea",
     "SetWeather",
     "SetBuildingStatus",
     "AdjustResource",
@@ -211,6 +219,7 @@ impl Command {
             Command::RequestReinforcement { .. } => "RequestReinforcement",
             Command::Ignite { .. } => "Ignite",
             Command::Extinguish { .. } => "Extinguish",
+            Command::ExtinguishArea { .. } => "ExtinguishArea",
             Command::SetWeather { .. } => "SetWeather",
             Command::SetBuildingStatus { .. } => "SetBuildingStatus",
             Command::AdjustResource { .. } => "AdjustResource",
@@ -279,6 +288,10 @@ impl Command {
                     format!("Extinguish {radius_m:.0} m around {}", loc(at))
                 }
             },
+            Command::ExtinguishArea { polygon } => format!(
+                "Extinguish the area {}",
+                polygon.iter().map(loc).collect::<Vec<_>>().join(" - ")
+            ),
             Command::SetWeather {
                 wind_dir_deg,
                 wind_speed_kmh,
@@ -372,6 +385,10 @@ pub fn catalogue(allowed: &[String]) -> String {
         (
             "Extinguish",
             r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place or a circle."#,
+        ),
+        (
+            "ExtinguishArea",
+            r#"{"type":"ExtinguishArea","polygon":[LOC,LOC,LOC,...]}  — put the fire out inside a polygon (at least 3 vertices, in order). Fuel is not removed: unburnt ground inside can burn again if fire reaches it later."#,
         ),
         (
             "SetWeather",
@@ -553,6 +570,23 @@ mod tests {
         ));
         let back: Command = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back, e);
+        let a: Command = serde_json::from_str(
+            r#"{"type":"ExtinguishArea","polygon":[{"x":10,"y":20},"F3",{"x":30,"y":5}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            a,
+            Command::ExtinguishArea {
+                polygon: vec![
+                    Loc::Point { x: 10.0, y: 20.0 },
+                    Loc::Named("F3".into()),
+                    Loc::Point { x: 30.0, y: 5.0 }
+                ]
+            }
+        );
+        assert!(a.is_master_only());
+        let back: Command = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        assert_eq!(back, a);
     }
 
     #[test]
@@ -572,6 +606,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 20);
+        assert_eq!(ALL_KINDS.len(), 21);
     }
 }
