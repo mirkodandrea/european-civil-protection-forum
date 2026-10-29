@@ -10,10 +10,16 @@ use std::sync::{Arc, Mutex};
 
 async fn call(c: &Client, who: &str, path: &str, body: Option<Value>) -> (Status, Value) {
     let req = match body {
-        Some(body) => c.post(path).header(ContentType::JSON).body(body.to_string()),
+        Some(body) => c
+            .post(path)
+            .header(ContentType::JSON)
+            .body(body.to_string()),
         None => c.get(path),
     };
-    let r = req.header(Header::new("Authorization", format!("Bearer {who}"))).dispatch().await;
+    let r = req
+        .header(Header::new("Authorization", format!("Bearer {who}")))
+        .dispatch()
+        .await;
     (r.status(), r.into_json().await.unwrap_or(Value::Null))
 }
 
@@ -22,7 +28,8 @@ const ANSWER: &str = "Lungo la strada da E3 a F3, con il bulldozer del Comune";
 /// The model: the first reading leaves the fire line open, the second (the
 /// thread holds the answer) completes it and proposes a question to the Mayor.
 fn model() -> llm::Llm {
-    llm::Llm::mock(|task, _, user| match task {
+    llm::Llm::mock(|task, _, user| {
+        match task {
         "translate" => Ok(user.into()),
         "review_reply" if user.contains(ANSWER) => Ok(json!({
             "actions": [
@@ -41,6 +48,7 @@ fn model() -> llm::Llm {
             "summary": "a team and a fire line without endpoints"
         }).to_string()),
         other => anyhow::bail!("unexpected task {other}"),
+    }
     })
 }
 
@@ -72,7 +80,12 @@ async fn reviewed(c: &Client, revision: u64) -> Value {
 }
 
 fn item<'a>(r: &'a Value, kind: &str) -> &'a Value {
-    r["items"].as_array().unwrap().iter().find(|i| i["type"] == kind || i["kind"] == kind).unwrap()
+    r["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == kind || i["kind"] == kind)
+        .unwrap()
 }
 
 #[tokio::test]
@@ -83,7 +96,10 @@ async fn the_clarification_loop_over_http() {
     assert_eq!(status, Status::Ok, "{body}");
     let r = reviewed(&c, 1).await;
     let line = item(&r, "CutFireLine");
-    assert_eq!(line["display"], "question_draft", "incomplete, with a question to review");
+    assert_eq!(
+        line["display"], "question_draft",
+        "incomplete, with a question to review"
+    );
     assert_eq!(line["missing"], json!(["from", "to"]));
     let team = item(&r, "DeployEngine");
     assert_eq!(team["display"], "complete");
@@ -92,19 +108,44 @@ async fn the_clarification_loop_over_http() {
     // The player sees no action, no approval state and no question yet.
     let (_, p) = call(&c, "fire_commander", "/api/player/fire_commander", None).await;
     assert_eq!(p["proposals"][0]["status"], "informational");
-    assert!(p["clarification_threads"].as_array().unwrap().is_empty(), "drafts never reach the player");
+    assert!(
+        p["clarification_threads"].as_array().unwrap().is_empty(),
+        "drafts never reach the player"
+    );
 
     // The complete suggestion runs at once; the question is sent after review.
-    let (status, run) = call(&c, "master", &format!("/api/master/review/execute/{}", team["id"]), Some(json!({}))).await;
+    let (status, run) = call(
+        &c,
+        "master",
+        &format!("/api/master/review/execute/{}", team["id"]),
+        Some(json!({})),
+    )
+    .await;
     assert_eq!(status, Status::Ok, "{run}");
     assert_eq!(run["execution"]["ok"], true, "{run}");
-    let edited = "Per la linea tagliafuoco: tra quali punti e con quali mezzi? Indica la zona (es. F4).";
-    let (status, sent) = call(&c, "master", &format!("/api/master/review/send/{}", q["id"]), Some(json!({"text": edited}))).await;
+    let edited =
+        "Per la linea tagliafuoco: tra quali punti e con quali mezzi? Indica la zona (es. F4).";
+    let (status, sent) = call(
+        &c,
+        "master",
+        &format!("/api/master/review/send/{}", q["id"]),
+        Some(json!({"text": edited})),
+    )
+    .await;
     assert_eq!(status, Status::Ok, "{sent}");
     let (_, p) = call(&c, "fire_commander", "/api/player/fire_commander", None).await;
-    let thread = p["clarification_threads"].as_array().unwrap().iter().find(|t| t["review"] == true).unwrap().clone();
+    let thread = p["clarification_threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["review"] == true)
+        .unwrap()
+        .clone();
     assert_eq!(thread["status"], "awaiting_player");
-    assert_eq!(thread["entries"][0]["text"], edited, "sent exactly as reviewed");
+    assert_eq!(
+        thread["entries"][0]["text"], edited,
+        "sent exactly as reviewed"
+    );
 
     // The DOS answers through the ordinary reply box.
     let (status, a) = call(&c, "fire_commander", "/api/player/fire_commander/reply",
@@ -114,17 +155,57 @@ async fn the_clarification_loop_over_http() {
     let r = reviewed(&c, 2).await;
     let line = item(&r, "CutFireLine");
     assert_eq!(line["display"], "complete");
-    assert_eq!(r["diff"]["completed"], json!([line["id"]]), "the diff names what the answer completed");
-    assert_eq!(item(&r, "DeployEngine")["display"], "executed", "the decision taken stays");
-    let cross = r["questions"].as_array().unwrap().iter().find(|q| q["state"] == "draft").unwrap();
-    assert_eq!((cross["to"].as_str(), cross["cross_role"].as_bool()), (Some("mayor"), Some(true)));
+    assert_eq!(
+        r["diff"]["completed"],
+        json!([line["id"]]),
+        "the diff names what the answer completed"
+    );
+    assert_eq!(
+        item(&r, "DeployEngine")["display"],
+        "executed",
+        "the decision taken stays"
+    );
+    let cross = r["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|q| q["state"] == "draft")
+        .unwrap();
+    assert_eq!(
+        (cross["to"].as_str(), cross["cross_role"].as_bool()),
+        (Some("mayor"), Some(true))
+    );
     let (_, mayor) = call(&c, "mayor", "/api/player/mayor", None).await;
-    assert!(mayor["clarification_threads"].as_array().unwrap().is_empty(), "the cross-role question waits for EXCON");
-    let (status, _) = call(&c, "master", &format!("/api/master/review/discard/{}", cross["id"]), Some(json!({}))).await;
+    assert!(
+        mayor["clarification_threads"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "the cross-role question waits for EXCON"
+    );
+    let (status, _) = call(
+        &c,
+        "master",
+        &format!("/api/master/review/discard/{}", cross["id"]),
+        Some(json!({})),
+    )
+    .await;
     assert_eq!(status, Status::Ok);
-    let (status, _) = call(&c, "master", &format!("/api/master/review/close/{}", r["proposal"]), Some(json!({}))).await;
+    let (status, _) = call(
+        &c,
+        "master",
+        &format!("/api/master/review/close/{}", r["proposal"]),
+        Some(json!({})),
+    )
+    .await;
     assert_eq!(status, Status::Ok);
     // Players cannot use the EXCON review.
-    let (status, _) = call(&c, "fire_commander", &format!("/api/master/review/execute/{}", line["id"]), Some(json!({}))).await;
+    let (status, _) = call(
+        &c,
+        "fire_commander",
+        &format!("/api/master/review/execute/{}", line["id"]),
+        Some(json!({})),
+    )
+    .await;
     assert_ne!(status, Status::Ok);
 }

@@ -20,6 +20,8 @@ use crate::access::Principal;
 use crate::body::Json;
 #[cfg(target_arch = "wasm32")]
 use crate::browser::Json;
+#[cfg(target_arch = "wasm32")]
+use crate::browser_runtime as tokio;
 use crate::{bad, ApiResult, AppState};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -41,8 +43,17 @@ pub(crate) struct ReviewBody {
     to: Option<String>,
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), rocket::post("/api/master/review/<op>/<id>", data = "<body>"))]
-pub(crate) async fn post(principal: Principal, state: AppState, op: String, id: u64, body: Json<ReviewBody>) -> ApiResult {
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    rocket::post("/api/master/review/<op>/<id>", data = "<body>")
+)]
+pub(crate) async fn post(
+    principal: Principal,
+    state: AppState,
+    op: String,
+    id: u64,
+    body: Json<ReviewBody>,
+) -> ApiResult {
     if !matches!(principal, Principal::Master) {
         return Err(bad("only EXCON reviews replies"));
     }
@@ -73,7 +84,9 @@ pub(crate) async fn post(principal: Principal, state: AppState, op: String, id: 
         }
         "ask" => {
             let to = b.to.ok_or_else(|| bad("recipient required"))?;
-            let q = state.lock().add_review_question(id, &to, b.text.as_deref().unwrap_or(""))?;
+            let q = state
+                .lock()
+                .add_review_question(id, &to, b.text.as_deref().unwrap_or(""))?;
             Ok(Json(json!({"question": q})))
         }
         "close" => {
@@ -96,14 +109,26 @@ pub(crate) async fn post(principal: Principal, state: AppState, op: String, id: 
 async fn send(state: &AppState, qid: u64, b: ReviewBody) -> ApiResult {
     let (to, text, persona, language, turn, revision) = {
         let ex = state.lock();
-        let (to, text, persona) = ex.review_question_to_send(qid, b.text.as_deref(), b.persona.as_deref())?;
+        let (to, text, persona) =
+            ex.review_question_to_send(qid, b.text.as_deref(), b.persona.as_deref())?;
         let language = ex.language_of(&to);
-        (to, text, persona, language, ex.turn, ex.clock_control.revision)
+        (
+            to,
+            text,
+            persona,
+            language,
+            ex.turn,
+            ex.clock_control.revision,
+        )
     };
     let text_en = if language == "en" || !state.llm.is_available() {
         text.clone()
     } else {
-        state.llm.translate_to_english(&text, &language).await.unwrap_or_else(|_| text.clone())
+        state
+            .llm
+            .translate_to_english(&text, &language)
+            .await
+            .unwrap_or_else(|_| text.clone())
     };
     let mut ex = state.lock();
     if ex.turn != turn || ex.clock_control.revision != revision {
@@ -121,13 +146,29 @@ pub async fn read(state: AppState, pid: u64) {
         if !ex.reviewable(pid) {
             return;
         }
-        let Ok(revision) = ex.begin_review(pid) else { return };
-        let Ok(context) = ex.review_context(pid) else { return };
-        let mut kinds: Vec<String> = ex.world.scn.roles.iter().flat_map(|r| r.allowed_actions.clone()).collect();
+        let Ok(revision) = ex.begin_review(pid) else {
+            return;
+        };
+        let Ok(context) = ex.review_context(pid) else {
+            return;
+        };
+        let mut kinds: Vec<String> = ex
+            .world
+            .scn
+            .roles
+            .iter()
+            .flat_map(|r| r.allowed_actions.clone())
+            .collect();
         kinds.sort();
         kinds.dedup();
         let catalogue = sim::catalogue_for(&ex.world.scn, &kinds);
-        (revision, context, catalogue, ex.world.gazetteer(), ex.language_of(exercise::MASTER))
+        (
+            revision,
+            context,
+            catalogue,
+            ex.world.gazetteer(),
+            ex.language_of(exercise::MASTER),
+        )
     };
     let (revision, context, catalogue, gazetteer, language) = prep;
     if !state.llm.is_available() {
@@ -151,7 +192,8 @@ pub async fn read(state: AppState, pid: u64) {
     let mut ex = state.lock();
     let outcome = result.and_then(|r| {
         let dropped = r.dropped;
-        let mut reading: exercise::reply_review::Reading = serde_json::from_value(serde_json::to_value(r)?)?;
+        let mut reading: exercise::reply_review::Reading =
+            serde_json::from_value(serde_json::to_value(r)?)?;
         reading.dropped = dropped;
         ex.ingest_reading(pid, revision, reading)
     });

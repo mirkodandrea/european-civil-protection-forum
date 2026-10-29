@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sim::{Actor, Command, Verdict};
 
-use crate::{Exercise, ExecutionRecord, MsgKind, Phase, ProposalStatus, Source, MASTER};
+use crate::{ExecutionRecord, Exercise, MsgKind, Phase, ProposalStatus, Source, MASTER};
 
 /// Suggestions kept per reply (the model may return fewer).
 const MAX_ITEMS: usize = 12;
@@ -325,14 +325,22 @@ impl Exercise {
                 1
             }
         };
-        self.record("review_reading", MASTER, json!({"proposal": pid, "revision": revision}));
+        self.record(
+            "review_reading",
+            MASTER,
+            json!({"proposal": pid, "revision": revision}),
+        );
         Ok(revision)
     }
 
     /// Everything the model reads for the review of `pid`.
     pub fn review_context(&self, pid: u64) -> Result<ReviewContext> {
-        let r = self.review(pid).ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
-        let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown reply {pid}"))?;
+        let r = self
+            .review(pid)
+            .ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
+        let p = self
+            .proposal(pid)
+            .ok_or_else(|| anyhow::anyhow!("unknown reply {pid}"))?;
         let mut thread = Vec::new();
         let mut words = Vec::new();
         if let Some(root) = p.inject_id {
@@ -344,7 +352,11 @@ impl Exercise {
                 thread.push(json!({"kind": "inject", "message": m.id, "from": m.persona.clone().unwrap_or_else(|| m.from.clone()), "clock": m.clock, "title": m.title, "text": m.text_en}));
             }
         }
-        let reply_en = if p.translation_en.trim().is_empty() { p.original.clone() } else { p.translation_en.clone() };
+        let reply_en = if p.translation_en.trim().is_empty() {
+            p.original.clone()
+        } else {
+            p.translation_en.clone()
+        };
         thread.push(json!({"kind": "reply", "from": r.role, "clock": scenario::format_clock(self.world.scn.start_clock_s + p.t_s), "text": reply_en, "original": p.original}));
         words.push(p.original.clone());
         words.push(reply_en);
@@ -352,9 +364,14 @@ impl Exercise {
             if !matches!(q.state, QuestionState::Sent | QuestionState::Answered) {
                 continue;
             }
-            let asked = q.message.and_then(|id| self.messages.iter().find(|m| m.id == id));
+            let asked = q
+                .message
+                .and_then(|id| self.messages.iter().find(|m| m.id == id));
             thread.push(json!({"kind": "question", "question": q.id, "to": q.to, "clock": asked.map(|m| m.clock.clone()), "text": q.text_en.clone().unwrap_or_else(|| q.text.clone()), "about": q.about}));
-            if let Some(a) = q.answer.and_then(|id| self.messages.iter().find(|m| m.id == id)) {
+            if let Some(a) = q
+                .answer
+                .and_then(|id| self.messages.iter().find(|m| m.id == id))
+            {
                 thread.push(json!({"kind": "answer", "question": q.id, "from": a.from, "clock": a.clock, "text": a.text_en, "original": a.original}));
                 words.push(a.original.clone().unwrap_or_else(|| a.text.clone()));
                 words.push(a.text_en.clone());
@@ -412,14 +429,25 @@ impl Exercise {
         }
         r.status = ReviewStatus::Failed;
         r.error = Some(error.chars().take(300).collect());
-        self.record("review_failed", MASTER, json!({"proposal": pid, "revision": revision, "error": error}));
+        self.record(
+            "review_failed",
+            MASTER,
+            json!({"proposal": pid, "revision": revision, "error": error}),
+        );
         Ok(())
     }
 
     /// Merge the model's reading of reply `pid` into its suggestions and
     /// question drafts. Nothing is executed and nothing is sent.
-    pub fn ingest_reading(&mut self, pid: u64, revision: u32, reading: Reading) -> Result<ReadingDiff> {
-        let r = self.review(pid).ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
+    pub fn ingest_reading(
+        &mut self,
+        pid: u64,
+        revision: u32,
+        reading: Reading,
+    ) -> Result<ReadingDiff> {
+        let r = self
+            .review(pid)
+            .ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
         if r.revision != revision {
             bail!("an older reading of reply {pid} was discarded");
         }
@@ -428,7 +456,10 @@ impl Exercise {
         }
         let author = r.role.clone();
         let first = revision == 1;
-        let mut diff = ReadingDiff { dropped: reading.dropped, ..Default::default() };
+        let mut diff = ReadingDiff {
+            dropped: reading.dropped,
+            ..Default::default()
+        };
         // Index of the reading's action -> suggestion id.
         let mut placed: Vec<Option<u64>> = Vec::new();
         let mut touched: Vec<u64> = Vec::new();
@@ -441,8 +472,16 @@ impl Exercise {
                 placed.push(None);
                 continue;
             }
-            let role = if self.players.contains_key(&a.role) { a.role.clone() } else { author.clone() };
-            let source_role = if self.players.contains_key(&a.source_role) { a.source_role.clone() } else { author.clone() };
+            let role = if self.players.contains_key(&a.role) {
+                a.role.clone()
+            } else {
+                author.clone()
+            };
+            let source_role = if self.players.contains_key(&a.source_role) {
+                a.source_role.clone()
+            } else {
+                author.clone()
+            };
             let mut params = match &a.params {
                 Value::Object(o) => Value::Object(o.clone()),
                 _ => json!({}),
@@ -451,7 +490,13 @@ impl Exercise {
                 o.remove("type");
                 o.retain(|_, v| !v.is_null());
             }
-            let notes: Vec<String> = a.notes.iter().map(|n| n.trim().chars().take(300).collect::<String>()).filter(|n| !n.is_empty()).take(4).collect();
+            let notes: Vec<String> = a
+                .notes
+                .iter()
+                .map(|n| n.trim().chars().take(300).collect::<String>())
+                .filter(|n| !n.is_empty())
+                .take(4)
+                .collect();
             let quote: String = a.quote.trim().chars().take(400).collect();
             let existing = self.match_item(pid, a, &touched);
             let id = match existing {
@@ -475,7 +520,11 @@ impl Exercise {
                         invalid: None,
                         description: String::new(),
                         state: ItemState::Incomplete,
-                        change: if first { Change::Unchanged } else { Change::New },
+                        change: if first {
+                            Change::Unchanged
+                        } else {
+                            Change::New
+                        },
                         previous: None,
                         edited: false,
                         revision,
@@ -493,7 +542,12 @@ impl Exercise {
             placed.push(Some(id));
         }
         // Items the reading did not mention keep their state and lose their diff mark.
-        for i in self.review.items.iter_mut().filter(|i| i.proposal == pid && !touched.contains(&i.id)) {
+        for i in self
+            .review
+            .items
+            .iter_mut()
+            .filter(|i| i.proposal == pid && !touched.contains(&i.id))
+        {
             i.change = Change::Unchanged;
             i.previous = None;
         }
@@ -518,7 +572,13 @@ impl Exercise {
     fn match_item(&self, pid: u64, a: &ReadAction, taken: &[u64]) -> Option<u64> {
         let mine = |i: &&ReviewItem| i.proposal == pid && !taken.contains(&i.id);
         if let Some(id) = a.ref_id {
-            if let Some(i) = self.review.items.iter().filter(mine).find(|i| i.id == id && i.kind == a.kind) {
+            if let Some(i) = self
+                .review
+                .items
+                .iter()
+                .filter(mine)
+                .find(|i| i.id == id && i.kind == a.kind)
+            {
                 return Some(i.id);
             }
         }
@@ -625,12 +685,27 @@ impl Exercise {
             .review
             .items
             .iter()
-            .filter(|i| i.proposal == pid && matches!(i.state, ItemState::Complete | ItemState::Incomplete | ItemState::Ignored))
+            .filter(|i| {
+                i.proposal == pid
+                    && matches!(
+                        i.state,
+                        ItemState::Complete | ItemState::Incomplete | ItemState::Ignored
+                    )
+            })
             .map(|i| i.id)
             .collect();
         for id in ids {
-            let item = self.review.items.iter().find(|i| i.id == id).cloned().expect("item");
-            let missing: Vec<String> = sim::missing_params(&item.kind, &item.params).into_iter().map(String::from).collect();
+            let item = self
+                .review
+                .items
+                .iter()
+                .find(|i| i.id == id)
+                .cloned()
+                .expect("item");
+            let missing: Vec<String> = sim::missing_params(&item.kind, &item.params)
+                .into_iter()
+                .map(String::from)
+                .collect();
             let (command, invalid) = if missing.is_empty() {
                 match command_of(&item.kind, &item.params) {
                     Ok(c) => (Some(self.world.reconcile_command(&c).0), None),
@@ -644,7 +719,12 @@ impl Exercise {
                 Some(c) => c.describe(),
                 None => describe_partial(&item.kind, &item.params, &missing),
             };
-            let item = self.review.items.iter_mut().find(|i| i.id == id).expect("item");
+            let item = self
+                .review
+                .items
+                .iter_mut()
+                .find(|i| i.id == id)
+                .expect("item");
             if let Some(c) = &command {
                 item.params = params_of(c);
             }
@@ -653,7 +733,11 @@ impl Exercise {
             item.verdict = verdict;
             item.description = description;
             if item.state != ItemState::Ignored {
-                item.state = if command.is_some() { ItemState::Complete } else { ItemState::Incomplete };
+                item.state = if command.is_some() {
+                    ItemState::Complete
+                } else {
+                    ItemState::Incomplete
+                };
             }
         }
     }
@@ -661,7 +745,9 @@ impl Exercise {
     /// Feasibility of `cmd` for `role`, after every approved or executed action.
     fn review_verdict(&self, role: &str, cmd: &Command) -> Verdict {
         let actor = Actor::Role(role.into());
-        let mut v = self.world.validate_batch(&self.prior(u64::MAX), std::slice::from_ref(cmd), &actor);
+        let mut v =
+            self.world
+                .validate_batch(&self.prior(u64::MAX), std::slice::from_ref(cmd), &actor);
         self.check_limit_batch(u64::MAX, std::slice::from_ref(cmd), &actor, &mut v);
         v.pop().unwrap_or(Verdict::Ok { notes: Vec::new() })
     }
@@ -669,8 +755,20 @@ impl Exercise {
     /// Replace the unsent drafts of `pid` with the reading's questions: one
     /// per player, bundling every gap. A gap the model asked nothing about gets
     /// a template question, so an incomplete suggestion is never left silent.
-    fn merge_questions(&mut self, pid: u64, revision: u32, reading: &Reading, placed: &[Option<u64>], author: &str) -> Result<()> {
-        for q in self.review.questions.iter_mut().filter(|q| q.proposal == pid && q.state == QuestionState::Draft) {
+    fn merge_questions(
+        &mut self,
+        pid: u64,
+        revision: u32,
+        reading: &Reading,
+        placed: &[Option<u64>],
+        author: &str,
+    ) -> Result<()> {
+        for q in self
+            .review
+            .questions
+            .iter_mut()
+            .filter(|q| q.proposal == pid && q.state == QuestionState::Draft)
+        {
             q.state = QuestionState::Discarded;
         }
         let mut drafts: Vec<(String, String, Vec<u64>, String, bool)> = Vec::new();
@@ -679,7 +777,11 @@ impl Exercise {
             if text.is_empty() || !self.players.contains_key(&q.to) {
                 continue;
             }
-            let about: Vec<u64> = q.about.iter().filter_map(|i| placed.get(*i).copied().flatten()).collect();
+            let about: Vec<u64> = q
+                .about
+                .iter()
+                .filter_map(|i| placed.get(*i).copied().flatten())
+                .collect();
             let reason: String = q.reason.trim().chars().take(300).collect();
             match drafts.iter_mut().find(|d| d.0 == q.to) {
                 Some(d) => {
@@ -694,18 +796,27 @@ impl Exercise {
         }
         // Gaps nobody asks about yet, per player whose words they come from.
         let waiting = |to: &str, item: u64, qs: &[ReviewQuestion]| {
-            qs.iter().any(|q| q.proposal == pid && q.to == to && q.state == QuestionState::Sent && q.about.contains(&item))
+            qs.iter().any(|q| {
+                q.proposal == pid
+                    && q.to == to
+                    && q.state == QuestionState::Sent
+                    && q.about.contains(&item)
+            })
         };
         let gaps: Vec<ReviewItem> = self
             .review
             .items
             .iter()
-            .filter(|i| i.proposal == pid && i.state == ItemState::Incomplete && !i.missing.is_empty())
+            .filter(|i| {
+                i.proposal == pid && i.state == ItemState::Incomplete && !i.missing.is_empty()
+            })
             .cloned()
             .collect();
         for item in gaps {
             let to = item.source_role.clone();
-            if waiting(&to, item.id, &self.review.questions) || drafts.iter().any(|d| d.0 == to && d.2.contains(&item.id)) {
+            if waiting(&to, item.id, &self.review.questions)
+                || drafts.iter().any(|d| d.0 == to && d.2.contains(&item.id))
+            {
                 continue;
             }
             if let Some(d) = drafts.iter_mut().find(|d| d.0 == to) {
@@ -719,7 +830,11 @@ impl Exercise {
             about.sort_unstable();
             about.dedup();
             let language = self.language_of(&to);
-            let text = if template { self.template_question(&about, &language) } else { text };
+            let text = if template {
+                self.template_question(&about, &language)
+            } else {
+                text
+            };
             let id = self.id();
             let persona = self.persona_for(None, self.proposal(pid).and_then(|p| p.inject_id));
             self.review.questions.push(ReviewQuestion {
@@ -751,7 +866,17 @@ impl Exercise {
         let parts: Vec<String> = about
             .iter()
             .filter_map(|id| self.review.items.iter().find(|i| i.id == *id))
-            .map(|i| format!("{}: {}", action_noun(&i.kind, it), i.missing.iter().map(|m| field_question(&i.kind, m, it)).collect::<Vec<_>>().join(", ")))
+            .map(|i| {
+                format!(
+                    "{}: {}",
+                    action_noun(&i.kind, it),
+                    i.missing
+                        .iter()
+                        .map(|m| field_question(&i.kind, m, it))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
             .collect();
         if it {
             format!("Per procedere ci servono questi dettagli — {}. Come nella guida alla risposta: dove (zona come F4, un luogo o coordinate), con quali mezzi ed entro quando.", parts.join("; "))
@@ -762,7 +887,9 @@ impl Exercise {
 
     /// The EXCON edits a suggestion's parameters (and optionally its executing role).
     pub fn edit_review_item(&mut self, id: u64, role: Option<String>, params: Value) -> Result<()> {
-        let Value::Object(mut o) = params else { bail!("parameters must be an object") };
+        let Value::Object(mut o) = params else {
+            bail!("parameters must be an object")
+        };
         o.remove("type");
         o.retain(|_, v| !v.is_null() && v != "");
         if let Some(role) = &role {
@@ -786,24 +913,49 @@ impl Exercise {
         let pid = item.proposal;
         let after = item.params.clone();
         self.recheck_items(pid);
-        self.record("review_item_edited", MASTER, json!({"item": id, "before": before, "after": after}));
+        self.record(
+            "review_item_edited",
+            MASTER,
+            json!({"item": id, "before": before, "after": after}),
+        );
         Ok(())
     }
 
     /// The EXCON executes a complete suggestion now (optionally with edited
     /// parameters): it becomes a command of its role, validated and applied.
-    pub fn execute_review_item(&mut self, id: u64, params: Option<Value>, role: Option<String>) -> Result<ExecutionRecord> {
+    pub fn execute_review_item(
+        &mut self,
+        id: u64,
+        params: Option<Value>,
+        role: Option<String>,
+    ) -> Result<ExecutionRecord> {
         if self.phase != Phase::Orders {
             bail!("actions are executed while the turn is open");
         }
         if params.is_some() || role.is_some() {
-            let current = self.review.items.iter().find(|i| i.id == id).map(|i| i.params.clone()).unwrap_or_default();
+            let current = self
+                .review
+                .items
+                .iter()
+                .find(|i| i.id == id)
+                .map(|i| i.params.clone())
+                .unwrap_or_default();
             self.edit_review_item(id, role, params.unwrap_or(current))?;
         }
-        let item = self.review.items.iter().find(|i| i.id == id).cloned().ok_or_else(|| anyhow::anyhow!("unknown suggestion {id}"))?;
+        let item = self
+            .review
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown suggestion {id}"))?;
         match item.state {
-            ItemState::Executed | ItemState::Failed => bail!("suggestion {id} was already executed"),
-            ItemState::Incomplete if !item.missing.is_empty() => bail!("suggestion {id} still needs: {}", item.missing.join(", ")),
+            ItemState::Executed | ItemState::Failed => {
+                bail!("suggestion {id} was already executed")
+            }
+            ItemState::Incomplete if !item.missing.is_empty() => {
+                bail!("suggestion {id} still needs: {}", item.missing.join(", "))
+            }
             _ => {}
         }
         let cmd = command_of(&item.kind, &item.params).map_err(anyhow::Error::msg)?;
@@ -823,7 +975,10 @@ impl Exercise {
         self.record_resource_events(events, &item.role);
         self.absorb_monitoring();
         let execution = ExecutionRecord {
-            allocations: self.world.d.allocations[allocations..].iter().map(|a| a.id).collect(),
+            allocations: self.world.d.allocations[allocations..]
+                .iter()
+                .map(|a| a.id)
+                .collect(),
             command: cmd.clone(),
             ok,
             detail,
@@ -832,7 +987,11 @@ impl Exercise {
             origin: "excon_review".into(),
         };
         let it = self.item_mut(id)?;
-        it.state = if ok { ItemState::Executed } else { ItemState::Failed };
+        it.state = if ok {
+            ItemState::Executed
+        } else {
+            ItemState::Failed
+        };
         it.execution = Some(execution.clone());
         it.params = params_of(&cmd);
         it.description = cmd.describe();
@@ -873,7 +1032,9 @@ impl Exercise {
 
     /// The EXCON writes a question of its own (a draft, reviewed like the AI's).
     pub fn add_review_question(&mut self, pid: u64, to: &str, text: &str) -> Result<u64> {
-        let r = self.review(pid).ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
+        let r = self
+            .review(pid)
+            .ok_or_else(|| anyhow::anyhow!("reply {pid} has no review"))?;
         if !self.players.contains_key(to) {
             bail!("unknown role {to}");
         }
@@ -902,7 +1063,11 @@ impl Exercise {
             revision,
             turn: self.turn,
         });
-        self.record("review_question_drafted", MASTER, json!({"question": id, "proposal": pid, "to": to}));
+        self.record(
+            "review_question_drafted",
+            MASTER,
+            json!({"question": id, "proposal": pid, "to": to}),
+        );
         Ok(id)
     }
 
@@ -910,8 +1075,18 @@ impl Exercise {
     /// recipient's language, persona)`, with the EXCON's edits applied.
     /// Nothing is sent: the caller makes the English copy, then calls
     /// [`Exercise::send_review_question`].
-    pub fn review_question_to_send(&self, qid: u64, text: Option<&str>, persona: Option<&str>) -> Result<(String, String, Option<String>)> {
-        let q = self.review.questions.iter().find(|q| q.id == qid).ok_or_else(|| anyhow::anyhow!("unknown question {qid}"))?;
+    pub fn review_question_to_send(
+        &self,
+        qid: u64,
+        text: Option<&str>,
+        persona: Option<&str>,
+    ) -> Result<(String, String, Option<String>)> {
+        let q = self
+            .review
+            .questions
+            .iter()
+            .find(|q| q.id == qid)
+            .ok_or_else(|| anyhow::anyhow!("unknown question {qid}"))?;
         if q.state != QuestionState::Draft {
             bail!("question {qid} is not a draft");
         }
@@ -923,20 +1098,61 @@ impl Exercise {
             bail!("the question needs 1–{MAX_QUESTION} characters");
         }
         let inject = self.proposal(q.proposal).and_then(|p| p.inject_id);
-        Ok((q.to.clone(), text, self.persona_for(persona, inject).or(q.persona.clone())))
+        Ok((
+            q.to.clone(),
+            text,
+            self.persona_for(persona, inject).or(q.persona.clone()),
+        ))
     }
 
     /// The EXCON sends a reviewed draft: `text` exactly as reviewed, in the
     /// player's language, with its English copy. The only way a question leaves.
-    pub fn send_review_question(&mut self, qid: u64, text: &str, text_en: &str, persona: Option<String>) -> Result<u64> {
+    pub fn send_review_question(
+        &mut self,
+        qid: u64,
+        text: &str,
+        text_en: &str,
+        persona: Option<String>,
+    ) -> Result<u64> {
         let (to, _, _) = self.review_question_to_send(qid, Some(text), persona.as_deref())?;
-        let pid = self.review.questions.iter().find(|q| q.id == qid).map(|q| q.proposal).expect("question");
-        let p = self.proposal(pid).ok_or_else(|| anyhow::anyhow!("unknown reply {pid}"))?;
+        let pid = self
+            .review
+            .questions
+            .iter()
+            .find(|q| q.id == qid)
+            .map(|q| q.proposal)
+            .expect("question");
+        let p = self
+            .proposal(pid)
+            .ok_or_else(|| anyhow::anyhow!("unknown reply {pid}"))?;
         // In the inject's thread of the recipient, when they received it.
         let thread = p.inject_id.map(|root| (root, None, vec![to.clone()]));
-        let reply_to = if to == p.source.label() { self.messages.iter().find(|m| m.proposal == Some(pid) && m.kind == MsgKind::Reply).map(|m| m.id) } else { None };
-        let mid = self.add_message_in_thread(MASTER, &to, MsgKind::Clarification, Some("Clarification requested"), text, text_en, None, thread, reply_to);
-        let persona = persona.or_else(|| self.review.questions.iter().find(|q| q.id == qid).and_then(|q| q.persona.clone()));
+        let reply_to = if to == p.source.label() {
+            self.messages
+                .iter()
+                .find(|m| m.proposal == Some(pid) && m.kind == MsgKind::Reply)
+                .map(|m| m.id)
+        } else {
+            None
+        };
+        let mid = self.add_message_in_thread(
+            MASTER,
+            &to,
+            MsgKind::Clarification,
+            Some("Clarification requested"),
+            text,
+            text_en,
+            None,
+            thread,
+            reply_to,
+        );
+        let persona = persona.or_else(|| {
+            self.review
+                .questions
+                .iter()
+                .find(|q| q.id == qid)
+                .and_then(|q| q.persona.clone())
+        });
         let who = self.persona_name(persona.as_deref(), "en");
         self.set_message_persona(mid, persona.clone());
         let q = self.question_mut(qid)?;
@@ -945,8 +1161,16 @@ impl Exercise {
         q.text = text.trim().into();
         q.message = Some(mid);
         q.persona = persona;
-        self.converse(&to, "user", format!("[{}] QUESTION from {who}:\n{text_en}", self.world.clock()));
-        self.record("review_question_sent", MASTER, json!({"question": qid, "proposal": pid, "to": to, "message": mid}));
+        self.converse(
+            &to,
+            "user",
+            format!("[{}] QUESTION from {who}:\n{text_en}", self.world.clock()),
+        );
+        self.record(
+            "review_question_sent",
+            MASTER,
+            json!({"question": qid, "proposal": pid, "to": to, "message": mid}),
+        );
         Ok(mid)
     }
 
@@ -957,7 +1181,11 @@ impl Exercise {
             bail!("question {qid} is already {:?}", q.state);
         }
         q.state = QuestionState::Discarded;
-        self.record("review_question_discarded", MASTER, json!({"question": qid}));
+        self.record(
+            "review_question_discarded",
+            MASTER,
+            json!({"question": qid}),
+        );
         Ok(())
     }
 
@@ -973,7 +1201,14 @@ impl Exercise {
     /// A player answers a question (free text, translated by the caller). The
     /// answer is linked to it; the caller then has the thread read again
     /// ([`Exercise::begin_review`]). Returns `(message, reply)`.
-    pub fn answer_review_question(&mut self, role: &str, text: &str, reply_to: u64, text_en: &str, translation_failed: bool) -> Result<(u64, u64)> {
+    pub fn answer_review_question(
+        &mut self,
+        role: &str,
+        text: &str,
+        reply_to: u64,
+        text_en: &str,
+        translation_failed: bool,
+    ) -> Result<(u64, u64)> {
         if self.phase != Phase::Orders {
             bail!("no turn is open for answers");
         }
@@ -983,9 +1218,29 @@ impl Exercise {
         let Some(qid) = self.review_question_for(role, reply_to) else {
             bail!("there is no open question to answer");
         };
-        let pid = self.review.questions.iter().find(|q| q.id == qid).map(|q| q.proposal).expect("question");
-        let root = self.messages.iter().find(|m| m.id == reply_to).and_then(|m| m.inject_id);
-        let mid = self.add_message_in_thread(role, MASTER, MsgKind::Reply, None, text, text_en, None, root.map(|r| (r, Some(reply_to), vec![MASTER.into()])), Some(reply_to));
+        let pid = self
+            .review
+            .questions
+            .iter()
+            .find(|q| q.id == qid)
+            .map(|q| q.proposal)
+            .expect("question");
+        let root = self
+            .messages
+            .iter()
+            .find(|m| m.id == reply_to)
+            .and_then(|m| m.inject_id);
+        let mid = self.add_message_in_thread(
+            role,
+            MASTER,
+            MsgKind::Reply,
+            None,
+            text,
+            text_en,
+            None,
+            root.map(|r| (r, Some(reply_to), vec![MASTER.into()])),
+            Some(reply_to),
+        );
         let language = self.language_of(role);
         if let Some(m) = self.messages.iter_mut().find(|m| m.id == mid) {
             m.original = Some(text.into());
@@ -995,8 +1250,19 @@ impl Exercise {
         let q = self.question_mut(qid)?;
         q.state = QuestionState::Answered;
         q.answer = Some(mid);
-        self.converse(role, "user", format!("[{}] ANSWER to the question:\n{text_en}", self.world.clock()));
-        self.record("review_question_answered", role, json!({"question": qid, "proposal": pid, "message": mid}));
+        self.converse(
+            role,
+            "user",
+            format!(
+                "[{}] ANSWER to the question:\n{text_en}",
+                self.world.clock()
+            ),
+        );
+        self.record(
+            "review_question_answered",
+            role,
+            json!({"question": qid, "proposal": pid, "message": mid}),
+        );
         // A closed review reopens: there is something new to read.
         if let Some(r) = self.review.reviews.iter_mut().find(|r| r.proposal == pid) {
             if r.status == ReviewStatus::Closed {
@@ -1011,7 +1277,12 @@ impl Exercise {
     pub fn close_review(&mut self, pid: u64) -> Result<()> {
         let r = self.review_mut(pid)?;
         r.status = ReviewStatus::Closed;
-        for q in self.review.questions.iter_mut().filter(|q| q.proposal == pid && q.state == QuestionState::Draft) {
+        for q in self
+            .review
+            .questions
+            .iter_mut()
+            .filter(|q| q.proposal == pid && q.state == QuestionState::Draft)
+        {
             q.state = QuestionState::Discarded;
         }
         self.record("review_closed", MASTER, json!({"proposal": pid}));
@@ -1020,16 +1291,32 @@ impl Exercise {
 
     /// Undo the reviews of rolled-back turns (the world is restored).
     pub(crate) fn rollback_reviews(&mut self, turn: u32) {
-        let gone: Vec<u64> = self.review.reviews.iter().filter(|r| r.turn >= turn).map(|r| r.proposal).collect();
+        let gone: Vec<u64> = self
+            .review
+            .reviews
+            .iter()
+            .filter(|r| r.turn >= turn)
+            .map(|r| r.proposal)
+            .collect();
         self.review.reviews.retain(|r| r.turn < turn);
-        self.review.items.retain(|i| i.turn < turn && !gone.contains(&i.proposal));
-        self.review.questions.retain(|q| q.turn < turn && !gone.contains(&q.proposal));
+        self.review
+            .items
+            .retain(|i| i.turn < turn && !gone.contains(&i.proposal));
+        self.review
+            .questions
+            .retain(|q| q.turn < turn && !gone.contains(&q.proposal));
     }
 
     /// Counts for the turn panel: open questions (drafts to review and
     /// questions awaiting an answer) and suggestions waiting for a decision.
     pub fn review_counts(&self) -> Value {
-        let q = |s: QuestionState| self.review.questions.iter().filter(|q| q.state == s).count();
+        let q = |s: QuestionState| {
+            self.review
+                .questions
+                .iter()
+                .filter(|q| q.state == s)
+                .count()
+        };
         let i = |s: ItemState| self.review.items.iter().filter(|i| i.state == s).count();
         json!({
             "drafts": q(QuestionState::Draft),
@@ -1142,7 +1429,15 @@ pub fn command_of(kind: &str, params: &Value) -> std::result::Result<Command, St
     v["type"] = kind.into();
     // Numbers typed as text in the console ("2") are accepted.
     if let Some(o) = v.as_object_mut() {
-        for key in ["qty", "width_m", "radius_m", "minutes", "delta", "allocation", "speed_mps"] {
+        for key in [
+            "qty",
+            "width_m",
+            "radius_m",
+            "minutes",
+            "delta",
+            "allocation",
+            "speed_mps",
+        ] {
             if let Some(Value::String(s)) = o.get(key) {
                 if let Ok(n) = s.trim().parse::<f64>() {
                     o.insert(key.into(), json!(n));
@@ -1158,7 +1453,11 @@ pub fn command_of(kind: &str, params: &Value) -> std::result::Result<Command, St
             o.insert("delta".into(), json!(n as i64));
         }
         if let Some(Value::String(s)) = o.get("zones") {
-            let zones: Vec<String> = s.split(',').map(|z| z.trim().to_string()).filter(|z| !z.is_empty()).collect();
+            let zones: Vec<String> = s
+                .split(',')
+                .map(|z| z.trim().to_string())
+                .filter(|z| !z.is_empty())
+                .collect();
             o.insert("zones".into(), json!(zones));
         }
     }
@@ -1178,9 +1477,25 @@ fn params_of(c: &Command) -> Value {
 fn describe_partial(kind: &str, params: &Value, missing: &[String]) -> String {
     let known = params
         .as_object()
-        .map(|o| o.iter().map(|(k, v)| format!("{k} {}", v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))).collect::<Vec<_>>().join(", "))
+        .map(|o| {
+            o.iter()
+                .map(|(k, v)| {
+                    format!(
+                        "{k} {}",
+                        v.as_str()
+                            .map(String::from)
+                            .unwrap_or_else(|| v.to_string())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
         .unwrap_or_default();
-    let gaps = missing.iter().map(|m| format!("{m} ?")).collect::<Vec<_>>().join(", ");
+    let gaps = missing
+        .iter()
+        .map(|m| format!("{m} ?"))
+        .collect::<Vec<_>>()
+        .join(", ");
     match (known.is_empty(), gaps.is_empty()) {
         (true, _) => format!("{kind} ({gaps})"),
         (false, true) => format!("{kind} ({known})"),
@@ -1205,7 +1520,11 @@ fn action_noun(kind: &str, it: bool) -> &'static str {
         "RequestReinforcement" => ("la richiesta di rinforzi", "the reinforcement request"),
         _ => ("l’azione", "the action"),
     };
-    if it { i } else { e }
+    if it {
+        i
+    } else {
+        e
+    }
 }
 
 /// What a template question asks for a missing field.
@@ -1221,5 +1540,9 @@ fn field_question(kind: &str, field: &str, it: bool) -> &'static str {
         (_, "qty") => ("quanti", "how many"),
         _ => ("i dettagli mancanti", "the missing details"),
     };
-    if it { i } else { e }
+    if it {
+        i
+    } else {
+        e
+    }
 }

@@ -2,6 +2,8 @@
 //! Translation only; EXCON owns approval and outcomes.
 #[cfg(target_arch = "wasm32")]
 use crate::browser::Json;
+#[cfg(target_arch = "wasm32")]
+use crate::browser_runtime as tokio;
 use crate::{access::Principal, bad, ApiResult, AppState};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::body::Json;
