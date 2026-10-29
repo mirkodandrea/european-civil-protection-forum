@@ -507,6 +507,7 @@ pub fn missing_params(kind: &str, params: &serde_json::Value) -> Vec<&'static st
         "CloseRoad" | "ReopenRoad" => &["road"],
         "RequestReinforcement" => &["resource", "qty"],
         "Extinguish" => &["area"],
+        "ExtinguishArea" => &["polygon"],
         "SetWeather" => &[],
         "ReturnResource" => &["allocation", "qty"],
         "SetDeploymentTravel" => &["role", "resource", "at", "speed_mps"],
