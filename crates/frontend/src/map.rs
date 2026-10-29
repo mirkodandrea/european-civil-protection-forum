@@ -12,25 +12,7 @@ use yew::prelude::*;
 
 const SIZE: f64 = 1200.;
 const MAX_ZOOM: f64 = 16.;
-/// Layer bits; a set bit in `hidden` switches the layer off.
-const L_FIRE: u8 = 1;
-const L_ROADS: u8 = 2;
-const L_BUILDINGS: u8 = 4;
-const L_LABELS: u8 = 8;
-const L_GRID: u8 = 16;
-const L_FORECAST: u8 = 32;
-const L_UNITS: u8 = 64;
-const L_FOG: u8 = 128;
-const LAYERS: [(u8, &str); 8] = [
-    (L_FIRE, "l_fire"),
-    (L_ROADS, "l_roads"),
-    (L_BUILDINGS, "l_buildings"),
-    (L_LABELS, "l_labels"),
-    (L_GRID, "l_grid"),
-    (L_FORECAST, "l_forecast"),
-    (L_UNITS, "l_units"),
-    (L_FOG, "l_fog"),
-];
+use crate::map_layers::{self as ml, Hidden};
 
 /// Visible window in territory units: top-left `(ox, oy)`, width `Frame::fw / z`.
 #[derive(Clone, Copy, PartialEq)]
@@ -158,7 +140,10 @@ pub fn situation_map(props: &MapProps) -> Html {
     let view = use_mut_ref(|| View::HOME);
     let drag = use_mut_ref(Drag::default);
     let tick = use_reducer(|| Tick(0));
-    let hidden = use_state(|| 0u8);
+    let hidden = use_state({
+        let id = props.id.clone();
+        move || ml::load(&id)
+    });
     let hover = use_state(|| None::<(f64, f64)>);
     let pinned = use_state(|| None::<(f64, f64)>);
     let geometry = geom(&props.stat);
@@ -604,9 +589,10 @@ pub fn situation_map(props: &MapProps) -> Html {
             <button type="button" title={t("map_reset")} aria-label={t("map_reset")} onclick={reset} disabled={current.z <= 1.0001}>{"⟲"}</button>
             <button type="button" title={t("map_fit_fire")} aria-label={t("map_fit_fire")} onclick={fit_fire} disabled={fire_box.is_none()}>{"🔥"}</button>
             <button type="button" title={t("map_fullscreen")} aria-label={t("map_fullscreen")} onclick={fullscreen}>{"⛶"}</button>
-            <details class="map-layers"><summary title={t("map_layers")} aria-label={t("map_layers")}>{"☰"}</summary><div>
-                {for LAYERS.iter().map(|(bit, key)| { let bit = *bit; let hidden = hidden.clone(); html!{<label><input type="checkbox" checked={*hidden & bit == 0} onchange={Callback::from(move |_| hidden.set(*hidden ^ bit))}/>{t(key)}</label>} })}
-            </div></details>
+            <ml::LayerControl hidden={*hidden} lang={props.lang.clone()} onchange={{
+                let (hidden, id) = (hidden.clone(), props.id.clone());
+                Callback::from(move |h: Hidden| { ml::save(&id, h); hidden.set(h) })
+            }}/>
         </div>}
         if !lines.is_empty() {<div class="map-probe" aria-live="polite">{for lines.iter().map(|l| html!{<div>{l.clone()}</div>})}if pinned.is_some() && hover.is_none() {<button type="button" aria-label={t("map_close_probe")} onclick={clear_pin}>{"✕"}</button>}</div>}
         if current.z > 1. {<div class="map-zoom-badge">{format!("×{:.1}", current.z)}</div>}
@@ -692,7 +678,7 @@ fn pick_static(
     x: f64,
     y: f64,
     tol: f64,
-    hidden: u8,
+    hidden: Hidden,
     simple: bool,
 ) -> (Option<(String, String)>, Option<String>) {
     if tol <= 0. {
@@ -700,7 +686,7 @@ fn pick_static(
     }
     let mut best_building: Option<(String, String, f64)> = None;
     for b in list(&stat["buildings"]) {
-        if hidden & L_BUILDINGS != 0 || (simple && text(&b["name"]).is_empty()) {
+        if hidden & ml::BUILDINGS != 0 || (simple && text(&b["name"]).is_empty()) {
             continue;
         }
         let (bx, by) = (n(&b["pos"][0]), n(&b["pos"][1]));
@@ -723,7 +709,7 @@ fn pick_static(
     }
     let mut best_road: Option<(String, f64)> = None;
     for road in list(&stat["roads"]) {
-        if hidden & L_ROADS != 0 || (simple && road["drivable"] == false) {
+        if hidden & ml::ROADS != 0 || (simple && road["drivable"] == false) {
             continue;
         }
         let points = list(&road["points"]);
@@ -1234,11 +1220,11 @@ fn draw(
     lang: &str,
     vw: View,
     fr: Frame,
-    hidden: u8,
+    hidden: Hidden,
     selected: &[String],
     marked: &[String],
 ) -> Result<(), wasm_bindgen::JsValue> {
-    let on = |bit: u8| hidden & bit == 0;
+    let on = |bit: Hidden| hidden & bit == 0;
     let (z, u) = (vw.z, 1. / vw.z);
     // Strokes and markers grow only with the square root of the zoom.
     let s = u.sqrt();
@@ -1287,7 +1273,10 @@ fn draw(
     let fire = bytes(&v["fire"]);
     let mut rgba = vec![0u8; cols * rows * 4];
     for i in 0..cols * rows {
-        let bg = match fuel.get(i).copied().unwrap_or(0) {
+        let bg = if !on(ml::BASE) {
+            ml::PLAIN_BG
+        } else {
+            match fuel.get(i).copied().unwrap_or(0) {
             1 => [107, 142, 78],
             2 => [154, 165, 90],
             3 => [214, 208, 196],
@@ -1296,9 +1285,11 @@ fn draw(
             6 => [194, 183, 110],
             7 => [127, 163, 122],
             _ => [200, 200, 190],
+            }
         };
-        let fg = if on(L_FIRE) {
-            colour(fire.get(i).copied().unwrap_or(0))
+        let code = fire.get(i).copied().unwrap_or(0);
+        let fg = if ml::fire_code_shown(code, hidden) {
+            colour(code)
         } else {
             [0; 4]
         };
@@ -1308,9 +1299,15 @@ fn draw(
         }
         rgba[i * 4 + 3] = 255;
     }
-    let mut states = fire.clone();
+    let mut states: Vec<u8> = fire
+        .iter()
+        .map(|&c| if ml::fire_code_shown(c, hidden) { c } else { 0 })
+        .collect();
     states.resize(cols * rows, 0);
-    for obs in list(&v["cells"]).iter().filter(|_| on(L_FIRE)) {
+    for obs in list(&v["cells"])
+        .iter()
+        .filter(|o| ml::fire_code_shown(o["state"].as_u64().unwrap_or(0) as u8, hidden))
+    {
         let i = (obs["row"].as_u64().unwrap_or(rows as u64) as usize * cols
             + obs["col"].as_u64().unwrap_or(cols as u64) as usize)
             * 4;
@@ -1324,7 +1321,7 @@ fn draw(
     }
     // Labels must not hide the active front: blocks of cells with active fire become obstacles.
     let mut front: Vec<(f64, f64, f64, f64)> = Vec::new();
-    if on(L_FIRE) && cols > 0 && rows > 0 {
+    if on(ml::FIRE) && cols > 0 && rows > 0 {
         const B: usize = 6;
         let (cw, chh) = (size / cols as f64, h * k / rows as f64);
         for br in (0..rows).step_by(B) {
@@ -1348,7 +1345,7 @@ fn draw(
     )?;
     ctx.set_image_smoothing_enabled(false);
     ctx.draw_image_with_html_canvas_element_and_dw_and_dh(&raster, 0., 0., size, h * k)?;
-    if on(L_FIRE) {
+    {
         // Texture per fire state so the legend does not rely on colour alone:
         // dots = active fire, diagonal hatch = burnt, horizontal lines = water/retardant.
         for state in [1u8, 2, 4] {
@@ -1360,7 +1357,7 @@ fn draw(
     let reqs = RefCell::new(Vec::<LabelReq>::new());
     let badges = RefCell::new(Vec::<Badge>::new());
     let label = |s: &str, x: f64, y: f64, prio: u8| {
-        if on(L_LABELS) {
+        if on(ml::LABELS) {
             reqs.borrow_mut().push(LabelReq {
                 text: s.to_string(),
                 x,
@@ -1375,7 +1372,7 @@ fn draw(
         z["cols"].as_u64().unwrap_or(0),
         z["rows"].as_u64().unwrap_or(0),
     );
-    if let Some(known) = fog_zones(stat, v).filter(|_| on(L_FOG)) {
+    if let Some(known) = fog_zones(stat, v).filter(|_| on(ml::FOG)) {
         // Fog of war: zones the role knows nothing about are veiled.
         ctx.set_fill_style_str("rgba(24,36,40,.55)");
         for row in 0..zrows {
@@ -1392,7 +1389,7 @@ fn draw(
         .iter()
         .filter_map(|name| parse_zone(text(name), zcols, zrows))
         .collect();
-    if on(L_UNITS) && !live.is_empty() {
+    if on(ml::UNITS) && !live.is_empty() {
         if let Some(known) = fog_zones(stat, v) {
             ctx.set_fill_style_str("rgba(24,36,40,.14)");
             for row in 0..zrows {
@@ -1449,13 +1446,13 @@ fn draw(
     }
     ctx.set_line_width(u);
     ctx.set_stroke_style_str("rgba(0,0,0,.12)");
-    for col in (0..=z["cols"].as_u64().unwrap_or(0)).filter(|_| on(L_GRID)) {
+    for col in (0..=z["cols"].as_u64().unwrap_or(0)).filter(|_| on(ml::GRID)) {
         ctx.begin_path();
         ctx.move_to(col as f64 * zsize, 0.);
         ctx.line_to(col as f64 * zsize, h * k);
         ctx.stroke();
     }
-    for row in (0..=z["rows"].as_u64().unwrap_or(0)).filter(|_| on(L_GRID)) {
+    for row in (0..=z["rows"].as_u64().unwrap_or(0)).filter(|_| on(ml::GRID)) {
         ctx.begin_path();
         ctx.move_to(0., row as f64 * zsize);
         ctx.line_to(size, row as f64 * zsize);
@@ -1464,7 +1461,7 @@ fn draw(
     for row in 0..z["rows"].as_u64().unwrap_or(0) {
         for col in 0..z["cols"].as_u64().unwrap_or(0) {
             let name = format!("{}{}", (b'A' + col as u8) as char, row + 1);
-            if list(&v["warned"]).contains(&json!(name)) {
+            if on(ml::CLOSURES) && list(&v["warned"]).contains(&json!(name)) {
                 ctx.set_fill_style_str("rgba(255,200,0,.15)");
                 ctx.fill_rect(col as f64 * zsize, row as f64 * zsize, zsize, zsize);
             }
@@ -1472,18 +1469,26 @@ fn draw(
     }
     ctx.set_line_join("round");
     ctx.set_line_cap("round");
-    for road in list(&stat["roads"]).iter().filter(|_| on(L_ROADS)) {
+    for road in list(&stat["roads"])
+        .iter()
+        .filter(|_| on(ml::ROADS) || on(ml::CLOSURES))
+    {
         if simple && road["drivable"] == false {
             continue;
         }
         let points = list(&road["points"]);
         trace(&ctx, points, k, h);
-        ctx.set_stroke_style_str("#29363d");
-        ctx.set_line_width(6. * s);
-        ctx.stroke();
-        ctx.set_stroke_style_str("#e6e4d8");
-        ctx.set_line_width(3. * s);
-        ctx.stroke();
+        if on(ml::ROADS) {
+            ctx.set_stroke_style_str("#29363d");
+            ctx.set_line_width(6. * s);
+            ctx.stroke();
+            ctx.set_stroke_style_str("#e6e4d8");
+            ctx.set_line_width(3. * s);
+            ctx.stroke();
+        }
+        if !on(ml::CLOSURES) {
+            continue;
+        }
         let state = &v["roads"][text(&road["id"])];
         let segments = list(&stat["road_segments"])
             .iter()
@@ -1542,7 +1547,7 @@ fn draw(
         }
     }
     for (i, b) in list(&stat["buildings"]).iter().enumerate() {
-        if !on(L_BUILDINGS) || (simple && text(&b["name"]).is_empty()) {
+        if !on(ml::BUILDINGS) || (simple && text(&b["name"]).is_empty()) {
             continue;
         }
         let state = &v["buildings"][i];
@@ -1595,7 +1600,7 @@ fn draw(
             ctx.set_line_dash(&js_sys::Array::new())?;
         }
     }
-    for line in list(&v["lines"]) {
+    for line in list(&v["lines"]).iter().filter(|_| on(ml::WORKS)) {
         trace(&ctx, &[line["from"].clone(), line["to"].clone()], k, h);
         ctx.set_stroke_style_str("#ffe000");
         ctx.set_line_width(3. * s);
@@ -1603,7 +1608,7 @@ fn draw(
         ctx.stroke();
         ctx.set_line_dash(&js_sys::Array::new())?;
     }
-    for drop in list(&v["drops"]) {
+    for drop in list(&v["drops"]).iter().filter(|_| on(ml::WORKS)) {
         ctx.begin_path();
         ctx.arc(
             n(&drop["at"][0]) * k,
@@ -1616,7 +1621,7 @@ fn draw(
         ctx.set_line_width(3. * s);
         ctx.stroke();
     }
-    for location in list(&v["reported_locations"]) {
+    for location in list(&v["reported_locations"]).iter().filter(|_| on(ml::ESTIMATES)) {
         let x = n(&location[0]) * k;
         let y = (h - n(&location[1])) * k;
         ctx.begin_path();
@@ -1626,7 +1631,7 @@ fn draw(
         label(crate::i18n::t(lang, "map_reported"), x, y, 0);
     }
     // Unverified fire estimates: a dashed uncertainty circle, the spread direction and who said it.
-    for e in list(&v["estimates"]).iter().filter(|_| on(L_FIRE)) {
+    for e in list(&v["estimates"]).iter().filter(|_| on(ml::ESTIMATES)) {
         let (x, y, r) = (n(&e["at"][0]) * k, (h - n(&e["at"][1])) * k, (n(&e["radius_m"]) * k).max(14. * s));
         ctx.set_stroke_style_str("#e33");
         ctx.set_line_width(2.5 * s);
@@ -1659,7 +1664,7 @@ fn draw(
     }
     if let Some(forecast) = list(&v["forecast_products"])
         .last()
-        .filter(|_| on(L_FORECAST))
+        .filter(|_| on(ml::FORECAST))
     {
         for (idx, horizon) in list(&forecast["horizons"]).iter().enumerate() {
             let probability = list(&horizon["probability"]);
@@ -1720,7 +1725,7 @@ fn draw(
         }
     }
     // The role's own drone: position known from its telemetry, whatever the fog.
-    for d in list(&v["drones"]).iter().filter(|_| on(L_UNITS)) {
+    for d in list(&v["drones"]).iter().filter(|_| on(ml::UNITS)) {
         let (x, y) = (n(&d["position_m"][0]) * k, (h - n(&d["position_m"][1])) * k);
         let status = text(&d["status"]);
         let color = match status {
@@ -1756,7 +1761,7 @@ fn draw(
     for d in list(&v["deployments"])
         .iter()
         .chain(list(&v["observed_units"]))
-        .filter(|_| on(L_UNITS))
+        .filter(|_| on(ml::UNITS))
     {
         let t = &d["task"];
         if d["active_qty"] == 0 || t["status"] == "cancelled" || drone_tasks.contains(&&t["id"]) {
@@ -1907,7 +1912,8 @@ fn draw(
         sc / dpr,
         dpr,
         zsize,
-        (zcols, zrows),
+        // Hidden zone codes: no edge axes and no per-cell codes.
+        if on(ml::CODES) { (zcols, zrows) } else { (0, 0) },
         &reqs.into_inner(),
         &badges.into_inner(),
         &front,
@@ -1981,5 +1987,12 @@ mod label_tests {
         assert!(zoomed.iter().all(|m| m.cell));
         assert!(zoomed.iter().any(|m| m.text == "C2"));
         assert!(zoomed.iter().all(|m| m.x >= 0. && m.x <= 800. && m.y >= 0. && m.y <= 600.));
+    }
+
+    #[test]
+    fn hidden_zone_codes_draw_neither_axes_nor_cell_codes() {
+        // `draw` passes an empty zone grid when the codes layer is off.
+        assert!(zone_marks(80., (100., 0.), (0, 0), (840., 640.)).is_empty());
+        assert!(zone_marks(400., (-500., -300.), (0, 0), (800., 600.)).is_empty());
     }
 }

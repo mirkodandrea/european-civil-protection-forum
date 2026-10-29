@@ -27,6 +27,7 @@ mod place_pick;
 mod player_view;
 mod map;
 mod map_legend;
+mod map_layers;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
