@@ -82,6 +82,20 @@ fn fingerprint(s: &server::AppState) -> Value {
     })
 }
 
+/// End-of-turn "Turn status" messages are posted by a spawned task after
+/// resolve returns (also during replay); wait for all three roles so the
+/// message count is stable before comparing fingerprints.
+async fn turn_status_posted(s: &server::AppState) {
+    for _ in 0..500 {
+        let n = s.lock().messages.iter().filter(|m| m.title.as_deref() == Some("Turn status")).count();
+        if n >= 3 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("Turn status messages never posted");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn session_survives_a_restart() {
     let _gate = gate();
@@ -92,6 +106,7 @@ async fn session_survives_a_restart() {
     let inject = json!({"title":"Wind","recipients":["all"],"text":"Wind rising"});
     assert_eq!(post(&c, &s, "/api/master/inject", inject).await.0, Status::Ok);
     assert_eq!(post(&c, &s, "/api/master/resolve", json!({"minutes": 10})).await.0, Status::Ok);
+    turn_status_posted(&s).await;
     // A rejected request must not enter the journal.
     assert_ne!(post(&c, &s, "/api/master/rollback", json!({"turn": 99})).await.0, Status::Ok);
     p.autosave(&s, true);
@@ -104,6 +119,7 @@ async fn session_survives_a_restart() {
     assert_eq!(session.journal.len(), 3, "start, inject, resolve");
     let (_c2, s2) = boot(&p2).await;
     persist::restore(&s2, server::replay_rocket(&s2), session).await.unwrap();
+    turn_status_posted(&s2).await;
     assert_eq!(fingerprint(&s2), before);
 }
 

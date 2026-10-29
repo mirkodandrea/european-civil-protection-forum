@@ -973,6 +973,15 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
         Some(json!({"minutes":1})),
     )
     .await;
+    // The end-of-turn "Turn status" messages are posted by a spawned task after
+    // resolve returns; wait for all of them so later snapshots are stable.
+    eventually(&app, "/api/master", |v| {
+        v["messages"]
+            .as_array()
+            .map(|m| m.iter().filter(|x| x["title"] == "Turn status").count() >= 3)
+            .unwrap_or(false)
+    })
+    .await;
     let (_, unchanged) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(unchanged["map"], mayor["map"]);
     let update = json!({"role":"mayor","source":"Field team observation","observation":{"cells":[{"row":3,"col":4,"state":2},{"row":3,"col":5,"state":1}]}});
