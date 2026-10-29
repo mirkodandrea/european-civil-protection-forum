@@ -25,10 +25,17 @@ pub const TERRITORIES: &[Territory] = &[
             "Conca sintetica di 6 × 6 km con due abitati, area festival e tre uscite stradali.",
         json: include_str!("../../../data/scenarios/selvariva_basin.json"),
     },
+    Territory {
+        id: "roccavento_island",
+        name: "Isola di Roccavento",
+        description: "Isola sintetica di 8 × 8 km con sei borghi, un valico e il porto.",
+        json: include_str!("../../../data/scenarios/roccavento_island.json"),
+    },
 ];
 pub const PACKS: &[&str] = &[
     include_str!("../../../data/scenarios/valverde_night_wind.pack.json"),
     include_str!("../../../data/scenarios/selvariva_crisi_integrata.pack.json"),
+    include_str!("../../../data/scenarios/roccavento_valico.pack.json"),
 ];
 
 pub fn territory(id: &str) -> Result<&'static Territory> {

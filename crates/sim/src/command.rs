@@ -91,6 +91,14 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         destination: Option<String>,
     },
+    /// Evacuate every home of a borgo (`Scenario::districts`, by name or id) at
+    /// the scenario's district pace, to its gathering area unless `destination`
+    /// names another shelter.
+    EvacuateDistrict {
+        district: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        destination: Option<String>,
+    },
     /// Warn the population of a zone: halves the time an evacuation takes there.
     IssueWarning {
         zone: String,
@@ -179,6 +187,7 @@ pub const ALL_KINDS: &[&str] = &[
     "Reconnoitre",
     "EvacuateZone",
     "EvacuateBuilding",
+    "EvacuateDistrict",
     "IssueWarning",
     "CloseRoad",
     "ReopenRoad",
@@ -204,6 +213,7 @@ impl Command {
             Command::Reconnoitre { .. } => "Reconnoitre",
             Command::EvacuateZone { .. } => "EvacuateZone",
             Command::EvacuateBuilding { .. } => "EvacuateBuilding",
+            Command::EvacuateDistrict { .. } => "EvacuateDistrict",
             Command::IssueWarning { .. } => "IssueWarning",
             Command::CloseRoad { .. } => "CloseRoad",
             Command::ReopenRoad { .. } => "ReopenRoad",
@@ -259,6 +269,18 @@ impl Command {
             } => {
                 format!(
                     "Evacuate {building}{}",
+                    destination
+                        .as_ref()
+                        .map(|d| format!(" to {d}"))
+                        .unwrap_or_default()
+                )
+            }
+            Command::EvacuateDistrict {
+                district,
+                destination,
+            } => {
+                format!(
+                    "Evacuate borgo {district}{}",
                     destination
                         .as_ref()
                         .map(|d| format!(" to {d}"))
@@ -347,6 +369,10 @@ pub fn catalogue(allowed: &[String]) -> String {
         (
             "EvacuateBuilding",
             r#"{"type":"EvacuateBuilding","building":"Pineta Primary School","destination":"Valverde Sports Centre"}  — evacuate one named facility ("building" is its exact name from the gazetteer, never a zone code). Schools/hospitals need buses."#,
+        ),
+        (
+            "EvacuateDistrict",
+            r#"{"type":"EvacuateDistrict","district":"Borgo Alto"}  — evacuate every home of a borgo (village or hamlet named in the gazetteer, scattered houses included). People prepare, then leave a few per minute, nearest homes first, to the borgo's gathering area (no need to open it); destination optional (an open shelter instead). Prefer it over EvacuateZone when the order names a borgo."#,
         ),
         (
             "IssueWarning",
@@ -454,6 +480,7 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
     swap("Pineta Primary School", named(Some(School)).or_else(|| named(None)));
     swap("Valverde Town Hall", staging);
     swap("Pine Hill", place);
+    swap("Borgo Alto", scn.districts.first().map(|d| d.name.clone()));
     swap("fire_commander", crew_role);
     swap("F3:S", zone.clone().map(|z| format!("{z}:S")));
     swap("F3-G4", zone.clone().map(|z| format!("{z}")));
@@ -518,6 +545,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 20);
+        assert_eq!(ALL_KINDS.len(), 21);
     }
 }

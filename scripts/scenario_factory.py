@@ -129,6 +129,14 @@ def main():
     p.add_argument('--seed', type=int, default=33)
     p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/selvariva_basin.json')
     p.set_defaults(run=selvariva)
+    def roccavento(args):
+        from factory.roccavento import landscape as run
+        run(args)
+    p = sub.add_parser('roccavento', help='Import the propagator_abm island as a TTX territory')
+    from factory.roccavento import SOURCE
+    p.add_argument('--source', type=Path, default=SOURCE)
+    p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/roccavento_island.json')
+    p.set_defaults(run=roccavento)
     p = sub.add_parser('sweep'); p.add_argument('scenario', type=Path); p.add_argument('--ignitions', type=Path)
     p.add_argument('--output', type=Path, default=ROOT/'runs/factory/sweep')
     p.add_argument('--seeds', nargs='+', type=int, default=[1,2,3]); p.add_argument('--winds', nargs='+', type=int, default=list(range(0,360,45)))

@@ -15,13 +15,17 @@ Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Gene
 | Standalone (WASM) | `localStorage` (`ttx.standalone.packs`) più i pack incorporati | `ttx.standalone.active` |
 
 La sessione salvata contiene il pack da cui è partita: al riavvio si ricostruisce lo stesso scenario anche se la libreria è cambiata.
-Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km) e **Selvariva** (`selvariva_basin`, 6 × 6 km), con i pack `valverde_night_wind` e `selvariva_crisi_integrata`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
+Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km), **Selvariva** (`selvariva_basin`, 6 × 6 km) e l'**Isola di Roccavento** (`roccavento_island`, 8 × 8 km), con i pack `valverde_night_wind`, `selvariva_crisi_integrata` e `roccavento_valico`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
 
 I salvataggi browser nuovi registrano anche l’identità dei dati del territorio: un replay su una mappa modificata viene scartato con avviso. I salvataggi precedenti senza impronta restano leggibili. Il 3D locale ricostruisce la scena quando cambia scenario; il viewer remoto scarica la nuova scena fuori dal ciclo di rendering quando cambia territorio.
 
 Per aggiungere un territorio al server basta un nuovo `<id>.json` valido nella libreria; per includerlo anche nello standalone aggiungerlo a `crates/scenario/src/embedded.rs`, con eventuali pack, e ricostruire il browser. La feature `scenario/embedded` evita di incorporare i raster negli strumenti headless che non ne hanno bisogno.
 
-La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md).
+La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md). Roccavento, i suoi borghi e il comando «Evacua borgo» sono in [scenario-roccavento.md](scenario-roccavento.md).
+
+## Borghi (`districts`)
+
+Un territorio può dichiarare i suoi borghi: `districts` (`id`, `name`, `buildings` per id, `gathering` facoltativa, nome di un edificio con capienza) e il ritmo `district_evacuation` (`per_min` persone al minuto, `prep_min` minuti di preparazione; predefiniti 6 e 5). Con i borghi è disponibile il comando `EvacuateDistrict` (vedi [scenario-roccavento.md](scenario-roccavento.md#evacua-borgo-evacuatedistrict)). Senza borghi il comando è rifiutato e nulla cambia. I borghi fanno parte del territorio: un pack non li modifica.
 
 ## Da riga di comando
 

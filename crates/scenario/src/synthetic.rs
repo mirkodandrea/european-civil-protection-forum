@@ -333,6 +333,8 @@ pub fn generate(seed: u64) -> Scenario {
         buildings,
         roads: roads(),
         sectors,
+        districts: vec![],
+        district_evacuation: Default::default(),
         zones: ZoneGrid { cols: 8, rows: 8, size_m: 500.0 },
         places: places(),
         resource_types: resource_types(),

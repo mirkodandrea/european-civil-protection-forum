@@ -280,6 +280,7 @@ pub fn summarize_command(c: &Value) -> Option<String> {
         "DeployEngine" => exfmt!("Squadra su strada verso {}", "Engine deployed to {}", fmt_loc(&c["at"])),
         "EvacuateZone" => with_dest(exfmt!("Evacuazione zona {}", "Evacuate zone {}", s(&c["zone"])), opt("destination")),
         "EvacuateBuilding" => with_dest(exfmt!("Evacuazione di {}", "Evacuate {}", s(&c["building"])), opt("destination")),
+        "EvacuateDistrict" => with_dest(exfmt!("Evacuazione del borgo {}", "Evacuate borgo {}", s(&c["district"])), opt("destination")),
         "IssueWarning" => exfmt!("Allerta alla popolazione in {}", "Warn the population in {}", s(&c["zone"])),
         "CloseRoad" => exfmt!("Chiusura strada {}", "Close road {}", s(&c["road"])),
         "ReopenRoad" => exfmt!("Riapertura strada {}", "Reopen road {}", s(&c["road"])),

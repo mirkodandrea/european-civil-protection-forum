@@ -310,6 +310,9 @@ impl World {
             Command::EvacuateBuilding { building, .. } => {
                 self.find_building(building).into_iter().collect()
             }
+            Command::EvacuateDistrict { district, .. } => {
+                self.district_targets(district).unwrap_or_default()
+            }
             _ => Vec::new(),
         }
     }
@@ -334,6 +337,10 @@ impl World {
             Command::EvacuateZone { zone, .. } => self
                 .zone_code(zone)
                 .and_then(|z| self.scn.resolve_place(&z)),
+            Command::EvacuateDistrict { district, .. } => self
+                .scn
+                .district(district)
+                .and_then(|d| self.scn.resolve_place(&d.name)),
             _ => None,
         }
     }

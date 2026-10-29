@@ -27,6 +27,7 @@ pub fn command_name(s: &str) -> &str {
         "IssueWarning" => crate::i18n::ex("Avvisare la popolazione"),
         "EvacuateZone" => crate::i18n::ex("Evacuare una zona"),
         "EvacuateBuilding" => crate::i18n::ex("Evacuare un edificio"),
+        "EvacuateDistrict" => crate::i18n::ex("Evacuare un borgo"),
         "OpenShelter" => crate::i18n::ex("Aprire un rifugio"),
         "CloseRoad" => crate::i18n::ex("Chiudere una strada"),
         "ReopenRoad" => crate::i18n::ex("Riaprire una strada"),

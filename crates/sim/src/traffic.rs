@@ -32,6 +32,10 @@ pub struct Vehicle {
     pub completed: bool,
     pub waiting: bool,
     pub at_risk: bool,
+    /// Bound for its borgo's gathering area (no explicit destination): may
+    /// use any gathering area, opened or not, when its own is out of reach.
+    #[serde(default)]
+    pub gathering: bool,
     pub detail: String,
 }
 impl Vehicle {
@@ -101,6 +105,7 @@ impl World {
                 completed: false,
                 waiting: false,
                 at_risk: false,
+                gathering: false,
                 detail: "Preparing to leave".into(),
             });
             left -= n;
@@ -109,8 +114,22 @@ impl World {
     fn evacuation_route(&self, v: &Vehicle) -> Option<(Route, Pos, Option<u32>)> {
         let origin = v.position(self.time_s(), self.scn.buildings[v.building].pos);
         let mut targets = Vec::new();
+        // Own gathering area first, if it is safe and reachable.
+        if v.gathering {
+            if let Some(own) = v.destination.and_then(|id| self.scn.buildings.iter().find(|b| b.id == id)) {
+                if self.d.hazard.at(own.pos).danger < 0.55 {
+                    if let Some(mut r) = self.network.route(origin, own.pos, &self.d.roads, true, false) {
+                        for leg in &mut r.legs {
+                            leg.speed_mps = leg.speed_mps.min(20.0);
+                        }
+                        return Some((r, own.pos, Some(own.id)));
+                    }
+                }
+            }
+        }
         for b in &self.scn.buildings {
-            if !self.d.shelters.contains_key(&b.id) || v.destination.is_some_and(|id| id != b.id) {
+            let usable = self.d.shelters.contains_key(&b.id) || (v.gathering && self.is_gathering(b.id));
+            if !usable || (!v.gathering && v.destination.is_some_and(|id| id != b.id)) {
                 continue;
             }
             let reserved: u32 = self
@@ -121,13 +140,13 @@ impl World {
                 .filter(|x| !x.completed && x.destination == Some(b.id) && x.id != v.id)
                 .map(|x| x.people)
                 .sum();
-            if self.d.shelters[&b.id] + reserved + v.people <= b.shelter_capacity
+            if self.d.shelters.get(&b.id).copied().unwrap_or(0) + reserved + v.people <= b.shelter_capacity
                 && self.d.hazard.at(b.pos).danger < 0.55
             {
                 targets.push((b.pos, Some(b.id)));
             }
         }
-        if v.destination.is_none() {
+        if v.destination.is_none() || v.gathering {
             let w = self.scn.grid.width_m();
             let h = self.scn.grid.height_m();
             for road in &self.scn.roads {
@@ -333,6 +352,8 @@ impl World {
         if let Some(dest) = v.destination {
             if let Some(n) = self.d.shelters.get_mut(&dest) {
                 *n += v.people;
+            } else if self.is_gathering(dest) {
+                self.d.shelters.insert(dest, v.people);
             }
         }
         self.event(
