@@ -201,7 +201,6 @@ pub fn open_inject_detail(fields: &mut BTreeMap<String, String>, key: String) {
     for k in [
         "inj:conv",
         "inj:newconv",
-        "inj:choose",
         "inj:conv_text",
         "inj:conv_reply",
         "inj:conv_people",
@@ -221,7 +220,6 @@ pub fn response_sent(fields: &mut BTreeMap<String, String>) {
 pub fn conversation_started(fields: &mut BTreeMap<String, String>, id: Option<u64>) {
     for key in [
         "inj:newconv",
-        "inj:choose",
         "inj:conv_text",
         "inj:conv_people",
         "inj:conv_reply",

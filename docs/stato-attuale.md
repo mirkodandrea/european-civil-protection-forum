@@ -104,14 +104,13 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    mappa tattica sta a sinistra e l’elenco degli inject a destra. Un click su un
    inject apre al posto dell’elenco il dettaglio (indietro all’elenco, come nelle
    Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
-   conversazioni nate dall’inject (sotto le risposte) e un’unica azione, **Rispondi**,
-   che non apre modali: in linea chiede prima a che cosa rispondere («Risposta diretta
+   conversazioni nate dall’inject (sotto le risposte) e in fondo, senza pulsanti né modali, la scelta di come rispondere («Risposta diretta
    al messaggio» oppure «Inizia una conversazione»). La risposta diretta apre il modulo
    qui sotto; la conversazione prosegue in linea nella chat (scelta dei player e primo
-   messaggio). Chi ha solo letto l’inject via conversazione risponde direttamente. È l’unico percorso: niente «+ Nuova azione», niente
+   messaggio). Chi ha solo letto l’inject via conversazione ha invece il pulsante **Rispondi**, che apre direttamente il modulo. È l’unico percorso: niente «+ Nuova azione», niente
    «Proponi azione» dalle chat, niente selettore «Rispondi a…» (vedi «Risposte per
    inject» sotto). La risposta diretta apre un modale quasi a schermo intero con mappa e
-   modulo: destinatario (il mittente fittizio dell’inject o uno o più player),
+   modulo: destinatario (il mittente fittizio dell’inject; solo dalla risposta in una conversazione, i suoi partecipanti),
    tipo (**comunicazione** o **decisione/azione**), il testo «Descrivi la tua
    risposta o decisione», e per una decisione il **fondamento** obbligatorio e al
    più **una** azione di simulazione associata (dal modulo o dai **suggerimenti
@@ -266,7 +265,7 @@ sull’inglese). La console EXCON continua a dire EXCON.
 ### Conversazioni collegate a un inject
 
 Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
-(**Rispondi → Inizia una conversazione** nel dettaglio dell’inject: scelta dei player e primo
+(**Inizia una conversazione** nel dettaglio dell’inject: scelta dei player e primo
 messaggio); poi prosegue come thread autonomo con l’inject citato in testa
 (riferimento fissato all’apertura) (`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,

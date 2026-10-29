@@ -126,8 +126,9 @@ impl crate::player_view::PlayerView {
         // Communication or decision: an explicit choice (an action makes it a decision).
         let work_kind = if staged.is_empty() { self.field("work:kind", "") } else { "decision".into() };
         let decision = work_kind == "decision";
-        // Recipient: the fictitious sender of the inject, or real players.
-        let to_players_mode = self.field("work:to", "persona") == "players";
+        // Recipient: the fictitious sender of the inject; only a reply from a conversation
+        // can instead go to its participants (talking to other players is a conversation).
+        let to_players_mode = work_conversation.is_some() && self.field("work:to", "persona") == "players";
         let to_players: Vec<String> = self.field("work:to_players", "").split(',').filter(|p| !p.is_empty()).map(String::from).collect();
         let sender_name = selected_context
             .map(|m| if m["persona"].is_string() { text(&m["persona"]).to_string() } else { self.name(text(&m["from"])) })
@@ -265,14 +266,14 @@ impl crate::player_view::PlayerView {
             })
         };
         let work_editor = html! {            <section class="card" id="player-work">
-            <div class="work-block" data-work-block="recipient">
+            if work_conversation.is_some() {<div class="work-block" data-work-block="recipient">
                 <h4 class="work-section">{i18n::t(l,"resp_to")}</h4>
                 <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"resp_to")}>
                     <label class={classes!("basis-option",(!to_players_mode).then_some("is-selected"))}><input type="radio" name="work-to" id="to-sender" data-to="persona" checked={!to_players_mode} onchange={self.cb(|_|Msg::Field("work:to".into(),"persona".into()))}/><span>{i18n::tf(l,"resp_to_sender",&[&sender_name])}</span></label>
                     <label class={classes!("basis-option",to_players_mode.then_some("is-selected"))}><input type="radio" name="work-to" id="to-players" data-to="players" checked={to_players_mode} disabled={player_choices.is_empty()} onchange={self.cb(|_|Msg::Field("work:to".into(),"players".into()))}/><span>{i18n::t(l,"resp_to_players")}</span></label>
                 </div>
                 if to_players_mode {<div class="work-players">{for player_choices.iter().map(|(id,name)|{let on=to_players.contains(id);html!{<label class="mt-check" key={id.clone()}><input type="checkbox" data-to-player={id.clone()} checked={on} onchange={pick_players(id.clone(),on)}/>{name.clone()}</label>}})}</div>}
-            </div>
+            </div>}
             <div class="work-block" data-work-block="kind">
                 <h4 class="work-section">{i18n::t(l,"resp_kind")}</h4>
                 <div class="basis-options kind-options" role="radiogroup" aria-label={i18n::t(l,"resp_kind")}>

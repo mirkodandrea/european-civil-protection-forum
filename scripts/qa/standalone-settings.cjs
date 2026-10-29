@@ -82,7 +82,7 @@ const out = process.env.TTX_QA_OUT || path.join('runs/standalone-settings', new 
     await page.locator('.role-tabs [data-role="mayor"]').click();
     const mayor = page.locator('[data-panel="mayor"]');
     await mayor.locator('[data-view="map"]').click();
-    await mayor.locator('[data-inject-row]').first().click();await mayor.locator('[data-reply-inject]').click();await mayor.locator('[data-reply-direct]').click();
+    await mayor.locator('[data-inject-row]').first().click();await mayor.locator('[data-reply-direct]').click();
     await mayor.locator('#response-narrative').fill('We issue a warning for F4 now.');
     await mayor.locator('[data-add-suggestion="0"]').waitFor({timeout: 15000});
     assert(requests > 0);
