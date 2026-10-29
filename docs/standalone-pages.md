@@ -62,6 +62,11 @@ una sequenza nativa equivalente e salva immagini e manifest in
 Tenere directory `CARGO_TARGET_DIR` diverse se si compilano contemporaneamente
 i due branch in worktree separati.
 
+La build include anche i banchi di sviluppo (feature `bench`): accanto a ogni
+versione la pagina iniziale collega il [banco simulatore](banco-simulatore.md)
+(`?simbench=1`) e il [banco di prova](banco-di-prova.md) (`?bench=1`). Senza
+questi parametri l’app non li usa.
+
 Le build pubbliche impostano chiavi e cassette vuote. Lo script locale
 `run_pages_local.sh` di dev può incorporare la chiave `.env`: il suo artefatto
 è destinato esclusivamente all’uso locale e non va caricato su Pages.

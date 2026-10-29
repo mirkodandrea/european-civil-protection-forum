@@ -30,5 +30,8 @@ trunk serve --skip-version-check --config crates/frontend/Trunk.toml --features 
 # → http://127.0.0.1:8080/?simbench=1   (scenario: &scn=<id>)
 ```
 
+Sulle versioni pubblicate su Pages: `…/dev/?simbench=1`, collegato anche dalla
+pagina iniziale.
+
 Trunk osserva solo `crates/frontend`: dopo modifiche a `sim` o `exercise`
 toccare un file del frontend per ricompilare.

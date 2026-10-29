@@ -38,8 +38,9 @@ quello corrente evidenziato.
 
 ## Avvio
 
-Feature cargo `bench`, disattivata per default: le build normali non la
-contengono.
+Feature cargo `bench`, disattivata per default nelle build server; la build
+standalone (`scripts/build_standalone.sh`, anche su Pages) la include, quindi
+`?bench=1` funziona anche nelle versioni pubblicate.
 
 ```bash
 ./scripts/dev_bench.sh                 # Trunk + live reload, standalone+bench
