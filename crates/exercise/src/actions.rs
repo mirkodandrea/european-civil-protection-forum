@@ -24,6 +24,8 @@ pub enum ActionStatus {
     Failed,
     /// Left unchecked when the inject was sent.
     NotRun,
+    /// A queued EXCON action withdrawn before its instant.
+    Cancelled,
 }
 
 /// Which actions run when an inject is sent.
@@ -73,6 +75,9 @@ pub struct ActionRun {
     pub run_at_s: Option<i64>,
     pub executed_s: Option<i64>,
     pub result: Option<String>,
+    /// Set for an EXCON action queued on its own (not part of an inject).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queued: Option<crate::queue::Queued>,
 }
 
 fn run_key(delivery: u64, action: &str) -> String {
@@ -142,6 +147,7 @@ impl Exercise {
                     run_at_s,
                     executed_s: None,
                     result: None,
+                    queued: None,
                 },
             );
             self.record(
@@ -151,14 +157,17 @@ impl Exercise {
                     "choice": if run { "run" } else { "not_run" }, "run_at_s": run_at_s}),
             );
         }
-        // Immediate actions apply now, before the send returns.
+        // Immediate actions apply now, before the send returns: they are what
+        // the delivered message describes (e.g. the fire it reports, which its
+        // reveal then estimates). Standalone EXCON actions wait for play
+        // instead ([`crate::queue`]).
         self.run_approved_actions();
     }
 
     /// Every action run with its current state, chronological by decision.
     pub fn inject_action_runs(&self) -> Vec<Value> {
         let start = self.world.scn.start_clock_s;
-        let mut rows: Vec<&ActionRun> = self.action_runs.values().collect();
+        let mut rows: Vec<&ActionRun> = self.action_runs.values().filter(|r| r.queued.is_none()).collect();
         rows.sort_by_key(|r| (r.decided_s, r.delivery));
         rows.into_iter()
             .map(|r| {
@@ -314,7 +323,8 @@ impl Exercise {
             .collect()
     }
 
-    /// Apply approved actions whose instant has been reached.
+    /// Apply approved actions whose instant has been reached: inject actions
+    /// and queued EXCON actions ([`crate::queue`]).
     pub(crate) fn run_approved_actions(&mut self) {
         let now = self.world.time_s();
         // Pre-actions whose instant has come become approved runs.
@@ -339,6 +349,7 @@ impl Exercise {
                     run_at_s: Some(instant),
                     executed_s: None,
                     result: None,
+                    queued: None,
                 },
             );
             self.record(
@@ -362,7 +373,27 @@ impl Exercise {
                 Some(spec) => self.execute_reveal(&run, spec),
                 None => serde_json::from_value::<Command>(run.command.clone())
                     .map_err(|e| anyhow::anyhow!("invalid command: {e}"))
-                    .and_then(|cmd| self.direct_command(&cmd)),
+                    .and_then(|cmd| match &run.queued {
+                        // A reviewed reply runs as its role, with its checks.
+                        Some(q) if q.origin["origin"] == "excon_review" => {
+                            let item = q.origin["review_item"].as_u64().unwrap_or_default();
+                            self.apply_review_item(item).and_then(|rec| {
+                                if rec.ok {
+                                    Ok(vec![rec.detail])
+                                } else {
+                                    Err(anyhow::anyhow!(rec.detail))
+                                }
+                            })
+                        }
+                        Some(q) => {
+                            let mut origin = json!({"origin": "excon_queue", "queue_id": q.id});
+                            if let (Some(m), Some(extra)) = (origin.as_object_mut(), q.origin.as_object()) {
+                                m.insert("queued_origin".into(), Value::Object(extra.clone()));
+                            }
+                            self.direct_command_logged(&cmd, origin).map(|(notes, _)| notes)
+                        }
+                        None => self.direct_command(&cmd),
+                    }),
             };
             let (status, result) = match outcome {
                 Ok(notes) => (ActionStatus::Done, notes.join("; ")),
@@ -441,10 +472,27 @@ impl Exercise {
     }
 
     /// A rollback forgets the decisions taken from the restored time onwards,
-    /// and the injects EXCON chose not to send after it.
+    /// and the injects EXCON chose not to send after it. Actions decided
+    /// earlier that ran or were cancelled from that time onwards wait again:
+    /// the restored world is from before their execution (the turn snapshot
+    /// is taken before anything runs at its instant).
     pub(crate) fn forget_actions_since_restore(&mut self) {
         let t = self.world.time_s();
         self.action_runs.retain(|_, r| r.decided_s < t);
+        for r in self.action_runs.values_mut() {
+            if r.executed_s.is_some_and(|e| e >= t) {
+                r.status = ActionStatus::Approved;
+                r.executed_s = None;
+                r.result = None;
+            }
+            if let Some(q) = r.queued.as_mut() {
+                if q.cancelled_s.is_some_and(|c| c >= t) {
+                    q.cancelled_s = None;
+                    q.cancel_reason = None;
+                    r.status = ActionStatus::Approved;
+                }
+            }
+        }
         self.skipped_injects.retain(|_, s| *s < t);
         self.disabled_actions.retain(|_, s| *s < t);
         self.suggestion_marks.retain(|_, m| m.at_s < t);

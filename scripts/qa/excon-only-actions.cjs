@@ -141,12 +141,12 @@ function reading(user, gazetteer) {
           await row.locator('[data-review-execute]').click();
         }
         await page.waitForTimeout(500);
-        if (await row.getAttribute('data-review-state') === 'executed') break;
+        if (['queued','executed'].includes(await row.getAttribute('data-review-state'))) break;
       }
-      assert.equal(await row.getAttribute('data-review-state'), 'executed', 'a team runs once the place is feasible');
+      assert(['queued','executed'].includes(await row.getAttribute('data-review-state')), 'a team is queued once the place is feasible');
     }
     await shot('06-excon-executed');
-    const executed = await board.locator('[data-review-state="executed"]').count();
+    const executed = await board.locator('[data-review-state="executed"],[data-review-state="queued"]').count();
 
     // 4. EXCON reviews the question and sends it.
     const q = board.locator('[data-question-state="draft"]').first();
@@ -169,7 +169,7 @@ function reading(user, gazetteer) {
     await toBoard();
     await board.locator('[data-review-diff]').first().waitFor({ timeout: 20000 });
     await board.locator('[data-question-state="draft"]').filter({ hasText: /Sindaco|Mayor/ }).waitFor();
-    assert(await board.locator('[data-review-state="executed"]').count() >= executed, 'decisions taken stay');
+    assert(await board.locator('[data-review-state="executed"],[data-review-state="queued"]').count() >= executed, 'decisions taken stay');
     const line = board.locator('[data-review-item]').filter({ hasText: /tagliafuoco|fire line|E3/ }).first();
     await line.locator('[data-review-details]').click();
     await shot('10-excon-diff-cross-role');

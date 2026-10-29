@@ -595,6 +595,24 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/excon-actions/<id>/cancel") => {
+            excon_queue::cancel(
+                principal.clone(),
+                s.clone(),
+                captures["id"].parse().map_err(|_| bad("invalid id"))?,
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/excon-actions/<id>/edit") => {
+            excon_queue::edit(
+                principal.clone(),
+                s.clone(),
+                captures["id"].parse().map_err(|_| bad("invalid id"))?,
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/master/command") => {
             post_command(
                 principal.clone(),
@@ -781,6 +799,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("POST", "/api/master/path"),
     ("POST", "/api/master/preview/apply"),
     ("POST", "/api/master/command"),
+    ("POST", "/api/master/excon-actions/<id>/cancel"),
+    ("POST", "/api/master/excon-actions/<id>/edit"),
     ("POST", "/api/master/resolve"),
     ("POST", "/api/master/resolve/stop"),
     ("POST", "/api/master/rollback"),

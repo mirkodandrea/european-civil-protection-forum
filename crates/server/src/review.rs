@@ -31,6 +31,12 @@ use serde_json::{json, Value};
 pub(crate) struct ReviewBody {
     #[serde(default)]
     params: Option<Value>,
+    /// `execute` only: `"play"` (default, queued until time moves) or `"now"`.
+    #[serde(default)]
+    when: Option<String>,
+    /// `execute` only: queue for this `HH:MM` instead of the next advance.
+    #[serde(default)]
+    at_clock: Option<String>,
     #[serde(default)]
     role: Option<String>,
     #[serde(default)]
@@ -61,8 +67,14 @@ pub(crate) async fn post(
     match op.as_str() {
         "execute" => {
             let mut ex = state.lock();
-            let run = ex.execute_review_item(id, b.params, b.role)?;
-            Ok(Json(json!({"execution": run})))
+            let when = crate::excon_queue::when_of(
+                &json!({"when": b.when, "at_clock": b.at_clock}),
+                ex.world.scn.start_clock_s,
+            )?
+            .unwrap_or_default();
+            let run = ex.execute_review_item(id, b.params, b.role, when)?;
+            let queued = ex.review.items.iter().find(|i| i.id == id).and_then(|i| i.queued);
+            Ok(Json(json!({"execution": run, "queued": queued})))
         }
         "edit" => {
             let mut ex = state.lock();

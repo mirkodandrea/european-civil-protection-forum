@@ -6,6 +6,7 @@ mod action_pick;
 mod bench;
 mod advanced;
 mod controllo;
+mod excon_queue;
 mod conv_viewer;
 mod api;
 mod chat;

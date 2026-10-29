@@ -45,6 +45,7 @@ pub mod threads;
 pub mod planned;
 pub mod agenda;
 pub mod actions;
+pub mod queue;
 pub mod situation;
 pub mod suggestions;
 
@@ -929,6 +930,9 @@ impl Exercise {
         let to_s = to_s.min(from_s + 24 * 3600);
         let minutes = ((to_s - from_s + 59) / 60) as u32;
         self.stop_clock("Turn resolution uses its own duration and playback speed");
+        // EXCON actions queued during the pause (and inject actions due now)
+        // set the scene first; then the approved proposals.
+        self.run_approved_actions();
         let mut applied = Vec::new();
         let approved: Vec<u64> = self
             .proposals
@@ -1072,6 +1076,7 @@ impl Exercise {
         self.world.restore(&snap)?;
         self.restore_epoch += 1;
         self.forget_actions_since_restore();
+        self.sync_review_queue();
         self.forget_monitoring_since_restore();
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self
@@ -2587,7 +2592,9 @@ impl Exercise {
         })
     }
 
-    /// A command from the EXCON GUI or a script: validated as EXCON and applied now.
+    /// A command by code (scripts, fixtures, tests): validated as EXCON and
+    /// applied now. The EXCON console goes through
+    /// [`Self::apply_or_queue_excon`], which waits for play while orders are open.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
         self.direct_command_logged(cmd, json!({"origin": "direct_excon_intervention"}))
             .map(|(notes, _)| notes)

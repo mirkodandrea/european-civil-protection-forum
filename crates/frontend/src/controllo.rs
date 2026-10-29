@@ -1,6 +1,7 @@
 //! "Controllo": the EXCON control surface. The map is the main state view; every possible action
 //! is an entry of a searchable, grouped list. Selecting an entry opens its own modal (with a map
 //! to pick locations when the tool needs one, otherwise a short form).
+use crate::excon_queue::{command_body, ExconQueue, When, WhenPicker};
 use crate::{
     advanced::Forecast,
     api::{self, list, text},
@@ -429,6 +430,7 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
         r.map(|r| format!("{r:.0}")).unwrap_or_else(|| if tool == "extcircle" { "150".to_string() } else { "80".to_string() })
     });
     let damage = use_state(|| initial["damage"].as_str().unwrap_or("destroyed").to_string());
+    let when = use_state(|| When::Play);
     let params = CmdParams { radius_m: radius.trim().parse().unwrap_or(0.), damage: (*damage).clone() };
     let cmd = build_command(tool, &points, &params, &c.stat);
     let radius_bad = matches!(tool, "ignite" | "extcircle") && !(if tool == "ignite" { 40.0..=2000.0 } else { 10.0..=5000.0 }).contains(&params.radius_m);
@@ -484,7 +486,7 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
         })
     };
     let onapply = {
-        let (cb, cmd, oncommand, onclose) = (c.action.clone(), cmd.clone(), p.oncommand.clone(), c.onclose.clone());
+        let (cb, cmd, oncommand, onclose, when) = (c.action.clone(), cmd.clone(), p.oncommand.clone(), c.onclose.clone(), (*when).clone());
         Callback::from(move |_| {
             if let Some(cmd) = &cmd {
                 match &oncommand {
@@ -492,7 +494,7 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
                         f.emit(cmd.clone());
                         onclose.emit(());
                     }
-                    None => cb.emit(Action::post("/api/master/command", cmd.clone())),
+                    None => cb.emit(Action::post("/api/master/command", command_body(cmd.clone(), &when))),
                 }
             }
         })
@@ -501,12 +503,13 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
         Some(f) => (f.0)(onmap, pending),
         None => pick_map(&c.stat, &c.state, onmap, pending, Vec::new(), Vec::new()),
     };
-    let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
+    let apply_label = apply_label(p.oncommand.is_some(), &c.state, &when);
+    let when_bad = p.oncommand.is_none() && matches!(&*when, When::At(t) if !crate::excon_queue::valid_clock(t));
     let reset = {
         let points = points.clone();
         Callback::from(move |_| points.set(Vec::new()))
     };
-    html! {<Modal title={tool_label(tool)} onclose={c.onclose.clone()} {onapply} apply_disabled={cmd.is_none() || radius_bad} busy={c.busy} done={c.done} error={c.error.clone()} {apply_label}
+    html! {<Modal title={tool_label(tool)} onclose={c.onclose.clone()} {onapply} apply_disabled={cmd.is_none() || radius_bad || when_bad} busy={c.busy} done={c.done} error={c.error.clone()} {apply_label}
         {map}
         extra_actions={html!{<>
             if tool == "extarea" {<button type="button" disabled={points.is_empty() || c.busy} onclick={undo_vertex}>{ex("Togli ultimo vertice")}</button>}
@@ -518,8 +521,30 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
         if matches!(tool, "ignite" | "extcircle") {<label>{ex("Raggio")}<span class="ctl-unit"><input type="number" min="10" step="10" value={(*radius).clone()} oninput={{let radius=radius.clone();Callback::from(move|e|radius.set(api::input(e)))}}/>{" m"}</span></label>}
         if radius_bad {<p class="error">{if tool == "ignite" {ex("Il raggio dell’innesco deve essere tra 40 e 2000 m.")} else {ex("Il raggio deve essere tra 10 e 5000 m.")}}</p>}
         if tool == "bstatus" {<label>{ex("Stato")}<select aria-label={ex("Stato edificio")} onchange={{let damage=damage.clone();Callback::from(move|e|damage.set(api::select(e)))}}><option value="destroyed" selected={*damage=="destroyed"}>{ex("Distrutto")}</option><option value="damaged" selected={*damage=="damaged"}>{ex("Danneggiato")}</option><option value="intact" selected={*damage=="intact"}>{ex("Integro")}</option></select></label>}
-        if c.state["clock_control"]["running"] == true {<p class="muted">{ex("Il clock è in marcia: l’intervento agisce subito sullo stato corrente.")}</p>}
+        if p.oncommand.is_none() {{when_picker(&c.state, &when)}}
     </Modal>}
+}
+
+/// "Use this command" in the scenario editor; otherwise "Queue" while the
+/// action will wait for play, "Apply" when it acts at once.
+fn apply_label(editor: bool, state: &Value, when: &When) -> &'static str {
+    if editor {
+        ex("Usa questo comando")
+    } else if *when == When::Now || !started(state) && *when == When::Play {
+        ex("Applica")
+    } else {
+        ex("Metti in coda")
+    }
+}
+fn started(state: &Value) -> bool {
+    matches!(text(&state["phase"]), "orders" | "resolving")
+}
+fn when_picker(state: &Value, when: &UseStateHandle<When>) -> Html {
+    let onchange = {
+        let when = when.clone();
+        Callback::from(move |w| when.set(w))
+    };
+    html! {<WhenPicker value={(**when).clone()} {onchange} now_clock={text(&state["world"]["stats"]["clock"]).to_string()} started={started(state)}/>}
 }
 
 // ------------------------------------------------------------------ generic short-form modal
@@ -624,6 +649,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
     let state = use_state(|| (p.dir.rem_euclid(360.).round(), p.speed.clamp(0., WIND_MAX_KMH).round()));
     let (dir, speed) = *state;
     let moisture = use_state(|| (p.moisture * 10.).round() / 10.);
+    let when = use_state(|| When::Play);
     let to = (dir + 180.).to_radians();
     let len = speed / WIND_MAX_KMH * WIND_R;
     let (tx, ty) = (len * to.sin(), -len * to.cos());
@@ -662,7 +688,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         })
     };
     let onapply = {
-        let (cb, moisture, oncommand, onclose) = (p.common.action.clone(), moisture.clone(), p.oncommand.clone(), p.common.onclose.clone());
+        let (cb, moisture, oncommand, onclose, when) = (p.common.action.clone(), moisture.clone(), p.oncommand.clone(), p.common.onclose.clone(), (*when).clone());
         Callback::from(move |_| {
             let cmd = json!({"type":"SetWeather","wind_dir_deg":dir,"wind_speed_kmh":speed,"moisture_pct":*moisture});
             match &oncommand {
@@ -670,7 +696,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
                     f.emit(cmd);
                     onclose.emit(());
                 }
-                None => cb.emit(Action::post("/api/master/command", cmd)),
+                None => cb.emit(Action::post("/api/master/command", command_body(cmd, &when))),
             }
         })
     };
@@ -700,8 +726,9 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         })
     };
     let rings = [25., 50., 75., 100.];
-    let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
-    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} {apply_label} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
+    let apply_label = apply_label(p.oncommand.is_some(), &p.common.state, &when);
+    let when_bad = p.oncommand.is_none() && matches!(&*when, When::At(t) if !crate::excon_queue::valid_clock(t));
+    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} {apply_label} apply_disabled={when_bad} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
         <p class="muted">{ex("Trascina la punta della freccia: indica dove soffia il vento, la lunghezza è la velocità.")}</p>
         <svg class="wind-dial" ref={dial} viewBox="-100 -100 200 200" onpointerdown={ondown} onpointermove={onmove}>
             {for rings.iter().map(|&v| html!{<circle r={format!("{}", v / WIND_MAX_KMH * WIND_R)} class="wd-ring"/>})}
@@ -719,6 +746,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         </div>
         <label>{ex("Umidità del combustibile")}<span class="ctl-unit"><input type="number" step="any" min="0" max="100" value={moisture.to_string()} oninput={on_moisture}/>{" %"}</span></label>
         <p class="muted">{ex("Umidità del combustibile in percentuale (0–100).")}</p>
+        if p.oncommand.is_none() {{when_picker(&p.common.state, &when)}}
     </Modal>}
 }
 
@@ -966,6 +994,7 @@ pub fn controllo(p: &ControlloProps) -> Html {
             {widgets::stats(&p.state["world"]["stats"])}
         </section>
         <aside class="card ctl-tools" aria-label={ex("Azioni disponibili")}>
+            <ExconQueue master={p.master.clone()} state={p.state.clone()} busy={p.busy} action={p.action.clone()}/>
             <input type="search" id="tool-search" class="ctl-search" placeholder={ex("Cerca un’azione…")} aria-label={ex("Cerca un’azione")} value={(*query).clone()}
                 oninput={{let query=query.clone();Callback::from(move|e|query.set(api::input(e)))}} onkeydown={on_enter}/>
             if visible.is_empty() {<p class="muted">{ex("Nessuna azione corrisponde alla ricerca.")}</p>}

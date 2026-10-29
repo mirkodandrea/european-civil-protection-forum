@@ -113,12 +113,30 @@ async fn the_clarification_loop_over_http() {
         "drafts never reach the player"
     );
 
-    // The complete suggestion runs at once; the question is sent after review.
+    // The complete suggestion is queued for play (the world does not change
+    // under the players); "now" runs it at once. The question is sent after review.
     let (status, run) = call(
         &c,
         "master",
         &format!("/api/master/review/execute/{}", team["id"]),
         Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{run}");
+    assert!(run["execution"].is_null() && run["queued"].is_u64(), "{run}");
+    let (status, _) = call(
+        &c,
+        "master",
+        &format!("/api/master/excon-actions/{}/cancel", run["queued"]),
+        Some(json!({"reason": "run it now instead"})),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let (status, run) = call(
+        &c,
+        "master",
+        &format!("/api/master/review/execute/{}", team["id"]),
+        Some(json!({"when": "now"})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{run}");

@@ -41,6 +41,7 @@ pub fn item_state(display: &str) -> (&'static str, &'static str) {
         "incomplete" => (tr("Incompleta", "Incomplete"), "gap"),
         "question_draft" => (tr("Incompleta · domanda da rivedere", "Incomplete · question to review"), "gap"),
         "awaiting_answer" => (tr("Incompleta · attende risposta", "Incomplete · awaiting answer"), "wait"),
+        "queued" => (tr("In coda · al prossimo avanzamento", "Queued · next advance"), "wait"),
         "executed" => (tr("Eseguita", "Executed"), "done"),
         "failed" => (tr("Non eseguita", "Not executed"), "bad"),
         "ignored" => (tr("Ignorata", "Ignored"), "off"),
@@ -205,7 +206,7 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
             <span class="pill rb-tone-wait" hidden={n("awaiting_answer")==0} data-review-count="awaiting">{crate::exfmt!("{} in attesa di risposta","{} awaiting an answer",n("awaiting_answer"))}</span>
             <span class="pill" hidden={n("reading")==0}>{tr("L’AI sta leggendo…","The AI is reading…")}</span>
         </header>
-        <p class="muted rb-intro">{tr("I player rispondono solo a parole. L’AI propone azioni del catalogo con la fonte; nulla accade finché non premi Esegui, e nessuna domanda parte senza Invia.","Players reply in words only. The AI proposes catalogue actions with their source; nothing happens until you press Execute, and no question leaves without Send.")}</p>
+        <p class="muted rb-intro">{tr("I player rispondono solo a parole. L’AI propone azioni del catalogo con la fonte; nulla accade finché non la metti in coda (si applica al prossimo avanzamento del tempo), e nessuna domanda parte senza Invia.","Players reply in words only. The AI proposes catalogue actions with their source; nothing happens until you queue it (it applies at the next time advance), and no question leaves without Send.")}</p>
         if reviews.is_empty(){<p class="muted">{tr("Nessuna risposta dei player da valutare.","No player replies to review.")}</p>}
         {for reviews.iter().map(|r|{
             let pid=r["proposal"].as_u64().unwrap_or(0);
@@ -234,7 +235,7 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
                     let (label,tone)=item_state(display);
                     let missing:Vec<&str>=list(&i["missing"]).iter().map(text).collect();
                     let rejected=i["verdict"]["verdict"]=="rejected";
-                    let decided=matches!(display,"executed"|"failed");
+                    let decided=matches!(display,"queued"|"executed"|"failed");
                     let is_open=*open==Some(id);
                     let toggle={let open=open.clone();Callback::from(move |_:MouseEvent|open.set(if is_open{None}else{Some(id)}))};
                     let fields=fields_for(text(&i["kind"]));
@@ -252,7 +253,7 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
                             if let Some(c)=change_label(text(&i["change"])){<span class="pill rb-diff">{c}</span>}
                             if rejected&&!decided{<span class="rb-warn" title={text(&i["verdict"]["reason"]).to_string()}>{format!("⚠ {}",text(&i["verdict"]["reason"]))}</span>}
                             <div class="grow"/>
-                            if !decided&&display!="ignored"{<button class="primary rb-run" data-review-execute={id.to_string()} disabled={!can_run} onclick={post(format!("/api/master/review/execute/{id}"),run_body.clone())}>{tr("Esegui","Execute")}</button>}
+                            if !decided&&display!="ignored"{<button class="primary rb-run" data-review-execute={id.to_string()} disabled={!can_run} title={tr("L’azione va in coda e si applica al prossimo avanzamento del tempo (la annulli dalla coda delle azioni EXCON)","The action is queued and applies at the next time advance (cancel it from the EXCON action queue)")} onclick={post(format!("/api/master/review/execute/{id}"),run_body.clone())}>{tr("Metti in coda","Queue")}</button>}
                             <button class="rb-mini" aria-expanded={is_open.to_string()} data-review-details={id.to_string()} onclick={toggle}>{if is_open{tr("Chiudi","Close")}else if decided{tr("Dettagli","Details")}else{tr("Modifica","Edit")}}</button>
                             if display=="ignored"{<button class="rb-mini" disabled={props.busy} onclick={post(format!("/api/master/review/restore/{id}"),json!({}))}>{tr("Ripristina","Restore")}</button>}
                             else if !decided{<button class="rb-mini" disabled={props.busy} data-review-ignore={id.to_string()} onclick={post(format!("/api/master/review/ignore/{id}"),json!({}))}>{tr("Ignora","Ignore")}</button>}
@@ -349,7 +350,7 @@ mod tests {
     use super::*;
     #[test]
     fn states_are_legible_and_distinct() {
-        let labels: Vec<_> = ["complete", "infeasible", "incomplete", "question_draft", "awaiting_answer", "executed", "failed", "ignored"].iter().map(|d| item_state(d).0).collect();
+        let labels: Vec<_> = ["complete", "infeasible", "incomplete", "question_draft", "awaiting_answer", "queued", "executed", "failed", "ignored"].iter().map(|d| item_state(d).0).collect();
         let mut unique = labels.clone();
         unique.sort();
         unique.dedup();

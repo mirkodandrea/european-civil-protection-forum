@@ -2,6 +2,7 @@
 //! the AI reads the reply thread and suggests catalogue actions, the EXCON
 //! executes, edits or ignores them. The acceptance scenario of the redesign,
 //! headless, with the model's readings scripted.
+use exercise::queue::ExconWhen;
 use exercise::reply_review::{ItemState, QuestionState, ReadAction, ReadQuestion, Reading};
 use exercise::response::{PlayerResponse, ResponseKind};
 use exercise::*;
@@ -191,7 +192,8 @@ fn the_acceptance_scenario_runs_end_to_end() {
     );
     for id in &teams {
         let run = ex
-            .execute_review_item(*id, Some(json!({"at": "F4"})), None)
+            .execute_review_item(*id, Some(json!({"at": "F4"})), None, ExconWhen::Now)
+            .unwrap()
             .unwrap();
         assert!(run.ok, "{}", run.detail);
     }
@@ -201,7 +203,7 @@ fn the_acceptance_scenario_runs_end_to_end() {
         .find(|i| i.kind == "CutFireLine")
         .unwrap();
     assert!(
-        ex.execute_review_item(line.id, None, None).is_err(),
+        ex.execute_review_item(line.id, None, None, ExconWhen::Now).is_err(),
         "an incomplete suggestion cannot run"
     );
 
@@ -334,7 +336,7 @@ fn the_acceptance_scenario_runs_end_to_end() {
     assert_eq!(clarifications(&ex), 1, "still nothing sent without EXCON");
     let cross = cross.id;
     ex.discard_review_question(cross).unwrap();
-    assert!(ex.execute_review_item(line.id, None, None).unwrap().ok);
+    assert!(ex.execute_review_item(line.id, None, None, ExconWhen::Now).unwrap().unwrap().ok);
 
     // Mayor: evacuation and shelter, both complete.
     let mayor_inject = ex
@@ -393,7 +395,7 @@ fn the_acceptance_scenario_runs_end_to_end() {
             // Two buses for 120 people: shown before, refused if executed, left open.
             assert!(matches!(i.verdict, Some(sim::Verdict::Rejected { .. })));
             let refused = ex
-                .execute_review_item(i.id, None, None)
+                .execute_review_item(i.id, None, None, ExconWhen::Now)
                 .unwrap_err()
                 .to_string();
             assert!(refused.contains("buses"), "{refused}");
@@ -401,7 +403,7 @@ fn the_acceptance_scenario_runs_end_to_end() {
                 .unwrap();
             continue;
         }
-        let run = ex.execute_review_item(i.id, None, None).unwrap();
+        let run = ex.execute_review_item(i.id, None, None, ExconWhen::Now).unwrap().unwrap();
         assert!(run.ok, "{}: {}", i.description, run.detail);
     }
     assert!(
@@ -550,9 +552,44 @@ fn an_old_reading_is_discarded_and_rollback_forgets_the_board() {
     )
     .unwrap();
     let id = ex.review.items[0].id;
-    assert!(ex.execute_review_item(id, None, None).unwrap().ok);
+    assert!(ex.execute_review_item(id, None, None, ExconWhen::Now).unwrap().unwrap().ok);
     ex.resolve_turn(Some(5)).unwrap();
     ex.rollback(1).unwrap();
     assert!(ex.review.items.is_empty() && ex.review.reviews.is_empty());
     assert!(ex.world.d.tasks.is_empty());
+}
+
+#[test]
+fn a_reviewed_action_waits_for_play_and_runs_as_its_role() {
+    let mut ex = exercise();
+    let parent = inject(&mut ex, &["fire_commander"], INJECT)[0];
+    let pid = reply(&mut ex, "fire_commander", parent, DOS);
+    let rev = ex.begin_review(pid).unwrap();
+    ex.ingest_reading(
+        pid,
+        rev,
+        Reading {
+            actions: vec![action("fire_commander", "DeployEngine", json!({"at": "F4"}), "due squadre")],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let id = ex.review.items[0].id;
+    // During the pause the decision is queued: the world does not change.
+    assert!(ex.execute_review_item(id, None, None, ExconWhen::Play).unwrap().is_none());
+    let item = ex.review.items.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(item.state, ItemState::Queued);
+    let queue_id = item.queued.unwrap();
+    assert!(ex.world.d.tasks.is_empty());
+    assert!(ex.execute_review_item(id, None, None, ExconWhen::Play).is_err(), "decided once");
+    // Withdrawn from the queue, it can be decided again.
+    ex.cancel_excon_action(queue_id, "changed my mind").unwrap();
+    assert_eq!(ex.review.items.iter().find(|i| i.id == id).unwrap().state, ItemState::Complete);
+    ex.execute_review_item(id, None, None, ExconWhen::Play).unwrap();
+    // Play: it runs as the fire commander, with that role's engines.
+    ex.resolve_turn(Some(5)).unwrap();
+    let item = ex.review.items.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(item.state, ItemState::Executed, "{:?}", item.execution);
+    assert!(item.execution.as_ref().unwrap().ok);
+    assert!(ex.world.d.tasks.iter().any(|t| t.role == "fire_commander"));
 }

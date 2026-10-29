@@ -154,7 +154,10 @@ async fn players_see_personas_and_never_excon_across_the_response_flow() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|l| l["seq"] == seq && l["data"]["origin"] == "narrative_outcome"));
+        .any(|l| l["seq"] == seq && l["data"]["origin"]["origin"] == "narrative_outcome"));
+    // Orders are open: the intervention waits for play in the EXCON queue.
+    assert_eq!(master["excon_queue"][0]["origin"]["origin"], "narrative_outcome");
+    assert_eq!(master["excon_queue"][0]["status"], "approved");
 }
 
 #[tokio::test]

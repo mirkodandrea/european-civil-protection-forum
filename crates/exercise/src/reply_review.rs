@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sim::{Actor, Command, Verdict};
 
+use crate::queue::ExconWhen;
 use crate::{ExecutionRecord, Exercise, MsgKind, Phase, ProposalStatus, Source, MASTER};
 
 /// Suggestions kept per reply (the model may return fewer).
@@ -46,6 +47,9 @@ pub enum ItemState {
     Complete,
     /// Some required parameters are missing (see [`ReviewItem::missing`]).
     Incomplete,
+    /// The EXCON decided to run it: it waits in the EXCON queue
+    /// ([`crate::queue`]) for the next advance (see [`ReviewItem::queued`]).
+    Queued,
     /// The EXCON executed it (see [`ReviewItem::execution`]).
     Executed,
     /// The EXCON executed it but the simulator refused it.
@@ -100,6 +104,8 @@ pub struct ReviewItem {
     /// Reading that last touched it.
     pub revision: u32,
     pub execution: Option<ExecutionRecord>,
+    /// Id of its queued EXCON action while it waits for play.
+    pub queued: Option<u64>,
     pub note: Option<String>,
     pub turn: u32,
 }
@@ -529,6 +535,7 @@ impl Exercise {
                         edited: false,
                         revision,
                         execution: None,
+                        queued: None,
                         note: None,
                         turn: self.turn,
                     });
@@ -628,7 +635,7 @@ impl Exercise {
         // by a reading that says the same; an executed one is never changed.
         let same = item.params == params && item.role == role;
         match item.state {
-            ItemState::Executed | ItemState::Failed => {
+            ItemState::Queued | ItemState::Executed | ItemState::Failed => {
                 item.change = Change::Unchanged;
                 if !same {
                     item.notes.push("A later answer suggests other parameters; this action was already executed.".into());
@@ -898,7 +905,7 @@ impl Exercise {
             }
         }
         let item = self.item_mut(id)?;
-        if matches!(item.state, ItemState::Executed | ItemState::Failed) {
+        if matches!(item.state, ItemState::Queued | ItemState::Executed | ItemState::Failed) {
             bail!("suggestion {id} was already executed");
         }
         let before = item.params.clone();
@@ -921,14 +928,19 @@ impl Exercise {
         Ok(())
     }
 
-    /// The EXCON executes a complete suggestion now (optionally with edited
-    /// parameters): it becomes a command of its role, validated and applied.
+    /// The EXCON decides to run a complete suggestion (optionally with edited
+    /// parameters): it becomes a command of its role, checked for that role.
+    /// Like every EXCON action on the world it waits for play
+    /// ([`Exercise::apply_or_queue_excon`]): with [`ExconWhen::Play`] or
+    /// [`ExconWhen::At`] it is queued (state `Queued`, `None` returned) and runs
+    /// as its role when time next moves; [`ExconWhen::Now`] applies it at once.
     pub fn execute_review_item(
         &mut self,
         id: u64,
         params: Option<Value>,
         role: Option<String>,
-    ) -> Result<ExecutionRecord> {
+        when: ExconWhen,
+    ) -> Result<Option<ExecutionRecord>> {
         if self.phase != Phase::Orders {
             bail!("actions are executed while the turn is open");
         }
@@ -942,6 +954,33 @@ impl Exercise {
                 .unwrap_or_default();
             self.edit_review_item(id, role, params.unwrap_or(current))?;
         }
+        let (item, cmd) = self.runnable_review_item(id)?;
+        if when == ExconWhen::Now {
+            return self.apply_review_item(id).map(Some);
+        }
+        let now = self.world.time_s();
+        let run_at_s = match when {
+            ExconWhen::At(t) if t < now => bail!("the chosen time has already passed"),
+            ExconWhen::At(t) => t,
+            _ => now,
+        };
+        let origin = json!({"origin": "excon_review", "review_item": id, "role": item.role});
+        let queued = self.enqueue_excon(&cmd, run_at_s, matches!(when, ExconWhen::Play), origin)?;
+        let it = self.item_mut(id)?;
+        it.state = ItemState::Queued;
+        it.queued = Some(queued);
+        it.params = params_of(&cmd);
+        it.description = cmd.describe();
+        self.record(
+            "review_item_queued",
+            MASTER,
+            json!({"review_item": id, "proposal": item.proposal, "role": item.role, "queue_id": queued, "run_at_s": run_at_s}),
+        );
+        Ok(None)
+    }
+
+    /// The suggestion and its command, if it may run now as its role.
+    fn runnable_review_item(&self, id: u64) -> Result<(ReviewItem, Command)> {
         let item = self
             .review
             .items
@@ -950,7 +989,7 @@ impl Exercise {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("unknown suggestion {id}"))?;
         match item.state {
-            ItemState::Executed | ItemState::Failed => {
+            ItemState::Queued | ItemState::Executed | ItemState::Failed => {
                 bail!("suggestion {id} was already executed")
             }
             ItemState::Incomplete if !item.missing.is_empty() => {
@@ -960,14 +999,33 @@ impl Exercise {
         }
         let cmd = command_of(&item.kind, &item.params).map_err(anyhow::Error::msg)?;
         let (cmd, _) = self.world.reconcile_command(&cmd);
-        let actor = Actor::Role(item.role.clone());
-        let allocations = self.world.d.allocations.len();
-        let events = self.world.d.resource_events.len();
         // Not feasible now: nothing runs, the suggestion stays open to edit.
         if let Verdict::Rejected { reason } = self.review_verdict(&item.role, &cmd) {
             bail!("not feasible: {reason}");
         }
-        let result = self.world.apply(&cmd, &actor);
+        Ok((item, cmd))
+    }
+
+    /// Apply a suggestion as its role, now: at once ([`ExconWhen::Now`]) or
+    /// when its queued action is due. A queued one that is no longer feasible
+    /// fails with the simulator's reason.
+    pub(crate) fn apply_review_item(&mut self, id: u64) -> Result<ExecutionRecord> {
+        let item = self
+            .review
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown suggestion {id}"))?;
+        let cmd = command_of(&item.kind, &item.params).map_err(anyhow::Error::msg)?;
+        let (cmd, _) = self.world.reconcile_command(&cmd);
+        let actor = Actor::Role(item.role.clone());
+        let allocations = self.world.d.allocations.len();
+        let events = self.world.d.resource_events.len();
+        let result = match self.review_verdict(&item.role, &cmd) {
+            Verdict::Rejected { reason } => Err(format!("not feasible: {reason}")),
+            _ => self.world.apply(&cmd, &actor),
+        };
         let (ok, detail) = match result {
             Ok(notes) => (true, notes.join("; ")),
             Err(reason) => (false, reason),
@@ -998,17 +1056,45 @@ impl Exercise {
         self.record(
             "action_executed",
             MASTER,
-            json!({"review_item": id, "proposal": item.proposal, "role": item.role, "source_role": item.source_role, "quote": item.quote, "execution": execution}),
+            json!({"review_item": id, "proposal": item.proposal, "role": item.role, "source_role": item.source_role, "quote": item.quote, "execution": execution, "queue_id": item.queued}),
         );
         // Later suggestions are checked against what is now committed.
         self.recheck_items(item.proposal);
         Ok(execution)
     }
 
+    /// Keep suggestions in step with their queued actions after a cancel or a
+    /// rollback: still waiting → `Queued`; withdrawn or forgotten → back to
+    /// `Complete` (to run again or ignore).
+    pub(crate) fn sync_review_queue(&mut self) {
+        let runs: Vec<(u64, Option<crate::actions::ActionStatus>)> = self
+            .review
+            .items
+            .iter()
+            .filter_map(|i| i.queued)
+            .map(|q| (q, self.action_runs.get(&format!("excon:{q}")).map(|r| r.status)))
+            .collect();
+        for (q, status) in runs {
+            let Some(it) = self.review.items.iter_mut().find(|i| i.queued == Some(q)) else { continue };
+            match status {
+                Some(crate::actions::ActionStatus::Approved) => {
+                    it.state = ItemState::Queued;
+                    it.execution = None;
+                }
+                Some(crate::actions::ActionStatus::Done | crate::actions::ActionStatus::Failed) => {}
+                _ => {
+                    it.state = ItemState::Complete;
+                    it.execution = None;
+                    it.queued = None;
+                }
+            }
+        }
+    }
+
     /// The EXCON decides not to act on a suggestion (it stays listed).
     pub fn ignore_review_item(&mut self, id: u64, note: Option<String>) -> Result<()> {
         let item = self.item_mut(id)?;
-        if matches!(item.state, ItemState::Executed | ItemState::Failed) {
+        if matches!(item.state, ItemState::Queued | ItemState::Executed | ItemState::Failed) {
             bail!("suggestion {id} was already executed");
         }
         item.state = ItemState::Ignored;
@@ -1360,6 +1446,7 @@ impl Exercise {
                             ItemState::Complete if matches!(i.verdict, Some(Verdict::Rejected { .. })) => "infeasible",
                             ItemState::Complete => "complete",
                             ItemState::Incomplete => "incomplete",
+                            ItemState::Queued => "queued",
                             ItemState::Executed => "executed",
                             ItemState::Failed => "failed",
                             ItemState::Ignored => "ignored",
