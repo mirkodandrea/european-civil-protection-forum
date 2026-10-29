@@ -359,15 +359,43 @@ impl crate::player_view::PlayerView {
             let open = self.cb(Msg::OpenWork);
             let open_via = self.cb(|(parent, conv): (String, String)| Msg::OpenWorkConv(parent, conv));
             let id = m["id"].to_string();
+            let guest = it.guest;
             // A guest answers through a conversation; the most recent one carries the response.
             let via = if it.guest { it.convs.last().map(|c| (c["delivery"].to_string(), c["id"].to_string())) } else { None };
-            let start = self.cb(|_| Msg::Field("inj:newconv".into(), "true".into()));
-            html! {<footer class="inj-composer row">
-                if incoming{<small class="muted" role="status">{i18n::t(l,"thread_incoming")}</small>}
-                else if it.threads.iter().any(|t| has_status(t,"awaiting_excon")){<small class="muted" role="status">{i18n::t(l,"thread_wait")}</small>}
-                <div class="grow"/>
-                if !it.guest {<button data-new-conversation="" onclick={start}>{i18n::t(l,"conv_new")}</button>}
-                <button class={classes!("reply-inject","primary")} disabled={!can_act||(it.guest&&via.is_none())} data-reply-inject={id.clone()} onclick={Callback::from(move |_|match &via{Some((p,c))=>open_via.emit((p.clone(),c.clone())),None=>open.emit(Some(id.clone()))})}>{i18n::t(l,label)}</button></footer>}
+            let choosing = self.field("inj:choose", "") == "true" && !it.guest;
+            let direct = {
+                let (open, id, link) = (open.clone(), id.clone(), self.link.clone());
+                Callback::from(move |_| {
+                    link.emit(Msg::Field("inj:choose".into(), String::new()));
+                    open.emit(Some(id.clone()))
+                })
+            };
+            let to_conversation = self.cb(|_| Msg::Field("inj:newconv".into(), "true".into()));
+            let cancel = self.cb(|_| Msg::Field("inj:choose".into(), String::new()));
+            // A guest answers through a conversation directly; everyone else first picks where the reply goes.
+            let on_reply = {
+                let (link, via) = (self.link.clone(), via.clone());
+                Callback::from(move |_| match &via {
+                    Some((p, c)) => open_via.emit((p.clone(), c.clone())),
+                    None if guest => {}
+                    None => link.emit(Msg::Field("inj:choose".into(), "true".into())),
+                })
+            };
+            if choosing {
+                html! {<footer class="inj-composer reply-step" data-reply-step="choose">
+                    <b>{i18n::t(l,"reply_step_title")}</b>
+                    <div class="reply-step-options">
+                        <button class="reply-step-option" data-reply-direct={id.clone()} disabled={!can_act} onclick={direct}><b>{i18n::t(l,"reply_step_direct")}</b><small>{i18n::t(l,"reply_step_direct_hint")}</small></button>
+                        <button class="reply-step-option" data-reply-conversation="" onclick={to_conversation}><b>{i18n::t(l,"reply_step_conv")}</b><small>{i18n::t(l,"reply_step_conv_hint")}</small></button>
+                    </div>
+                    <div class="row"><div class="grow"/><button onclick={cancel}>{i18n::t(l,"cancel")}</button></div></footer>}
+            } else {
+                html! {<footer class="inj-composer row">
+                    if incoming{<small class="muted" role="status">{i18n::t(l,"thread_incoming")}</small>}
+                    else if it.threads.iter().any(|t| has_status(t,"awaiting_excon")){<small class="muted" role="status">{i18n::t(l,"thread_wait")}</small>}
+                    <div class="grow"/>
+                    <button class={classes!("reply-inject","primary")} disabled={!can_act||(it.guest&&via.is_none())} data-reply-inject={id.clone()} onclick={on_reply}>{i18n::t(l,label)}</button></footer>}
+            }
         } else {
             html! {}
         };

@@ -84,7 +84,7 @@ const supportedText = 'Issue a warning for the selected zone';
     // The mayor starts a conversation from the inject; the reference is fixed at opening.
     await openInject('mayor');
     assert.equal(await mayor.locator('#new-player-action').count(), 0, 'no "+ New action" entry point');
-    await mayor.locator('[data-new-conversation]').click();
+    await mayor.locator('[data-reply-inject]').click();await mayor.locator('[data-reply-conversation]').click();
     await mayor.locator('[data-conv-person="fire_commander"]').check();
     await mayor.locator('#conv-first').fill('Mayor: can you hold the north road while we warn F4?');
     await mayor.locator('[data-create-conversation]').click();
@@ -137,7 +137,7 @@ const supportedText = 'Issue a warning for the selected zone';
     // The same inject can receive more responses (each one is its own proposal).
     for (const zone of ['F4', 'G4']) {
       await openInject('mayor');
-      await mayor.locator('[data-reply-inject]').click();
+      await mayor.locator('[data-reply-inject]').click();await mayor.locator('[data-reply-direct]').click();
       await work.locator('#kind-decision').check();
       await work.locator('#work-action').selectOption('IssueWarning');
       await work.locator('#work-location').fill(zone);
@@ -151,7 +151,7 @@ const supportedText = 'Issue a warning for the selected zone';
     // AI suggestions: nothing actionable proposes nothing; an actionable narrative
     // offers actions, and associating one (the only slot) is an explicit click.
     await openInject('mayor');
-    await mayor.locator('[data-reply-inject]').click();
+    await mayor.locator('[data-reply-inject]').click();await mayor.locator('[data-reply-direct]').click();
     await work.locator('#response-narrative').fill(unsupportedText);
     await work.locator('[data-work-suggestions="none"]').waitFor({ timeout: 15000 });
     await work.locator('#response-narrative').fill(supportedText);
@@ -170,7 +170,7 @@ const supportedText = 'Issue a warning for the selected zone';
 
     // A plain communication is delivered at once and never waits for EXCON.
     await openInject('mayor');
-    await mayor.locator('[data-reply-inject]').click();
+    await mayor.locator('[data-reply-inject]').click();await mayor.locator('[data-reply-direct]').click();
     await work.locator('#kind-communication').check();
     assert.equal(await work.locator('[data-work-block="basis"]').count(), 0, 'no basis for a communication');
     await work.locator('#response-narrative').fill('Received, following the situation.');
@@ -184,7 +184,7 @@ const supportedText = 'Issue a warning for the selected zone';
     // without sending it.
     await page.setViewportSize({ width: 390, height: 844 });
     await openInject('fire_commander');
-    await fire.locator('[data-reply-inject]').click();
+    await fire.locator('[data-reply-inject]').click();await fire.locator('[data-reply-direct]').click();
     const fireWork = fire.locator('.work-modal');
     await fireWork.locator('#kind-decision').check();
     await fireWork.locator('#work-action').selectOption('CutFireLine');

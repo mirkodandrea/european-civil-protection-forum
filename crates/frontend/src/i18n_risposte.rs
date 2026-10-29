@@ -8,7 +8,11 @@ use serde_json::Value;
 fn it(key: &str) -> Option<&'static str> {
     Some(match key {
         "reply" | "another_reply" | "reply_again" | "conv_respond" | "reply_inject_title" | "respond_title" => "Rispondi",
-        "conv_new" => "Avvia conversazione",
+        "reply_step_title" => "A che cosa vuoi rispondere?",
+        "reply_step_direct" => "Risposta diretta al messaggio",
+        "reply_step_direct_hint" => "Rispondi all’inject: comunicazione o decisione.",
+        "reply_step_conv" => "Inizia una conversazione",
+        "reply_step_conv_hint" => "Ne parli prima con altri player, qui nella chat.",
         "conv_create" => "Invia e avvia",
         "conv_pick" => "Con quale player?",
         "conv_first" => "Primo messaggio",
@@ -58,7 +62,11 @@ fn it(key: &str) -> Option<&'static str> {
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
         "reply" | "another_reply" | "reply_again" | "conv_respond" | "reply_inject_title" | "respond_title" => "Reply",
-        "conv_new" => "Start conversation",
+        "reply_step_title" => "What do you want to reply to?",
+        "reply_step_direct" => "Direct reply to the message",
+        "reply_step_direct_hint" => "Answer the inject: a communication or a decision.",
+        "reply_step_conv" => "Start a conversation",
+        "reply_step_conv_hint" => "Talk it over with other players first, here in the chat.",
         "conv_create" => "Send and start",
         "conv_pick" => "With which player?",
         "conv_first" => "First message",
