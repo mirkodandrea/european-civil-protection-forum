@@ -5,38 +5,88 @@ use crate::{
     widgets, Action, ActionKind, Msg,
 };
 use serde_json::{json, Value};
-
-/// Largest PDF the server accepts (`exercise::files::MAX_PDF_BYTES`).
-const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
 use yew::prelude::*;
+
+/// Where a map click points, as words for the reply: a named building, else
+/// the zone code (`F4`), else the coordinates.
+pub fn place_words(point: &Value) -> String {
+    let building = text(&point["building"]);
+    let zone = text(&point["zone"]);
+    if !building.is_empty() {
+        building.to_string()
+    } else if !zone.is_empty() {
+        zone.to_string()
+    } else {
+        format!("{:.0},{:.0}", point["x"].as_f64().unwrap_or(0.0), point["y"].as_f64().unwrap_or(0.0))
+    }
+}
+
+/// `text` with `place` appended, separated as a writer would.
+pub fn append_place(text: &str, place: &str) -> String {
+    let t = text.trim_end();
+    if t.is_empty() {
+        place.to_string()
+    } else {
+        format!("{t} {place}")
+    }
+}
+
 impl crate::player_view::PlayerView {
+    /// How to reply so the exercise control can act on it, next to the reply
+    /// box: what, where, with which resources, by when, who is informed; then
+    /// what the role decides with (competences, resources).
+    pub fn reply_guidance(&self, l: &str, compact: bool) -> Html {
+        let tips = [
+            ("guide_what", "guide_what_hint"),
+            ("guide_where", "guide_where_hint"),
+            ("guide_with", "guide_with_hint"),
+            ("guide_when", "guide_when_hint"),
+            ("guide_who", "guide_who_hint"),
+        ];
+        let resource_name = |id: &str| {
+            list(&self.stat["resource_types"]).iter().find(|r| r["id"] == id).map(|r| text(&r["name"]).to_string()).unwrap_or(id.into())
+        };
+        let resources: Vec<String> = self.state["resource_accounting"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(id, a)| format!("{} {}", a["available"], resource_name(id)))
+            .collect();
+        let allowed = list(&self.state["role"]["allowed_actions"]);
+        if compact {
+            return html! {<p class="reply-guide-line" data-reply-guide="compact">{i18n::t(l,"guide_compact")}</p>};
+        }
+        html! {<aside class="reply-guide" data-reply-guide="" aria-label={i18n::t(l,"guide_title")}>
+            <h4>{i18n::t(l,"guide_title")}</h4>
+            <ul class="reply-guide-list">{for tips.iter().map(|(k,h)|html!{<li><b>{i18n::t(l,k)}</b><span>{i18n::t(l,h)}</span></li>})}</ul>
+            <p class="reply-guide-example"><small>{i18n::t(l,"guide_example")}</small></p>
+            <h4>{i18n::t(l,"guide_support")}</h4>
+            <dl class="reply-guide-support">
+                <dt>{i18n::t(l,"guide_competences")}</dt>
+                <dd>{if allowed.is_empty(){i18n::t(l,"function_no_actions").to_string()}else{allowed.iter().map(|a|i18n::action(l,text(a)).to_string()).collect::<Vec<_>>().join(" · ")}}</dd>
+                <dt>{i18n::t(l,"guide_resources")}</dt>
+                <dd>{if resources.is_empty(){i18n::t(l,"function_no_resources").to_string()}else{resources.join(" · ")}}</dd>
+            </dl>
+            <small class="muted">{i18n::t(l,"guide_more")}</small>
+        </aside>}
+    }
+
     pub fn view_tactical(&self) -> Html {
         let own = self.own.clone();
         let l = self.lang();
         let l = l.as_str();
-        // Only the action kinds the scenario gives this role (Risorse); the form
-        // is shared with the EXCON review (`action_pick`).
-        let work_allowed = crate::place_pick::menu_actions(&self.state["role"]);
-        let draft = crate::action_pick::Draft::read(|k, d| self.field(k, d));
-        let resolved = crate::action_pick::resolve(&self.stat, &work_allowed, &draft);
-        let set: crate::action_pick::Set = self.batch(|v: Vec<(&'static str, String)>| v.into_iter().map(|(k, v)| Msg::Field(k.into(), v)).collect::<Vec<_>>());
-        let pick = resolved.pick;
-        let map_click = crate::action_pick::map_click(&self.stat, &resolved, &draft, &set);
         let work_reply_to = self.field("work:reply_to", "");
-        let staged = self.staged();
         let work_conversation = self.field("work:conversation", "").parse::<u64>().ok();
         let narrative_text = self.field("work:narrative", "");
-        let work_command = {
-            let commands = resolved.commands.clone();
-            self.batch(move |_| {
-                if commands.is_empty() {
-                    return vec![];
+        // A map click writes the place into the reply (zone code or building name).
+        let map_click = {
+            let link = self.link.clone();
+            let current = narrative_text.clone();
+            let open = self.field("work:open", "false") == "true";
+            Callback::from(move |point: Value| {
+                if open {
+                    link.emit(Msg::Field("work:narrative".into(), append_place(&current, &place_words(&point))));
                 }
-                // The selection is used up: the next action starts from a clean map.
-                let mut out = vec![Msg::StageActions(commands.clone())];
-                out.extend(["work:location", "work:destination", "work:anchor"].map(|k| Msg::Field(k.into(), String::new())));
-                out.push(Msg::Field("work:target_field".into(), "work:location".into()));
-                out
             })
         };
         let selected_context = self
@@ -54,9 +104,6 @@ impl crate::player_view::PlayerView {
             });
         let answers_inject = selected_context.is_some_and(|m| m["kind"] == "inject");
         let has_narrative = !narrative_text.trim().is_empty();
-        // Communication or decision: an explicit choice (an action makes it a decision).
-        let work_kind = if staged.is_empty() { self.field("work:kind", "") } else { "decision".into() };
-        let decision = work_kind == "decision";
         // Recipient: the fictitious sender of the inject; only a reply from a conversation
         // can instead go to its participants (talking to other players is a conversation).
         let to_players_mode = work_conversation.is_some() && self.field("work:to", "persona") == "players";
@@ -69,85 +116,21 @@ impl crate::player_view::PlayerView {
             Some(c) => list(&c["participants"]).iter().map(text).filter(|p| *p != own).map(|p| (p.to_string(), self.name(p))).collect(),
             None => self.contacts().iter().filter(|r| r["id"] != "master").map(|r| (text(&r["id"]).to_string(), text(&r["name"]).to_string())).collect(),
         };
-        let work_basis_chosen = self.field("work:basis", "");
         // What the disabled "send" button is waiting for.
         let respond_missing = if self.state["phase"] != "orders" { Some("work_need_orders") }
             else if !answers_inject { Some("work_need_inject") }
-            else if work_kind.is_empty() { Some("need_kind") }
-            else if !has_narrative && (!decision || staged.is_empty() || to_players_mode) { Some("need_text") }
-            else if decision && work_basis_chosen.is_empty() { Some("need_basis") }
+            else if !has_narrative { Some("need_text") }
             else if to_players_mode && to_players.is_empty() { Some("need_players") }
             else { None };
-        // What the disabled "add action" button is waiting for.
-        let work_missing = resolved.missing;
-        // What the response rests on; a PDF only goes with plans or laws.
-        let work_basis = work_basis_chosen.clone();
-        let file_name = self.field("work:file_name", "");
-        let file_size = self.field("work:file_size", "0").parse::<usize>().unwrap_or(0);
-        let file_error = self.field("work:file_error", "");
-        let doc_allowed = work_basis == "plan" || work_basis == "law";
-        let on_file = {
-            let link = self.link.clone();
-            Callback::from(move |e: Event| {
-                use yew::TargetCast;
-                let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                let Some(file) = input.files().and_then(|f| f.get(0)) else { return };
-                // Choosing the same file again must fire a change event.
-                input.set_value("");
-                let link = link.clone();
-                let set = move |k: &str, v: String| link.emit(Msg::Field(k.into(), v));
-                wasm_bindgen_futures::spawn_local(async move {
-                    let name = file.name();
-                    let size = file.size() as usize;
-                    let error = if size > MAX_PDF_BYTES {
-                        Some("doc_too_big")
-                    } else if !(file.type_() == "application/pdf" || name.to_lowercase().ends_with(".pdf")) {
-                        Some("doc_not_pdf")
-                    } else {
-                        None
-                    };
-                    if let Some(error) = error {
-                        set("work:file_error", error.into());
-                        return;
-                    }
-                    match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-                        Ok(buffer) => {
-                            use base64::Engine;
-                            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-                            set("work:file_data", base64::engine::general_purpose::STANDARD.encode(&bytes));
-                            set("work:file_name", name);
-                            set("work:file_size", bytes.len().to_string());
-                            set("work:file_error", String::new());
-                        }
-                        Err(_) => set("work:file_error", "doc_read_fail".into()),
-                    }
-                });
-            })
-        };
-        let drop_file = self.batch(|_| {
-            ["work:file_data", "work:file_name", "work:file_size", "work:file_error"]
-                .into_iter()
-                .map(|k| Msg::Field(k.into(), String::new()))
-                .collect::<Vec<_>>()
-        });
+        // Players reply in words only: the exercise control decides what happens.
         let respond = {
             let own = own.clone();
             let narrative = narrative_text.clone();
-            let commands = staged.clone();
             let parent = work_reply_to.parse::<u64>().ok();
-            let basis = work_basis.clone();
-            let attachment = (doc_allowed && !file_name.is_empty()).then(|| {
-                json!({"name": file_name.clone(), "content_type": "application/pdf", "data": self.field("work:file_data", "")})
-            });
-            let summary = staged.iter().map(|c| widgets::command_summary("en", c)).collect::<Vec<_>>().join("; ");
-            let (kind, players) = (work_kind.clone(), to_players_mode.then(|| to_players.clone()));
+            let players = to_players_mode.then(|| to_players.clone());
             self.cb(move |_| {
-                let decision = kind == "decision";
-                let mut body = json!({"kind":kind,"commands":if decision {commands.clone()} else {vec![]},"text":summary,"reply_to":parent,"conversation":work_conversation});
-                if !narrative.trim().is_empty() { body["narrative"] = json!(narrative); }
-                if decision { body["basis"] = json!(basis); }
+                let mut body = json!({"kind":"communication","narrative":narrative,"reply_to":parent,"conversation":work_conversation});
                 if let Some(players) = &players { body["to_players"] = json!(players); }
-                if let Some(attachment) = attachment.as_ref().filter(|_| decision) { body["attachment"] = attachment.clone(); }
                 let mut request = Action::post(format!("/api/player/{own}/actions"), body);
                 request.kind = ActionKind::WorkSubmit;
                 Msg::Action(request)
@@ -170,60 +153,24 @@ impl crate::player_view::PlayerView {
                 </div>
                 if to_players_mode {<div class="work-players">{for player_choices.iter().map(|(id,name)|{let on=to_players.contains(id);html!{<label class="mt-check" key={id.clone()}><input type="checkbox" data-to-player={id.clone()} checked={on} onchange={pick_players(id.clone(),on)}/>{name.clone()}</label>}})}</div>}
             </div>}
-            <div class="work-block" data-work-block="kind">
-                <h4 class="work-section">{i18n::t(l,"resp_kind")}</h4>
-                <div class="basis-options kind-options" role="radiogroup" aria-label={i18n::t(l,"resp_kind")}>
-                    <label class={classes!("basis-option",(work_kind=="communication").then_some("is-selected"))}><input type="radio" name="work-kind" id="kind-communication" data-kind="communication" checked={work_kind=="communication"} disabled={!staged.is_empty()} onchange={self.cb(|_|Msg::Field("work:kind".into(),"communication".into()))}/><span><b>{i18n::t(l,"kind_comm")}</b><small>{i18n::t(l,"kind_comm_hint")}</small></span></label>
-                    <label class={classes!("basis-option",decision.then_some("is-selected"))}><input type="radio" name="work-kind" id="kind-decision" data-kind="decision" checked={decision} onchange={self.cb(|_|Msg::Field("work:kind".into(),"decision".into()))}/><span><b>{i18n::t(l,"kind_dec")}</b><small>{i18n::t(l,"kind_dec_hint")}</small></span></label>
+            <div class="work-block reply-block" data-work-block="narrative">
+                <div class="reply-write">
+                    <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"reply_text_label")}</label></h4>
+                    <p class="work-help" data-narrative-help="">{i18n::t(l,"reply_text_help")}</p>
+                    <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"reply_ph")} value={narrative_text.clone()} oninput={self.cb(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
+                    <small class="muted">{i18n::t(l,"map_inserts_place")}</small>
                 </div>
+                {self.reply_guidance(l, false)}
             </div>
-            <div class="work-block" data-work-block="narrative">
-                <h4 class="work-section"><label for="response-narrative">{i18n::t(l,"resp_text")}</label></h4>
-                <p class="work-help" data-narrative-help="">{i18n::t(l,"resp_text_help")}</p>
-                <textarea id="response-narrative" data-response-narrative="" maxlength="8000" placeholder={i18n::t(l,"narr_ph")} value={narrative_text.clone()} oninput={self.cb(|e|Msg::Field("work:narrative".into(),api::input(e)))}/>
-                if work_kind != "communication" {{self.view_suggestions(l, &staged)}}
-            </div>
-            if decision {
-            <div class="work-block" data-work-block="basis">
-                <h4 class="work-section">{format!("{} *",i18n::t(l,"step_basis"))}</h4>
-                <p class="work-help">{i18n::t(l,"basis_hint")}</p>
-                <div class="basis-options" role="radiogroup" aria-required="true" aria-label={i18n::t(l,"step_basis")}>{for [("plan","basis_plan"),("law","basis_law"),("operational_judgment","basis_judgment")].into_iter().map(|(value,label)|html!{<label key={value} class={classes!("basis-option",(work_basis==value).then_some("is-selected"))}><input type="radio" name="work-basis" id={format!("basis-{value}")} value={value} checked={work_basis==value} onchange={self.cb(move |_|Msg::Field("work:basis".into(),value.into()))}/><span>{i18n::t(l,label)}</span></label>})}</div>
-                <div class="work-attach" data-work-attach="">
-                    <label for="work-pdf">{i18n::t(l,"doc_label")}</label>
-                    if doc_allowed {
-                        <p class="work-help">{i18n::t(l,"doc_hint")}</p>
-                        if file_name.is_empty() {
-                            <input id="work-pdf" type="file" accept="application/pdf,.pdf" disabled={self.busy} onchange={on_file}/>
-                        } else {
-                            <div class="work-file" data-work-file=""><span class="work-file-name">{file_name.clone()}</span><small class="muted">{if file_size<1_048_576{format!("{} KB",file_size.div_ceil(1024))}else{format!("{:.1} MB",file_size as f64/1_048_576.0)}}</small><button type="button" disabled={self.busy} onclick={drop_file}>{i18n::t(l,"doc_remove")}</button></div>
-                        }
-                    } else {
-                        <p class="work-help muted">{i18n::t(l,"doc_off")}</p>
-                    }
-                    if !file_error.is_empty() {<p class="error" role="alert">{i18n::t(l,match file_error.as_str(){"doc_too_big"=>"doc_too_big","doc_not_pdf"=>"doc_not_pdf",_=>"doc_read_fail"})}</p>}
-                </div>
-            </div>
-            <div class="work-block" data-work-block="actions">
-            <h4 class="work-section">{i18n::t(l,"sim_action")}</h4>
-            if staged.is_empty() {<p class="muted" data-staged-empty="">{i18n::t(l,"sim_action_none")}</p>}
-            <ol class="staged-actions">{for staged.iter().enumerate().map(|(i,c)|html!{<li data-staged-action=""><span>{widgets::command_summary(l,c)}</span><button type="button" aria-label={i18n::t(l,"remove")} disabled={self.busy} onclick={self.cb(move |_|Msg::Unstage(i))}>{"×"}</button></li>})}</ol>
-            <details class="work-add" open={staged.is_empty()}><summary>{i18n::t(l,"add_action_title")}</summary>
-            {crate::action_pick::form(l, "work", &self.stat, &resolved, &draft, &set, html!{<small class="muted work-hint" data-narrate-unlisted="">{i18n::t(l,"narrate_unlisted")}</small>})}
-            <button data-add-action="" disabled={self.busy||work_missing.is_some()} onclick={work_command}>{i18n::t(l,"add_action")}</button>
-            if let Some(missing)=work_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}
-            </details>
-            </div>
-            }
             <div class="work-submit-bar">
                 <button class="primary" id="respond-submit" data-respond="" disabled={self.busy||respond_missing.is_some()} onclick={respond}>{i18n::t(l,"send_response")}</button>
-                if let Some(missing)=respond_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}else{<small class="muted work-hint">{i18n::t(l,if decision{"respond_hint"}else{"kind_comm_hint"})}</small>}
+                if let Some(missing)=respond_missing{<small class="muted work-hint" role="status">{i18n::t(l,missing)}</small>}else{<small class="muted work-hint">{i18n::t(l,"reply_hint")}</small>}
             </div>
         </section>};
         let mut view = self.state["map"].clone();
         view["deployments"] = self.state["deployments"].clone();
-        let selection = if pick == "zones" && !resolved.selected_zones.is_empty() { resolved.selected_zones.join(", ") } else { self.field("work:location", "") };
-        // The map shows what the form holds: selected zones, the points or line.
-        let (map_zones, pending) = crate::action_pick::map_preview(&self.stat, &resolved, &draft);
+        let selection = String::new();
+        let (map_zones, pending): (Vec<String>, Option<Value>) = (Vec::new(), None);
         let turn = self.field("work:turn", &self.state["turn"].to_string());
         let current_turn = turn.parse::<u64>().unwrap_or(0);
         let injects = self
@@ -319,7 +266,7 @@ impl crate::player_view::PlayerView {
             <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div></section>
             <section class="tactical-resources" id="resources" aria-label={i18n::t(l,"resources")}>{for self.state["resources"].as_object().into_iter().flatten().map(|(id,pool)|{let account=&self.state["resource_accounting"][id];html!{<div class="resource-token"><strong>{account["available"].to_string()}</strong><span>{resource_name(id)}<small>{i18n::tf(l,"res_of",&[&pool["total"].to_string(),&(account["committed"].as_u64().unwrap_or(0)+account["deployed"].as_u64().unwrap_or(0)).to_string()])}</small></span></div>}})}</section>
             <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
-                if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint")}</p>
+                if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint_reply")}</p>
                 if !list(&self.state["map"]["forecast_products"]).is_empty(){<details><summary>{i18n::t(l,"forecasts")}</summary>{for list(&self.state["map"]["forecast_products"]).iter().map(|f|widgets::details(i18n::tf(l,"issued",&[&f["issued_s"].to_string()]),&json!({"assumptions":f["assumptions"],"horizons":f["horizons"]})))}</details>}
                 if !list(&self.state["deployments"]).is_empty(){<details open=true class="tactical-missions"><summary>{i18n::t(l,"missions")}</summary>{for list(&self.state["deployments"]).iter().map(|d|{let drone=list(&self.state["map"]["drones"]).iter().find(|x|x["task"]==d["task"]["id"]).cloned();let detail=match &drone{Some(x)=>i18n::tf(l,"mission_drone_detail",&[&list(&x["zones"]).iter().map(|z|text(z).to_string()).collect::<Vec<_>>().join(", ")]),None=>text(&d["task"]["detail"]).to_string()};html!{<p><b>{resource_name(text(&d["task"]["resource"]))}</b>{format!(" · {}",i18n::mission_status(l,text(&d["task"]["status"])))}<br/><small>{detail}</small></p>}})}</details>}
             </section>
@@ -330,51 +277,13 @@ impl crate::player_view::PlayerView {
             if self.field("work:open","false")=="true"{<crate::inject_panel::ModalShell class={classes!("modal-backdrop","work-backdrop")} onkeydown={{let link=self.link.clone();let busy=self.busy;Callback::from(move |e:KeyboardEvent|{if e.key()=="Escape"&&!busy{e.prevent_default();link.emit(Msg::Field("work:open".into(),"false".into()));}})}}><section class="work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title"><header><h2 id="work-modal-title">{i18n::t(l,"respond_title")}</h2><button aria-label={i18n::t(l,"close_reply")} disabled={self.busy} onclick={self.cb(|_|Msg::Field("work:open".into(),"false".into()))}>{i18n::t(l,"close")}</button></header>
                 if let Some(message)=selected_context{<div class="work-context"><strong>{if message["kind"]=="inject"{text(&message["title"]).to_string()}else{self.name(text(&message["from"]))}}</strong><small>{text(&message["clock"])}</small><p>{text(if message["from"]==own && message["original"].is_string(){&message["original"]}else{&message["text"]})}</p>if message["kind"]=="inject"{<small>{format!("{}: {}",i18n::t(l,"reply_count"),response_count)}</small>}</div>}
                 if let Some(question)=clarifying_proposal.as_ref().and_then(|p|p["clarification_request"].as_str()){<div class="work-clarification" role="note" data-work-clarification={clarifying_proposal.as_ref().map(|p|p["id"].to_string()).unwrap_or_default()}><b>{format!("{} · {}",asker,i18n::t(l,"clarif_needed"))}</b><p>{question}</p>if let Some(p)=clarifying_proposal.as_ref(){<small class="muted">{text(&p["original"])}</small>}</div>}
-                <p class="work-approval-note">{i18n::t(l,"response_note")}</p>
+                <p class="work-approval-note">{i18n::t(l,"reply_note")}</p>
                 if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
-                <div class="work-modal-layout"><div class="work-modal-map"><p>{i18n::t(l,"select_map_target")}</p>
-                    {crate::action_pick::endpoint_picker(l,&resolved,&draft,&set)}
+                <div class="work-modal-layout"><div class="work-modal-map"><p>{i18n::t(l,"map_inserts_place")}</p>
                     if self.maps{<SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}</div><div class="work-modal-form">{work_editor}</div></div>
             </section></crate::inject_panel::ModalShell>}
         </>}
     }
-}
-
-impl crate::player_view::PlayerView {
-    /// Actions the AI suggests from the narrative being written (player-known
-    /// context only; see `/api/player/<role>/suggest-actions`), to add by hand.
-    fn view_suggestions(&self, l: &str, staged: &[Value]) -> Html {
-        let working = !self.field("work:sugg_busy", "").is_empty();
-        let result: Value = serde_json::from_str(&self.field("work:sugg", "null")).unwrap_or_default();
-        let stale = !result.is_null() && self.field("work:sugg_for", "") != self.field("work:narrative", "");
-        if !working && result.is_null() {
-            return html! {};
-        }
-        let open = fresh_suggestions(&result, staged);
-        html! {<div class={classes!("work-suggestions",stale.then_some("is-stale"))} data-work-suggestions={text(&result["status"]).to_string()} aria-live="polite">
-            <b>{i18n::t(l,"sugg_title")}</b>
-            if working {<p class="muted" data-suggestions-working="">{i18n::t(l,"sugg_working")}</p>}
-            if result["status"]=="ai_unavailable" {<p class="muted">{i18n::t(l,"sugg_unavailable")}</p>}
-            else if !result.is_null() && open.is_empty() && !working {<p class="muted">{i18n::t(l,"sugg_none")}</p>}
-            if !open.is_empty() {
-                <p class="work-help">{i18n::t(l,"sugg_hint")}</p>
-                <ol class="suggested-actions">{for open.iter().enumerate().map(|(i,a)|{
-                    let cmd=a["command"].clone();
-                    html!{<li data-suggested-action={i.to_string()}>
-                        <span>{widgets::command_summary(l,&cmd)}</span>
-                        if !text(&a["reason"]).is_empty(){<small class="muted">{text(&a["reason"])}</small>}
-                        if a["verdict"]["verdict"]=="rejected"{<small class="danger">{i18n::tf(l,"sugg_check",&[text(&a["verdict"]["reason"])])}</small>}
-                        <button type="button" data-add-suggestion={i.to_string()} disabled={self.busy} onclick={self.cb(move |_|Msg::StageActions(vec![cmd.clone()]))}>{i18n::t(l,"sugg_add")}</button>
-                    </li>}
-                })}</ol>
-            }
-        </div>}
-    }
-}
-
-/// Suggested actions not already in the response being composed.
-fn fresh_suggestions(result: &Value, staged: &[Value]) -> Vec<Value> {
-    list(&result["actions"]).iter().filter(|a| !staged.contains(&a["command"])).cloned().collect()
 }
 
 #[cfg(test)]
@@ -393,13 +302,25 @@ mod place_tests {
     }
 
     #[test]
-    fn staged_suggestions_are_not_offered_again() {
-        let warn = json!({"type":"IssueWarning","zone":"F4"});
-        let close = json!({"type":"CloseRoad","road":"r1"});
-        let result = json!({"status":"ready","actions":[{"command":warn},{"command":close}]});
-        let open = fresh_suggestions(&result, &[warn.clone()]);
-        assert_eq!(open.len(), 1);
-        assert_eq!(open[0]["command"], close);
-        assert!(fresh_suggestions(&Value::Null, &[]).is_empty());
+    fn a_map_click_writes_the_place_into_the_reply() {
+        assert_eq!(place_words(&json!({"zone":"F4","x":2750.0,"y":2250.0})), "F4");
+        assert_eq!(place_words(&json!({"zone":"F4","building":"Valverde Sports Centre"})), "Valverde Sports Centre");
+        assert_eq!(place_words(&json!({"x":10.4,"y":20.6})), "10,21");
+        assert_eq!(append_place("Mandiamo le squadre in ", "F4"), "Mandiamo le squadre in F4");
+        assert_eq!(append_place("", "F4"), "F4");
+    }
+
+    /// Only the EXCON acts on the world: the player's composer has no action
+    /// form, no communication/decision choice, no basis, no AI action
+    /// suggestions; a reply is words only.
+    #[test]
+    fn the_player_page_has_no_action_controls() {
+        let src = include_str!("tactical.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        for forbidden in ["action_pick::form(", "data-add-action", "name=\"work-kind\"", "work-basis", "suggest-actions", "StageActions", "\"commands\""] {
+            assert!(!body.contains(forbidden), "player composer still has {forbidden}");
+        }
+        assert!(body.contains(r#"json!({"kind":"communication","narrative""#));
+        assert!(body.contains("reply_guidance(l, false)"), "the reply guidance sits next to the reply box");
     }
 }

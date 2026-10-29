@@ -10,7 +10,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 | Topic | Decision |
 |---|---|
 | Simulator | Rust + Bevy 0.14 (+ bevy_egui 0.28), from scratch; `propagator-core` vendored from `~/dev/experiments/propagator_abm` |
-| Game | Turn-based. EXCON omnipotent (GUI tools, AI prompts, commands by code). Every player action needs EXCON approval |
+| Game | Turn-based. Only the EXCON acts on the world (GUI tools, AI prompts, commands by code). Players are narrative-only: they reply in free text; the AI reads each reply thread and suggests catalogue actions (`sim::Command`) that the EXCON executes, edits or ignores (`exercise::reply_review`). Incomplete suggestions are never dropped or guessed; every AI-drafted question goes through EXCON review before it is sent |
 | People | Not modelled individually: buildings have occupant counts |
 | Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. |
 | Places | Named places, zone codes of an 8×8 grid (`F4`), zone edges (`F4:N`), or coordinates |

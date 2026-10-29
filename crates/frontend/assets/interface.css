@@ -999,3 +999,23 @@ body:has(.simbench){height:100dvh;overflow:hidden}
 .simbench-clock{font-size:18px;font-variant-numeric:tabular-nums}
 .simbench-panel>.error{padding:4px 10px}
 .simbench-console{flex:1;min-height:0}
+/* Reply review (EXCON): actions from the replies, questions to review. */
+.review-board .rv-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px}.review-board .rv-head h2{margin:0 8px 0 0}.rv-intro{margin:0 0 12px}
+.rv-tone-ok{background:#d9efe2;color:#14573f}.rv-tone-gap{background:#ffe9c7;color:#7a4300}.rv-tone-wait{background:#e1ebf6;color:#234f7d}.rv-tone-done{background:#e8eeea;color:#3d5a50}.rv-tone-bad{background:#f6d8d5;color:#8a2520}.rv-tone-off{background:#eef0ef;color:#738480}
+.rv-group{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#fbfcfb}.rv-group.is-closed{opacity:.7}
+.rv-source{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rv-inject b{font-size:14px}.rv-reply{flex:1 1 280px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:italic;color:var(--ink)}.rv-summary{margin:4px 0 0}.rv-none{margin:6px 0}
+.rv-mini{padding:4px 10px;font-size:13px}.rv-diff{background:#efe3fb;color:#5a2c86}
+.rv-items{list-style:none;margin:8px 0 0;padding:0}.rv-item{border-top:1px solid var(--line);padding:7px 0 6px 10px;border-left:4px solid transparent}.rv-item.rv-ok{border-left-color:#2f8f68}.rv-item.rv-gap{border-left-color:#d48a1c}.rv-item.rv-wait{border-left-color:#4f82b8}.rv-item.rv-done{border-left-color:#9fb4aa}.rv-item.rv-bad{border-left-color:#b8433c}.rv-item.rv-off{border-left-color:#d0d6d3}.rv-item.rv-off .rv-what b{text-decoration:line-through;color:var(--muted)}
+.rv-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rv-what{display:flex;flex-direction:column;min-width:0}.rv-what b{font-weight:600}.rv-state{white-space:nowrap}
+.rv-missing{color:#8a4b00;background:#fff4df;border:1px dashed #d48a1c;border-radius:6px;padding:1px 8px;font-size:13px}.rv-warn{color:#8a2520;font-size:13px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rv-quote{display:block;color:var(--muted);font-style:italic;margin-top:2px}
+.rv-details{margin:8px 0 2px;padding:10px;background:white;border:1px solid var(--line);border-radius:8px;display:grid;gap:8px}.rv-fields{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}.rv-field{display:flex;flex-direction:column;font-size:13px;gap:2px}.rv-field input{min-width:170px}.rv-field.is-missing span{color:#8a4b00;font-weight:600}.rv-field.is-missing input{border:2px solid #d48a1c;background:#fffaf0}.rv-notes{margin:0;padding-left:18px;font-size:13px}
+.rv-questions{margin-top:8px}.rv-question{border-top:1px dashed var(--line);padding:8px 0 6px 10px;border-left:4px solid transparent}.rv-question.rv-gap{border-left-color:#d48a1c;background:#fffaf2}.rv-question.rv-wait{border-left-color:#4f82b8}.rv-question.rv-done{border-left-color:#9fb4aa}
+.rv-qtext{min-height:60px;margin:6px 0}.rv-qsent{margin:4px 0}.rv-answer{margin:4px 0;padding:6px 8px;background:#eef5f0;border-radius:6px}
+.rv-ask{margin-top:6px;font-size:13px}.rv-ask summary{cursor:pointer;color:var(--accent)}.rv-ask textarea{min-height:50px;margin:6px 0}
+.tp-review{background:#fff4df;border-color:#ecc98a}.tp-review b{color:#7a4300}
+/* Player reply: words plus the guidance next to them. */
+.work-modal #player-work .reply-block{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,.8fr);gap:14px;align-items:start}.reply-write textarea{min-height:170px}
+.reply-guide{background:#f4f8f5;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px}.reply-guide h4{margin:0 0 6px;font-size:14px}.reply-guide h4+ul{margin-top:0}.reply-guide-list{list-style:none;padding:0;margin:0 0 6px;display:grid;gap:4px}.reply-guide-list b{display:inline-block;min-width:108px;color:var(--accent)}.reply-guide-example{margin:4px 0 10px;font-style:italic}.reply-guide-support{margin:0 0 6px}.reply-guide-support dt{font-weight:600}.reply-guide-support dd{margin:0 0 6px}
+.reply-guide-line{font-size:13px;color:#2f5a4c;background:#f4f8f5;border-radius:6px;padding:5px 8px;margin:0 0 6px}
+@media(max-width:1050px){.work-modal #player-work .reply-block{grid-template-columns:minmax(0,1fr)}}

@@ -127,8 +127,8 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         let shown = crate::i18n_risposte::response_state(p);
         let to = &p["addressed_to"];
         let recipient = if list(&to["players"]).is_empty() { text(&to["persona"]).to_string() } else { list(&to["players"]).iter().map(|r| name(text(r))).collect::<Vec<_>>().join(", ") };
-        let meta = format!("{}{}", i18n::t(l, if p["communication"] == true { "kind_tag_comm" } else { "kind_tag_dec" }),
-            if recipient.is_empty() { String::new() } else { format!(" · {}", i18n::tf(l, "resp_to_label", &[&recipient])) });
+        // Replies are words only: the tag says to whom, not what kind.
+        let meta = if recipient.is_empty() { i18n::t(l, "kind_tag_reply").to_string() } else { i18n::tf(l, "resp_to_label", &[&recipient]) };
         out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, meta, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
         let note = text(&p["decision"]["note"]);
         if !note.is_empty() {
@@ -158,7 +158,14 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
             }
         }
     }
-    for _ in it.threads.iter().filter(|t| has_status(t, "closed")) {
+    // Questions of the exercise control about the replies (EXCON-reviewed), with the answers.
+    for t in it.threads.iter().filter(|t| t["review"] == true) {
+        for e in list(&t["entries"]) {
+            let (kind, who) = if e["author"] == "excon" { (Kind::Question, persona(e)) } else { (Kind::Answer, i18n::t(l, "thread_you").into()) };
+            out.push(ev(kind, who, text(&e["clock"]).into(), text(&e["text"])));
+        }
+    }
+    for _ in it.threads.iter().filter(|t| has_status(t, "closed") && t["review"] != true) {
         out.push(ev(Kind::Closed, String::new(), String::new(), i18n::t(l, "thread_closed")));
     }
     out

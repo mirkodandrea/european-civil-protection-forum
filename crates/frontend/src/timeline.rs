@@ -691,6 +691,25 @@ struct TurnPanelProps {
     onadvance: Callback<(Value, i64)>,
     #[prop_or_default]
     onview: Callback<String>,
+    /// `reply_review.counts`: open questions and suggestions waiting for the EXCON.
+    #[prop_or_default]
+    review: Value,
+}
+
+/// "Domande aperte · azioni da decidere" for the turn panel (open questions
+/// stay visible, above all before closing the turn); opens Risposte.
+fn review_chip(counts: &Value, onview: &Callback<String>) -> Html {
+    let n = |k: &str| counts[k].as_u64().unwrap_or(0);
+    let (questions, actions) = (n("drafts") + n("awaiting_answer"), n("complete") + n("incomplete"));
+    if questions + actions == 0 {
+        return Html::default();
+    }
+    let v = onview.clone();
+    html! {<button class="tp-review" id="tp-review" title={crate::exfmt!("Apri Risposte: azioni suggerite dalle risposte e domande ai player","Open Responses: actions suggested by the replies and questions to players")} onclick={Callback::from(move |_|v.emit("risposte".into()))}>
+        if questions>0{<span><b>{questions}</b>{crate::exfmt!(" domande aperte"," open questions")}</span>}
+        if questions>0&&actions>0{{" · "}}
+        if actions>0{<span><b>{actions}</b>{crate::exfmt!(" azioni da decidere"," actions to decide")}</span>}
+    </button>}
 }
 
 /// Position of `t` on a track from `start` to `end`, in percent.
@@ -880,6 +899,7 @@ fn turn_panel(props: &TurnPanelProps) -> Html {
             if due_inj>0{<button class="tp-attention" id="tp-attention" title={crate::i18n::ex("Mostra gli inject nella lista: invia o non inviare")} onclick={{let t=due_targets.clone();Callback::from(move |_|reveal_rows(&t))}}><b>{crate::i18n::ex("Da gestire ora")}</b>{format!(": {} inject",due_inj)}</button>}
             else{<span class="tp-attention none muted" id="tp-attention">{crate::i18n::ex("Nulla da gestire ora")}</span>}
             <crate::situation::SuggestionBadge generation={props.state["generation"].as_u64().unwrap_or(0)} onopen={{let v=props.onview.clone();Callback::from(move |_|v.emit("situazione".into()))}}/>
+            {review_chip(&props.review,&props.onview)}
             {if resolving{Html::default()}else{last_advance_summary(&props.state,&props.actions,&props.report,origin)}}
             {if resolving{Html::default()}else{refresh_maps(&props.state,&props.roles,props.busy||!orders,&props.action)}}
             <div class="grow"/>
@@ -1040,7 +1060,7 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
             {subs(&post)}</li>}
     };
     let panel = (!agenda.is_null() && matches!(text(&props.state["phase"]), "orders" | "resolving")).then(|| {
-        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} roles={roles.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()}/>}
+        html! {<TurnPanel agenda={agenda.clone()} state={props.state.clone()} actions={runs.clone()} roles={roles.clone()} report={props.last_report.clone()} busy={props.busy} action={props.action.clone()} onadvance={props.onadvance.clone()} onview={props.onview.clone()} review={props.master["reply_review"]["counts"].clone()}/>}
     });
     // The selected inject in full, in the side column on wide screens (inline below it otherwise).
     let detail = current_key.as_ref().and_then(|k| all_items.iter().find(|i| item_key(i) == *k)).map(|i| {

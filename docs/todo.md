@@ -4,8 +4,16 @@ Il progetto è in fase di definizione: questi punti non hanno priorità né
 scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](stato-attuale.md).
 
 - Discutere quali ulteriori azioni operative il simulatore dovrebbe modellare.
-- Aggiungere hint testuali ai partecipanti sulle azioni possibili nel loro ruolo
-  e su come chiedere supporto.
+- ~~Aggiungere hint testuali ai partecipanti~~: la guida alla risposta accanto al
+  testo (cosa, dove, con quali mezzi, entro quando, chi si informa) e competenze e
+  risorse del ruolo (2026-10-29).
+- Solo l’EXCON agisce (2026-10-29), aperti: piani, leggi e procedure per ruolo
+  non esistono ancora nello scenario (la guida mostra competenze e risorse);
+  provare `review_reply` con `TTX_LIVE_LLM=1` sul caso del DOS/Sindaco; il banco
+  (`?bench=1`) e alcuni script QA descrivono ancora il vecchio flusso con azioni
+  del player; l’EXCON non riceve ancora un avviso «riletta» quando l’AI finisce;
+  domande aperte non entrano ancora nella finestra di revisione prima
+  dell’avanzamento (solo nel chip del pannello del turno).
 - Modellare più viaggi per autobus nella stessa evacuazione, con riuso dei mezzi
   e tempi di completamento.
 

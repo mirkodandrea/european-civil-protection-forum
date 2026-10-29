@@ -146,7 +146,8 @@ pub fn risposte(props: &RisposteProps) -> Html {
         .filter(|r| is_sent(r))
         .filter(|r| !*only_pending || matches!(reply_state(r), ReplyState::Pending | ReplyState::Clarifying))
         .collect::<Vec<_>>();
-    html! {<section class="card" id="risposte"><div class="row"><h2>{crate::i18n::ex("Risposte")}</h2><span class="pill pending-count" hidden={pending_count(&props.master)==0}>{crate::exfmt!("{} in attesa di approvazione","{} awaiting approval",pending_count(&props.master))}</span><span class="pill clarifying-count" hidden={clarifying_count(&props.master)==0}>{crate::exfmt!("{} in attesa di chiarimento","{} awaiting clarification",clarifying_count(&props.master))}</span><div class="grow"/>
+    html! {<><crate::review_board::ReviewBoard master={props.master.clone()} stat={props.stat.clone()} action={props.action.clone()} busy={props.busy}/>
+        <section class="card" id="risposte"><div class="row"><h2>{crate::exfmt!("Thread per inject","Threads by inject")}</h2><span class="pill pending-count" hidden={pending_count(&props.master)==0}>{crate::exfmt!("{} in attesa di approvazione","{} awaiting approval",pending_count(&props.master))}</span><span class="pill clarifying-count" hidden={clarifying_count(&props.master)==0}>{crate::exfmt!("{} in attesa di chiarimento","{} awaiting clarification",clarifying_count(&props.master))}</span><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="only-pending" checked={*only_pending} onchange={{let o=only_pending.clone();Callback::from(move |e:Event|{use yew::TargetCast;o.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("solo in attesa")}</label></div>
         if shown.is_empty(){<p class="muted">{crate::i18n::ex("Nessun inject inviato da mostrare")}</p>}
         <ol class="response-list">{for shown.iter().map(|r|{
@@ -167,7 +168,7 @@ pub fn risposte(props: &RisposteProps) -> Html {
         if let Some((r,first))=conv.as_ref().and_then(|(k,first)|rows.iter().find(|r|key(r)==*k).map(|r|(r,*first))){
             <crate::conv_viewer::ConversationViewer key={format!("{}:{}:{:?}",r["inject_message_id"],text(&r["role"]),first)} row={r.clone()} proposals={props.master["proposals"].clone()} roles={roles.clone()} selected={first} onclose={{let conv=conv.clone();Callback::from(move |_|conv.set(None))}}/>
         }
-    </section>}
+    </section></>}
 }
 
 fn common(props: &RisposteProps) -> crate::controllo::CommonProps {
