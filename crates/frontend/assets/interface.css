@@ -930,4 +930,22 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 body:has(.bench){height:100dvh;overflow:hidden}.bench{height:100dvh;display:flex;flex-direction:column;min-height:0}.bench-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 18px;background:#fff;border-bottom:1px solid var(--line)}.bench-tabs{display:flex;gap:6px;padding:8px 18px;overflow-x:auto;background:#f9fbf9;border-bottom:1px solid var(--line);flex-shrink:0}.bench-tabs button{white-space:nowrap;font-size:13px;padding:6px 12px}.bench-tabs .active{background:var(--ink);color:white}
 .bench-flow{padding:8px 18px;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}.bench-steps{display:flex;gap:6px;list-style:none;margin:6px 0 0;padding:0;flex-wrap:wrap}.bench-step{display:flex;gap:8px;align-items:flex-start;flex:1;min-width:190px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#f7f9f8;color:var(--muted)}.bench-step small{display:block;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em}.bench-step-n{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#dfe7e2;font-weight:700;font-size:12px}.bench-step.active{border-color:var(--accent);background:#eef6f1;color:var(--ink);box-shadow:0 0 0 2px #12675233}.bench-step.active .bench-step-n{background:var(--accent);color:#fff}.bench-step.done{color:var(--ink)}.bench-step.done .bench-step-n{background:#cfe6d8;color:var(--accent)}
 .bench-cols{flex:1;min-height:0;display:grid;grid-template-columns:repeat(var(--bench-cols),minmax(0,1fr));gap:8px;padding:8px}.bench-col{position:relative;transform:translateZ(0);min-width:0;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#f4f7f5}.bench-col-title{position:sticky;top:0;z-index:5;padding:6px 12px;font-size:14px;background:var(--ink);color:#fff}.bench-col>.card,.bench-col>#risposte{margin:8px}.bench-col .card{padding:14px}.bench-planned ul{list-style:none;margin:0;padding:0}.bench-planned li{display:flex;gap:10px;align-items:center;justify-content:space-between}
+/* Every 2D map fills 100% of its container's width, in every view and on resize;
+   the height follows the map's aspect ratio and the card scrolls when needed. */
+.mapbox{width:100%;max-width:none;align-items:stretch}
+.mapbox>.mapview,.mapview,.tactical-map>.mapbox .mapview{display:block;width:100%;max-width:none;height:auto;max-height:none}
+.mapbox canvas,.mapview canvas,.tactical-view .mapbox canvas,.work-modal-map .mapbox canvas,#map-view .mapbox canvas,.excon-map .mapbox canvas,.excon-map #map-view .mapbox canvas,.sit-map canvas{width:100%!important;max-width:100%!important;height:auto!important;max-height:none!important;margin:0}
+.tactical-map>.mapbox{flex:none;display:block}
+.tactical-grid>.tactical-map{overflow:auto}
+@media(max-width:1050px){.tactical-view:not([hidden]){overflow:auto}.tactical-view .tactical-grid{flex:none;grid-template-rows:auto auto}.tactical-grid>.card,.tactical-grid>.tactical-map{overflow:visible}}
+.mapview:fullscreen{display:flex}
+.mapview:fullscreen canvas{width:auto!important;max-width:100vw!important;max-height:100dvh!important}
+/* Player action form: zone selection tools. */
+.zone-tools{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.zone-tool-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.zone-tool-row button{padding:5px 10px}
+.zone-tool-row button[aria-pressed=true]{background:var(--ink);color:#fff}
+.zone-tool-row select{max-width:220px}
+.zone-chips{display:flex;flex-wrap:wrap;gap:4px}
+.zone-chips .chip{padding:2px 8px;font-size:12px;border-radius:12px;background:#dcebe2;border-color:#b8d1c3}
 .bench-col .page{padding:8px}.bench-col .tactical-view{height:auto}.bench-col .tactical-grid{grid-template-columns:minmax(0,1fr)}.bench-col .tactical-map,.bench-col .work-modal-map,.bench-col .tactical-resources{display:none}.bench-col .modal-backdrop,.bench-col .modal-backdrop.work-backdrop{position:fixed;inset:31px 0 0 0;padding:8px;align-items:flex-start}.bench-col .work-modal,.bench-col .inject-modal{width:100%;max-width:none;height:auto;max-height:calc(100% - 4px);overflow:auto}.bench-col .work-modal-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto}.bench-col .response-cols{grid-template-columns:minmax(0,1fr)}

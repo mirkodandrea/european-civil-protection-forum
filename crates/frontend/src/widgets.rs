@@ -34,6 +34,7 @@ pub fn command_name(s: &str) -> &str {
         "WaterDrop" => crate::i18n::ex("Effettuare un lancio d’acqua"),
         "DeployEngine" => crate::i18n::ex("Inviare un’autobotte"),
         "MonitorArea" => crate::i18n::ex("Inviare il drone di monitoraggio"),
+        "Reconnoitre" => crate::i18n::ex("Inviare una squadra in ricognizione"),
         "RequestReinforcement" => crate::i18n::ex("Richiedere rinforzi"),
         "Ignite" => crate::i18n::ex("Innescare un incendio"),
         "Extinguish" => crate::i18n::ex("Spegnere un’area"),

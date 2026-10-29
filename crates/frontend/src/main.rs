@@ -23,6 +23,7 @@ mod label_layout;
 mod i18n_review;
 mod i18n_reply;
 mod pdf_view;
+mod place_pick;
 mod player_view;
 mod map;
 mod map_legend;

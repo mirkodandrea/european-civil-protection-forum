@@ -276,6 +276,7 @@ pub fn summarize_command(c: &Value) -> Option<String> {
             let zones = c["zones"].as_array().map(|z| z.iter().map(s).collect::<Vec<_>>().join(", ")).unwrap_or_default();
             exfmt!("Drone di monitoraggio su {}", "Monitoring drone over {}", zones)
         }
+        "Reconnoitre" => exfmt!("Ricognizione a terra in {}", "Ground reconnaissance of {}", s(&c["zone"])),
         "DeployEngine" => exfmt!("Squadra su strada verso {}", "Engine deployed to {}", fmt_loc(&c["at"])),
         "EvacuateZone" => with_dest(exfmt!("Evacuazione zona {}", "Evacuate zone {}", s(&c["zone"])), opt("destination")),
         "EvacuateBuilding" => with_dest(exfmt!("Evacuazione di {}", "Evacuate {}", s(&c["building"])), opt("destination")),

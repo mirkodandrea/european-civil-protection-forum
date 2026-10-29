@@ -14,25 +14,6 @@ fn norm(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
 }
 
-/// What kind of place an action takes: a grid zone, a building, a road, a point.
-fn place_kind(action: &str) -> &'static str {
-    match action {
-        "IssueWarning" | "EvacuateZone" | "MonitorArea" => "zone",
-        "EvacuateBuilding" | "OpenShelter" => "building",
-        "CloseRoad" | "ReopenRoad" => "road",
-        _ => "point",
-    }
-}
-
-/// `F4`-style code inside the scenario grid.
-fn is_zone_code(stat: &Value, s: &str) -> bool {
-    let s: String = s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
-    let (cols, rows) = (stat["zones"]["cols"].as_u64().unwrap_or(0), stat["zones"]["rows"].as_u64().unwrap_or(0));
-    let mut it = s.chars();
-    let (Some(letter), Ok(row)) = (it.next(), it.as_str().parse::<u64>()) else { return false };
-    letter.is_ascii_uppercase() && ((letter as u8 - b'A') as u64) < cols && (1..=rows).contains(&row)
-}
-
 /// The facility called `name` (case and punctuation ignored), if any.
 fn building_named(stat: &Value, name: &str) -> Option<String> {
     let k = norm(name);
@@ -45,60 +26,27 @@ impl crate::player_view::PlayerView {
         let own = self.own.clone();
         let l = self.lang();
         let l = l.as_str();
-        let click_action = self.field(
-            "work:action",
-            list(&self.state["role"]["allowed_actions"])
-                .first()
-                .map(text)
-                .unwrap_or(""),
-        );
-        let click_field = self.field("work:target_field", "work:location");
-        let monitor_zones = self.field("work:location", "");
-        let map_click = self.cb(move |point: Value| {
-            let (field, value) = match click_action.as_str() {
-                "CloseRoad" | "ReopenRoad" => ("work:location", text(&point["road"]).to_string()),
-                "EvacuateBuilding" | "OpenShelter" => {
-                    ("work:location", text(&point["building"]).to_string())
-                }
-                "DeployEngine" | "WaterDrop" => (
-                    "work:location",
-                    format!(
-                        "{},{}",
-                        point["x"].as_f64().unwrap_or(0.),
-                        point["y"].as_f64().unwrap_or(0.)
-                    ),
-                ),
-                "CutFireLine" if point["x"].is_number() => (
-                    if click_field == "work:destination" {
-                        "work:destination"
-                    } else {
-                        "work:location"
-                    },
-                    format!(
-                        "{},{}",
-                        point["x"].as_f64().unwrap_or(0.),
-                        point["y"].as_f64().unwrap_or(0.)
-                    ),
-                ),
-                "MonitorArea" => {
-                    // Clicking zones builds the list; clicking one again removes it.
-                    let mut zones: Vec<String> = monitor_zones.split(',').map(|z| z.trim().to_string()).filter(|z| !z.is_empty()).collect();
-                    let clicked = text(&point["zone"]).to_string();
-                    match zones.iter().position(|z| *z == clicked) {
-                        Some(i) => { zones.remove(i); }
-                        None => zones.push(clicked),
-                    }
-                    ("work:location", zones.join(", "))
-                }
-                _ => ("work:location", text(&point["zone"]).to_string()),
-            };
-            Msg::Field(field.into(), value)
-        });
-        let work_allowed = list(&self.state["role"]["allowed_actions"]);
-        let work_action = self.field(
-            "work:action",
-            work_allowed.first().map(|v| text(v)).unwrap_or(""),
-        );
+        // Only the action kinds the scenario gives this role (Risorse); a stale
+        // choice from another role or scenario falls back to the first one.
+        let work_allowed = crate::place_pick::menu_actions(&self.state["role"]);
+        let work_action = {
+            let chosen = self.field("work:action", "");
+            if work_allowed.contains(&chosen) { chosen } else { work_allowed.first().cloned().unwrap_or_default() }
+        };
+        let pick = crate::place_pick::pick_for(&work_action);
+        let zone_mode = self.field("work:zone_mode", "cells");
+        let anchor = self.field("work:anchor", "");
+        let map_click = {
+            let (stat, action, location) = (self.stat.clone(), work_action.clone(), self.field("work:location", ""));
+            let (target, mode, anchor) = (self.field("work:target_field", "work:location"), zone_mode.clone(), anchor.clone());
+            self.batch(move |point: Value| {
+                crate::place_pick::click(&stat, &action, &point, &location, &target, &mode, &anchor)
+                    .into_iter()
+                    .map(|(k, v)| Msg::Field(k.into(), v))
+                    .chain(std::iter::once(Msg::Field("work:notice".into(), String::new())))
+                    .collect::<Vec<_>>()
+            })
+        };
         let location_options: Vec<String> =
             if ["CloseRoad", "ReopenRoad"].contains(&work_action.as_str()) {
                 list(&self.stat["roads"])
@@ -145,29 +93,21 @@ impl crate::player_view::PlayerView {
             let destination = work_destination.clone();
             let resource = work_resource.clone();
             let qty = work_qty.parse::<u32>().unwrap_or(1).max(1);
+            let stat = self.stat.clone();
             self.batch(move |_| {
-                let loc = |value: &str| -> Value {
-                    let mut pair = value.split(',').filter_map(|part| part.parse::<f32>().ok());
-                    match (pair.next(), pair.next()) {
-                        (Some(x), Some(y)) => json!({"x":x,"y":y}),
-                        _ => json!(value),
-                    }
-                };
-                let command = match action.as_str() {
-                    "IssueWarning" | "EvacuateZone" => json!({"type":action,"zone":location}),
-                    "MonitorArea" => json!({"type":action,"zones":location.split(',').map(str::trim).filter(|z| !z.is_empty()).collect::<Vec<_>>()}),
-                    "EvacuateBuilding" | "OpenShelter" => {
-                        json!({"type":action,"building":location})
-                    }
-                    "WaterDrop" | "DeployEngine" => json!({"type":action,"at":loc(&location)}),
-                    "CutFireLine" => json!({"type":action,"from":loc(&location),"to":loc(&destination)}),
-                    "CloseRoad" | "ReopenRoad" => json!({"type":action,"road":location}),
-                    "RequestReinforcement" => json!({"type":action,"resource":resource,"qty":qty}),
-                    _ => Value::Null,
-                };
-                (!command.is_null()).then(|| Msg::StageActions(vec![command]))
+                let commands = crate::place_pick::commands(&stat, &action, &location, &destination, &resource, qty);
+                if commands.is_empty() {
+                    return vec![];
+                }
+                // The selection is used up: the next action starts from a clean map.
+                let mut out = vec![Msg::StageActions(commands)];
+                out.extend(["work:location", "work:destination", "work:anchor"].map(|k| Msg::Field(k.into(), String::new())));
+                out.push(Msg::Field("work:target_field".into(), "work:location".into()));
+                out
             })
         };
+        // How many orders the selection makes (several zones = several orders).
+        let order_count = crate::place_pick::commands(&self.stat, &work_action, &work_location, &work_destination, &work_resource, 1).len();
         let selected_context = self
             .messages()
             .iter()
@@ -186,10 +126,10 @@ impl crate::player_view::PlayerView {
         // What the disabled "respond" button is waiting for.
         let respond_missing = if self.state["phase"] != "orders" { Some("work_need_orders") } else if !has_narrative && staged.is_empty() { Some("work_need_response") } else if has_narrative && !answers_inject { Some("work_need_inject") } else { None };
         // What the disabled "add action" button is waiting for.
-        let work_missing = if work_allowed.is_empty() { Some("work_need_action") } else if work_action != "RequestReinforcement" && work_location.trim().is_empty() { Some("work_need_place") } else if work_action == "CutFireLine" && work_destination.trim().is_empty() { Some("work_need_second") } else { None };
-        // Zone-type actions take a grid code (or a named place); a building typed
-        // there switches the action to the building one instead of being refused later.
-        let zone_options: Vec<String> = if place_kind(&work_action) == "zone" {
+        let work_missing = if work_allowed.is_empty() { Some("work_need_action") } else if pick != "none" && work_location.trim().is_empty() { Some("work_need_place") } else if pick == "line" && order_count == 0 { Some("work_need_second") } else if order_count == 0 { Some("work_need_place") } else { None };
+        // Zone-type actions take grid codes, rectangles or named places; a building
+        // typed there switches the action to the building one instead of being refused later.
+        let zone_options: Vec<String> = if pick == "zones" {
             let (cols, rows) = (self.stat["zones"]["cols"].as_u64().unwrap_or(0) as u8, self.stat["zones"]["rows"].as_u64().unwrap_or(0) as u8);
             (1..=rows).flat_map(|r| (0..cols).map(move |c| format!("{}{}", (b'A' + c) as char, r)))
                 .chain(list(&self.stat["places"]).iter().map(|p| text(&p["name"]).to_string()).filter(|n| !n.is_empty()))
@@ -197,7 +137,7 @@ impl crate::player_view::PlayerView {
         } else { Vec::new() };
         let zone_input = {
             let (stat, action) = (self.stat.clone(), work_action.clone());
-            let building_allowed = work_allowed.iter().any(|a| text(a) == "EvacuateBuilding");
+            let building_allowed = work_allowed.iter().any(|a| a == "EvacuateBuilding");
             self.batch(move |e: InputEvent| {
                 let v = api::input(e);
                 match building_named(&stat, &v) {
@@ -211,17 +151,17 @@ impl crate::player_view::PlayerView {
             })
         };
         let notice = self.field("work:notice", "");
-        let zone_notice = if !notice.is_empty() && place_kind(&work_action) == "building" {
+        let unknown = if pick == "zones" { crate::place_pick::unknown_entries(&self.stat, &work_location) } else { Vec::new() };
+        let zone_notice = if !notice.is_empty() && pick == "building" {
             i18n::tf(l, "place_switched", &[&notice, i18n::action(l, "EvacuateBuilding")])
-        } else if work_action != "MonitorArea" && place_kind(&work_action) == "zone" && !work_location.trim().is_empty() && !is_zone_code(&self.stat, &work_location) {
-            if building_named(&self.stat, &work_location).is_some() {
-                i18n::tf(l, "place_is_building", &[work_location.trim()])
-            } else if zone_options.iter().any(|o| norm(o) == norm(&work_location)) {
-                String::new()
+        } else if let Some(bad) = unknown.first() {
+            if building_named(&self.stat, bad).is_some() {
+                i18n::tf(l, "place_is_building", &[bad.trim()])
             } else {
-                i18n::tf(l, "place_not_zone", &[work_location.trim()])
+                i18n::tf(l, "place_not_zone", &[bad.trim()])
             }
         } else { String::new() };
+        let selected_zones = if pick == "zones" { crate::place_pick::zones_of(&self.stat, &work_location) } else { Vec::new() };
         // What the response rests on; a PDF only goes with plans or laws.
         let work_basis = self.field("work:basis", "operational_judgment");
         let file_name = self.field("work:file_name", "");
@@ -325,22 +265,29 @@ impl crate::player_view::PlayerView {
             <ol class="staged-actions">{for staged.iter().enumerate().map(|(i,c)|html!{<li data-staged-action=""><span>{widgets::command_summary(l,c)}</span><button type="button" aria-label={i18n::t(l,"remove")} disabled={self.busy} onclick={self.cb(move |_|Msg::Unstage(i))}>{"×"}</button></li>})}</ol>
             <details class="work-add" open=true><summary>{i18n::t(l,"add_action_title")}</summary>
             <label for="work-action">{i18n::t(l,"action_type")}</label>
-            <select id="work-action" value={work_action.clone()} onchange={{let old=work_action.clone();let loc=work_location.clone();self.batch(move |e|{let new=api::select(e);let mut m=vec![Msg::Field("work:notice".into(),String::new())];if place_kind(&new)!=place_kind(&old)&&!loc.is_empty(){m.push(Msg::Field("work:location".into(),String::new()));}m.push(Msg::Field("work:action".into(),new));m})}}>
-                {for work_allowed.iter().map(|v|html!{<option value={text(v).to_string()} selected={text(v)==work_action}>{i18n::action(l,text(v))}</option>})}
+            <select id="work-action" value={work_action.clone()} onchange={{let old=work_action.clone();let loc=work_location.clone();self.batch(move |e|{let new=api::select(e);let mut m=vec![Msg::Field("work:notice".into(),String::new()),Msg::Field("work:anchor".into(),String::new())];if crate::place_pick::pick_for(&new)!=crate::place_pick::pick_for(&old)&&!loc.is_empty(){m.extend(["work:location","work:destination"].map(|k|Msg::Field(k.into(),String::new())));m.push(Msg::Field("work:target_field".into(),"work:location".into()));}m.push(Msg::Field("work:action".into(),new));m})}}>
+                {for work_allowed.iter().map(|v|html!{<option value={v.clone()} selected={*v==work_action}>{i18n::action(l,v)}</option>})}
             </select>
+            <small class="muted work-hint" data-narrate-unlisted="">{i18n::t(l,"narrate_unlisted")}</small>
             <label for="work-location">{format!("{} *",i18n::t(l,"place"))}</label>
             if work_action=="CloseRoad"||work_action=="ReopenRoad" {
                 <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={self.cb(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["roads"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_location}>{text(&r["name"])}</option>})}</select>
             } else if work_action=="EvacuateBuilding"||work_action=="OpenShelter" {
                 <select id="work-location" required=true aria-required="true" value={work_location.clone()} onchange={self.cb(|e|Msg::Field("work:location".into(),api::select(e)))}><option value="" selected={work_location.is_empty()}>{if l=="it"{"Seleziona sulla mappa o nell’elenco"}else{"Select on the map or from the list"}}</option>{for self.stat["buildings"].as_array().into_iter().flatten().map(|b|{let id=b["id"].as_u64().unwrap_or(0);let name=text(&b["name"]);let value=if name.is_empty(){format!("#{id}")}else{name.to_string()};html!{<option value={value.clone()} selected={value==work_location}>{if name.is_empty(){value}else{name.to_string()}}</option>}})}</select>
-            } else if place_kind(&work_action)=="zone" {
-                <input id="work-location" list="work-zone-options" required=true aria-required="true" placeholder="F4" value={work_location.clone()} oninput={zone_input}/>
+            } else if pick=="zones" {
+                <input id="work-location" list="work-zone-options" required=true aria-required="true" placeholder="F4, C3-D4" value={work_location.clone()} oninput={zone_input}/>
                 <datalist id="work-zone-options">{for zone_options.iter().map(|z|html!{<option value={z.clone()}/>})}</datalist>
+                {self.zone_tools(l, &zone_mode, &anchor, &work_location, &selected_zones)}
+                if order_count>1 && work_action!="MonitorArea" {<small class="muted work-hint" data-order-count={order_count.to_string()}>{i18n::tf(l,"pick_orders",&[&order_count.to_string()])}</small>}
+            } else if pick=="line" {
+                <input id="work-location" required=true aria-required="true" placeholder={i18n::t(l,"first_point")} value={work_location.clone()} oninput={self.cb(|e|Msg::Field("work:location".into(),api::input(e)))}/>
             } else {
                 <input id="work-location" required=true aria-required="true" value={work_location.clone()} oninput={self.cb(|e|Msg::Field("work:location".into(),api::input(e)))}/>
             }
             if !zone_notice.is_empty() {<small class="muted work-hint" role="status" data-place-notice="">{zone_notice.clone()}</small>}
-            if work_action=="CutFireLine" {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={self.cb(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
+            if pick=="line" && !crate::place_pick::is_zone_edge(&self.stat,&work_location) {<label for="work-destination">{i18n::t(l,"second_point")}</label><input id="work-destination" value={work_destination.clone()} oninput={self.cb(|e|Msg::Field("work:destination".into(),api::input(e)))}/>}
+            if pick=="line" {<small class="muted work-hint">{i18n::t(l,"pick_hint_line")}</small>}
+            if pick=="point" {<small class="muted work-hint">{i18n::t(l,"pick_hint_point")}</small>}
             if work_conversation.is_none() {<label for="work-reply-to">{i18n::t(l,"reply_to")}</label>}
             if work_conversation.is_none() {<select id="work-reply-to" value={work_reply_to.clone()} onchange={self.cb(|e|Msg::Field("work:reply_to".into(),api::select(e)))}><option value="" selected={work_reply_to.is_empty()}>{i18n::t(l,"independent")}</option>{for self.messages().iter().filter(|m|m["kind"]=="inject"||m["kind"]=="chat").map(|m|{let id=m["id"].to_string();let label=if m["kind"]=="inject"{i18n::tf(l,"turn_title",&[&m["turn"].to_string(),text(&m["title"])])}else{format!("{} · {}",self.name(text(&m["from"])),text(&m["text"]))};html!{<option value={id.clone()} selected={id==work_reply_to}>{label}</option>}})}</select>}
             if work_action=="RequestReinforcement" {<label for="work-resource">{i18n::t(l,"resource_req")}</label><select id="work-resource" value={work_resource.clone()} onchange={self.cb(|e|Msg::Field("work:resource".into(),api::select(e)))}>{for self.stat["resource_types"].as_array().into_iter().flatten().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==work_resource}>{text(&r["name"])}</option>})}</select><label for="work-qty">{i18n::t(l,"quantity")}</label><input id="work-qty" type="number" min="1" value={work_qty} oninput={self.cb(|e|Msg::Field("work:qty".into(),api::input(e)))}/>}
@@ -355,8 +302,9 @@ impl crate::player_view::PlayerView {
         </section>};
         let mut view = self.state["map"].clone();
         view["deployments"] = self.state["deployments"].clone();
-        let selection = self.field("work:location", "");
-        let pending = (!selection.is_empty()).then(|| json!({"zone":selection}));
+        let selection = if pick == "zones" && !selected_zones.is_empty() { selected_zones.join(", ") } else { self.field("work:location", "") };
+        // The map shows what the form holds: selected zones, the points or line.
+        let (map_zones, pending) = crate::place_pick::preview(&self.stat, &work_action, &work_location, &work_destination, &anchor);
         let turn = self.field("work:turn", &self.state["turn"].to_string());
         let current_turn = turn.parse::<u64>().unwrap_or(0);
         let injects = self
@@ -453,7 +401,7 @@ impl crate::player_view::PlayerView {
             <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div><div class="grow"/><button class="primary" id="new-player-action" disabled={!can_act} onclick={{let open=open.clone();Callback::from(move |_|open.emit(None))}}>{i18n::t(l,"new_action")}</button></section>
             <section class="tactical-resources" id="resources" aria-label={i18n::t(l,"resources")}>{for self.state["resources"].as_object().into_iter().flatten().map(|(id,pool)|{let account=&self.state["resource_accounting"][id];html!{<div class="resource-token"><strong>{account["available"].to_string()}</strong><span>{resource_name(id)}<small>{i18n::tf(l,"res_of",&[&pool["total"].to_string(),&(account["committed"].as_u64().unwrap_or(0)+account["deployed"].as_u64().unwrap_or(0)).to_string()])}</small></span></div>}})}</section>
             <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
-                if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint")}</p>
+                if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint")}</p>
                 if !list(&self.state["map"]["forecast_products"]).is_empty(){<details><summary>{i18n::t(l,"forecasts")}</summary>{for list(&self.state["map"]["forecast_products"]).iter().map(|f|widgets::details(i18n::tf(l,"issued",&[&f["issued_s"].to_string()]),&json!({"assumptions":f["assumptions"],"horizons":f["horizons"]})))}</details>}
                 if !list(&self.state["deployments"]).is_empty(){<details open=true class="tactical-missions"><summary>{i18n::t(l,"missions")}</summary>{for list(&self.state["deployments"]).iter().map(|d|{let drone=list(&self.state["map"]["drones"]).iter().find(|x|x["task"]==d["task"]["id"]).cloned();let detail=match &drone{Some(x)=>i18n::tf(l,"mission_drone_detail",&[&list(&x["zones"]).iter().map(|z|text(z).to_string()).collect::<Vec<_>>().join(", ")]),None=>text(&d["task"]["detail"]).to_string()};html!{<p><b>{resource_name(text(&d["task"]["resource"]))}</b>{format!(" · {}",i18n::mission_status(l,text(&d["task"]["status"])))}<br/><small>{detail}</small></p>}})}</details>}
             </section>
@@ -467,14 +415,56 @@ impl crate::player_view::PlayerView {
                 <p class="work-approval-note">{i18n::t(l,"response_note")}</p>
                 if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
                 <div class="work-modal-layout"><div class="work-modal-map"><p>{i18n::t(l,"select_map_target")}</p>
-                    if work_action=="CutFireLine" {<div class="endpoint-picker"><button aria-pressed={(self.field("work:target_field","work:location")=="work:location").to_string()} onclick={self.cb(|_|Msg::Field("work:target_field".into(),"work:location".into()))}>{i18n::t(l,"first_point")}</button><button aria-pressed={(self.field("work:target_field","work:location")=="work:destination").to_string()} onclick={self.cb(|_|Msg::Field("work:target_field".into(),"work:destination".into()))}>{i18n::t(l,"second_point")}</button></div>}
-                    if self.maps{<SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} lang={l.to_string()}/>}</div><div class="work-modal-form">{work_editor}</div></div>
+                    if pick=="line" {<div class="endpoint-picker"><button aria-pressed={(self.field("work:target_field","work:location")=="work:location").to_string()} onclick={self.cb(|_|Msg::Field("work:target_field".into(),"work:location".into()))}>{i18n::t(l,"first_point")}</button><button aria-pressed={(self.field("work:target_field","work:location")=="work:destination").to_string()} onclick={self.cb(|_|Msg::Field("work:target_field".into(),"work:destination".into()))}>{i18n::t(l,"second_point")}</button></div>}
+                    if self.maps{<SituationMap id="work-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}</div><div class="work-modal-form">{work_editor}</div></div>
             </section></crate::inject_panel::ModalShell>}
         </>}
     }
 }
 
 impl crate::player_view::PlayerView {
+    /// Tools to select several zones: one by one (cells), as a rectangle (two
+    /// corner clicks), or by a named place that expands to the cells it covers.
+    fn zone_tools(&self, l: &str, mode: &str, anchor: &str, location: &str, zones: &[String]) -> Html {
+        let set_mode = |m: &'static str| self.batch(move |_: MouseEvent| vec![Msg::Field("work:zone_mode".into(), m.into()), Msg::Field("work:anchor".into(), String::new())]);
+        let add_place = {
+            let (stat, location) = (self.stat.clone(), location.to_string());
+            self.batch(move |e: Event| {
+                use yew::TargetCast;
+                // The picker adds and goes back to its prompt.
+                let el = e.target_unchecked_into::<web_sys::HtmlSelectElement>();
+                let name = el.value();
+                el.set_value("");
+                let cells = crate::place_pick::place_cells(&stat, &name);
+                if cells.is_empty() {
+                    return vec![];
+                }
+                let all = crate::place_pick::add_all(&crate::place_pick::zones_of(&stat, &location), &cells);
+                vec![Msg::Field("work:location".into(), all.join(", ")), Msg::Field("work:notice".into(), String::new())]
+            })
+        };
+        let places: Vec<String> = list(&self.stat["places"]).iter().map(|p| text(&p["name"]).to_string()).filter(|n| !n.is_empty()).collect();
+        let hint = if mode == "rect" && !anchor.is_empty() { i18n::tf(l, "pick_hint_corner", &[anchor]) } else { i18n::t(l, "pick_hint_zones").to_string() };
+        html! {<div class="zone-tools" data-zone-tools={mode.to_string()}>
+            <div class="zone-tool-row" role="group" aria-label={i18n::t(l, "place")}>
+                <button type="button" aria-pressed={(mode != "rect").to_string()} data-zone-mode="cells" onclick={set_mode("cells")}>{i18n::t(l, "pick_cells")}</button>
+                <button type="button" aria-pressed={(mode == "rect").to_string()} data-zone-mode="rect" onclick={set_mode("rect")}>{i18n::t(l, "pick_rect")}</button>
+                if !places.is_empty() {
+                    <select aria-label={i18n::t(l, "pick_add_place")} data-zone-place="" value="" onchange={add_place}>
+                        <option value="" selected=true>{i18n::t(l, "pick_add_place")}</option>
+                        {for places.iter().map(|p| html!{<option value={p.clone()}>{p.clone()}</option>})}
+                    </select>
+                }
+                <button type="button" data-zone-clear="" disabled={zones.is_empty() && anchor.is_empty()} onclick={self.batch(|_: MouseEvent| vec![Msg::Field("work:location".into(), String::new()), Msg::Field("work:anchor".into(), String::new())])}>{i18n::t(l, "pick_clear")}</button>
+            </div>
+            if !zones.is_empty() {<div class="zone-chips" data-selected-zones={zones.join(",")}>{for zones.iter().map(|z| {
+                let (z2, stat, location) = (z.clone(), self.stat.clone(), location.to_string());
+                html!{<button type="button" class="chip" title={i18n::t(l, "remove")} onclick={self.cb(move |_: MouseEvent| Msg::Field("work:location".into(), crate::place_pick::toggle(&crate::place_pick::zones_of(&stat, &location), &z2).join(", ")))}>{format!("{z} ×")}</button>}
+            })}</div>}
+            <small class="muted work-hint">{hint}</small>
+        </div>}
+    }
+
     /// Actions the AI suggests from the narrative being written (player-known
     /// context only; see `/api/player/<role>/suggest-actions`), to add by hand.
     fn view_suggestions(&self, l: &str, staged: &[Value]) -> Html {
@@ -520,12 +510,12 @@ mod place_tests {
     #[test]
     fn building_names_are_not_zone_codes() {
         let stat = json!({"zones":{"cols":8,"rows":8},"buildings":[{"id":1,"name":"Pineta Primary School"},{"id":2,"name":""}]});
-        assert!(is_zone_code(&stat, "f4") && is_zone_code(&stat, "F 4") && !is_zone_code(&stat, "I1") && !is_zone_code(&stat, "F9"));
-        assert!(!is_zone_code(&stat, "Pineta Primary School") && !is_zone_code(&stat, "Pineta"));
+        assert!(crate::place_pick::parse_zone(&stat, "f4").is_some() && crate::place_pick::parse_zone(&stat, "F 4").is_some() && !crate::place_pick::parse_zone(&stat, "I1").is_some() && !crate::place_pick::parse_zone(&stat, "F9").is_some());
+        assert!(!crate::place_pick::parse_zone(&stat, "Pineta Primary School").is_some() && !crate::place_pick::parse_zone(&stat, "Pineta").is_some());
         assert_eq!(building_named(&stat, "pineta primary-school").as_deref(), Some("Pineta Primary School"));
         assert_eq!(building_named(&stat, "Pineta"), None);
         assert_eq!(building_named(&stat, ""), None);
-        assert_ne!(place_kind("EvacuateZone"), place_kind("EvacuateBuilding"));
+        assert_ne!(crate::place_pick::pick_for("EvacuateZone"), crate::place_pick::pick_for("EvacuateBuilding"));
     }
 
     #[test]

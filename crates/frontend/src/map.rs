@@ -547,7 +547,6 @@ pub fn situation_map(props: &MapProps) -> Html {
     };
     html! {<div class="mapbox"><div class="mapview" ref={frame}>
         <canvas id={props.id.clone()} ref={canvas} tabindex="0" {onclick} {ondblclick} {onpointerdown} {onpointermove} {onpointerup} onpointercancel={onpointerup_cancel(&drag)} {onpointerleave} {onkeydown}
-            style={if props.simple {"max-width:min(100%, calc(100dvh - 280px))"}else{""}}
             aria-label={if props.simple {t("map_tactical")} else {t("map_situation")}}/>
         if props.tools {<div class="map-tools" role="toolbar" aria-label={t("map_tools")}>
             <button type="button" title={t("map_zoom_in")} aria-label={t("map_zoom_in")} onclick={zoom_button(1.5)} disabled={current.z >= MAX_ZOOM}>{"+"}</button>
@@ -969,9 +968,25 @@ struct Badge {
     glyph: &'static str,
     color: &'static str,
 }
-/// Label font size in CSS pixels: readable at 75% browser zoom, growing gently with map zoom.
+/// Label font size in CSS pixels: compact at overview, growing gently with map zoom.
 fn label_font_px(zoom: f64) -> f64 {
-    (14.5 + 1.4 * zoom.max(1.).ln()).min(18.)
+    (12. + 1.1 * zoom.max(1.).ln()).min(14.5)
+}
+/// Zone codes: small, light, always drawn.
+const ZONE_FONT: &str = "600 11px system-ui";
+/// A label as shown at `zoom`: long names are shortened at overview zoom.
+fn label_text(text: &str, zoom: f64) -> String {
+    let max = if zoom < 1.6 { 18 } else if zoom < 3. { 28 } else { usize::MAX };
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max - 1).collect();
+    format!("{}…", cut.trim_end())
+}
+/// Fewer labels at overview zoom: descriptive places (more than two words,
+/// e.g. "Margine nord di Roverechiare") wait until the map is zoomed in.
+fn label_shown(text: &str, prio: u8, zoom: f64) -> bool {
+    prio < 2 || zoom >= 1.4 || text.split_whitespace().count() <= 2
 }
 /// Draw badges, labels (collision-free, by priority) and zone codes in CSS-pixel space.
 fn draw_labels(
@@ -996,7 +1011,7 @@ fn draw_labels(
     let to_screen = |x: f64, y: f64| ((x - vw.ox) * vw.z / sx, (y - vw.oy) * vw.z / sy);
     let visible = |p: (f64, f64)| p.0 >= 0. && p.1 >= 0. && p.0 <= cw && p.1 <= ch;
     let fs = label_font_px(vw.z);
-    let h = fs + 8.;
+    let h = fs + 5.;
     let mut items: Vec<Item> = Vec::new();
     let mut texts: Vec<(String, bool)> = Vec::new();
     let mut markers: Vec<Rect> = vec![Rect { x: cw - 200., y: ch - 46., w: 200., h: 46. }];
@@ -1013,7 +1028,7 @@ fn draw_labels(
     let mut seen: Vec<(String, (f64, f64))> = Vec::new();
     for r in reqs {
         let p = to_screen(r.x, r.y);
-        if !visible(p) {
+        if !visible(p) || !label_shown(&r.text, r.prio, vw.z) {
             continue;
         }
         // A place and a building with the same name at the same spot are one label.
@@ -1025,16 +1040,17 @@ fn draw_labels(
             continue;
         }
         seen.push((key, p));
-        ctx.set_font(&format!("{} {fs}px system-ui", if r.prio == 0 { 700 } else { 500 }));
-        let w = ctx.measure_text(&r.text)?.width() + 10.;
+        ctx.set_font(&format!("{} {fs}px system-ui", if r.prio == 0 { 650 } else { 500 }));
+        let shown = label_text(&r.text, vw.z);
+        let w = ctx.measure_text(&shown)?.width() + 8.;
         markers.push(Rect { x: p.0 - 5., y: p.1 - 5., w: 10., h: 10. });
         items.push(Item { w, h, anchor: p, prio: r.prio, forced: false, cands: vec![] });
-        texts.push((r.text.clone(), r.prio == 0));
+        texts.push((shown, r.prio == 0));
     }
     let n_named = items.len();
     // Zone codes: centred in the visible part of the zone, moving to a corner on collision.
-    ctx.set_font("600 14px system-ui");
-    let (zw, zh) = (ctx.measure_text("W8")?.width() + 8., 20.);
+    ctx.set_font(ZONE_FONT);
+    let (zw, zh) = (ctx.measure_text("W8")?.width() + 6., 15.);
     for row in 0..zrows {
         for col in 0..zcols {
             let (l, t) = to_screen(col as f64 * zsize, row as f64 * zsize);
@@ -1071,33 +1087,39 @@ fn draw_labels(
             ctx.begin_path();
             ctx.move_to(ax, ay);
             ctx.line_to(nx, ny);
-            ctx.set_stroke_style_str("#122b2c");
-            ctx.set_line_width(1.5);
+            ctx.set_stroke_style_str("rgba(18,43,44,.7)");
+            ctx.set_line_width(1.);
             ctx.stroke();
             ctx.begin_path();
-            ctx.arc(ax, ay, 2.5, 0., std::f64::consts::TAU)?;
+            ctx.arc(ax, ay, 2., 0., std::f64::consts::TAU)?;
             ctx.set_fill_style_str("#122b2c");
             ctx.fill();
         }
         let zone = i >= n_named;
+        // Light plates: zone codes barely tinted, names translucent, only
+        // critical names outlined.
         ctx.set_fill_style_str(if zone {
-            "rgba(255,255,255,.82)"
+            "rgba(255,255,255,.5)"
+        } else if strong {
+            "rgba(255,255,255,.9)"
         } else {
-            "rgba(255,255,255,.95)"
+            "rgba(255,255,255,.72)"
         });
         ctx.fill_rect(rc.x, rc.y, rc.w, rc.h);
-        ctx.set_stroke_style_str(if strong { "#122b2c" } else { "rgba(18,43,44,.6)" });
-        ctx.set_line_width(if strong { 2. } else { 1. });
-        ctx.stroke_rect(rc.x, rc.y, rc.w, rc.h);
-        ctx.set_fill_style_str("#122b2c");
+        if strong {
+            ctx.set_stroke_style_str("rgba(18,43,44,.75)");
+            ctx.set_line_width(1.);
+            ctx.stroke_rect(rc.x + 0.5, rc.y + 0.5, rc.w - 1., rc.h - 1.);
+        }
+        ctx.set_fill_style_str(if zone { "rgba(18,43,44,.8)" } else { "#122b2c" });
         if zone {
-            ctx.set_font("600 14px system-ui");
+            ctx.set_font(ZONE_FONT);
             ctx.set_text_align("center");
-            ctx.fill_text(txt, rc.x + rc.w / 2., rc.y + rc.h / 2.)?;
+            ctx.fill_text(txt, rc.x + rc.w / 2., rc.y + rc.h / 2. + 0.5)?;
             ctx.set_text_align("left");
         } else {
-            ctx.set_font(&format!("{} {fs}px system-ui", if strong { 700 } else { 500 }));
-            ctx.fill_text(txt, rc.x + 5., rc.y + rc.h / 2.)?;
+            ctx.set_font(&format!("{} {fs}px system-ui", if strong { 650 } else { 500 }));
+            ctx.fill_text(txt, rc.x + 4., rc.y + rc.h / 2. + 0.5)?;
         }
     }
     // Status badges on top, with a white halo.
@@ -1715,6 +1737,55 @@ fn draw(
             }
         }
     }
+    // Points picked by an action form (one point, or the two ends of a line).
+    if let Some(points) = pending.and_then(|p| p["points"].as_array()) {
+        let pts: Vec<(f64, f64)> = points
+            .iter()
+            .filter_map(|q| Some((q[0].as_f64()? * k, (h - q[1].as_f64()?) * k)))
+            .collect();
+        if pts.len() >= 2 {
+            ctx.begin_path();
+            ctx.move_to(pts[0].0, pts[0].1);
+            ctx.line_to(pts[1].0, pts[1].1);
+            ctx.set_stroke_style_str("#122b2c");
+            ctx.set_line_width(7. * s);
+            ctx.stroke();
+            ctx.set_stroke_style_str("#ffe000");
+            ctx.set_line_width(4. * s);
+            ctx.stroke();
+        }
+        for (i, (x, y)) in pts.iter().enumerate() {
+            ctx.begin_path();
+            ctx.arc(*x, *y, 8. * s, 0., std::f64::consts::TAU)?;
+            ctx.set_fill_style_str("#ffe000");
+            ctx.fill();
+            ctx.set_stroke_style_str("#122b2c");
+            ctx.set_line_width(2. * s);
+            ctx.stroke();
+            label(if i == 0 { "1" } else { "2" }, *x, *y, 0);
+        }
+    }
+    // A zone edge (`F4:N`) picked for a fire line.
+    if let Some(edge) = pending.and_then(|p| p["edge"].as_str()) {
+        if let Some((zone, side)) = edge.split_once(':') {
+            if let Some((col, row)) = parse_zone(zone, zcols, zrows) {
+                let (x0, y0) = (col as f64 * zsize, row as f64 * zsize);
+                let (x1, y1) = (x0 + zsize, y0 + zsize);
+                let (a, b) = match side.trim() {
+                    "N" => ((x0, y0), (x1, y0)),
+                    "S" => ((x0, y1), (x1, y1)),
+                    "E" => ((x1, y0), (x1, y1)),
+                    _ => ((x0, y0), (x0, y1)),
+                };
+                ctx.begin_path();
+                ctx.move_to(a.0, a.1);
+                ctx.line_to(b.0, b.1);
+                ctx.set_stroke_style_str("#ffe000");
+                ctx.set_line_width(6. * s);
+                ctx.stroke();
+            }
+        }
+    }
     if let Some(p) = pending.filter(|p| p["x"].is_number() && p["y"].is_number()) {
         ctx.begin_path();
         ctx.arc(
@@ -1772,4 +1843,21 @@ fn scale_bar(
         format!("{len_m} m")
     };
     ctx.fill_text(&label, x + 2., y - 9.)
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn labels_are_compact_at_overview_and_complete_when_zoomed() {
+        assert!(label_font_px(1.) < 13. && label_font_px(16.) <= 14.5);
+        assert_eq!(label_text("Presidio sanitario di Selvariva", 1.), "Presidio sanitari…");
+        assert_eq!(label_text("Presidio sanitario di Selvariva", 4.), "Presidio sanitario di Selvariva");
+        assert_eq!(label_text("Pianalto", 1.), "Pianalto");
+        // Descriptive places wait for zoom; towns and critical facilities never do.
+        assert!(!label_shown("Margine nord di Roverechiare", 2, 1.));
+        assert!(label_shown("Margine nord di Roverechiare", 2, 2.));
+        assert!(label_shown("Pianalto", 2, 1.) && label_shown("Scuola di Roverechiare", 0, 1.));
+    }
 }
