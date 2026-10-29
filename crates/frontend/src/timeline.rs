@@ -1072,7 +1072,9 @@ pub fn excon_timeline(props: &ExconTimelineProps) -> Html {
         html! {<section class="card tl-detail" aria-label={crate::i18n::ex("Dettaglio dell’elemento selezionato")}>{body}</section>}
     });
     let side_hint = html! {<section class="card tl-detail empty"><p class="muted">{crate::i18n::ex("Seleziona un inject nella lista per vederne qui il testo completo, le azioni, i destinatari e l’invio.")}</p></section>};
-    html! {<div class="timeline-layout"><aside class="tl-side">{panel.unwrap_or_default()}{detail.unwrap_or(side_hint)}</aside><section class="card" id="excon-timeline"><div class="row tl-head"><h2>{crate::i18n::ex("Timeline EXCON")}</h2>
+    html! {<div class="timeline-layout"><aside class="tl-side">{panel.unwrap_or_default()}
+        if started {<crate::excon_queue::ExconQueue master={props.master.clone()} state={props.state.clone()} busy={props.busy} action={props.action.clone()} compact={true}/>}
+        {detail.unwrap_or(side_hint)}</aside><section class="card" id="excon-timeline"><div class="row tl-head"><h2>{crate::i18n::ex("Timeline EXCON")}</h2>
         <small class="muted">{crate::exfmt!("{} inject · {} inviati","{} injects · {} sent",injects.len(),sent_count)}</small><div class="grow"/>
         <label class="inline-check"><input type="checkbox" id="group-by-event" checked={*grouped} onchange={{let g=grouped.clone();Callback::from(move |e:Event|{use yew::TargetCast;g.set(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())})}}/> {crate::i18n::ex("raggruppa per evento")}</label>
         <button class="primary" data-inject-all="" disabled={props.busy} onclick={{let cb=props.oninject.clone();Callback::from(move |_|cb.emit("all".into()))}}>{crate::i18n::ex("Inject personalizzato")}</button></div>

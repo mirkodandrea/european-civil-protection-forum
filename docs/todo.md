@@ -9,6 +9,17 @@ scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](
 - Modellare più viaggi per autobus nella stessa evacuazione, con riuso dei mezzi
   e tempi di completamento.
 
+## Azioni EXCON in coda (2026-10-29): da decidere
+
+- «Esegui ora ordine approvato» (`POST /api/master/proposals/<id>/execute`) applica
+  ancora subito una proposta approvata a turno aperto: tenerlo come eccezione o
+  toglierlo dall'interfaccia (le proposte approvate si applicano già all'avanzamento).
+- Le azioni a offset 0 degli inject restano immediate all'invio; negli scenari, gli
+  inneschi andrebbero spostati in azioni EXCON programmate (o azioni anticipate)
+  separate dall'inject di segnalazione.
+- Una modifica a un'azione in coda di un turno precedente non è permessa (si annulla
+  e si rimette): valutare se serve davvero modificarla.
+
 ## Problemi emersi dal playthrough del 2026-10-23
 
 - ~~Blocco della scheda con `CutFireLine`~~ (risolto). Con lo scenario factory e il

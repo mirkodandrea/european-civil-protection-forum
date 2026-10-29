@@ -127,10 +127,14 @@ impl Exercise {
         );
         let mut interventions = Vec::new();
         for cmd in &i.commands {
-            let (_, log_seq) = self.direct_command_logged(
-                cmd,
-                json!({"origin":"narrative_outcome","proposal":pid,"role":role}),
-            )?;
+            // Like every EXCON action: waits for play while orders are open.
+            let log_seq = self
+                .apply_or_queue_excon(
+                    cmd,
+                    crate::queue::ExconWhen::Play,
+                    json!({"origin":"narrative_outcome","proposal":pid,"role":role}),
+                )?
+                .log_seq();
             interventions.push(OutcomeIntervention {
                 log_seq,
                 description: cmd.describe(),

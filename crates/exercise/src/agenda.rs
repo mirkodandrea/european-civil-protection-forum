@@ -79,7 +79,8 @@ impl Exercise {
     /// actions. Pending ones planned earlier than the window (overdue) are
     /// included; finished ones only from the window's start. `due` marks the
     /// pending ones whose instant has been reached: EXCON decides to send or
-    /// skip those. `next_event_s` is the next pending inject.
+    /// skip those. `next_event_s` is the next pending inject. Queued EXCON
+    /// actions of the window are items of kind `excon` (never due).
     pub fn turn_agenda(&self) -> Value {
         let now = self.world.time_s();
         let (from, to) = (self.turn_start_s, self.planned_end_s());
@@ -107,6 +108,19 @@ impl Exercise {
                     "at_s": at, "clock": clock(at), "status": status, "pending": active,
                     "skipped": skipped, "due": active && at <= now,
                     "recipients": i["not_yet_sent_to"], "actions": i["actions"]}),
+            ));
+        }
+        // EXCON actions waiting for play or for their instant in the window
+        // (not due: they run by themselves when time moves).
+        for q in self.excon_queue() {
+            let at = q["run_at_s"].as_i64().unwrap_or(now).max(now);
+            if q["status"] != "approved" || at >= to {
+                continue;
+            }
+            items.push((
+                at,
+                json!({"kind": "excon", "id": q["id"], "title": q["title"], "at_s": at,
+                    "clock": clock(at), "status": "queued", "pending": true, "due": false}),
             ));
         }
         items.sort_by_key(|(t, _)| *t);
