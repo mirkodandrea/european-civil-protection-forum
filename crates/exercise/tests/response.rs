@@ -418,3 +418,20 @@ fn suggestions_keep_only_new_allowed_commands_and_scope_the_context() {
     assert!(full.digest.to_string().contains("training_design"));
     assert_eq!(full.role, "mayor");
 }
+
+#[test]
+fn an_order_as_role_is_approved_and_executed_at_once() {
+    let (mut ex, _) = fixture();
+    let (pid, applied) = ex
+        .order_as_role("mayor", vec![json!({"type":"IssueWarning","zone":"F4"})], "Bench order")
+        .unwrap();
+    assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Applied);
+    assert!(applied.iter().all(|a| a.ok), "{applied:?}");
+    // An infeasible action names its reason and leaves nothing pending.
+    let err = ex
+        .order_as_role("mayor", vec![json!({"type":"IssueWarning","zone":"Z99"})], "Bench order")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Z99"), "{err}");
+    assert!(ex.proposals.iter().all(|p| p.status != ProposalStatus::Pending));
+}

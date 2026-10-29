@@ -69,6 +69,9 @@ local build private. Changes in `crates/frontend/` are picked up automatically.
 `./scripts/dev_bench.sh` serves the dev-only workflow test bench (EXCON and
 player screens side by side on a simulated server, no AI) at
 `http://127.0.0.1:8080/?bench=1`; see [docs/banco-di-prova.md](docs/banco-di-prova.md).
+The standalone build also serves a simulator bench (3D left, EXCON Controllo
+right, clock play/pause, tools applied at any time) at
+`http://127.0.0.1:8080/?simbench=1`; see [docs/banco-simulatore.md](docs/banco-simulatore.md).
 
 Then open:
 

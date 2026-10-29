@@ -238,44 +238,14 @@ fn main() -> Result<()> {
                     .as_str()
                     .context("role_orders requires role")?;
                 exercise.set_language(role, "en")?;
-                let message = exercise.send_inject(
-                    None,
-                    "Visual fixture",
-                    "EXCON",
-                    &[role.into()],
-                    "Reproducible visual inspection order",
-                    &std::collections::BTreeMap::new(),
-                )?[0];
-                let proposal = exercise.player_reply(
+                exercise.order_as_role(
                     role,
-                    "Execute fixture order",
-                    message,
-                    exercise::DecisionEvidence::judgment("Controlled visual regression fixture"),
+                    order["commands"]
+                        .as_array()
+                        .context("role_orders requires commands array")?
+                        .clone(),
+                    "Visual fixture deployment",
                 )?;
-                exercise.attach_parse(
-                    proposal,
-                    exercise::ParsedInput {
-                        resource_limit_draft: None,
-                        communication_drafts: vec![],
-                        language: "en".into(),
-                        translation_en: "Execute fixture order".into(),
-                        actions: order["commands"]
-                            .as_array()
-                            .context("role_orders requires commands array")?
-                            .clone(),
-                        clarification: None,
-                        summary: "Visual fixture deployment".into(),
-                        inject_drafts: vec![],
-                    },
-                )?;
-                exercise.decide(
-                    proposal,
-                    exercise::Decision {
-                        approve: true,
-                        ..Default::default()
-                    },
-                )?;
-                exercise.execute_approved(proposal)?;
             }
             if let Some(minutes) = spec["minutes"].as_u64() {
                 exercise.resolve_turn(Some(u32::try_from(minutes)?))?;

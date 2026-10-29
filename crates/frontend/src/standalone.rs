@@ -50,6 +50,10 @@ pub fn runtime() -> Result<server::AppState, String> {
         .with(|r| r.borrow().clone())
         .ok_or_else(|| "Esercitazione non inizializzata".into())
 }
+/// Make `state` the exercise every view of this page talks to (the simulator bench).
+pub fn install(state: server::AppState) {
+    RUNTIME.with(|r| *r.borrow_mut() = Some(state));
+}
 fn initialize() -> Result<server::AppState, String> {
     let scenarios = crate::store::scenarios();
     // A saved session continues with the scenario it started from; a new one

@@ -45,6 +45,8 @@ mod webmcp;
 mod server_settings;
 mod settings;
 #[cfg(feature = "standalone")]
+mod simbench;
+#[cfg(feature = "standalone")]
 mod standalone;
 #[cfg(feature = "standalone")]
 mod store;
@@ -1153,6 +1155,11 @@ fn main() {
     #[cfg(feature = "bench")]
     if bench::requested() {
         yew::Renderer::<bench::Bench>::new().render();
+        return;
+    }
+    #[cfg(feature = "standalone")]
+    if simbench::requested() {
+        yew::Renderer::<simbench::SimBench>::new().render();
         return;
     }
     #[cfg(feature = "standalone")]

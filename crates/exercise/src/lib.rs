@@ -1766,6 +1766,73 @@ impl Exercise {
         self.execute_proposal(pid)
     }
 
+    /// `commands` as an order of `role`, approved and executed now: the same
+    /// path as a player reply that EXCON interprets, approves and executes
+    /// (visual fixtures, the simulator bench). Returns the proposal and its
+    /// per-action results.
+    pub fn order_as_role(
+        &mut self,
+        role: &str,
+        commands: Vec<Value>,
+        note: &str,
+    ) -> Result<(u64, Vec<AppliedAction>)> {
+        let message = self.send_inject(
+            None,
+            note,
+            "EXCON",
+            &[role.into()],
+            note,
+            &BTreeMap::new(),
+        )?[0];
+        let proposal = self.player_reply(
+            role,
+            note,
+            message,
+            DecisionEvidence::judgment(note),
+        )?;
+        self.attach_parse(
+            proposal,
+            ParsedInput {
+                resource_limit_draft: None,
+                communication_drafts: vec![],
+                language: "en".into(),
+                translation_en: note.into(),
+                actions: commands,
+                clarification: None,
+                summary: note.into(),
+                inject_drafts: vec![],
+            },
+        )?;
+        // An infeasible action would block the approval with a generic
+        // message: name the actions and their reasons instead.
+        let refused: Vec<String> = self
+            .proposal(proposal)
+            .map(|p| {
+                p.commands
+                    .iter()
+                    .zip(&p.verdicts)
+                    .filter_map(|(c, v)| match v {
+                        Verdict::Rejected { reason } => Some(format!("{}: {reason}", c.describe())),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !refused.is_empty() {
+            // Closed, so it holds no resources against later orders.
+            let _ = self.decide(proposal, Decision::default());
+            bail!("{}", refused.join("; "));
+        }
+        self.decide(
+            proposal,
+            Decision {
+                approve: true,
+                ..Default::default()
+            },
+        )?;
+        Ok((proposal, self.execute_approved(proposal)?))
+    }
+
     fn execute_proposal(&mut self, pid: u64) -> Result<Vec<AppliedAction>> {
         let p = self
             .proposal(pid)

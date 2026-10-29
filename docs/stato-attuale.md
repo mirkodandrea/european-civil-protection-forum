@@ -438,6 +438,13 @@ senza AI né simulatore. La schermata di lavoro del player (`tactical.rs`,
 `App` costruisce dal proprio stato e il banco dal finto server. Dettagli e
 avvio: [banco-di-prova.md](banco-di-prova.md).
 
+## Banco simulatore (sviluppo)
+
+`?simbench=1` nello standalone: vista 3D a sinistra, console Controllo
+dell’EXCON a destra, tempo avviabile, in pausa o a salti; gli strumenti EXCON si
+applicano subito, anche mentre il tempo scorre. Nessun salvataggio. Dettagli:
+[banco-simulatore.md](banco-simulatore.md).
+
 ## Capacità modellate
 
 - Propagazione del fuoco influenzata da terreno, combustibile e meteo, calcolata
