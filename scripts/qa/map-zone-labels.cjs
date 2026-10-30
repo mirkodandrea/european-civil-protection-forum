@@ -120,9 +120,10 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
     await choose('mayor');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#player-timeline').getByText('Zone label review').waitFor();
-    await mayor.locator('[data-reply-direct]').click();
-    const modal = page.locator('.work-modal');
-    const canvas = modal.locator('#work-map');
+    // The reply box sits under the inject; the player's map writes into it.
+    await mayor.locator('[data-inject-row]').filter({ hasText: 'Zone label review' }).click();
+    const modal = page.locator('#map-view');
+    const canvas = modal.locator('#player-map');
     await canvas.waitFor();
     await waitPaint();
     const overview = await draws();

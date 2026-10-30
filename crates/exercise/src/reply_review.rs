@@ -363,7 +363,11 @@ impl Exercise {
         } else {
             p.translation_en.clone()
         };
-        thread.push(json!({"kind": "reply", "from": r.role, "clock": scenario::format_clock(self.world.scn.start_clock_s + p.t_s), "text": reply_en, "original": p.original}));
+        // What the player said the reply rests on (plan, procedure, law or
+        // operational judgement, with their reference or rationale): context
+        // for the reading, never an action by itself.
+        let basis = p.evidence.as_ref().map(|e| json!({"kind": e.basis.kind, "reference": e.basis.reference}));
+        thread.push(json!({"kind": "reply", "from": r.role, "clock": scenario::format_clock(self.world.scn.start_clock_s + p.t_s), "text": reply_en, "original": p.original, "basis": basis}));
         words.push(p.original.clone());
         words.push(reply_en);
         for q in self.review.questions.iter().filter(|q| q.proposal == pid) {
@@ -1476,6 +1480,8 @@ impl Exercise {
                     "reply": p.map(|p| p.original.clone()),
                     "reply_en": p.map(|p| p.translation_en.clone()),
                     "reply_clock": p.map(|p| scenario::format_clock(self.world.scn.start_clock_s + p.t_s)),
+                    "basis": self.basis_of(Some(r.proposal)),
+                    "basis_note": self.basis_note_of(Some(r.proposal)),
                     "revision": r.revision,
                     "status": r.status,
                     "summary": r.summary,

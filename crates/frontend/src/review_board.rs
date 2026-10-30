@@ -219,6 +219,10 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
                     <span class="pill rcpt sent">{role_name(&roles,text(&r["role"]))}</span>
                     <span class="rb-inject"><b>{text(&r["inject_title"])}</b><small>{format!(" · {}",text(&r["reply_clock"]))}</small></span>
                     <q class="rb-reply" title={text(&r["reply"]).to_string()}>{text(&r["reply"])}</q>
+                    if r["basis"].is_string(){<span class="pill rb-basis" data-review-basis={text(&r["basis"]).to_string()} title={text(&r["basis_note"]).to_string()}>{match (text(&r["basis"]),text(&r["basis_note"])){
+                        (k,"")=>basis_word(k).to_string(),
+                        (k,n)=>format!("{} · {}",basis_word(k),crate::inject_panel::excerpt(n)),
+                    }}</span>}
                     <div class="grow"/>
                     if status=="reading"{<span class="pill rb-tone-wait" data-review-status="reading">{tr("lettura AI…","AI reading…")}</span>}
                     if status=="failed"{<span class="pill rb-tone-bad" data-review-status="failed" title={text(&r["error"]).to_string()}>{tr("AI non disponibile: usa Controllo","AI unavailable: use Controllo")}</span>}
@@ -365,5 +369,14 @@ mod tests {
         assert_eq!(param_value("at", "2800, 2250"), json!({"x": 2800.0, "y": 2250.0}));
         assert_eq!(param_value("at", "F4:N"), json!("F4:N"));
         assert_eq!(param_text(&json!({"x": 2800.0, "y": 2250.0})), "2800,2250");
+    }
+}
+
+/// What the player said the reply rests on, in the EXCON's language.
+fn basis_word(kind: &str) -> &'static str {
+    match kind {
+        "plan" | "procedure" => tr("Piano o procedura", "Plan or procedure"),
+        "law" => tr("Legge o norma", "Law or regulation"),
+        _ => tr("Giudizio operativo", "Operational judgement"),
     }
 }

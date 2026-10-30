@@ -123,6 +123,9 @@ pub(crate) struct ResponseBody {
     /// What the response is based on: required for a decision.
     #[serde(default)]
     pub basis: Option<exercise::BasisKind>,
+    /// Which plan, procedure or law applies, or the operational rationale.
+    #[serde(default)]
+    pub basis_note: Option<String>,
     /// PDF of the plan or law cited (plan/law basis only).
     #[serde(default)]
     pub attachment: Option<AttachmentBody>,
@@ -172,6 +175,7 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
         reply_to: body.reply_to,
         conversation: body.conversation,
         basis: body.basis,
+        basis_note: body.basis_note,
         document: body.attachment.map(AttachmentBody::decode).transpose()?,
         kind: body.kind,
         to_persona: body.to_persona,
