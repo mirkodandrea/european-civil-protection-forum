@@ -33,6 +33,7 @@ mod proposal_drafts;
 mod place_pick;
 mod player_view;
 mod map;
+mod fuel_palette;
 mod map_legend;
 mod map_layers;
 #[cfg(not(feature = "standalone"))]
