@@ -3,6 +3,10 @@ use exercise::response::PlayerResponse;
 use exercise::*;
 use std::{collections::BTreeMap, sync::Arc};
 
+fn why() -> conversations::ConversationReason {
+    conversations::ConversationReason::new(Some(BasisKind::OperationalJudgment), None, Some("We agree before answering")).unwrap()
+}
+
 fn exercise() -> Exercise {
     Exercise::new(
         sim::World::new(
@@ -48,7 +52,7 @@ fn counts_per_turn_cumulate_and_split_by_role_and_inject() {
     reply(&mut ex, "mayor", first, BasisKind::Plan);
     reply(&mut ex, "mayor", first, BasisKind::OperationalJudgment);
     let (cid, _) = ex
-        .start_linked_conversation("mayor", first, &["regional_cp".into()], "Your view?", "Your view?", &BTreeMap::new(), false)
+        .start_linked_conversation("mayor", first, &["regional_cp".into()], "Your view?", "Your view?", &BTreeMap::new(), false, why())
         .unwrap();
     ex.post_conversation_message("regional_cp", cid, "Close it", None, "Close it", &BTreeMap::new(), false)
         .unwrap();
