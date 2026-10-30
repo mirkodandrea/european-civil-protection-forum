@@ -214,6 +214,7 @@ pub async fn restore(
                 Principal::Master => Some(state.access.master.clone()),
                 Principal::Player { role } => state.access.player_key(role),
                 Principal::Evaluator { id } => state.access.evaluators.get(id).cloned(),
+                Principal::Observer => Some(crate::access::OBSERVER_KEY.into()),
             }
             .ok_or_else(|| format!("step {}: unknown participant", i + 1))?;
             let response = client

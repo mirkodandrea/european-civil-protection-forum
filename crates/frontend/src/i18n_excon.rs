@@ -113,6 +113,7 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Chiave di accesso ricevuta da EXCON" => "Access key received from EXCON",
         "Apri esercitazione" => "Open exercise",
         "Valutatore · sola lettura" => "Evaluator · read-only",
+        "Osservatori" => "Observers",
         "Direzione esercitazione" => "Exercise direction",
         "Apri la console conversazionale" => "Open the conversational console",
         "Azione pianificata" => "Scripted action",

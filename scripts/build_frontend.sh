@@ -3,7 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 # TTX_BENCH=1 adds the dev-only workflow test bench (bench.html).
-pages="master player play advanced evaluator maptest"
+pages="master player play advanced evaluator observer maptest"
 if [ "${TTX_BENCH:-0}" = 1 ]; then
     set -- --features bench "$@"
     pages="$pages bench"

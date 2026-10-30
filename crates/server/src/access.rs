@@ -18,10 +18,15 @@ pub enum Principal {
     Master,
     Player { role: String },
     Evaluator { id: String },
+    /// The one observer: reads the analysis dashboard only (`/api/observer`).
+    Observer,
 }
 
 /// The EXCON identity, also its bearer value.
 pub const MASTER_KEY: &str = "master";
+/// The observer identity, also its bearer value. There is one observer and
+/// no key to hand out: `observer.html` presents it by itself.
+pub const OBSERVER_KEY: &str = "observer";
 
 #[derive(Clone)]
 pub struct Access {
@@ -95,6 +100,9 @@ impl Access {
         if token == self.master {
             return Some(Principal::Master);
         }
+        if token == OBSERVER_KEY {
+            return Some(Principal::Observer);
+        }
         if let Some((id, _)) = self
             .evaluators
             .iter()
@@ -148,6 +156,7 @@ impl Principal {
     pub fn allows(&self, path: &str, read: bool) -> bool {
         match self {
             Principal::Master => true,
+            Principal::Observer => read && matches!(path, "/api/access" | "/api/observer" | "/ws"),
             Principal::Evaluator { .. } => {
                 read && matches!(
                     path,

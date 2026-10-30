@@ -38,6 +38,7 @@ mod map_layers;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
+mod observer;
 mod render;
 mod risposte;
 mod reply_composer;
@@ -1079,13 +1080,20 @@ fn main() {
         return;
     }
     #[cfg(not(feature = "standalone"))]
-    if api::window()
-        .location()
-        .pathname()
-        .unwrap_or_default()
-        .ends_with("maptest.html")
-    {
+    let path = api::window().location().pathname().unwrap_or_default();
+    #[cfg(not(feature = "standalone"))]
+    if path.ends_with("maptest.html") {
         yew::Renderer::<maptest::MapTest>::new().render();
+    } else if path.ends_with("observer.html") {
+        // The one observer needs no key; it reads the EXCON console language
+        // of this browser (Italian by default).
+        let lang = crate::store_lang();
+        yew::Renderer::<observer::Observers>::with_props(observer::ObserverProps {
+            token: "observer".into(),
+            lang,
+            visible: true,
+        })
+        .render();
     } else {
         // `Renderer::new` would use `AppProps::default()`, where `visible` is
         // false (the `prop_or(true)` only applies inside `html!`): the page
@@ -1098,6 +1106,16 @@ fn main() {
     }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();
+}
+
+/// The EXCON console language this browser chose (`ttx_excon_lang`), Italian by default.
+#[allow(dead_code)]
+fn store_lang() -> String {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
+        .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+        .unwrap_or_else(|| "it".into())
 }
 
 /// True when this browser session already stored `key`.

@@ -411,6 +411,7 @@ fn session() -> Html {
     for role in &roles {
         panels.push((role.id.clone(), role.name.clone(), "chat"));
     }
+    panels.push(("observer".to_string(), ex("Osservatori").to_string(), "observer"));
     // Header and settings read in the EXCON language, whatever panel is visible.
     let excon_lang = crate::store::get(EXCON_LANG_KEY).unwrap_or_else(|| "it".into());
     crate::i18n::with_ui_lang(&excon_lang, || {
@@ -442,6 +443,9 @@ fn session() -> Html {
           })}</nav>
           <div class={classes!("role-panels",(*all_roles).then_some("all-roles"))}>{for panels.iter().map(|(id,_,page)|{
              let visible = if *all_roles { roles.iter().any(|r|r.id==*id) } else { *selected==*id };
+             if *page == "observer" {
+                 return html!{<section class="role-panel" data-panel={id.clone()} key={id.clone()} hidden={!visible}><crate::observer::Observers token="observer" lang={excon_lang.clone()} visible={visible}/></section>};
+             }
              html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="history"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App visible={visible} role={Some(id.clone())} page={Some(page.to_string())}/></section>}
           })}</div></section>
         </div>

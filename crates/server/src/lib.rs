@@ -315,6 +315,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_cancel_schedule,
                 post_execute,
                 get_evaluator,
+                get_observer,
                 assessment::get,
                 get_static,
                 get_state,
@@ -566,7 +567,7 @@ async fn get_access(principal: Principal) -> ApiResult {
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(
-        json!({"players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>()}),
+        json!({"players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>(), "observer": {"url": "/observer.html"}}),
     ))
 }
 
@@ -681,6 +682,16 @@ async fn get_evaluator(
     Ok(Json(s.lock().evaluator_view(&filter)?))
 }
 
+/// Observer dashboard (the observer and the EXCON): see [`exercise::observer`].
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/observer"))]
+async fn get_observer(principal: Principal, s: AppState) -> ApiResult {
+    let map = excon_display_map(&s, &principal).await;
+    let mut view = json!(s.lock().observer_dashboard());
+    view["wall_ms"] = json!(web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    scenario::glossary::localize_value(&mut view, &map);
+    Ok(Json(view))
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/state"))]
 async fn get_state(principal: Principal, s: AppState) -> ApiResult {
     let map = excon_display_map(&s, &principal).await;
@@ -784,7 +795,7 @@ async fn get_attachment(principal: Principal, s: AppState, id: u64) -> ApiResult
     let file = match &principal {
         Principal::Master => ex.file_for(None, id),
         Principal::Player { role } => ex.file_for(Some(role), id),
-        Principal::Evaluator { .. } => return Err(bad("document not found")),
+        Principal::Evaluator { .. } | Principal::Observer => return Err(bad("document not found")),
     }?;
     Ok(Json(json!({
         "id": file.meta.id, "name": file.meta.name, "size": file.meta.size,
