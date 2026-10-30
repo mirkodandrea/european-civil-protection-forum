@@ -115,6 +115,7 @@ fn reference(scn: &Scenario) -> Value {
         "zone_grid": {"cols": scn.zones.cols, "rows": scn.zones.rows, "size_m": scn.zones.size_m},
         "zone_centres": scn.zones.names().iter().filter_map(|z| scn.zone_centre(z).map(|c| (z.clone(), c))).collect::<std::collections::BTreeMap<_, _>>(),
         "facilities": scn.buildings.iter().filter_map(|b| b.name.clone()).collect::<Vec<_>>(),
+        "buildings": scn.buildings.iter().map(|b| json!([b.id, b.pos[0].round(), b.pos[1].round(), b.occupants, b.name, format!("{:?}", b.kind), b.shelter_capacity])).collect::<Vec<_>>(),
         "sectors": scn.sectors.iter().map(|s| json!({"id": s.id, "name": s.name})).collect::<Vec<_>>(),
         "actions": role_actions(),
         "master_only": sim::MASTER_ONLY,

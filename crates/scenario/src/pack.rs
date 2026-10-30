@@ -6,12 +6,12 @@
 //! [`ScenarioPack`] that names its base. Several packs can share one base, and
 //! a pack is a plain JSON file that can be copied, edited and versioned.
 use crate::{
-    InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
+    District, DistrictEvacuation, InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
     ResourceType, Role, Scenario, TacticalPolicy, WeatherSpec,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Shortest ignition radius that does not fizzle (single-cell ignitions die out).
 
@@ -61,6 +61,11 @@ pub struct ScenarioEdits {
     pub staging_base: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operational_grants: Option<Vec<OperationalGrant>>,
+    /// Borghi of the territory, for `EvacuateDistrict`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub districts: Option<Vec<District>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub district_evacuation: Option<DistrictEvacuation>,
 }
 
 /// Simulation options a pack may fix. Command-line options take precedence.
@@ -191,6 +196,12 @@ impl Scenario {
         if let Some(v) = &e.operational_grants {
             self.operational_grants = v.clone();
         }
+        if let Some(v) = &e.districts {
+            self.districts = v.clone();
+        }
+        if let Some(v) = e.district_evacuation {
+            self.district_evacuation = v;
+        }
         self.check()
     }
 
@@ -214,6 +225,8 @@ impl Scenario {
             operations: Some(self.operations.clone()),
             staging_base: Some(self.staging_base.clone().unwrap_or_default()),
             operational_grants: Some(self.operational_grants.clone()),
+            districts: Some(self.districts.clone()),
+            district_evacuation: Some(self.district_evacuation),
             ..Default::default()
         }
     }
@@ -315,6 +328,38 @@ impl Scenario {
             }
             if self.cell_of(p.pos).is_none() {
                 out.push(format!("{at}: posizione fuori dalla mappa"));
+            }
+        }
+
+        let districts = e.districts.as_deref().unwrap_or(&self.districts);
+        let mut claimed: BTreeMap<u32, &str> = BTreeMap::new();
+        for (n, d) in districts.iter().enumerate() {
+            let at = format!("Borgo {}", n + 1);
+            if d.id.trim().is_empty() || d.name.trim().is_empty() {
+                out.push(format!("{at}: identificativo e nome sono obbligatori"));
+            }
+            if districts[..n].iter().any(|o| o.id == d.id || o.name == d.name) {
+                out.push(format!("{at}: identificativo o nome «{}» duplicato", d.name));
+            }
+            if d.buildings.is_empty() {
+                out.push(format!("{at}: indica almeno una casa"));
+            }
+            for id in &d.buildings {
+                if !self.buildings.iter().any(|b| b.id == *id) {
+                    out.push(format!("{at}: edificio {id} sconosciuto"));
+                } else if let Some(other) = claimed.insert(*id, d.id.as_str()) {
+                    out.push(format!("{at}: l’edificio {id} è già nel borgo «{other}»"));
+                }
+            }
+            if let Some(g) = d.gathering.as_deref() {
+                if !self.buildings.iter().any(|b| b.name.as_deref() == Some(g) && b.shelter_capacity > 0) {
+                    out.push(format!("{at}: l’area di raccolta «{g}» non è un edificio con capienza"));
+                }
+            }
+        }
+        if let Some(de) = e.district_evacuation {
+            if !(de.per_min.is_finite() && de.per_min > 0.0) || de.prep_min > 240 {
+                out.push("Ritmo di evacuazione dei borghi: persone al minuto > 0 e preparazione al massimo 240 min".into());
             }
         }
 
@@ -437,6 +482,29 @@ mod tests {
     }
         fn vocab() -> Vocabulary<'static> {
         Vocabulary { role_actions: ALL }
+    }
+
+    #[test]
+    fn districts_are_editable_and_checked() {
+        let s = base();
+        let ids: Vec<u32> = s.buildings.iter().take(3).map(|b| b.id).collect();
+        let d = |id: &str, buildings: Vec<u32>| District { id: id.into(), name: id.into(), buildings, gathering: None };
+        let ok = ScenarioEdits { districts: Some(vec![d("a", ids[..2].to_vec())]), ..Default::default() };
+        assert!(s.edit_problems(&ok, &vocab()).is_empty());
+        let mut built = s.clone();
+        built.apply_edits(&ok).unwrap();
+        assert_eq!(built.edits().districts, ok.districts);
+        for (bad, why) in [
+            (vec![d("a", vec![])], "no houses"),
+            (vec![d("a", vec![u32::MAX])], "unknown building"),
+            (vec![d("a", ids[..2].to_vec()), d("b", ids[1..].to_vec())], "house in two boroughs"),
+            (vec![d("a", ids[..1].to_vec()), d("a", ids[1..].to_vec())], "duplicate id"),
+        ] {
+            let e = ScenarioEdits { districts: Some(bad), ..Default::default() };
+            assert!(!s.edit_problems(&e, &vocab()).is_empty(), "{why}");
+        }
+        let slow = ScenarioEdits { district_evacuation: Some(DistrictEvacuation { per_min: 0.0, prep_min: 5 }), ..Default::default() };
+        assert!(!s.edit_problems(&slow, &vocab()).is_empty());
     }
 
     #[test]

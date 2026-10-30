@@ -25,7 +25,7 @@ La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzi
 
 ## Borghi (`districts`)
 
-Un territorio può dichiarare i suoi borghi: `districts` (`id`, `name`, `buildings` per id, `gathering` facoltativa, nome di un edificio con capienza) e il ritmo `district_evacuation` (`per_min` persone al minuto, `prep_min` minuti di preparazione; predefiniti 6 e 5). Con i borghi è disponibile il comando `EvacuateDistrict` (vedi [scenario-roccavento.md](scenario-roccavento.md#evacua-borgo-evacuatedistrict)). Senza borghi il comando è rifiutato e nulla cambia. I borghi fanno parte del territorio: un pack non li modifica.
+Un territorio può dichiarare i suoi borghi: `districts` (`id`, `name`, `buildings` per id, `gathering` facoltativa, nome di un edificio con capienza) e il ritmo `district_evacuation` (`per_min` persone al minuto, `prep_min` minuti di preparazione; predefiniti 6 e 5). Con i borghi è disponibile il comando `EvacuateDistrict` (vedi [scenario-roccavento.md](scenario-roccavento.md#evacua-borgo-evacuatedistrict)). Senza borghi il comando è rifiutato e nulla cambia. Un pack può sostituire `districts` e `district_evacuation` (campi `edits`); nell’editor la scheda «Borghi» li modifica: le case si scelgono cliccando sulla mappa (una casa appartiene a un solo borgo), con area di raccolta e ritmo delle partenze. «Controlla» segnala borghi vuoti, duplicati, case sconosciute e aree di raccolta senza capienza.
 
 ## Da riga di comando
 

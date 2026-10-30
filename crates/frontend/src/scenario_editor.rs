@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 use std::rc::Rc;
 use yew::prelude::*;
 
+mod districts;
+
 fn token() -> String {
     #[cfg(feature = "standalone")]
     return "master".into();
@@ -1162,6 +1164,7 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
 const TABS: &[(&str, &str, &str)] = &[
     ("general", "Generale", "Nome, descrizione, ora di inizio, durata dei turni e meteo iniziale."),
     ("team", "Ruoli e risorse", "Chi partecipa, quali mezzi ha e quali rinforzi può richiedere."),
+    ("districts", "Borghi", "Le località evacuabili in blocco con «Evacua borgo»: case scelte sulla mappa, area di raccolta e ritmo delle partenze."),
     ("injects", "Timeline", "Inject (messaggi) con le loro azioni (cambiamenti del mondo, inneschi compresi) che l’EXCON invia durante l’esercitazione."),
     ("advanced", "Avanzate", "Impostazioni tecniche: modello operativo, seme casuale, realizzazioni dell’ensemble."),
 ];
@@ -1487,6 +1490,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                 <div class="scenario-tab" role="tabpanel">
                     {match tab.as_str() {
                         "team" => team_tab(o, &open),
+                        "districts" => districts::districts_tab(o, &open),
                         "injects" => injects_tab(o, &open, &json, &message),
                         "advanced" => advanced_tab(o, &open),
                         _ => general(o, &open),
