@@ -1023,3 +1023,29 @@ body:has(.simbench){height:100dvh;overflow:hidden}
 .when-pick{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0;display:grid;gap:4px}.when-pick legend{font-size:12px;font-weight:650;color:var(--muted);padding:0 4px}.when-pick input[type=time]{padding:3px 6px;margin-left:6px}
 .eq-row button{padding:3px 9px;font-size:12px}.when-pick label{margin:0;min-height:0}.tb-marker.excon{border-color:#a8721c;background:#f2c46d;border-radius:3px;transform:rotate(45deg)}.tb-marker.excon:hover{transform:rotate(45deg) scale(1.35)}
 .dist-swatch{width:10px;height:10px;border-radius:50%;flex:none;border:1px solid #2224}.dist-pace{max-width:520px;margin-bottom:10px}.dist-map{cursor:pointer;max-width:720px}
+/* Scenario editor: tab badges, live validation, Borghi map. */
+.scenario-tabs .tab-badge{display:inline-block;min-width:18px;margin-left:8px;padding:0 5px;border-radius:9px;background:#b3261e;color:#fff;font-size:11px;font-weight:700;text-align:center;line-height:18px}
+.scenario-problems li button.link{border:0;background:none;color:#0b5a8c;padding:0 4px;font-size:12px;cursor:pointer;text-decoration:underline}
+.field-errors{margin:4px 0;padding:6px 10px 6px 24px;border-left:3px solid #b3261e;background:#fdecea;color:#7a1d12;font-size:12px}
+.field-error{margin:0;font-size:12px}
+.dist-key{font-size:10px;padding:0 4px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:#fff;color:var(--muted)}
+.dist-free{display:flex;align-items:center;gap:8px;margin-top:8px;padding:6px 10px;font-size:12px;color:var(--muted);border-top:1px dashed var(--line)}
+.dist-swatch.free{background:#8a948c}
+.scenario-editor .scenario-tab>.dist-tab{grid-template-rows:auto auto minmax(0,1fr)}
+.dist-pace{display:flex;flex-wrap:wrap;align-items:end;gap:6px 18px;font-size:13px}.dist-pace label{display:flex;align-items:center;gap:8px;margin:0;min-height:0}.dist-pace input{width:84px;padding:4px 8px}.dist-pace .field-error{margin:0}
+.dist-side .settings-fields>label:nth-child(-n+2) .hint{display:none}
+.dist-work{display:grid;grid-template-columns:minmax(220px,260px) minmax(0,1fr);gap:14px;align-items:start}
+.dist-side .settings-fields{grid-template-columns:1fr!important}
+.dist-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}
+.dist-bar .dist-tool,.dist-bar select{padding:4px 10px;font-size:13px}
+.dist-bar .dist-tool.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dist-bar .dist-free-only{margin:0;font-size:12px;min-height:0}
+.dist-mapbox{position:relative;outline-offset:2px;border-radius:8px}.dist-mapbox:focus-visible{outline:2px solid var(--accent)}
+.dist-map{aspect-ratio:4/3;max-width:100%;width:min(100%,max(440px,calc((100dvh - 540px) * 4 / 3)));height:auto;margin:0;cursor:crosshair;user-select:none;-webkit-user-select:none;touch-action:none}.dist-map.pan{cursor:grab}
+.dist-band{fill:rgba(28,126,214,.15);stroke:#1c7ed6;pointer-events:none}
+.dist-tip{position:absolute;pointer-events:none;background:#1e2a24;color:#fff;font-size:12px;padding:3px 8px;border-radius:5px;transform:translate(10px,-135%);white-space:nowrap;z-index:3}
+.dist-note{position:absolute;left:8px;bottom:8px;max-width:calc(100% - 16px);margin:0;padding:4px 10px;border-radius:6px;background:rgba(255,255,255,.94);border:1px solid #9db3a6;font-size:13px;font-weight:600;color:#0f6b4d;pointer-events:none}.dist-note[hidden]{display:none}
+.dist-legend{display:block;margin-top:10px;line-height:1.7}.dist-legend .lg{display:inline-block;width:10px;height:10px;margin:0 4px 0 0;vertical-align:-1px;border-radius:50%}
+.dist-legend .lg.own{background:#d9480f}.dist-legend .lg.other{background:#1c7ed6}.dist-legend .lg.free{background:#8a948c}.dist-legend .lg.sq{border-radius:2px;background:#8a948c;border:1px solid #222}.dist-legend .lg.ring{background:none;border:2px dashed #0f6b4d}
+@media(max-width:1250px){.dist-work{grid-template-columns:1fr}}
+.scenario-editor #scenario-form>.scenario-problems{max-height:12dvh;padding:6px 12px;font-size:13px}.scenario-editor .scenario-problems ul{margin:2px 0 0;padding-left:18px}.scenario-editor .scenario-problems li{margin:0}

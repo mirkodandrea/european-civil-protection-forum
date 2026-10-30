@@ -1161,6 +1161,20 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
 
 // ------------------------------------------------------------ the view
 
+/// The tab a validation problem belongs to, from the prefix `edit_problems` gives it.
+fn problem_tab(problem: &str) -> &'static str {
+    let starts = |p: &[&str]| p.iter().any(|x| problem.starts_with(x));
+    if starts(&["Ruolo", "Risorsa", "Rinforzo"]) {
+        "team"
+    } else if starts(&["Borgo", "Ritmo di evacuazione"]) {
+        "districts"
+    } else if starts(&["Inject"]) {
+        "injects"
+    } else {
+        "general"
+    }
+}
+
 const TABS: &[(&str, &str, &str)] = &[
     ("general", "Generale", "Nome, descrizione, ora di inizio, durata dei turni e meteo iniziale."),
     ("team", "Ruoli e risorse", "Chi partecipa, quali mezzi ha e quali rinforzi può richiedere."),
@@ -1340,6 +1354,33 @@ pub fn scenario_editor(props: &Props) -> Html {
         })
     };
 
+    // Live validation: the problems follow the edits (debounced), so tabs and
+    // fields show them without pressing "Controlla".
+    let generation = use_mut_ref(|| 0u64);
+    {
+        let (problems, generation, current) = (problems.clone(), generation.clone(), current.clone());
+        let key = (*open).as_ref().map(|o| serde_json::to_string(&o.pack).unwrap_or_default());
+        use_effect_with(key, move |_| {
+            let pack = current.borrow().as_ref().map(|o| o.pack.clone());
+            *generation.borrow_mut() += 1;
+            let mine = *generation.borrow();
+            if let Some(pack) = pack {
+                wasm_bindgen_futures::spawn_local(async move {
+                    gloo_timers::future::TimeoutFuture::new(500).await;
+                    if *generation.borrow() != mine {
+                        return;
+                    }
+                    if let Ok(v) = call("/api/master/scenarios/validate", Some(json!({"pack": pack}))).await {
+                        if *generation.borrow() == mine {
+                            problems.set(list(&v["problems"]).iter().map(|p| text(p).to_string()).collect());
+                        }
+                    }
+                });
+            }
+            || ()
+        });
+    }
+
     let act = {
         let (message, refresh, busy) = (message.clone(), refresh.clone(), busy.clone());
         Callback::from(move |(path, id): (&'static str, String)| {
@@ -1484,13 +1525,15 @@ pub fn scenario_editor(props: &Props) -> Html {
                         let tab = tab.clone();
                         let id = id.to_string();
                         let on = *tab == id;
-                        html!{<button role="tab" aria-selected={on.to_string()} title={ex(tip)} class={classes!(on.then_some("active"))} data-tab={id.clone()} onclick={Callback::from(move |_| tab.set(id.clone()))}>{ex(label)}</button>}
+                        let bad = problems.iter().filter(|p| problem_tab(p) == id.as_str()).count();
+                        html!{<button role="tab" aria-selected={on.to_string()} title={ex(tip)} class={classes!(on.then_some("active"))} data-tab={id.clone()} onclick={Callback::from(move |_| tab.set(id.clone()))}>{ex(label)}
+                            if bad > 0 {<span class="tab-badge" title={crate::exfmt!("{} da correggere", "{} to fix", bad)}>{bad}</span>}</button>}
                     })}
                 </nav>
                 <div class="scenario-tab" role="tabpanel">
                     {match tab.as_str() {
                         "team" => team_tab(o, &open),
-                        "districts" => districts::districts_tab(o, &open),
+                        "districts" => districts::districts_tab(o, &open, &problems),
                         "injects" => injects_tab(o, &open, &json, &message),
                         "advanced" => advanced_tab(o, &open),
                         _ => general(o, &open),
@@ -1498,16 +1541,21 @@ pub fn scenario_editor(props: &Props) -> Html {
                 </div></div>
                 if !problems.is_empty() {
                     <div class="error scenario-problems" role="alert"><strong>{format!("{} ({})", ex("Da correggere prima di salvare:"), problems.len())}</strong>
-                        <ul>{for problems.iter().map(|p| html!{<li>{p.clone()}</li>})}</ul></div>
+                        <ul>{for problems.iter().map(|p| {
+                            let target = problem_tab(p);
+                            let label = TABS.iter().find(|t| t.0 == target).map(|t| t.1).unwrap_or("");
+                            let tab = tab.clone();
+                            html!{<li>{p.clone()}{" "}<button type="button" class="link" title={ex("Apre la scheda con il problema.")} onclick={Callback::from(move |_| tab.set(target.to_string()))}>{format!("→ {}", ex(label))}</button></li>}
+                        })}</ul></div>
                 }
                 if !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
                 <div class="scenario-actions">
                     <div class="row">
-                        <button id="save-scenario" class="primary" disabled={*busy}
+                        <button id="save-scenario" class={classes!(if o.dirty || o.saved_id.is_none() {"primary"} else {""})} disabled={*busy}
                             title={ex("Salva lo scenario nella libreria. Non tocca l’esercitazione in corso.")}
-                            onclick={{let save = save.clone(); Callback::from(move |_| save.emit(false))}}>{if *busy {ex("Attendere…")} else {ex("Salva")}}</button>
+                            onclick={{let save = save.clone(); Callback::from(move |_| save.emit(false))}}>{if *busy {ex("Attendere…")} else if !o.dirty && o.saved_id.is_some() {ex("Salvato ✓")} else {ex("Salva")}}</button>
                         {twice("save-start".into(), ex("Salva e avvia").to_string(), "", "Salva lo scenario e avvia subito una nuova esercitazione. La sessione in corso viene scartata.", {let save = save.clone(); Callback::from(move |_| save.emit(true))})}
-                        <button disabled={*busy} title={ex("Verifica lo scenario senza salvare e segnala gli errori da correggere.")} onclick={validate}>{ex("Controlla")}</button>
+                        <button disabled={*busy} title={ex("Verifica lo scenario senza salvare. Le verifiche girano già da sole mentre modifichi: qui le rilanci a mano.")} onclick={validate}>{ex("Controlla")}</button>
                     </div>
                     <div class="row scenario-transfer">
                         <button id="export-scenario" title={ex("Scarica lo scenario intero come file JSON.")} onclick={{
@@ -1586,5 +1634,26 @@ pub(crate) async fn start_scenario(id: &str) -> Result<String, String> {
     {
         call("/api/master/scenarios/activate", Some(json!({"id": id}))).await?;
         Ok(ex("Nuova esercitazione avviata").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::problem_tab;
+
+    #[test]
+    fn problems_land_on_the_tab_that_fixes_them() {
+        for (p, tab) in [
+            ("Ruolo 2: il nome è obbligatorio", "team"),
+            ("Risorsa 1: identificativo duplicato", "team"),
+            ("Rinforzo 1: quantità", "team"),
+            ("Borgo 3: indica almeno una casa", "districts"),
+            ("Ritmo di evacuazione dei borghi: ...", "districts"),
+            ("Inject 4, azione «a»: ...", "injects"),
+            ("Meteo: direzione", "general"),
+            ("Base di partenza: luogo «x» sconosciuto", "general"),
+        ] {
+            assert_eq!(problem_tab(p), tab, "{p}");
+        }
     }
 }

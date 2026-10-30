@@ -17,6 +17,7 @@ proprietà, meteo, annulla/ripristina e import/export JSON completo.
 La bozza è indipendente dall’esercitazione. I salvataggi sono territori JSON
 nella libreria nativa oppure territori in localStorage nel browser, disponibili
 anche all’editor pack e all’avvio dell’esercitazione. Vedi [uso e limiti](scenari.md#editor-scenario-3d).
+L’editor verifica lo scenario mentre si modifica (contatori rossi sulle schede, errori accanto ai campi) e la scheda «Borghi» ha una mappa con zoom, selezione a rettangolo, annulla e suggerimenti: vedi [Borghi](scenari.md#borghi-districts).
 
 ## Solo l’EXCON agisce: azioni dalle risposte (2026-10-29)
 
