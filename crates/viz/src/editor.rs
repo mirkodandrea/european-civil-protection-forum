@@ -23,6 +23,8 @@ pub struct Editor {
     library: Vec<Scenario>,
     tool: String,
     selected: Option<Selection>,
+    /// Set when the selection changes: the object tree opens the branch holding it.
+    reveal: bool,
     properties: String,
     json: String,
     show_json: bool,
@@ -109,6 +111,7 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         library,
         tool: "select".into(),
         selected: None,
+        reveal: false,
         properties: String::new(),
         json: String::new(),
         show_json: false,
@@ -150,6 +153,7 @@ fn selected_json(s: &Scenario, selection: Selection) -> Option<serde_json::Value
     }
 }
 fn set_selection(e: &mut Editor, d: &Document, selection: Option<Selection>) {
+    e.reveal = selection.is_some() && selection != e.selected;
     e.selected = selection;
     e.properties = selection
         .and_then(|sel| selected_json(&d.scene, sel))
@@ -338,36 +342,7 @@ pub(crate) fn draw(
                 ui.separator();
                 ui.heading("Oggetti");
                 let s = d.scene.clone();
-                for (i, b) in s.buildings.iter().enumerate() {
-                    let sel = Selection::Building(i);
-                    if ui
-                        .selectable_label(
-                            e.selected == Some(sel),
-                            format!("Edificio {} · {}", b.id, b.name.as_deref().unwrap_or("")),
-                        )
-                        .clicked()
-                    {
-                        set_selection(e, &d, Some(sel));
-                    }
-                }
-                for (i, r) in s.roads.iter().enumerate() {
-                    let sel = Selection::Road(i);
-                    if ui
-                        .selectable_label(e.selected == Some(sel), format!("Strada · {}", r.name))
-                        .clicked()
-                    {
-                        set_selection(e, &d, Some(sel));
-                    }
-                }
-                for (i, p) in s.places.iter().enumerate() {
-                    let sel = Selection::Place(i);
-                    if ui
-                        .selectable_label(e.selected == Some(sel), format!("Luogo · {}", p.name))
-                        .clicked()
-                    {
-                        set_selection(e, &d, Some(sel));
-                    }
-                }
+                object_tree(ui, &s, e, &d);
             });
         });
     if let Some(selection) = e.selected {
@@ -588,6 +563,165 @@ fn building_spec_fields(ui: &mut egui::Ui, spec: &mut BuildingSpec) {
     ui.add(egui::Slider::new(&mut spec.rotation_deg, 0. ..=359.).text("Rotazione °"));
     ui.add(egui::DragValue::new(&mut spec.occupants).prefix("Occupanti "));
 }
+/// Building indices grouped by borgo, in the scenario's district order, then
+/// those in no borgo. A building listed in several borghi shows under the first.
+fn district_groups(s: &Scenario) -> Vec<(String, Vec<usize>)> {
+    let mut placed = vec![false; s.buildings.len()];
+    let mut groups: Vec<(String, Vec<usize>)> = s
+        .districts
+        .iter()
+        .map(|dist| {
+            let members = (0..s.buildings.len())
+                .filter(|&i| !placed[i] && dist.buildings.contains(&s.buildings[i].id))
+                .collect::<Vec<_>>();
+            for &i in &members {
+                placed[i] = true;
+            }
+            (dist.name.clone(), members)
+        })
+        .collect();
+    groups.push(("Senza borgo".into(), (0..s.buildings.len()).filter(|&i| !placed[i]).collect()));
+    groups
+}
+
+/// `members` split by building kind, in [`BUILDING_KINDS`] order; empty kinds dropped.
+fn kind_groups(s: &Scenario, members: &[usize]) -> Vec<(&'static str, Vec<usize>)> {
+    let mut groups: Vec<(&'static str, Vec<usize>)> = Vec::new();
+    for &i in members {
+        let label = kind_label(&s.buildings[i].kind);
+        match groups.iter_mut().find(|(l, _)| *l == label) {
+            Some((_, g)) => g.push(i),
+            None => groups.push((label, vec![i])),
+        }
+    }
+    let rank = |l: &str| BUILDING_KINDS.iter().position(|(_, k)| *k == l).unwrap_or(usize::MAX);
+    groups.sort_by_key(|(l, _)| rank(l));
+    groups
+}
+
+/// One collapsible branch of the object tree, labelled with its size. `reveal`
+/// forces it open (the selection has just moved inside it).
+fn branch(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash,
+    label: &str,
+    count: usize,
+    reveal: bool,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    egui::CollapsingHeader::new(format!("{label} ({count})"))
+        .id_source(id)
+        .open(reveal.then_some(true))
+        .show(ui, add);
+}
+
+/// Buildings as a tree: borgo (when the scenario has borghi), then kind, then
+/// `row` for each building. Branches holding `selected` open when `reveal`.
+fn building_tree(
+    ui: &mut egui::Ui,
+    id: &str,
+    s: &Scenario,
+    selected: Option<Selection>,
+    reveal: bool,
+    mut row: impl FnMut(&mut egui::Ui, usize),
+) {
+    let holds = |members: &[usize]| {
+        reveal && matches!(selected, Some(Selection::Building(i)) if members.contains(&i))
+    };
+    let mut kinds = |ui: &mut egui::Ui, scope: usize, members: &[usize]| {
+        for (label, group) in kind_groups(s, members) {
+            branch(ui, (id, scope, label), label, group.len(), holds(&group), |ui| {
+                group.iter().for_each(|&i| row(ui, i))
+            });
+        }
+    };
+    if s.districts.is_empty() {
+        let all: Vec<usize> = (0..s.buildings.len()).collect();
+        return kinds(ui, 0, &all);
+    }
+    for (n, (name, members)) in district_groups(s).into_iter().enumerate() {
+        if !members.is_empty() {
+            branch(ui, (id, "borgo", n), &name, members.len(), holds(&members), |ui| {
+                kinds(ui, n + 1, &members)
+            });
+        }
+    }
+}
+
+fn road_class_label(class: &str) -> &str {
+    match class {
+        "motorway" => "Autostrada",
+        "trunk" => "Superstrada",
+        "primary" => "Strada principale",
+        "secondary" => "Strada secondaria",
+        "tertiary" => "Strada locale",
+        "residential" => "Strada residenziale",
+        "unclassified" => "Strada minore",
+        "service" => "Strada di servizio",
+        "track" => "Sterrata",
+        "path" | "footway" => "Sentiero",
+        other => other,
+    }
+}
+
+/// The «Oggetti» list: buildings by borgo and kind, roads by class, places.
+/// Clicking a row selects the object; a selection made elsewhere opens its
+/// branch and scrolls to it.
+fn object_tree(ui: &mut egui::Ui, s: &Scenario, e: &mut Editor, d: &Document) {
+    let reveal = std::mem::take(&mut e.reveal);
+    let selected = e.selected;
+    let mut clicked = None;
+    let mut item = |ui: &mut egui::Ui, sel: Selection, label: String| {
+        let r = ui.selectable_label(selected == Some(sel), label);
+        if reveal && selected == Some(sel) {
+            r.scroll_to_me(Some(egui::Align::Center));
+        }
+        if r.clicked() {
+            clicked = Some(sel);
+        }
+    };
+    let in_buildings = matches!(selected, Some(Selection::Building(_)));
+    branch(ui, "objects-buildings", "Edifici", s.buildings.len(), reveal && in_buildings, |ui| {
+        building_tree(ui, "objects", s, selected, reveal, |ui, i| {
+            let b = &s.buildings[i];
+            item(ui, Selection::Building(i), format!("Edificio {} · {}", b.id, b.name.as_deref().unwrap_or("")));
+        });
+    });
+    let mut classes: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (i, r) in s.roads.iter().enumerate() {
+        let label = road_class_label(&r.class);
+        match classes.iter_mut().find(|(l, _)| *l == label) {
+            Some((_, g)) => g.push(i),
+            None => classes.push((label, vec![i])),
+        }
+    }
+    let road_sel = match selected {
+        Some(Selection::Road(i)) => Some(i),
+        _ => None,
+    };
+    branch(ui, "objects-roads", "Strade", s.roads.len(), reveal && road_sel.is_some(), |ui| {
+        for (label, group) in classes {
+            let open = reveal && road_sel.is_some_and(|i| group.contains(&i));
+            branch(ui, ("objects-roads", label), label, group.len(), open, |ui| {
+                for i in group {
+                    item(ui, Selection::Road(i), s.roads[i].name.clone());
+                }
+            });
+        }
+    });
+    let in_places = matches!(selected, Some(Selection::Place(_)));
+    branch(ui, "objects-places", "Luoghi", s.places.len(), reveal && in_places, |ui| {
+        for (i, p) in s.places.iter().enumerate() {
+            item(ui, Selection::Place(i), p.name.clone());
+        }
+    });
+    if let Some(sel) = clicked {
+        set_selection(e, d, Some(sel));
+        // Already in view: no need to open or scroll anything.
+        e.reveal = false;
+    }
+}
+
 /// Typed editors for the fields JSON text boxes handle badly (enums, optional
 /// fields, references). They edit the JSON that «Applica» deserialises.
 fn typed_fields(ui: &mut egui::Ui, selection: Selection, v: &mut serde_json::Value, s: &Scenario) {
@@ -656,7 +790,8 @@ fn typed_fields(ui: &mut egui::Ui, selection: Selection, v: &mut serde_json::Val
                 }
             }
             ui.collapsing(format!("Edifici associati ({})", buildings.len()), |ui| {
-                for b in &s.buildings {
+                building_tree(ui, "place-buildings", s, None, false, |ui, i| {
+                    let b = &s.buildings[i];
                     let mut on = buildings.contains(&b.id);
                     let label = format!("{} · {}", b.id, b.name.as_deref().unwrap_or(""));
                     if ui.checkbox(&mut on, label).changed() {
@@ -665,7 +800,7 @@ fn typed_fields(ui: &mut egui::Ui, selection: Selection, v: &mut serde_json::Val
                             buildings.push(b.id);
                         }
                     }
-                }
+                });
             });
             ui.collapsing(format!("Strade associate ({})", roads.len()), |ui| {
                 for r in &s.roads {
@@ -1356,5 +1491,42 @@ pub(crate) fn paste_input(
         for text in queue.drain(..) {
             input.0.events.push(egui::Event::Paste(text));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn district_groups_cover_every_building_once() {
+        let s = scenario::synthetic::with_districts(scenario::synthetic::generate(7));
+        assert!(!s.districts.is_empty());
+        let groups = district_groups(&s);
+        assert_eq!(groups.len(), s.districts.len() + 1);
+        let mut all: Vec<usize> = groups.iter().flat_map(|(_, m)| m.clone()).collect();
+        all.sort_unstable();
+        assert_eq!(all, (0..s.buildings.len()).collect::<Vec<_>>());
+        for (dist, (name, members)) in s.districts.iter().zip(&groups) {
+            assert_eq!(&dist.name, name);
+            assert!(members.iter().all(|&i| dist.buildings.contains(&s.buildings[i].id)));
+        }
+    }
+
+    #[test]
+    fn kind_groups_follow_the_kind_list() {
+        let s = scenario::synthetic::generate(7);
+        let all: Vec<usize> = (0..s.buildings.len()).collect();
+        let groups = kind_groups(&s, &all);
+        assert!(groups.len() > 1);
+        let order: Vec<usize> = groups
+            .iter()
+            .map(|(l, _)| BUILDING_KINDS.iter().position(|(_, k)| k == l).unwrap())
+            .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]));
+        for (label, members) in &groups {
+            assert!(members.iter().all(|&i| kind_label(&s.buildings[i].kind) == *label));
+        }
+        assert_eq!(groups.iter().map(|(_, m)| m.len()).sum::<usize>(), all.len());
     }
 }
