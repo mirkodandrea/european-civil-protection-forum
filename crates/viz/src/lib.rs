@@ -237,7 +237,12 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 night::update,
                 deployments::night_vehicles,
                 deployments::update.after(frame::update),
-                camera::control.after(frame::update),
+                // After the panels are laid out: before them, egui's available
+                // rect is still the whole screen and the wheel over a panel zooms.
+                camera::control
+                    .after(frame::update)
+                    .after(hud::draw)
+                    .after(editor::draw),
                 camera::fire_lights.after(frame::update),
                 hud::draw.after(frame::update).after(fire_field::toggle),
                 editor::draw,
