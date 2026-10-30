@@ -845,6 +845,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
     let app = app().await;
     let (_, mut before) = call(&app, "GET", "/api/state", None).await;
     before.as_object_mut().unwrap().remove("wall_ms");
+    before["progress"].as_object_mut().unwrap().remove("now_wall_ms");
     for path in [
         "/api/state",
         "/api/master",
@@ -911,6 +912,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
     );
     let (_, mut after) = call(&app, "GET", "/api/state", None).await;
     after.as_object_mut().unwrap().remove("wall_ms");
+    after["progress"].as_object_mut().unwrap().remove("now_wall_ms");
     assert_eq!(before, after);
     let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
     assert!(

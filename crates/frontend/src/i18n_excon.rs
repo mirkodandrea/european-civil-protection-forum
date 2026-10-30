@@ -56,6 +56,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Iniziativa narrativa" => "Narrative initiative",
         "Testo originale del player" => "Player's original text",
         "Avvia comunque" => "Start anyway",
+        "Tempo reale" => "Real time",
+        "Tempo reale dall’avvio dell’esercitazione (le pause contano); tra parentesi, il turno aperto" => "Real time since the exercise started (pauses included); in brackets, the open turn",
         "Invio in corso…" => "Sending…",
         "Attendi la fine degli invii in corso" => "Wait for the sends in progress to finish",
         "Iniziativa narrativa ricevuta" => "Narrative initiative received",

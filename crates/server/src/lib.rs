@@ -531,6 +531,14 @@ pub(crate) const MAX_BODY_BYTES: usize = 15 * 1024 * 1024;
 
 type ApiResult = Result<Json<Value>, ApiError>;
 
+/// Wall clock in ms since the epoch (journals record it with each request).
+pub(crate) fn now_wall_ms() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(Status::BadRequest, msg.into())
 }
@@ -695,6 +703,7 @@ async fn get_state(principal: Principal, s: AppState) -> ApiResult {
         "turn": ex.turn,
         "phase": ex.phase,
         "turn_minutes": ex.turn_minutes,
+        "progress": ex.progress(),
         "speed": ex.speed,
         "resolving": ex.resolving.as_ref().map(|r| json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "minutes": r.minutes, "partial": r.partial})),
         "turn_window": {"start_s": ex.turn_start_s, "planned_end_s": ex.planned_end_s(), "now_s": ex.world.time_s(), "substeps": ex.substeps},
