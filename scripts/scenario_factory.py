@@ -137,6 +137,11 @@ def main():
     p.add_argument('--source', type=Path, default=SOURCE)
     p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/roccavento_island.json')
     p.set_defaults(run=roccavento)
+    def districts(args):
+        from factory.districts import patch
+        patch(args.folder)
+    p = sub.add_parser('districts', help='Add the derived borghi to the shipped territories in place')
+    p.add_argument('--folder', type=Path, default=ROOT/'data/scenarios'); p.set_defaults(run=districts)
     p = sub.add_parser('sweep'); p.add_argument('scenario', type=Path); p.add_argument('--ignitions', type=Path)
     p.add_argument('--output', type=Path, default=ROOT/'runs/factory/sweep')
     p.add_argument('--seeds', nargs='+', type=int, default=[1,2,3]); p.add_argument('--winds', nargs='+', type=int, default=list(range(0,360,45)))

@@ -362,6 +362,31 @@ pub fn generate(seed: u64) -> Scenario {
     scn
 }
 
+/// The shipped valley also names its borghi (one per sector with enough homes,
+/// gathering at the sports centre). Kept out of [`generate`] so tests that
+/// reshape the buildings stay valid.
+pub fn with_districts(mut scn: Scenario) -> Scenario {
+    scn.districts = scn
+        .sectors
+        .iter()
+        .filter_map(|sec| {
+            let buildings: Vec<u32> = scn
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::House && b.sector == sec.id)
+                .map(|b| b.id)
+                .collect();
+            (buildings.len() >= 5).then(|| crate::District {
+                id: sec.id.clone(),
+                name: sec.name.clone(),
+                buildings,
+                gathering: Some("Valverde Sports Centre".into()),
+            })
+        })
+        .collect();
+    scn
+}
+
 fn roads() -> Vec<Road> {
     let road = |id: &str, name: &str, pts: &[Pos]| Road {
         oneway: false,

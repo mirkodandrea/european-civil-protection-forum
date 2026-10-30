@@ -18,7 +18,7 @@ fn main() -> Result<()> {
             other => anyhow::bail!("unknown argument {other}"),
         }
     }
-    let mut scn = scenario::synthetic::generate(seed);
+    let mut scn = scenario::synthetic::with_districts(scenario::synthetic::generate(seed));
     if operational {
         scn.enable_operational_model();
     }
