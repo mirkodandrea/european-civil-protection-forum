@@ -90,8 +90,7 @@ impl crate::player_view::PlayerView {
                 }
             })
         };
-        let mut view = self.state["map"].clone();
-        view["deployments"] = self.state["deployments"].clone();
+        let view = crate::map::player_view(&self.state["map"], &self.state["deployments"]);
         let selection = String::new();
         let (map_zones, pending): (Vec<String>, Option<Value>) = (Vec::new(), None);
         let turn = self.field("work:turn", &self.state["turn"].to_string());

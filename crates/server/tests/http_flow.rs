@@ -3500,3 +3500,49 @@ async fn excon_commands_queue_until_play() {
     assert_eq!(status(queued), "done");
     assert_eq!(status(later), "cancelled");
 }
+
+/// "View as role": EXCON reads a player's map exactly as the player receives
+/// it; players and evaluators cannot, and the fog of war is respected.
+#[tokio::test]
+async fn excon_views_a_role_map_as_the_player_sees_it() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":"G5","radius_m":60}))).await;
+    let uri = "/api/master/player-map/mayor";
+    // Never for players (own role included) or evaluators.
+    for path in [uri, "/api/master/player-static/mayor"] {
+        for key in ["test-mayor", "test-fire", "test-eval-one"] {
+            assert_eq!(call_key(&app, "GET", path, None, Some(key)).await.0, Status::Forbidden, "{path} {key}");
+        }
+        assert_eq!(call_key(&app, "GET", path, None, None).await.0, Status::Unauthorized);
+    }
+    assert_eq!(call(&app, "GET", "/api/master/player-map/nobody", None).await.0, Status::BadRequest);
+    assert_eq!(call(&app, "GET", "/api/master/player-static/nobody", None).await.0, Status::BadRequest);
+    // The territory as the player receives it: own role only.
+    let (st, territory) = call(&app, "GET", "/api/master/player-static/mayor", None).await;
+    assert_eq!(st, Status::Ok);
+    let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
+    assert_eq!(territory, own);
+    assert_eq!(territory["roles"].as_array().unwrap().len(), 1);
+
+    let (st, fogged) = call(&app, "GET", uri, None).await;
+    assert_eq!(st, Status::Ok, "{fogged}");
+    assert_eq!(fogged["role"], "mayor");
+    assert_eq!(fogged["map"]["known_zones"], json!([]));
+    assert!(fogged["map"]["cells"].as_array().unwrap().is_empty(), "unrevealed fire stays hidden");
+    assert!(fogged.get("world").is_none() && fogged["map"].get("fire").is_none());
+    let (_, player) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(fogged["map"], player["map"]);
+    assert_eq!(fogged["deployments"], player["deployments"]);
+
+    let reveal = json!({"role":"mayor","source":"Zone patrol","zones":["G5"],"layers":["fire","buildings"]});
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(reveal)).await.0, Status::Ok);
+    let (_, revealed) = call(&app, "GET", uri, None).await;
+    assert_eq!(revealed["map"]["known_zones"], json!(["G5"]));
+    assert!(!revealed["map"]["cells"].as_array().unwrap().is_empty());
+    let (_, player) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(revealed["map"], player["map"]);
+    // The other role is still in the dark.
+    let (_, other) = call(&app, "GET", "/api/master/player-map/fire_commander", None).await;
+    assert_eq!(other["map"]["known_zones"], json!([]));
+}

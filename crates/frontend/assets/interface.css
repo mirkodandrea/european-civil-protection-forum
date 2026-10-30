@@ -1079,3 +1079,4 @@ span.reply-basis-note{font-size:12px;color:var(--muted);margin-left:6px}
 p.reply-rationale-line{flex:1 1 100%;margin:2px 0 0;font-size:13px;white-space:pre-wrap}
 .rb-rationale{margin:4px 0 0;font-size:13px;white-space:pre-wrap}
 .inj-thread-status{display:block;padding:6px 16px 0}
+.view-as-tabs{margin:0 0 4px}#view-as-caption{margin:0 0 6px;font-size:12px;line-height:1.35}

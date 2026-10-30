@@ -288,6 +288,12 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("GET", "/api/master/player-map/<role>") => {
+            get_master_player_map(principal.clone(), s.clone(), captures["role"].to_string()).await
+        }
+        ("GET", "/api/master/player-static/<role>") => {
+            get_master_player_static(principal.clone(), s.clone(), captures["role"].to_string()).await
+        }
         ("POST", "/api/master/references") => {
             post_references(
                 principal.clone(),
@@ -759,6 +765,8 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/master/access"),
     ("POST", "/api/master/knowledge"),
     ("POST", "/api/master/knowledge/refresh"),
+    ("GET", "/api/master/player-map/<role>"),
+    ("GET", "/api/master/player-static/<role>"),
     ("POST", "/api/master/references"),
     ("GET", "/api/evaluator"),
     ("GET", "/api/state"),
