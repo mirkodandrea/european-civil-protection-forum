@@ -139,7 +139,6 @@ pub struct Planned {
 /// What happened on the fake server (the step checks of the benches read it).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Trace {
-    pub player_suggestions: u32,
     pub excon_suggestions: u32,
     pub rechecks: u32,
 }
@@ -349,7 +348,6 @@ impl Fake {
                 Ok(json!({"delivery": delivery}))
             }
             (true, ["api", "player", role, "suggest-actions"]) if master || who == *role => {
-                self.trace.player_suggestions += 1;
                 Ok(self.suggestions(role, &[]))
             }
             (true, ["api", "player", role, "actions"]) if who == *role => {

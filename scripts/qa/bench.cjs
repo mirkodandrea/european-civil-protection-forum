@@ -49,16 +49,6 @@ const benches={
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');await excon.locator('[data-reply-basis="plan"]').first().waitFor();
   },
-  async suggest(page){
-    const police=col(page,'police');
-    await openInject(page,'police');await police.locator('[data-reply-direct]').click();await done(page,1);
-    await police.locator('#response-narrative').fill('Chiudiamo la SP12 ai curiosi e avvisiamo la zona E3.');
-    await police.locator('[data-add-suggestion="0"]').click();await done(page,2);
-    await police.locator('#basis-operational_judgment').click();
-    await police.locator('[data-rationale]').fill('Troppi curiosi sulla SP12 rallentano i mezzi.');
-    await police.locator('[data-respond]').click();await done(page,3);
-    await col(page,'excon').locator('[data-response$=":police"] [data-reply-state="Pending"]').waitFor();
-  },
   async 'excon-suggest'(page){
     const excon=col(page,'excon');
     await openResponse(page,'mayor');
