@@ -50,6 +50,7 @@ pub mod situation;
 pub mod suggestions;
 pub mod progress;
 pub use progress::Progress;
+pub mod observer;
 
 /// Minutes an evacuation takes (see `sim::EVAC_MIN`); the lead time of warnings.
 pub const EVAC_LEAD_MIN: i64 = sim::EVAC_MIN;

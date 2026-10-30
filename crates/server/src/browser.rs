@@ -250,6 +250,7 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
     // key boundary in this process.
     let principal = match role {
         "master" | "advanced" => Principal::Master,
+        "observer" => Principal::Observer,
         "evaluator" => Principal::Evaluator {
             id: s
                 .access
@@ -316,6 +317,7 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("GET", "/api/observer") => get_observer(principal.clone(), s.clone()).await,
         ("GET", "/api/state") => get_state(principal.clone(), s.clone()).await,
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
         ("GET", "/api/attachments/<id>") => {
@@ -775,6 +777,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/master/player-static/<role>"),
     ("POST", "/api/master/references"),
     ("GET", "/api/evaluator"),
+    ("GET", "/api/observer"),
     ("GET", "/api/state"),
     ("GET", "/api/master"),
     ("GET", "/api/attachments/<id>"),

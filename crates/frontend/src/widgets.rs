@@ -17,7 +17,9 @@ pub fn participant_links(links: &Value, roles: &[Value]) -> Html {
         let id=text(if p["role"].is_null(){&p["id"]}else{&p["role"]});
         let name=roles.iter().find(|r|r["id"]==id).map(|r|text(&r["name"])).unwrap_or(id);
         html!{<p><a href={text(&p["url"]).to_string()} target="_blank" rel="noopener noreferrer">{name}</a></p>}
-    })}</div>}
+    })}
+    if let Some(url)=links["observer"]["url"].as_str(){<p><a id="observer-link" href={url.to_string()} target="_blank" rel="noopener noreferrer">{crate::i18n::ex("Osservatori")}</a></p>}
+    </div>}
 }
 pub fn stats(v: &Value) -> Html {
     html! {<p>{crate::exfmt!("Bruciato {:.1} ha · edifici danneggiati {} · distrutti {} · minacciati {} · evacuati {} · a rischio {} · nei rifugi {}","Burnt {:.1} ha · buildings damaged {} · destroyed {} · threatened {} · evacuated {} · at risk {} · in shelters {}",v["burned_ha"].as_f64().unwrap_or(0.),v["damaged"],v["destroyed"],v["threatened"],v["evacuated_people"],v["people_at_risk"],v["sheltered"])}</p>}

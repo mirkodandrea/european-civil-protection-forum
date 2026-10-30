@@ -139,6 +139,31 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   `crates/server/tests/reply_review.rs`, `llm::tasks` (fedeltà della lettura),
   `frontend::tactical` (nessun controllo d’azione nella pagina del player).
 
+## Vista Osservatori: cruscotto di analisi (2026-10-30)
+
+Scheda «Osservatori» nello standalone, pagina `observer.html` sul server.
+L’osservatore è uno solo e non ha chiavi: la pagina si presenta come
+`observer`, che legge soltanto `GET /api/observer` (lo legge anche l’EXCON),
+calcolato da `exercise::observer::observer_dashboard` senza toccare
+l’esercitazione.
+
+- **Per turno e cumulato**: ogni turno ha i suoi numeri (`turn_only`) e il
+  cumulato fino a lì (`cumulative`); i turni risolti sono definitivi, quello in
+  corso è marcato provvisorio (tratteggio). Di default si guarda l’ultimo turno
+  chiuso; la fine dell’esercitazione congela anche l’ultimo.
+- **Complessivo o un giocatore**: stessi riquadri, grafici e tabelle per ruolo.
+- **Conteggi**: risposte agli inject (al mittente), divise per fondamento
+  (piano o procedura · legge o norma · giudizio operativo · senza); interazioni
+  tra player (messaggi nelle conversazioni collegate, risposte ai player
+  incluse); conversazioni avviate; risposte alle domande EXCON; azioni suggerite
+  dall’AI dalle parole del ruolo ed eseguite. Per inject: gli stessi numeri e il
+  tempo reale alla prima risposta.
+- **Ritmo e tempi**: inject MSEL inviati sul totale contro quelli previsti a
+  quest’ora (in linea / in anticipo / indietro); tempo reale dall’avvio e durata
+  reale di ogni turno; orologio dello scenario con la barra dei turni pianificati
+  (dall’MSEL), il cursore «adesso» e gli inject posizionati.
+- QA: `scripts/qa/observer.cjs` (due turni, AI simulata, screenshot).
+
 ## Situazione EXCON: impatto, anteprima di fine turno, allerte
 
 La scheda **Situazione** (solo EXCON, solo desktop) mostra a EXCON l'effetto dell'incendio e cosa accadrà entro la fine del turno, così può scrivere gli inject in anticipo. **Gli inject restano manuali**: nulla viene inviato o pianificato da solo.
