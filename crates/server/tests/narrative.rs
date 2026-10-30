@@ -70,7 +70,7 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
         &c,
         "mayor",
         "/api/player/mayor/actions",
-        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Attivo assistenza psicologica","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":"Attivo assistenza psicologica","reply_to":parent})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -129,7 +129,7 @@ async fn narrative_routes_are_translation_only_and_private_and_do_not_change_phy
 #[tokio::test]
 async fn narrative_routes_reject_other_roles_injects_and_executable_payloads() {
     let (c, _, parent, _) = fixture(true).await;
-    let body = json!({"kind":"decision","basis":"operational_judgment","narrative":"Support","reply_to":parent});
+    let body = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":"Support","reply_to":parent});
     assert_eq!(
         call(
             &c,
@@ -175,7 +175,7 @@ async fn unavailable_translation_still_delivers_original_narrative_for_excon_rev
         &c,
         "mayor",
         "/api/player/mayor/actions",
-        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"Richiedo supporto psicologico","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":"Richiedo supporto psicologico","reply_to":parent})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{got}");

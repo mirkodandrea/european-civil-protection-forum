@@ -37,6 +37,7 @@ fn narrative(text: &str, parent: u64) -> PlayerResponse {
         narrative_en: text.into(),
         reply_to: Some(parent),
         basis: Some(BasisKind::OperationalJudgment),
+        rationale: Some("Rationale stated by the player".into()),
         ..Default::default()
     }
 }
@@ -57,6 +58,7 @@ fn a_response_needs_a_narrative_or_an_action() {
     let none = PlayerResponse {
         reply_to: Some(parent),
         basis: Some(BasisKind::OperationalJudgment),
+        rationale: Some("Rationale stated by the player".into()),
         ..Default::default()
     };
     assert!(ex.player_response("mayor", none).is_err());
@@ -65,6 +67,7 @@ fn a_response_needs_a_narrative_or_an_action() {
         narrative_en: "x".into(),
         reply_to: Some(parent),
         basis: Some(BasisKind::OperationalJudgment),
+        rationale: Some("Rationale stated by the player".into()),
         ..Default::default()
     };
     assert!(ex.player_response("mayor", blank).is_err());
@@ -97,6 +100,7 @@ fn actions_only_is_the_operational_proposal_it_always_was() {
                 commands: vec![warn()],
                 reply_to: Some(parent),
                 basis: Some(BasisKind::OperationalJudgment),
+                rationale: Some("Rationale stated by the player".into()),
                 ..Default::default()
             },
         )
@@ -181,6 +185,7 @@ fn authority_and_inject_ownership_still_apply() {
                 narrative: Some("x".into()),
                 narrative_en: "x".into(),
                 basis: Some(BasisKind::OperationalJudgment),
+                rationale: Some("Rationale stated by the player".into()),
                 ..Default::default()
             }
         )

@@ -62,10 +62,10 @@ async fn narrated_decisions_and_communications_are_recorded_under_the_inject() {
     let (status, _) = call(&c, "mayor", path, Some(json!({"reply_to":parent,"kind":"decision","narrative":warning}))).await;
     assert_eq!(status, Status::BadRequest, "a decision needs its basis");
     let (status, body) = call(&c, "mayor", path,
-        Some(json!({"reply_to":parent,"kind":"decision","basis":"operational_judgment","narrative":warning}))).await;
+        Some(json!({"reply_to":parent,"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":warning}))).await;
     assert_eq!(status, Status::Ok, "{body}");
     let (status, body) = call(&c, "mayor", path,
-        Some(json!({"reply_to":parent,"kind":"communication","narrative":"Ricevuto"}))).await;
+        Some(json!({"reply_to":parent,"kind":"communication","narrative":"Ricevuto","basis":"operational_judgment","rationale":"Presa visione"}))).await;
     assert_eq!(status, Status::Ok, "{body}");
     let (_, master) = call(&c, "master", "/api/master", None).await;
     let row = master["inject_responses"].as_array().unwrap().iter().find(|r| r["inject_message_id"] == parent).unwrap().clone();
@@ -92,21 +92,33 @@ async fn a_response_to_a_player_reaches_them_through_a_conversation() {
     assert_eq!(conv["quote"]["title"], "Smoke", "the inject reference travels with it");
 }
 
-/// 30/10 playtest: the reply composer asks what a reply rests on (plan,
-/// procedure, law or operational judgement) and the player's reference or
-/// rationale; EXCON reads both next to the reply.
+/// 30/10 playtest: a reply to the sender states what it rests on (plan,
+/// procedure, law or operational judgement), the reference of a plan or law,
+/// and why (rationale); EXCON reads all of it next to the reply.
 #[tokio::test]
 async fn a_reply_carries_its_basis_and_rationale_to_excon() {
     let (c, _, parent) = fixture().await;
     let path = "/api/player/mayor/actions";
     let (status, _) = call(&c, "mayor", path,
         Some(json!({"reply_to":parent,"kind":"communication","narrative":"Apriamo la palestra","basis_note":"Piano comunale"}))).await;
-    assert_eq!(status, Status::BadRequest, "a rationale says which kind of basis it is");
-    let (status, body) = call(&c, "mayor", path,
-        Some(json!({"reply_to":parent,"kind":"communication","narrative":"Apriamo la palestra","basis":"plan","basis_note":"Piano comunale, scheda 4"}))).await;
+    assert_eq!(status, Status::BadRequest, "a reference says which kind of basis it is");
+    let missing = |extra: Value| {
+        let mut b = json!({"reply_to":parent,"kind":"communication","narrative":"Apriamo la palestra","basis":"plan",
+            "basis_note":"Piano comunale, scheda 4","rationale":"Le famiglie devono attendere al coperto"});
+        for (k, v) in extra.as_object().unwrap() { if v.is_null() { b.as_object_mut().unwrap().remove(k); } else { b[k] = v.clone(); } }
+        b
+    };
+    for (gap, error) in [(json!({"basis":null,"basis_note":null}), "basis"), (json!({"basis_note":null}), "which plan"), (json!({"rationale":"  "}), "rationale")] {
+        let (status, body) = call(&c, "mayor", path, Some(missing(gap))).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+        assert!(body["error"].as_str().unwrap().contains(error), "{body}");
+    }
+    let (status, body) = call(&c, "mayor", path, Some(missing(json!({})))).await;
     assert_eq!(status, Status::Ok, "{body}");
     let (_, master) = call(&c, "master", "/api/master", None).await;
     let row = master["inject_responses"].as_array().unwrap().iter().find(|r| r["inject_message_id"] == parent).unwrap().clone();
     let reply = &row["replies"][0];
     assert_eq!((reply["basis"].as_str(), reply["basis_note"].as_str()), (Some("plan"), Some("Piano comunale, scheda 4")));
+    assert_eq!(reply["rationale"], "Le famiglie devono attendere al coperto");
+    assert_eq!(row["pending_proposals"].as_array().unwrap().len(), 0, "a communication waits for nobody");
 }

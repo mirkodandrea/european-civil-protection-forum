@@ -13,6 +13,11 @@
 //!   commands still need EXCON approval and feasibility checks and are the
 //!   only part that can touch the world.
 //!
+//! A narrated reply to the inject's sender (the player's answer, which the
+//! EXCON's AI reads) also needs its basis, the reference for a plan,
+//! procedure or law, and the player's rationale ("why this decision"); a
+//! message to other players is coordination and needs none of them.
+//!
 //! A narrative needs an inject to answer. A response addressed to players is
 //! also posted in a conversation with them linked to the inject.
 use crate::{BasisKind, DecisionBasis, DecisionEvidence, Exercise, PdfUpload, MsgKind, ParsedInput, Phase, ProposalStatus, MASTER};
@@ -57,9 +62,13 @@ pub struct PlayerResponse {
     pub conversation: Option<u64>,
     /// What the response rests on (plans, laws or operational judgement).
     pub basis: Option<BasisKind>,
-    /// Which plan, procedure or law applies, or the player's operational
-    /// rationale, in the player's own words (needs `basis`).
+    /// Which plan, procedure or law applies, in the player's own words
+    /// (needs `basis`; required for a plan, procedure or law basis in a
+    /// narrated reply to the sender).
     pub basis_note: Option<String>,
+    /// Why the player decided this, in their own words: required, with
+    /// `basis`, in a narrated reply to the inject's sender.
+    pub rationale: Option<String>,
     /// PDF of the plan or law the response cites; needs a plan/law basis.
     pub document: Option<PdfUpload>,
     /// Communication or decision (required by the API; a decision needs `basis`).
@@ -79,6 +88,12 @@ impl PlayerResponse {
     }
     pub fn is_communication(&self) -> bool {
         self.kind == ResponseKind::Communication
+    }
+    fn rationale_text(&self) -> Option<&str> {
+        self.rationale.as_deref().map(str::trim).filter(|t| !t.is_empty())
+    }
+    fn note_text(&self) -> Option<&str> {
+        self.basis_note.as_deref().map(str::trim).filter(|t| !t.is_empty())
     }
 }
 
@@ -108,7 +123,23 @@ impl Exercise {
                 bail!("the reference or rationale is limited to 2000 characters");
             }
         }
+        if r.rationale_text().is_some_and(|t| t.chars().count() > 2000) {
+            bail!("the rationale is limited to 2000 characters");
+        }
         let narrative = r.narrative_text();
+        // A narrated reply to the inject's sender is what the EXCON's AI reads:
+        // it states its basis, the reference for a plan or law, and why.
+        if narrative.is_some() && r.to_players.is_empty() {
+            let Some(kind) = r.basis else {
+                bail!("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement");
+            };
+            if kind != BasisKind::OperationalJudgment && r.note_text().is_none() {
+                bail!("say which plan, procedure or law the reply rests on (e.g. the plan's section or the article)");
+            }
+            if r.rationale_text().is_none() {
+                bail!("a reply to the sender needs its rationale: why this decision");
+            }
+        }
         if narrative.is_none() && r.commands.is_empty() {
             bail!("a response needs a narrative or at least one action");
         }
@@ -240,7 +271,8 @@ impl Exercise {
             ),
             None => (None, Vec::new()),
         };
-        let basis_note = r.basis_note.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+        let basis_note = r.note_text().map(str::to_string);
+        let rationale = r.rationale_text().map(str::to_string);
         let evidence = match r.basis {
             Some(kind) => Some(DecisionEvidence {
                 basis: DecisionBasis {
@@ -258,6 +290,7 @@ impl Exercise {
                         }
                         reference
                     },
+                    rationale: rationale.clone(),
                 },
                 attachments: Vec::new(),
             }),
@@ -371,6 +404,9 @@ impl Exercise {
                 if let Some(d) = &document {
                     note.push_str(&format!("; attached PDF: {}", d.name));
                 }
+            }
+            if let Some(why) = &rationale {
+                note.push_str(&format!("\n[rationale] {why}"));
             }
             self.converse(role, "user", note);
             self.record(

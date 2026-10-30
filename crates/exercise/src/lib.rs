@@ -299,6 +299,10 @@ pub struct DecisionBasis {
     pub kind: BasisKind,
     /// Procedure/plan reference or the player's operational rationale.
     pub reference: String,
+    /// Why the player took this decision, in their own words (a reply to
+    /// the inject's sender requires it; older sessions have none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +324,7 @@ impl DecisionEvidence {
             basis: DecisionBasis {
                 kind: BasisKind::OperationalJudgment,
                 reference: reference.into(),
+                rationale: None,
             },
             attachments: Vec::new(),
         }
@@ -328,6 +333,9 @@ impl DecisionEvidence {
     pub fn validate(&self) -> Result<()> {
         if self.basis.reference.trim().is_empty() || self.basis.reference.chars().count() > 2000 {
             bail!("decision basis requires a reference or rationale (up to 2000 characters)");
+        }
+        if self.basis.rationale.as_ref().is_some_and(|r| r.chars().count() > 2000) {
+            bail!("the rationale is limited to 2000 characters");
         }
         if self.attachments.len() > 20 {
             bail!("at most 20 evidence links are allowed");

@@ -63,6 +63,10 @@ function reading(user, gazetteer) {
     await field.click();
     await field.pressSequentially(text.slice(0, 1));
     await field.fill(text);
+    // A reply to the sender states its basis and why (required).
+    assert.ok(await box.locator('[data-reply-send]').isDisabled(), 'Send waits for basis and rationale');
+    await box.locator('#basis-operational_judgment').click();
+    await box.locator('[data-rationale]').fill('Il fronte scende verso F4: va fermato prima delle case');
     await box.locator('[data-reply-send]:not([disabled])').waitFor();
     await box.locator('[data-reply-send]').click();
     await fire.locator('#response-narrative').first().waitFor();
@@ -100,6 +104,7 @@ function reading(user, gazetteer) {
     assert.equal(await open().count(), 1);
     const badge = () => master.locator('[data-view="risposte"] .unread').count();
     assert.equal(await badge(), 1, 'the reply awaits the EXCON');
+    assert.match(await board.locator('[data-review-rationale]').first().innerText(), /prima delle case/, 'the EXCON reads the rationale');
     await shot('01-first-reply-open');
 
     // 2. EXCON handles everything: queue the team (any feasible place), ignore the line, discard the question.

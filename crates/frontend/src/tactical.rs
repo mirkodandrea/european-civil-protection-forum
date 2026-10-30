@@ -34,7 +34,8 @@ pub fn append_place(text: &str, place: &str) -> String {
 impl crate::player_view::PlayerView {
     /// How to reply so the exercise control can act on it, under the reply
     /// box: what, where, with which resources, by when, who is informed, what
-    /// it rests on (plan, procedure, law or operational judgement); then what
+    /// it rests on (plan, procedure, law or operational judgement) and why
+    /// (rationale); then what
     /// the role decides with (competences, resources).
     pub fn reply_guidance(&self, l: &str, compact: bool) -> Html {
         let tips = [
@@ -44,6 +45,7 @@ impl crate::player_view::PlayerView {
             ("guide_when", "guide_when_hint"),
             ("guide_who", "guide_who_hint"),
             ("guide_basis", "guide_basis_hint"),
+            ("guide_why", "guide_why_hint"),
         ];
         let resource_name = |id: &str| {
             list(&self.stat["resource_types"]).iter().find(|r| r["id"] == id).map(|r| text(&r["name"]).to_string()).unwrap_or(id.into())
@@ -192,5 +194,6 @@ mod place_tests {
             assert!(!body.contains(forbidden), "player page still has {forbidden}");
         }
         assert!(body.contains("guide_basis"), "the guide asks for plans, procedures or operational judgement");
+        assert!(body.contains("guide_why"), "the guide asks for the rationale");
     }
 }

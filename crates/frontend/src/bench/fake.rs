@@ -97,9 +97,11 @@ pub struct Proposal {
     pub clarification_request: Option<String>,
     pub outcomes: Vec<Value>,
     pub t_s: i64,
-    /// What the player said the reply rests on, and their reference or rationale.
+    /// What the player said the reply rests on, its reference (plan or
+    /// law) and why (rationale).
     pub basis: Option<String>,
     pub basis_note: Option<String>,
+    pub rationale: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -295,6 +297,7 @@ impl Fake {
             t_s: t,
             basis: None,
             basis_note: None,
+            rationale: None,
         });
         let mid = self.id();
         self.messages.push(Message {
@@ -363,6 +366,22 @@ impl Fake {
                 if b["kind"] == "decision" && !b["basis"].is_string() {
                     return Err("una decisione richiede il fondamento".into());
                 }
+                // A narrated reply to the sender: basis, reference of a plan
+                // or law, and rationale are required.
+                let filled = |k: &str| b[k].as_str().is_some_and(|t| !t.trim().is_empty());
+                let to_sender = b["to_players"].as_array().is_none_or(|p| p.is_empty());
+                if to_sender && filled("narrative") {
+                    let basis = b["basis"].as_str().unwrap_or("");
+                    if !["plan", "procedure", "law", "operational_judgment"].contains(&basis) {
+                        return Err("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement".into());
+                    }
+                    if basis != "operational_judgment" && !filled("basis_note") {
+                        return Err("say which plan, procedure or law the reply rests on (e.g. the plan's section or the article)".into());
+                    }
+                    if !filled("rationale") {
+                        return Err("a reply to the sender needs its rationale: why this decision".into());
+                    }
+                }
                 let pid = self.respond(
                     role,
                     &body_text(&b, "narrative"),
@@ -376,6 +395,7 @@ impl Fake {
                 }
                 p.basis = b["basis"].as_str().map(String::from);
                 p.basis_note = b["basis_note"].as_str().filter(|n| !n.trim().is_empty()).map(String::from);
+                p.rationale = b["rationale"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(String::from);
                 Ok(json!({"proposal": pid, "translation_failed": false}))
             }
             (true, ["api", "player", role, "reply"]) if who == *role => {
@@ -721,7 +741,8 @@ impl Fake {
         json!({"id": m.id, "kind": m.kind, "from": m.from, "to": m.to, "turn": 1, "t_s": m.t_s, "clock": clock(m.t_s),
             "title": m.title, "text": m.text, "inject_id": m.delivery, "reply_to": m.reply_to,
             "clarification_thread": clarification,
-            "basis": basis.as_ref().map(|p| p.basis.clone()), "basis_note": basis.and_then(|p| p.basis_note.clone())})
+            "basis": basis.as_ref().map(|p| p.basis.clone()), "basis_note": basis.and_then(|p| p.basis_note.clone()),
+            "rationale": basis.and_then(|p| p.rationale.clone())})
     }
     fn thread_json(&self, t: &Thread) -> Value {
         json!({"id": t.id, "role": t.role, "inject_id": t.delivery, "status": t.status, "current_proposal": t.proposal,
@@ -779,7 +800,8 @@ impl Fake {
             let replies: Vec<Value> = self.messages.iter().filter(|r| r.kind == "reply" && r.from == m.to && r.delivery == m.delivery)
                 .map(|r| json!({"id": r.id, "proposal": r.proposal, "text": r.text, "original": r.text, "clock": clock(r.t_s), "reply_to": r.reply_to,
                     "basis": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).map(|p| p.basis.clone().unwrap_or_else(|| "operational_judgment".into())),
-                    "basis_note": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).and_then(|p| p.basis_note.clone())})).collect();
+                    "basis_note": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).and_then(|p| p.basis_note.clone()),
+                    "rationale": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).and_then(|p| p.rationale.clone())})).collect();
             let pending: Vec<Value> = self.proposals.iter().filter(mine).filter(|p| ["pending", "needs_clarification"].contains(&p.status))
                 .map(|p| json!({"id": p.id, "status": p.status, "summary": p.original, "original": p.original, "role": p.role,
                     "narrative": p.narrative, "carries_actions": p.carries_actions,
@@ -844,7 +866,7 @@ mod tests {
                 "mayor",
                 "/api/player/mayor/actions",
                 Some(
-                    json!({"kind": "decision", "basis": "operational_judgment", "narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
+                    json!({"kind": "decision", "basis": "operational_judgment", "rationale": "Le famiglie evacuate devono stare al coperto", "narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
                 ),
             )
             .unwrap();
@@ -852,6 +874,10 @@ mod tests {
         // `kind` is required, and a decision needs its basis.
         assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"narrative": "x", "reply_to": inject}))).is_err());
         assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"kind": "decision", "narrative": "x", "reply_to": inject}))).is_err());
+        // A reply to the sender also needs its rationale, and a plan its reference.
+        let reply = |extra: Value| { let mut b = json!({"kind": "communication", "narrative": "x", "reply_to": inject}); for (k, v) in extra.as_object().unwrap() { b[k] = v.clone(); } b };
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({"basis": "operational_judgment"})))).is_err());
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({"basis": "plan", "rationale": "y"})))).is_err());
         let m = f.master();
         let row = m["inject_responses"]
             .as_array()

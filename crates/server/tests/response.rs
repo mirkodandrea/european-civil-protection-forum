@@ -56,13 +56,13 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
     let (c, _, parent) = fixture().await;
     let path = "/api/player/mayor/actions";
     let warn = json!({"type":"IssueWarning","zone":"F4"});
-    let (status, _) = call(&c, "mayor", path, Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent}))).await;
+    let (status, _) = call(&c, "mayor", path, Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent}))).await;
     assert_eq!(status, Status::BadRequest, "neither narrative nor actions");
     let (status, body) = call(
         &c,
         "mayor",
         path,
-        Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"narrative":"Avviso i volontari"})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"narrative":"Avviso i volontari"})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -70,7 +70,7 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
         &c,
         "mayor",
         path,
-        Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"text":"Avviso F4","commands":[warn]})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"text":"Avviso F4","commands":[warn]})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -78,7 +78,7 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
         &c,
         "mayor",
         path,
-        Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"narrative":"Avviso e informo","commands":[warn]})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"narrative":"Avviso e informo","commands":[warn]})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -126,7 +126,7 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
 #[tokio::test]
 async fn a_linked_conversation_lets_another_player_answer_the_inject() {
     let (c, _, parent) = fixture().await;
-    let respond = json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"narrative":"Warning from regional level","commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let respond = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"narrative":"Warning from regional level","commands":[{"type":"IssueWarning","zone":"F4"}]});
     // Without a conversation the non-recipient cannot answer.
     let (status, _) = call(
         &c,

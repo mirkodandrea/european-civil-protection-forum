@@ -247,6 +247,7 @@ fn review_group(r: &Value, props: &ReviewBoardProps, roles: &[Value], edits: &Us
                     <button class="rb-mini" disabled={props.busy||status=="reading"} onclick={post(format!("/api/master/review/reread/{pid}"),json!({}))} title={tr("L’AI rilegge l’intero thread","The AI reads the whole thread again")}>{tr("Rileggi","Re-read")}</button>
                     if !closed{<button class="rb-mini" disabled={props.busy} data-review-close={pid.to_string()} onclick={post(format!("/api/master/review/close/{pid}"),json!({}))}>{tr("Chiudi revisione","Close review")}</button>}
                 </div>
+                if !text(&r["rationale"]).is_empty(){<p class="rb-rationale" data-review-rationale=""><b>{tr("Motivazione: ","Rationale: ")}</b>{text(&r["rationale"])}</p>}
                 if !text(&r["summary"]).is_empty(){<p class="rb-summary muted">{text(&r["summary"])}</p>}
                 if list(&r["items"]).is_empty()&&status=="ready"{<p class="muted rb-none">{tr("Nessuna azione del catalogo in questa risposta.","No catalogue action in this reply.")}</p>}
                 <ol class="rb-items">{for list(&r["items"]).iter().map(|i|{

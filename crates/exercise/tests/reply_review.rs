@@ -39,6 +39,8 @@ fn reply(ex: &mut Exercise, role: &str, parent: u64, text: &str) -> u64 {
             narrative_en: text.into(),
             reply_to: Some(parent),
             kind: ResponseKind::Communication,
+            basis: Some(BasisKind::OperationalJudgment),
+            rationale: Some("The fire threatens the village".into()),
             ..Default::default()
         },
     )
@@ -611,6 +613,7 @@ fn the_reply_basis_reaches_the_ai_reading() {
                 kind: ResponseKind::Communication,
                 basis: Some(BasisKind::Plan),
                 basis_note: Some("Piano comunale di protezione civile, scheda 4".into()),
+                rationale: Some("Le famiglie evacuate devono attendere al coperto".into()),
                 ..Default::default()
             },
         )
@@ -627,6 +630,39 @@ fn the_reply_basis_reaches_the_ai_reading() {
     let reply = context.thread.as_array().unwrap().iter().find(|e| e["kind"] == "reply").unwrap();
     assert_eq!(reply["basis"]["kind"], "plan");
     assert!(reply["basis"]["reference"].as_str().unwrap().contains("scheda 4"));
+    assert_eq!(reply["basis"]["rationale"], "Le famiglie evacuate devono attendere al coperto");
+    assert!(
+        ex.conversations["mayor"].iter().any(|t| t.content.contains("[rationale] Le famiglie evacuate")),
+        "the player's AI conversation keeps the rationale"
+    );
+    let view = ex.review_view();
+    let row = view["reviews"].as_array().unwrap().iter().find(|r| r["proposal"] == pid).unwrap();
+    assert_eq!(row["rationale"], "Le famiglie evacuate devono attendere al coperto", "the EXCON board shows why");
+    // A reply to the sender needs its basis, the reference of a plan or law,
+    // and the rationale; a message to other players needs none of them.
+    let base = PlayerResponse {
+        narrative: Some("Evacuiamo F4".into()),
+        narrative_en: "We evacuate F4".into(),
+        reply_to: Some(parent),
+        kind: ResponseKind::Communication,
+        basis: Some(BasisKind::Law),
+        basis_note: Some("L. 225/1992, art. 15".into()),
+        rationale: Some("Il fuoco raggiunge le case entro un'ora".into()),
+        ..Default::default()
+    };
+    assert!(ex.validate_player_response("mayor", &base).is_ok());
+    let err = |r: PlayerResponse| ex.validate_player_response("mayor", &r).unwrap_err().to_string();
+    assert!(err(PlayerResponse { basis: None, basis_note: None, ..base.clone() }).contains("basis"));
+    assert!(err(PlayerResponse { basis_note: Some("  ".into()), ..base.clone() }).contains("which plan, procedure or law"));
+    assert!(err(PlayerResponse { rationale: Some(" ".into()), ..base.clone() }).contains("rationale"));
+    let judgement = PlayerResponse { basis: Some(BasisKind::OperationalJudgment), basis_note: None, ..base.clone() };
+    assert!(ex.validate_player_response("mayor", &judgement).is_ok(), "no reference for operational judgement");
+    let to_players = PlayerResponse { basis: None, basis_note: None, rationale: None, to_players: vec!["fire_commander".into()], ..base.clone() };
+    assert!(ex.validate_player_response("mayor", &to_players).is_ok(), "coordination needs no basis");
+    // Sessions saved before the rationale existed still load.
+    let old: DecisionEvidence = serde_json::from_value(json!({"basis": {"kind": "plan", "reference": "Piano, scheda 4"}})).unwrap();
+    assert!(old.basis.rationale.is_none());
+    assert!(serde_json::to_value(&old).unwrap()["basis"].get("rationale").is_none());
     // A rationale has to say what kind of basis it is.
     let orphan = PlayerResponse {
         narrative: Some("Evacuiamo".into()),

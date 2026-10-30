@@ -9,6 +9,7 @@ fn narrated(ex: &mut Exercise, role: &str, text: &str, parent: u64, text_en: &st
         exercise::response::PlayerResponse {
             kind: exercise::ResponseKind::Decision,
             basis: Some(exercise::BasisKind::OperationalJudgment),
+            rationale: Some("Rationale stated by the player".into()),
             narrative: Some(text.into()),
             narrative_en: text_en.into(),
             translation_failed: failed,
