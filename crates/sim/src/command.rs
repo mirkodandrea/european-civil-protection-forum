@@ -100,7 +100,8 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         destination: Option<String>,
     },
-    /// Warn the population of a zone: halves the time an evacuation takes there.
+    /// Warn the population of a zone: the zone is marked warned (with the
+    /// time) and an evacuation there takes 10 min instead of 20.
     IssueWarning {
         zone: String,
     },
@@ -298,7 +299,7 @@ impl Command {
                         .unwrap_or_default()
                 )
             }
-            Command::IssueWarning { zone } => format!("Issue warning to zone {zone}"),
+            Command::IssueWarning { zone } => format!("Warn the population of zone {zone}"),
             Command::CloseRoad { road } => format!("Close road {road}"),
             Command::ReopenRoad { road } => format!("Reopen road {road}"),
             Command::OpenShelter { building } => format!("Open shelter at {building}"),
@@ -391,7 +392,7 @@ pub fn catalogue(allowed: &[String]) -> String {
         ),
         (
             "IssueWarning",
-            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone (grid code, never a building name); later evacuations there are faster."#,
+            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone (grid code, never a building name). The zone stays marked as warned, with the time; any later evacuation there takes 10 min instead of 20. No resources; it moves nobody by itself."#,
         ),
         (
             "CloseRoad",

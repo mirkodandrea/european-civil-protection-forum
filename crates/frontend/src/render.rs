@@ -125,6 +125,29 @@ fn localize_note_in(note: &str, en: bool) -> String {
             return if en { format!("{bus} for {}", people(p)) } else { format!("{bus} per {}", people(p)) };
         }
     }
+    // "population of F4 warned at Day 1 14:20 (37 people in 12 buildings); an evacuation there will take 10 min instead of 20"
+    if let Some(rest) = n.strip_prefix("population of ") {
+        if let Some((zone, rest)) = rest.split_once(" warned at ") {
+            if let Some((when, rest)) = rest.split_once(" (") {
+                if let Some((who, _)) = rest.split_once(");") {
+                    let who = match who.split_once(" people in ") {
+                        Some((p, b)) => {
+                            let bld = counted(b.trim_end_matches(" buildings"), en, ("edificio", "edifici"), ("building", "buildings"));
+                            format!("{} in {bld}", people(p))
+                        }
+                        None if en => "no occupied buildings".into(),
+                        None => "nessun edificio occupato".into(),
+                    };
+                    return if en {
+                        format!("population of {zone} warned at {when} ({who}); an evacuation there will take 10 min instead of 20")
+                    } else {
+                        let when = when.replace("Day ", "giorno ");
+                        format!("popolazione di {zone} allertata · {when} ({who}); un’evacuazione lì richiederà 10 min invece di 20")
+                    };
+                }
+            }
+        }
+    }
     if let Some(d) = n.strip_prefix("to ") {
         return if en { format!("to {d}") } else { format!("verso {d}") };
     }
@@ -538,6 +561,9 @@ mod tests {
         assert_eq!(localize_note_in("500 m line, 1 crew(s)", true), "500 m line, 1 crew");
         assert_eq!(localize_note_in("500 m line, 2 crew(s)", true), "500 m line, 2 crews");
         assert_eq!(localize_note_in("1 buildings, 1 people", true), "1 building, 1 person");
+        let w = "population of F4 warned at Day 1 14:20 (37 people in 12 buildings); an evacuation there will take 10 min instead of 20";
+        assert_eq!(localize_note_in(w, false), "popolazione di F4 allertata · giorno 1 14:20 (37 persone in 12 edifici); un’evacuazione lì richiederà 10 min invece di 20");
+        assert_eq!(localize_note_in(w, true), w);
         assert_eq!(localize_note_in("2 bus(es) for 90 people", true), "2 buses for 90 people");
         assert_eq!(localize_note_in("to Pineta", false), "verso Pineta");
         assert_eq!(localize_note_in("2 crews arrive in 12 min from base", false), "2 crews in arrivo tra 12 min da base");

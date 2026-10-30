@@ -285,7 +285,7 @@ async fn master_player_llm_round_trip() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|a| a["action"] == "Issue warning to zone F4" && a["ok"] == true));
+        .any(|a| a["action"] == "Warn the population of zone F4" && a["ok"] == true));
     eventually(&app, "/api/player/fire_commander", |v| {
         v["inbox"]
             .as_array()
@@ -3337,7 +3337,7 @@ async fn partial_approval_acknowledgement_and_review_states_over_http() {
         "reason":"Only F4 for now",
         "rejected_actions":[{"index":1,"reason":"G4 is not threatened yet"}]}))).await;
     assert_eq!(s, Status::Ok, "{out}");
-    assert!(out["facts_en"].as_str().unwrap().contains("NOT APPROVED: Issue warning to zone G4"));
+    assert!(out["facts_en"].as_str().unwrap().contains("NOT APPROVED: Warn the population of zone G4"));
     let (_, m) = call(&app, "GET", "/api/master", None).await;
     let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
     assert_eq!((p["status"].as_str(), p["review"].as_str()), (Some("approved"), Some("partially_approved")));
@@ -3357,8 +3357,8 @@ async fn partial_approval_acknowledgement_and_review_states_over_http() {
     // The AI conversation of the player knows what was approved and what not.
     let context = shared.lock().unwrap().conversation("mayor");
     let last = context.iter().rev().find(|t| t.content.contains("FEEDBACK")).unwrap();
-    assert!(last.content.contains("APPROVED: Issue warning to zone F4"), "{}", last.content);
-    assert!(last.content.contains("NOT APPROVED: Issue warning to zone G4"), "{}", last.content);
+    assert!(last.content.contains("APPROVED: Warn the population of zone F4"), "{}", last.content);
+    assert!(last.content.contains("NOT APPROVED: Warn the population of zone G4"), "{}", last.content);
 
     // A reply with no actions (AI off: nothing interpreted) is acknowledged.
     let (_, r) = call_key(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"How many buses do we have?","reply_to":parent,

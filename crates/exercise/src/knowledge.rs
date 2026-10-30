@@ -691,7 +691,11 @@ impl Exercise {
             json!({"cells":cells.values().collect::<Vec<_>>(), "reported_locations":locations,
             "forecast_products":forecast_products,
             "known_zones":self.known_zones(role), "observed_units":units,
-            "roads":roads, "lines":lines, "drops":drops, "warned":[], "burning_zones":[],
+            "roads":roads, "lines":lines, "drops":drops, "burning_zones":[],
+            // Public warnings reach the population, so every role sees zone and time
+            // (never the hidden population counts).
+            "warned":self.world.d.warned.keys().collect::<Vec<_>>(),
+            "warnings":self.world.warnings().iter().map(|w| json!({"zone":w.zone,"t_s":w.t_s,"clock":w.clock})).collect::<Vec<_>>(),
             "buildings":(0..self.world.scn.buildings.len()).map(|i| buildings.get(&i).cloned().unwrap_or(Value::Null)).collect::<Vec<_>>(),
             // The latest estimate, until a later disclosure of the fire itself supersedes it.
             "estimates":self.knowledge_events.iter().enumerate().rev().find(|(_, e)| e.role == role && !e.observation.estimates.is_empty())

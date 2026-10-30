@@ -83,7 +83,7 @@ fn a_queued_action_can_be_edited_or_cancelled_before_play() {
     assert_eq!(status(&ex, a), "cancelled");
     assert!(!burning(&ex), "the cancelled ignition never ran");
     assert_eq!(status(&ex, b), "done");
-    assert!(ex.world.d.warned.contains("G4"));
+    assert!(ex.world.d.warned.contains_key("G4"));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn setup_bookkeeping_and_apply_now_stay_immediate() {
     // The explicit escape hatch.
     let o = ex.apply_or_queue_excon(&Command::IssueWarning { zone: "F4".into() }, ExconWhen::Now, json!({})).unwrap();
     assert!(matches!(o, ExconOutcome::Applied { .. }));
-    assert!(ex.world.d.warned.contains("F4"));
+    assert!(ex.world.d.warned.contains_key("F4"));
     assert!(ex.excon_queue().is_empty());
     // A command the world refuses is refused when queued, not at play.
     assert!(ex

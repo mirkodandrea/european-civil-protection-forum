@@ -469,7 +469,7 @@ creazione.
 ## Fedeltà delle formulazioni AI (playtest 28/10)
 
 Un invito comunale a evitare abbruciamenti era diventato «divieto di
-abbruciamento (Issue warning to zone F4)». Regole e controlli (`llm::fidelity`):
+abbruciamento (Warn the population of zone F4)». Regole e controlli (`llm::fidelity`):
 
 - I prompt di `parse_reply`, `suggest_actions`, traduzioni, riepilogo di turno e
   aggiornamento di situazione includono `FIDELITY_RULES`: quantità, condizioni,
@@ -540,6 +540,25 @@ applicano subito, anche mentre il tempo scorre. Nessun salvataggio. Dettagli:
   stato (`sim::World::step_buildings`; test `crates/sim/tests/building_damage.rs`).
 - Avvisi ed evacuazioni di edifici o zone, rifugi e destinazioni, traffico
   d'evacuazione e risorse di trasporto.
+- **Allerta alla popolazione** (`IssueWarning {zone}`, playtest 30/10 «Warn non
+  fa niente»): la zona resta *allertata* con l'ora dell'avviso
+  (`sim::Dyn::warned`: zona → secondo simulato, quindi segue snapshot e
+  rollback) e un'evacuazione successiva lì richiede 10 min invece di 20. Non usa
+  risorse e da sola non sposta nessuno. Ripetere l'avviso conserva l'ora del
+  primo. Effetti visibili: nota del comando e riga di registro «population of F4
+  warned at Day 1 14:20 (37 people in 12 buildings); an evacuation there will
+  take 10 min instead of 20» (localizzata in console, nel messaggio di esito
+  dell'operazione e nella colonna dello storico), evento `warning` del sim,
+  riga «WARNING …» nel feed del 3D; zona tratteggiata in ambra con bordo e
+  etichetta «🔔 Allertata F4 · 14:20» sulla mappa 2D EXCON e su quella dei
+  giocatori (livello «Chiusure e allerte», voce di legenda «Zona allertata»; i
+  giocatori vedono zona e ora, non i conteggi della popolazione); contorno e
+  tratteggio sempre visibili nella vista 3D con etichetta «WARNED F4 · ora»
+  (`view::ViewState::warnings`, costruito da `server::view::extract`).
+  Per l'AI: `digest` ha `warnings_in_force` (zona, da quando, persone ancora
+  dentro, effetto) e `populated_zones[].warned_at`; `World::view` espone
+  `warned` (codici) e `warnings` (zona, ora, persone, edifici). Verifica nel
+  browser: `TTX_QA_URL=http://127.0.0.1:8080 node scripts/qa/warn-zone.cjs`.
 - Interventi antincendio, tra cui linee tagliafuoco, lanci d'acqua e autobotti.
 - Chiusure stradali, viaggi delle risorse, richieste di rinforzi e gestione
   delle disponibilità.

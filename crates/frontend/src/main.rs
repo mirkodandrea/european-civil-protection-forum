@@ -709,6 +709,16 @@ impl Component for App {
                     }
                     Ok(value) => {
                         self.notice = crate::i18n::ex("Operazione completata").into();
+                        // Say what the simulator did (e.g. "population of F4 warned at 14:20 …").
+                        let notes = list(&value["results"])
+                            .iter()
+                            .filter(|r| r["ok"] == true && r["queued"].is_null())
+                            .flat_map(|r| list(&r["notes"]).iter().map(|n| crate::render::localize_note(text(n))).collect::<Vec<_>>())
+                            .filter(|n| !n.is_empty())
+                            .collect::<Vec<_>>();
+                        if !notes.is_empty() {
+                            self.notice = format!("{} · {}", self.notice, notes.join(" · "));
+                        }
                         let failures = list(&value["results"])
                             .iter()
                             .filter(|r| r["ok"] == false)

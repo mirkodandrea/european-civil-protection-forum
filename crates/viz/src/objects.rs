@@ -326,7 +326,6 @@ pub fn update(
     }
     if grid.0 {
         let z = s.zones;
-        let warned: std::collections::HashSet<&String> = snap.warned.iter().collect();
         let (w, h) = (s.grid.width_m(), s.grid.height_m());
         for c in 0..=z.cols {
             let x = (c as f32 * z.size_m).min(w - 1.0);
@@ -342,31 +341,37 @@ pub fn update(
                 Color::srgba(1.0, 1.0, 1.0, 0.35),
             );
         }
-        for name in &warned {
-            if let Some(b) = s.zone_bounds(name) {
-                let ring = [
-                    [b[0], b[1]],
-                    [b[2], b[1]],
-                    [b[2], b[3]],
-                    [b[0], b[3]],
-                    [b[0], b[1]],
-                ];
-                let mut pts = Vec::new();
-                for wv in ring.windows(2) {
-                    for k in 0..=20 {
-                        let t = k as f32 / 20.0;
-                        pts.push(to_bevy(
-                            s,
-                            [
-                                wv[0][0] + (wv[1][0] - wv[0][0]) * t,
-                                wv[0][1] + (wv[1][1] - wv[0][1]) * t,
-                            ],
-                            6.0,
-                        ));
-                    }
-                }
-                gizmos.linestrip(pts, Color::srgb(1.0, 0.8, 0.0));
-            }
+    }
+
+    // Warned zones: always visible (not only with the grid), amber outline and
+    // diagonal hatching draped on the terrain.
+    for name in &snap.warned {
+        let Some(b) = s.zone_bounds(name) else {
+            continue;
+        };
+        let amber = Color::srgb(1.0, 0.75, 0.0);
+        let seg = |gizmos: &mut Gizmos, a: [f32; 2], c: [f32; 2], n: usize| {
+            gizmos.linestrip(
+                (0..=n).map(|k| {
+                    let t = k as f32 / n as f32;
+                    to_bevy(s, [a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t], 6.0)
+                }),
+                amber,
+            );
+        };
+        let ring = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]];
+        for wv in ring.windows(2) {
+            seg(&mut gizmos, wv[0], wv[1], 24);
+        }
+        // 45 degree hatching, clipped to the (possibly rectangular) zone.
+        let (w, h) = (b[2] - b[0], b[3] - b[1]);
+        let step = w.min(h) / 8.0;
+        let mut d = step;
+        while d < w + h {
+            let a = if d <= w { [b[0] + d, b[1]] } else { [b[2], b[1] + d - w] };
+            let c = if d <= h { [b[0], b[1] + d] } else { [b[0] + d - h, b[3]] };
+            seg(&mut gizmos, a, c, 16);
+            d += step;
         }
     }
 

@@ -157,6 +157,18 @@ pub struct SimEvent {
     pub zone: Option<String>,
 }
 
+/// A warning in force, for the UIs and the AI.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WarningInfo {
+    pub zone: String,
+    /// Simulated second the warning was issued.
+    pub t_s: i64,
+    pub clock: String,
+    /// People still inside the zone's buildings, and occupied buildings.
+    pub people_inside: u32,
+    pub buildings: u32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Pool {
     pub total: u32,
@@ -255,7 +267,8 @@ pub struct Dyn {
     pub drops: Vec<DropRec>,
     /// Open shelters: building id -> people sheltered.
     pub shelters: BTreeMap<u32, u32>,
-    pub warned: BTreeSet<String>,
+    /// Warned zones: zone code -> simulated second the warning was issued.
+    pub warned: BTreeMap<String, i64>,
     pub pools: BTreeMap<String, BTreeMap<String, Pool>>,
     pub allocations: Vec<ResourceAllocation>,
     pub resource_events: Vec<ResourceEvent>,
@@ -393,7 +406,7 @@ impl World {
                 lines: Vec::new(),
                 drops: Vec::new(),
                 shelters: BTreeMap::new(),
-                warned: BTreeSet::new(),
+                warned: BTreeMap::new(),
                 pools,
                 allocations: Vec::new(),
                 resource_events: Vec::new(),
@@ -417,6 +430,55 @@ impl World {
 
     pub fn clock(&self) -> String {
         scenario::format_clock(self.scn.start_clock_s + self.time_s())
+    }
+
+    /// Wall-clock label of a simulated second.
+    pub fn clock_at(&self, t_s: i64) -> String {
+        scenario::format_clock(self.scn.start_clock_s + t_s)
+    }
+
+    /// Occupied buildings and people currently inside a zone.
+    pub fn zone_population(&self, code: &str) -> (u32, u32) {
+        self.buildings_in_zone(code)
+            .iter()
+            .map(|&i| self.d.buildings[i].people_inside)
+            .filter(|&n| n > 0)
+            .fold((0, 0), |(b, p), n| (b + 1, p + n))
+    }
+
+    /// The log line for a warning issued to `code` at `t_s`.
+    pub fn warning_text(&self, code: &str, t_s: i64) -> String {
+        let (buildings, people) = self.zone_population(code);
+        let who = if people > 0 {
+            format!(" ({people} people in {buildings} buildings)")
+        } else {
+            " (no occupied buildings)".to_string()
+        };
+        format!(
+            "population of {code} warned at {}{who}; an evacuation there will take {EVAC_WARNED_MIN} min instead of {EVAC_MIN}",
+            self.clock_at(t_s)
+        )
+    }
+
+    /// Warnings in force, oldest first, with the people still inside each zone.
+    pub fn warnings(&self) -> Vec<WarningInfo> {
+        let mut v: Vec<WarningInfo> = self
+            .d
+            .warned
+            .iter()
+            .map(|(zone, &t_s)| {
+                let (buildings, people_inside) = self.zone_population(zone);
+                WarningInfo {
+                    zone: zone.clone(),
+                    t_s,
+                    clock: self.clock_at(t_s),
+                    people_inside,
+                    buildings,
+                }
+            })
+            .collect();
+        v.sort_by_key(|w| (w.t_s, w.zone.clone()));
+        v
     }
 
     pub fn snapshot(&self) -> WorldSnapshot {
@@ -1681,12 +1743,18 @@ impl World {
             }
             Command::IssueWarning { zone } => {
                 let code = self.zone_code(zone).unwrap();
-                self.d.warned.insert(code.clone());
-                self.event(
-                    "warning",
-                    format!("{by} issued a warning to zone {code}"),
-                    Some(code),
-                );
+                let note = match self.d.warned.get(&code) {
+                    Some(&at) => format!(
+                        "warning to {code} repeated (warned since {})",
+                        self.clock_at(at)
+                    ),
+                    None => {
+                        self.d.warned.insert(code.clone(), t);
+                        self.warning_text(&code, t)
+                    }
+                };
+                out.push(note.clone());
+                self.event("warning", format!("{by}: {note}"), Some(code));
             }
             Command::CloseRoad { road } => {
                 let id = self.find_road(road).unwrap();
@@ -1972,7 +2040,7 @@ impl World {
                 .scn
                 .zone_of(self.scn.buildings[i].pos)
                 .unwrap_or_default();
-            let warned = self.d.warned.contains(&zone);
+            let warned = self.d.warned.contains_key(&zone);
             let b = &mut self.d.buildings[i];
             let leaving = b.people_inside.saturating_sub(b.evac_pending);
             if leaving == 0 {

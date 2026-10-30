@@ -239,7 +239,16 @@ pub fn extract(ex: &Exercise, have: Have) -> Option<ViewState> {
             .collect(),
         deployments: w.d.tasks.iter().map(|t| deployment(w, t)).collect(),
         traffic_model: w.scn.operations.traffic,
-        warned: w.d.warned.iter().cloned().collect(),
+        warned: w.d.warned.keys().cloned().collect(),
+        warnings: w
+            .warnings()
+            .into_iter()
+            .map(|x| view::Warning {
+                zone: x.zone,
+                t_s: x.t_s,
+                clock: x.clock,
+            })
+            .collect(),
         last_turn: ex.last_turn.as_ref().map(window),
         resolving: ex.resolving.as_ref().map(|r| TurnWindow {
             turn: r.turn,
@@ -450,6 +459,11 @@ pub(crate) fn feed_line(e: &exercise::LogEntry) -> Option<String> {
                 .trim_start_matches("APPROVED: ")
         ),
         "proposal_decided" => "REJECTED  a proposal".to_string(),
+        // A warning shows what it did: zone, time and the evacuation effect.
+        "master_command" if d["command"]["type"] == "IssueWarning" => format!(
+            "WARNING  {}",
+            truncate(d["result"]["ok"][0].as_str()?, 110)
+        ),
         "master_command" => format!(
             "EXCON  {}",
             serde_json::from_value::<sim::Command>(d["command"].clone())

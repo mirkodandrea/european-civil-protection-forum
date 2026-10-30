@@ -167,6 +167,15 @@ pub struct FireLine {
     pub width_m: f32,
 }
 
+/// A zone whose population has been warned.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Warning {
+    pub zone: String,
+    /// Simulated second the warning was issued, and its clock label.
+    pub t_s: i64,
+    pub clock: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Drop {
     pub at: Pos,
@@ -260,6 +269,9 @@ pub struct ViewState {
     pub traffic_model: bool,
     /// Zones with an issued warning.
     pub warned: Vec<String>,
+    /// The same warnings with the time they were issued, oldest first.
+    #[serde(default)]
+    pub warnings: Vec<Warning>,
     pub last_turn: Option<TurnWindow>,
     /// While a turn is being simulated.
     pub resolving: Option<TurnWindow>,

@@ -69,7 +69,7 @@ impl World {
         }
         let populated: Vec<Value> = zones
             .iter()
-            .map(|(z, v)| json!({"zone": z, "buildings": v[0], "people_inside": v[1], "evacuated": v[2], "damaged_or_destroyed": v[3], "threatened": v[4], "warned": self.d.warned.contains(z)}))
+            .map(|(z, v)| json!({"zone": z, "buildings": v[0], "people_inside": v[1], "evacuated": v[2], "damaged_or_destroyed": v[3], "threatened": v[4], "warned_at": self.d.warned.get(z).map(|&t| self.clock_at(t))}))
             .collect();
         let roads: Vec<Value> = self
             .scn
@@ -99,6 +99,8 @@ impl World {
             "totals": {"buildings_damaged": s.damaged, "buildings_destroyed": s.destroyed, "buildings_threatened": s.threatened, "people_evacuated": s.evacuated_people, "people_at_risk": s.people_at_risk, "people_sheltered": s.sheltered},
             "facilities": facilities,
             "populated_zones": populated,
+            "warnings_in_force": self.warnings().iter().map(|w| json!({"zone": w.zone, "since": w.clock, "people_still_inside": w.people_inside,
+                "effect": format!("population warned: an evacuation of {} takes {} min instead of {}", w.zone, crate::EVAC_WARNED_MIN, crate::EVAC_MIN)})).collect::<Vec<_>>(),
             "roads": roads,
             "resources": pools,
             "resources_this_turn": pools,
@@ -215,7 +217,8 @@ impl World {
             "roads": self.d.roads,
             "lines": self.d.lines,
             "drops": self.d.drops,
-            "warned": self.d.warned,
+            "warned": self.d.warned.keys().collect::<Vec<_>>(),
+            "warnings": self.warnings(),
             "shelters": self.d.shelters,
             "pools": self.d.pools,
             "allocations": self.d.allocations,
