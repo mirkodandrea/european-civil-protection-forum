@@ -1,0 +1,34 @@
+{
+  "title": "Valverde valley · current playtest",
+  "status": "Playtest",
+  "description": "The version the team is testing now: a wildfire in the synthetic Valverde valley, run turn by turn by the EXCON while players answer in free text.",
+  "scenario": "Valverde valley (synthetic territory) and its scenario packs",
+  "highlights": [
+    "Players are narrative-only: the AI reads each reply and suggests catalogue actions that the EXCON executes, edits or ignores",
+    "Queued and scheduled EXCON actions, including ExtinguishArea on a drawn polygon",
+    "Every participant chooses a language when a new exercise starts",
+    "Session, scenario packs and OpenRouter key are kept in this browser"
+  ],
+  "modes": [
+    {
+      "query": "",
+      "name": "Full exercise",
+      "description": "Launcher, EXCON console, every player role and the 3D simulator in one browser window."
+    },
+    {
+      "query": "?bench=1",
+      "name": "Interaction bench",
+      "description": "EXCON and player screens of one small workflow side by side, against a fake server, to try the message flow between users."
+    },
+    {
+      "query": "?simbench=1",
+      "name": "Simulator bench",
+      "description": "3D simulator next to the EXCON control console: run, pause or jump the clock and apply actions at once. Nothing is saved."
+    },
+    {
+      "query": "?editor=1",
+      "name": "Scenario editor 3D",
+      "description": "Edit a complete scenario draft, terrain, roads and objects included, without starting an exercise."
+    }
+  ]
+}

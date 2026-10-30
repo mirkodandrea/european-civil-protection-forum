@@ -1,14 +1,18 @@
 # Versioni standalone su GitHub Pages
 
 La [pagina iniziale](https://mirkodandrea.github.io/european-civil-protection-forum/)
-permette di aprire o scaricare due app HTML indipendenti:
+(in inglese, per il pubblico internazionale) mostra una scheda per ciascuna delle
+due app HTML indipendenti:
 
 - [main](https://mirkodandrea.github.io/european-civil-protection-forum/main/):
-  interfaccia HTML/JavaScript originale, renderer Bevy 3D originale, mappe 2D, scenario
-  `synthetic_valley.json`, modello storico predefinito del branch.
+  la versione che il team sta testando (scenario Valverde).
 - [dev](https://mirkodandrea.github.io/european-civil-protection-forum/dev/):
-  interfaccia Rust/Yew, renderer Bevy 3D, scenario `valverde_factory.json`,
-  modello operativo abilitato.
+  la versione successiva, in sviluppo (isola di Roccavento, gestione per
+  borghi/distretti con `EvacuateDistrict` a partenze cadenzate).
+
+Ogni scheda riporta titolo, descrizione, scenario e novità scritti dal branch
+stesso in `release.json` (vedi sotto), data dell’ultimo commit, commit e numero
+di build, un link diretto a ogni modalità e i pulsanti “Open” e “Download HTML”.
 
 Entrambe usano il modello e i controller del rispettivo branch, con seme 1,
 32 realizzazioni e cutoff 0.5. Non sono collegate tra loro. Ogni apertura
@@ -62,10 +66,62 @@ una sequenza nativa equivalente e salva immagini e manifest in
 Tenere directory `CARGO_TARGET_DIR` diverse se si compilano contemporaneamente
 i due branch in worktree separati.
 
-La build include anche i banchi di sviluppo (feature `bench`): accanto a ogni
-versione la pagina iniziale collega il [banco simulatore](banco-simulatore.md)
-(`?simbench=1`) e il [banco di prova](banco-di-prova.md) (`?bench=1`). Senza
-questi parametri l’app non li usa.
+## Modalità (query string)
+
+La stessa app si apre in modalità diverse a seconda dell’indirizzo; vale anche
+per il file scaricato (`ttx-main.html?simbench=1`):
+
+| Indirizzo | Modalità | A cosa serve |
+|---|---|---|
+| nessun parametro | Esercitazione completa | launcher, console EXCON, tutti i ruoli e simulatore 3D in una finestra |
+| `?bench=1` | [Banco di prova](banco-di-prova.md) | schermate EXCON e partecipante affiancate su un server finto, per provare il flusso di messaggi (feature `bench`) |
+| `?simbench=1` (`&scn=ID`) | [Banco simulatore](banco-simulatore.md) | simulatore 3D con la console Controllo EXCON; clock avviato, in pausa o a salti; nulla viene salvato |
+| `?editor=1` | Editor scenario 3D | bozza di scenario completo, territorio incluso, senza esercitazione ([scenari](scenari.md#editor-scenario-3d)) |
+
+Senza questi parametri l’app non usa i banchi. `/main/` e `/dev/` sono sullo
+stesso sito e condividono il `localStorage` (chiavi `ttx.standalone.*`): passando
+da una versione all’altra conviene iniziare una nuova sessione dal launcher.
+
+## Pagina iniziale e `release.json`
+
+`release.json`, nella radice del repository, descrive la scheda del proprio
+branch. La build lo copia in `_branch/` accanto a `version.json`;
+`scripts/stage_pages.py` lo legge da `_site/<branch>/release.json`. Campi:
+
+- `title` e `description` (obbligatori): titolo leggibile e una o due frasi;
+- `status` (facoltativo): etichetta breve, es. `Playtest`, `In development`;
+- `scenario` (facoltativo): scenario/territorio principale;
+- `highlights` (facoltativo): elenco di novità, una riga ciascuna;
+- `modes` (facoltativo): elenco di `{query, name, description}`, con `query`
+  vuota o del tipo `?bench=1`. Se manca: esercitazione, `?bench=1`, `?simbench=1`.
+
+Un file non valido blocca la pubblicazione con un errore esplicito. Se il file
+manca (branch precedente a questa pagina) la scheda è generica, con “Branch X”
+e le modalità predefinite. Tutto il testo è in inglese.
+
+Su **dev**, dopo il merge di main, adattare il file al contenuto di dev, ad esempio:
+
+```json
+{
+  "title": "Roccavento island · borghi and evacuation",
+  "status": "In development",
+  "description": "The next version: a wildfire on the Roccavento island, where settlements are managed borgo by borgo and districts are evacuated with paced departures.",
+  "scenario": "Roccavento island, organised in borghi and districts",
+  "highlights": [
+    "EvacuateDistrict: evacuate a district with paced departures instead of all at once",
+    "Scenario editor: Borghi tab and editable districts in scenario packs",
+    "Launcher and session headers show commit, build number and build date"
+  ],
+  "modes": []
+}
+```
+
+Al posto di `"modes": []` copiare l’elenco `modes` di main (le quattro modalità,
+se dev le supporta ancora) oppure togliere la chiave per avere le tre predefinite;
+un elenco vuoto non è accettato.
+
+Aggiornare `release.json` quando cambia ciò che il branch offre (scenario,
+novità, modalità). Test: `python3 -m unittest scripts/test_stage_pages.py`.
 
 Le build pubbliche impostano chiavi e cassette vuote. Lo script locale
 `run_pages_local.sh` di dev può incorporare la chiave `.env`: il suo artefatto
@@ -80,7 +136,10 @@ proposto senza pubblicare. Le pubblicazioni sono serializzate tra tutti i branch
 un errore nei test o nella build impedisce il deploy dell’intero sito.
 La verifica browser estesa può essere richiesta dall’avvio manuale del workflow
 con `verify_standalone=true`; se richiesta, anche il suo esito blocca il deploy.
-Ogni sottocartella include `version.json` con branch, commit e run GitHub.
+Ogni sottocartella include `version.json` (branch, commit, run e numero di run
+GitHub, repository, data del commit `committed_at` e della build `built_at`;
+i campi assenti nelle build più vecchie sono mostrati come “not recorded”) e,
+se presente nel branch, `release.json`.
 La verifica browser opzionale usa Chrome preinstallato sul runner Ubuntu, con ANGLE SwiftShader per
 verificare il 3D senza una GPU fisica. Le prove browser sono conservate negli
 artefatti della run per sette giorni.

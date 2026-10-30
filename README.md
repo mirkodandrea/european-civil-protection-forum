@@ -27,6 +27,12 @@ Background: [`PPRD_East_4_Agentic_TTX_Use_Case_for_Mirko.md`](PPRD_East_4_Agenti
 
 Le versioni pubblicate sono disponibili su [GitHub Pages](https://mirkodandrea.github.io/european-civil-protection-forum/): [main](https://mirkodandrea.github.io/european-civil-protection-forum/main/) e [dev](https://mirkodandrea.github.io/european-civil-protection-forum/dev/). Build, differenze e verifica: [docs/standalone-pages.md](docs/standalone-pages.md).
 
+The landing page has one card per branch: main is the version being playtested,
+dev the next one. Each card's title, description, highlights and mode links
+(`?bench=1`, `?simbench=1`, `?editor=1`) come from that branch's
+[`release.json`](release.json); update it when the branch's content changes
+(fields and the dev example: [docs/standalone-pages.md](docs/standalone-pages.md#pagina-iniziale-e-releasejson)).
+
 `./scripts/build_standalone.sh` builds **`web/standalone/ttx.html`**, one
 self-contained HTML app with the real simulation, EXCON, all player views and
 the Bevy 3D renderer in the simulation panel. It runs directly in a browser
