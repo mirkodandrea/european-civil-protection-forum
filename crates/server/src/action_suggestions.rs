@@ -113,7 +113,7 @@ async fn run(
         (
             spec,
             catalogue,
-            ex.world.gazetteer(),
+            ex.gazetteer(),
             ex.turn,
             ex.clock_control.revision,
         )

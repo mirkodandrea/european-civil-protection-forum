@@ -112,7 +112,7 @@ pub async fn process_reply(state: AppState, pid: u64) {
                     .unwrap_or_default(),
             ),
             others,
-            ex.world.gazetteer(),
+            ex.gazetteer(),
             serde_json::json!({"chat_recipient":ex.messages.iter().find(|m|m.proposal==Some(pid) && m.kind==MsgKind::Chat).map(|m|&m.to),"clock":ex.world.clock(),"map":ex.player_map(&role_id).unwrap_or_default(),"resources":ex.world.d.pools.get(&role_id),"deployments":ex.world.d.tasks.iter().filter(|t|t.role==role_id).collect::<Vec<_>>()}),
             history(&ex, &role_id),
             p.original.clone(),
@@ -203,7 +203,7 @@ pub async fn process_master_prompt(state: AppState, pid: u64) {
                 .iter()
                 .map(|r| (r.id.clone(), r.name.clone()))
                 .collect::<Vec<_>>(),
-            ex.world.gazetteer(),
+            ex.gazetteer(),
             serde_json::json!({"training_design":ex.design_view(),"recorded_decisions":ex.proposals.iter().rev().take(100).collect::<Vec<_>>(),"deployments":ex.world.deployment_view(),"travel_settings":ex.world.d.travel_settings,"world":ex.world.digest(None),"exercise_phase":ex.exercise_phase,"resource_limits":ex.resource_limits,"resource_accounting":ex.resource_accounting(None)}),
             history(&ex, exercise::MASTER),
             ex.proposal(pid)

@@ -17,6 +17,8 @@ import tempfile
 
 import numpy as np
 
+from . import translations
+
 ID = 'roccavento_island'
 SOURCE = Path.home() / 'dev/experiments/propagator_abm/data/scenarios/rocca_ventosa'
 ROOT = Path(__file__).resolve().parents[2]
@@ -267,6 +269,7 @@ def generate(source):
 
 def landscape(args):
     s, manifest = generate(args.source)
+    translations.fill(s, args.output, llm=getattr(args, 'translate', True))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     manifest['scenario_sha256'] = write(args.output, s, compact=True)
     pack = args.output.parent / 'roccavento_valico.pack.json'

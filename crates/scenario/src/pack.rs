@@ -66,6 +66,10 @@ pub struct ScenarioEdits {
     pub districts: Option<Vec<District>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub district_evacuation: Option<DistrictEvacuation>,
+    /// Display texts in other languages (see [`Scenario::translations`]),
+    /// e.g. the map labels players read in their own language.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translations: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 /// Simulation options a pack may fix. Command-line options take precedence.
@@ -202,6 +206,9 @@ impl Scenario {
         if let Some(v) = e.district_evacuation {
             self.district_evacuation = v;
         }
+        if let Some(v) = &e.translations {
+            self.translations = v.clone();
+        }
         self.check()
     }
 
@@ -227,6 +234,7 @@ impl Scenario {
             operational_grants: Some(self.operational_grants.clone()),
             districts: Some(self.districts.clone()),
             district_evacuation: Some(self.district_evacuation),
+            translations: Some(self.translations.clone()),
             ..Default::default()
         }
     }
@@ -482,6 +490,23 @@ mod tests {
     }
         fn vocab() -> Vocabulary<'static> {
         Vocabulary { role_actions: ALL }
+    }
+
+    #[test]
+    fn packs_carry_map_label_translations_and_english_is_a_target() {
+        let mut b = base();
+        let place = b.places[0].name.clone();
+        assert!(b.map_texts().contains(&place));
+        b.translations.entry("it".into()).or_default().insert(place.clone(), "Luogo".into());
+        let mut e = ScenarioEdits::default();
+        let mut s = b.clone();
+        s.apply_edits(&e).unwrap();
+        assert_eq!(s.display_map("it")[&place], "Luogo", "absent edits keep the territory's");
+        e.translations = Some([("en".to_string(), [(place.clone(), "Place".to_string())].into())].into());
+        s.apply_edits(&e).unwrap();
+        assert_eq!(s.display_map("en")[&place], "Place");
+        assert!(!s.display_map("it").contains_key(&place));
+        assert_eq!(s.edits().translations, e.translations);
     }
 
     #[test]

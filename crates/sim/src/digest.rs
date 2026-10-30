@@ -110,6 +110,40 @@ impl World {
     /// Place names, zone layout and resource meanings: the static context an
     /// LLM needs to turn words into commands.
     pub fn gazetteer(&self) -> Value {
+        self.gazetteer_for(&[])
+    }
+
+    /// [`World::gazetteer`] with the names players read in `languages` (the
+    /// scenario's static map-label translations) as aliases, so a reply that
+    /// uses them resolves to the source name commands need.
+    pub fn gazetteer_for(&self, languages: &[String]) -> Value {
+        let maps: Vec<_> = languages.iter().map(|l| self.scn.display_map(l)).collect();
+        let local = |name: &str| {
+            let mut out: Vec<&str> = maps.iter().filter_map(|m| m.get(name).map(String::as_str)).collect();
+            out.sort();
+            out.dedup();
+            out
+        };
+        let mut g = self.gazetteer_source();
+        for key in ["places", "facilities", "roads"] {
+            for item in g[key].as_array_mut().into_iter().flatten() {
+                let names = local(item["name"].as_str().unwrap_or_default());
+                if names.is_empty() {
+                    continue;
+                }
+                let mut aliases = item["aliases"].as_array().cloned().unwrap_or_default();
+                for n in names {
+                    if !aliases.iter().any(|a| a == n) {
+                        aliases.push(json!(n));
+                    }
+                }
+                item["aliases"] = Value::Array(aliases);
+            }
+        }
+        g
+    }
+
+    fn gazetteer_source(&self) -> Value {
         let z = self.scn.zones;
         json!({
             "map": format!("{:.0} x {:.0} m. Evacuation-zone grid {}x{} of {:.0} m squares: columns {}..{} west to east, rows 1..{} north to south (A1 = north-west corner). Zone edges: \"F3:N\" / \"F3:S\" / \"F3:E\" / \"F3:W\".",

@@ -795,6 +795,14 @@ impl Exercise {
         self.players.keys().cloned().collect()
     }
 
+    /// The LLM gazetteer, with the map names in the players' languages as aliases.
+    pub fn gazetteer(&self) -> Value {
+        let mut languages: Vec<String> = self.players.values().map(|p| p.language.clone()).collect();
+        languages.sort();
+        languages.dedup();
+        self.world.gazetteer_for(&languages)
+    }
+
     pub fn language_of(&self, role: &str) -> String {
         if role == MASTER {
             return self.excon_language.clone();

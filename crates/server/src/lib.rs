@@ -94,31 +94,40 @@ const TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
 /// Most texts translated at runtime for one view.
 const MAX_RUNTIME_TEXTS: usize = 60;
 
-/// English source text -> text in `language` for the scenario-authored
-/// content players read (role, resource and inject texts, senders). The
-/// built-in glossary and the scenario's own `translations` come first and work
-/// without an LLM; the rest (and `extra`, e.g. titles of injects the EXCON
-/// wrote) is translated once per language and cached. What cannot be
-/// translated stays in the scenario's language.
+/// Source text -> text in `language` for the scenario-authored content
+/// (role, resource and inject texts, senders; for a player also the map
+/// labels). The built-in glossary and the scenario's own `translations` come
+/// first and work without an LLM; for a player the rest (and `extra`, e.g.
+/// titles of injects the EXCON wrote) is translated once per language and
+/// cached. What cannot be translated stays in the scenario's language. Map
+/// labels are only ever static: the EXCON keeps the territory's names, which
+/// its commands use.
 async fn display_map(
     s: &AppState,
     language: &str,
     extra: Vec<String>,
-    use_llm: bool,
+    player: bool,
 ) -> std::collections::BTreeMap<String, String> {
-    if language == "en" {
-        return Default::default();
-    }
     let (mut map, mut texts) = {
         let ex = s.lock();
         let scn = &ex.world.scn;
+        let mut map = scn.display_map(language);
+        if !player {
+            for name in scn.map_texts() {
+                map.remove(&name);
+            }
+        }
         let mut texts = scn.translatable_texts();
         // A role written in the player's language needs no translation.
         for r in scn.roles.iter().filter(|r| r.language == language) {
             texts.retain(|t| *t != r.name && *t != r.description);
         }
-        (scn.display_map(language), texts)
+        (map, texts)
     };
+    if language == "en" {
+        return map;
+    }
+    let use_llm = player;
     texts.extend(extra);
     texts.sort();
     texts.dedup();
@@ -352,6 +361,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 library::get_scenarios,
                 library::get_scenario,
                 library::post_validate,
+                library::post_translate,
                 library::post_save,
                 library::post_delete_scenario,
                 library::post_activate,

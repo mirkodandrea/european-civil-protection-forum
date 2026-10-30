@@ -120,6 +120,8 @@ def main():
     p.add_argument('--template', type=Path, default=ROOT/'data/scenarios/synthetic_valley.json')
     p.add_argument('--seed', type=int, default=11)
     p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/valverde_factory.json')
+    p.add_argument('--no-translate', dest='translate', action='store_false',
+                   help='Keep the previous translations only; do not draft missing map labels with the LLM')
     p.set_defaults(run=landscape)
     def selvariva(args):
         from factory.selvariva import landscape as run
@@ -128,6 +130,8 @@ def main():
     p.add_argument('--template', type=Path, default=ROOT/'data/scenarios/synthetic_valley.json')
     p.add_argument('--seed', type=int, default=33)
     p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/selvariva_basin.json')
+    p.add_argument('--no-translate', dest='translate', action='store_false',
+                   help='Keep the previous translations only; do not draft missing map labels with the LLM')
     p.set_defaults(run=selvariva)
     def roccavento(args):
         from factory.roccavento import landscape as run
@@ -136,6 +140,8 @@ def main():
     from factory.roccavento import SOURCE
     p.add_argument('--source', type=Path, default=SOURCE)
     p.add_argument('--output', type=Path, default=ROOT/'data/scenarios/roccavento_island.json')
+    p.add_argument('--no-translate', dest='translate', action='store_false',
+                   help='Keep the previous translations only; do not draft missing map labels with the LLM')
     p.set_defaults(run=roccavento)
     def districts(args):
         from factory.districts import patch

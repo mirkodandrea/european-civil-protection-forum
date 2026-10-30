@@ -354,6 +354,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("POST", "/api/master/scenarios/translate") => {
+            library::post_translate(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
         ("POST", "/api/master/scenarios/save") => {
             library::post_save(
                 principal.clone(),
@@ -763,6 +771,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/master/scenarios"),
     ("GET", "/api/master/scenarios/<id>"),
     ("POST", "/api/master/scenarios/validate"),
+    ("POST", "/api/master/scenarios/translate"),
     ("POST", "/api/master/scenarios/save"),
     ("POST", "/api/master/scenarios/delete"),
     ("GET", "/api/view/scene"),

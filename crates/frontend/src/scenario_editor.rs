@@ -18,6 +18,7 @@ use std::rc::Rc;
 use yew::prelude::*;
 
 mod districts;
+mod translations;
 
 fn token() -> String {
     #[cfg(feature = "standalone")]
@@ -1180,6 +1181,7 @@ const TABS: &[(&str, &str, &str)] = &[
     ("team", "Ruoli e risorse", "Chi partecipa, quali mezzi ha e quali rinforzi può richiedere."),
     ("districts", "Borghi", "Le località evacuabili in blocco con «Evacua borgo»: case scelte sulla mappa, area di raccolta e ritmo delle partenze."),
     ("injects", "Timeline", "Inject (messaggi) con le loro azioni (cambiamenti del mondo, inneschi compresi) che l’EXCON invia durante l’esercitazione."),
+    ("translations", "Traduzioni", "I nomi della mappa nelle lingue dei giocatori: scritti a mano o generati con l’AI."),
     ("advanced", "Avanzate", "Impostazioni tecniche: modello operativo, seme casuale, realizzazioni dell’ensemble."),
 ];
 
@@ -1535,6 +1537,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                         "team" => team_tab(o, &open),
                         "districts" => districts::districts_tab(o, &open, &problems),
                         "injects" => injects_tab(o, &open, &json, &message),
+                        "translations" => translations::translations_tab(o, &open),
                         "advanced" => advanced_tab(o, &open),
                         _ => general(o, &open),
                     }}

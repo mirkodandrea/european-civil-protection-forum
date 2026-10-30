@@ -1050,3 +1050,5 @@ body:has(.simbench){height:100dvh;overflow:hidden}
 @media(max-width:1250px){.dist-work{grid-template-columns:1fr}}
 .scenario-editor #scenario-form>.scenario-problems{max-height:12dvh;padding:6px 12px;font-size:13px}.scenario-editor .scenario-problems ul{margin:2px 0 0;padding-left:18px}.scenario-editor .scenario-problems li{margin:0}
 .launcher-territories{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:6px}.launcher-territories li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}
+.translations-coverage ul{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}.translations-coverage button.active{font-weight:600;text-decoration:underline}.translations-coverage>button{grid-column:1/-1;justify-self:start}
+.translations-table{width:100%;border-collapse:collapse;margin-top:12px}.translations-table th{text-align:left;font-size:12px;color:var(--muted);padding:4px 8px}.translations-table td{padding:4px 8px;border-top:1px solid var(--line)}.translations-table td:first-child{width:45%}.translations-table input{width:100%}

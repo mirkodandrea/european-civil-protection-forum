@@ -178,7 +178,7 @@ pub async fn read(state: AppState, pid: u64) {
             revision,
             context,
             catalogue,
-            ex.world.gazetteer(),
+            ex.gazetteer(),
             ex.language_of(exercise::MASTER),
         )
     };

@@ -805,10 +805,12 @@ pub struct Scenario {
     /// persona applies. Empty: a built-in neutral name ("Operations room").
     #[serde(default)]
     pub default_persona: String,
-    /// Texts of this scenario in other languages: language code -> English
-    /// source text -> translation (role and resource names and descriptions,
-    /// inject titles, senders). Overrides [`glossary`]; missing entries stay English
-    /// or are translated at runtime.
+    /// Texts of this scenario in other languages: language code -> source
+    /// text -> translation (role and resource names and descriptions, inject
+    /// titles, senders, and the map labels of [`Scenario::map_texts`]).
+    /// Overrides [`glossary`]; missing entries stay in the source language or
+    /// are translated at runtime. Territories authored in another language
+    /// than English may carry an `en` table too.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub translations: BTreeMap<String, BTreeMap<String, String>>,
     pub reinforcements: Vec<ReinforcementOffer>,
@@ -827,18 +829,31 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    /// English source text -> text in `lang`: built-in glossary overlaid with
-    /// this scenario's `translations`. Empty for the working language.
+    /// Source text -> text in `lang`: built-in glossary overlaid with this
+    /// scenario's `translations`. For the working language (English) only the
+    /// scenario's own `en` table, for territories authored in another language.
     pub fn display_map(&self, lang: &str) -> BTreeMap<String, String> {
-        if lang == "en" {
-            return BTreeMap::new();
-        }
         let mut map = glossary::builtin(lang);
         if let Some(own) = self.translations.get(lang) {
             map.extend(own.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         map.retain(|k, v| k != v && !v.trim().is_empty());
         map
+    }
+
+    /// Names drawn on the maps: places, named buildings, roads, borghi and
+    /// sectors. Players read them in their language; commands keep using
+    /// these source names.
+    pub fn map_texts(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.places.iter().map(|p| p.name.clone()).collect();
+        out.extend(self.buildings.iter().filter_map(|b| b.name.clone()));
+        out.extend(self.roads.iter().map(|r| r.name.clone()));
+        out.extend(self.districts.iter().map(|d| d.name.clone()));
+        out.extend(self.sectors.iter().map(|s| s.name.clone()));
+        out.retain(|t| !t.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Scenario-authored texts players read, which need a translation.

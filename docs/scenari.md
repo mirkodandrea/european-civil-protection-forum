@@ -40,7 +40,7 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 
 ## API (solo EXCON)
 
-`GET /api/master/scenarios`, `GET /api/master/scenarios/<id>` (pack completo + nomi del territorio), `POST …/validate`, `…/save`, `…/delete`, `…/activate` (solo server). Tutti i problemi di un pack tornano insieme (400, uno per riga).
+`GET /api/master/scenarios`, `GET /api/master/scenarios/<id>` (pack completo + nomi del territorio), `POST …/validate`, `…/translate` (`{pack, language}` → etichette della mappa mancanti tradotte dall'AI, niente salvato), `…/save`, `…/delete`, `…/activate` (solo server). Tutti i problemi di un pack tornano insieme (400, uno per riga).
 
 ## Testi in più lingue (`translations`)
 
@@ -60,6 +60,31 @@ degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
 La sostituzione avviene sul server (`display_map` in `crates/server/src/lib.rs`) nelle
 viste di giocatore, `/api/static`, `/api/state` e `/api/master`; mai nell'editor scenario.
 Un ruolo scritto nella lingua del lettore non viene tradotto.
+
+### Etichette della mappa
+
+I nomi disegnati sulle mappe (luoghi, edifici con nome, strade, borghi, settori:
+`Scenario::map_texts`) hanno traduzioni **statiche** nella stessa `translations`, una
+tabella per lingua, inglese compreso (i territori Selvariva e Roccavento sono scritti
+in italiano). Regole:
+
+- Solo i **giocatori** le vedono: l'EXCON legge i nomi originali, che sono quelli che
+  i comandi usano. Le etichette non sono mai tradotte a runtime.
+- Il gazetteer dell'LLM aggiunge come `aliases` i nomi nelle lingue dei giocatori
+  (`Exercise::gazetteer`), così una risposta che li usa si risolve nel nome originale.
+- Territori inclusi: le ricette della factory (`scripts/scenario_factory.py landscape |
+  selvariva | roccavento`) chiamano `translations.fill` prima di scrivere: riportano le
+  traduzioni del file precedente il cui testo è ancora nel territorio e fanno tradurre
+  all'LLM le etichette mancanti (binario `translate-territory`, chiave in `.env`).
+  `--no-translate` lavora offline e segnala solo le etichette scoperte. `gen-scenario`
+  (`synthetic_valley.json`) riporta le traduzioni ma non chiama l'LLM. Per completare
+  un territorio esistente: `python3 scripts/factory/translations.py [TERRITORIO …]
+  [--lang xx …]`, che aggiunge solo le mancanti e aggiorna il manifest.
+- Editor scenario, scheda **Traduzioni**: copertura per lingua dei ruoli, tabella
+  modificabile nome originale → traduzione, «Genera le mancanti (AI)» per una lingua o
+  per tutte le lingue dei ruoli (`POST /api/master/scenarios/translate`). Le voci
+  generate restano modificabili e finiscono nel pack (`edits.translations`, che se
+  presente sostituisce quella del territorio) al salvataggio.
 
 ## Terminologia per i giocatori
 

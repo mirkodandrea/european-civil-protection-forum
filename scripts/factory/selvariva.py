@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 import numpy as np
-from . import grid, terrain, vegetation, roads, districts
+from . import grid, terrain, vegetation, roads, districts, translations
 from .layout import corners, mtv
 from .network import rounded, grade_roadbeds
 
@@ -203,6 +203,7 @@ def landscape(args):
     if args.output.resolve()==args.template.resolve():raise ValueError('Output must differ from template')
     s,manifest=generate(template,args.seed)
     districts.selvariva(s)
+    translations.fill(s,args.output,llm=getattr(args,'translate',True))
     args.output.parent.mkdir(parents=True,exist_ok=True)
     manifest['scenario_sha256']=write(args.output,s,compact=True)
     manifest['template_sha256']=hashlib.sha256(args.template.read_bytes()).hexdigest()
