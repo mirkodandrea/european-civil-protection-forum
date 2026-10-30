@@ -227,3 +227,126 @@ async fn the_clarification_loop_over_http() {
     .await;
     assert_ne!(status, Status::Ok);
 }
+
+/// Open (not handled) replies of the inject row of `role`.
+fn row_pending(m: &Value, role: &str) -> Vec<Value> {
+    m["inject_responses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["role"] == role)
+        .map(|r| r["pending_proposals"].as_array().unwrap().iter().map(|p| p["id"].clone()).collect())
+        .unwrap_or_default()
+}
+
+fn row<'a>(m: &'a Value, role: &str) -> &'a Value {
+    m["inject_responses"].as_array().unwrap().iter().find(|r| r["role"] == role).unwrap()
+}
+
+async fn send_decision(c: &Client, parent: u64, text: &str) -> Value {
+    let (status, body) = call(c, "fire_commander", "/api/player/fire_commander/actions",
+        Some(json!({"reply_to": parent, "kind": "decision", "basis": "operational_judgment", "narrative": text}))).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    body["proposal"].clone()
+}
+
+/// Playtest 30/10 ("le risposte si incasinano man mano che arrivano"):
+/// successive replies to the same inject stay distinct. Once the EXCON has
+/// handled a reply's suggestions it is closed and leaves every pending list;
+/// the next reply is a new item with its own suggestions, never merged.
+#[tokio::test]
+async fn successive_replies_stay_distinct() {
+    let (c, parent) = fixture().await;
+    let p1 = send_decision(&c, parent, "Mandiamo due squadre AIB sul lato nord di F4 e apriamo una linea tagliafuoco").await;
+    let r1 = reviewed(&c, 1).await;
+    assert_eq!(r1["items"].as_array().unwrap().len(), 2, "{r1}");
+    assert_eq!(r1["proposal"], p1);
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert_eq!(row_pending(&m, "fire_commander"), vec![p1.clone()]);
+
+    // The EXCON queues the complete suggestion and ignores the open one...
+    for i in r1["items"].as_array().unwrap() {
+        let op = if i["display"] == "complete" { "execute" } else { "ignore" };
+        let (s, b) = call(&c, "master", &format!("/api/master/review/{op}/{}", i["id"]), Some(json!({}))).await;
+        assert_eq!(s, Status::Ok, "{b}");
+    }
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert_eq!(m["reply_review"]["reviews"][0]["status"], "ready", "a draft question is still open");
+    // ...and discards the draft question: nothing is left to decide.
+    for q in r1["questions"].as_array().unwrap() {
+        let (s, b) = call(&c, "master", &format!("/api/master/review/discard/{}", q["id"]), Some(json!({}))).await;
+        assert_eq!(s, Status::Ok, "{b}");
+    }
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert_eq!(m["reply_review"]["reviews"][0]["status"], "closed", "a handled reply closes itself");
+    assert!(row_pending(&m, "fire_commander").is_empty(), "a handled reply is no longer pending");
+    let counts = &m["reply_review"]["counts"];
+    assert_eq!((counts["complete"].as_u64(), counts["drafts"].as_u64(), counts["incomplete"].as_u64()), (Some(0), Some(0), Some(0)));
+    assert_eq!(row(&m, "fire_commander")["decided_proposals"][0]["id"], p1);
+    assert_eq!(row(&m, "fire_commander")["decided_proposals"][0]["review"], "partially_approved", "one run, one ignored");
+
+    // A second reply to the same inject: a new item; the old one stays closed.
+    let p2 = send_decision(&c, parent, "Apriamo una linea tagliafuoco").await;
+    assert_ne!(p2, p1);
+    let r2 = reviewed(&c, 1).await;
+    assert_eq!(r2["proposal"], p2);
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert_eq!(row_pending(&m, "fire_commander"), vec![p2.clone()], "only the new reply is pending");
+    let reviews = m["reply_review"]["reviews"].as_array().unwrap();
+    assert_eq!(reviews.len(), 2);
+    let old = reviews.iter().find(|r| r["proposal"] == p1).unwrap();
+    assert_eq!(old["status"], "closed", "the handled reply does not resurface");
+    assert_eq!(old["revision"], 1, "the handled reply is not read again");
+    for r in reviews {
+        for i in r["items"].as_array().unwrap() {
+            assert_eq!(i["proposal"], r["proposal"], "suggestions stay with their reply");
+        }
+    }
+    // The first reply's words are not suggestions of the second.
+    assert!(r2["items"].as_array().unwrap().iter().all(|i| i["kind"] != "DeployEngine"), "{r2}");
+    assert_eq!(m["reply_review"]["counts"]["incomplete"], 1, "only the new reply's gap counts");
+
+    // Closing by hand settles the reply too (nothing run: acknowledged).
+    let (s, _) = call(&c, "master", &format!("/api/master/review/close/{p2}"), Some(json!({}))).await;
+    assert_eq!(s, Status::Ok);
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert!(row_pending(&m, "fire_commander").is_empty());
+    let decided = row(&m, "fire_commander")["decided_proposals"].as_array().unwrap().clone();
+    assert_eq!(decided.len(), 2);
+    assert_eq!(decided[1]["review"], "acknowledged");
+}
+
+/// The player page sends words as a communication: the review still closes
+/// once handled, its suggestions stop counting, and a later reply is a new
+/// open group next to the closed one.
+#[tokio::test]
+async fn handled_communication_closes_its_review() {
+    let (c, parent) = fixture().await;
+    let say = |text: &'static str| json!({"reply_to": parent, "kind": "communication", "narrative": text});
+    let (s, _) = call(&c, "fire_commander", "/api/player/fire_commander/actions",
+        Some(say("Mandiamo due squadre AIB sul lato nord di F4 e apriamo una linea tagliafuoco"))).await;
+    assert_eq!(s, Status::Ok);
+    let r1 = reviewed(&c, 1).await;
+    let (team, line) = (item(&r1, "DeployEngine")["id"].clone(), item(&r1, "CutFireLine")["id"].clone());
+    for (op, id) in [("execute", &team), ("ignore", &line), ("discard", &r1["questions"][0]["id"])] {
+        let (s, b) = call(&c, "master", &format!("/api/master/review/{op}/{id}"), Some(json!({}))).await;
+        assert_eq!(s, Status::Ok, "{op}: {b}");
+    }
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert_eq!(m["reply_review"]["reviews"][0]["status"], "closed");
+    // Restoring the ignored suggestion reopens the review; ignoring it again closes it.
+    let (s, _) = call(&c, "master", &format!("/api/master/review/restore/{line}"), Some(json!({}))).await;
+    assert_eq!(s, Status::Ok);
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    assert_eq!(m["reply_review"]["reviews"][0]["status"], "ready");
+    assert_eq!(m["reply_review"]["counts"]["incomplete"], 1);
+    let (s, _) = call(&c, "master", &format!("/api/master/review/ignore/{line}"), Some(json!({}))).await;
+    assert_eq!(s, Status::Ok);
+    let (s, _) = call(&c, "fire_commander", "/api/player/fire_commander/actions", Some(say("Apriamo una linea tagliafuoco"))).await;
+    assert_eq!(s, Status::Ok);
+    let r2 = reviewed(&c, 1).await;
+    assert_ne!(r2["proposal"], r1["proposal"]);
+    let (_, m) = call(&c, "master", "/api/master", None).await;
+    let states: Vec<_> = m["reply_review"]["reviews"].as_array().unwrap().iter().map(|r| (r["proposal"].clone(), r["status"].clone())).collect();
+    assert_eq!(states, vec![(r2["proposal"].clone(), json!("ready")), (r1["proposal"].clone(), json!("closed"))]);
+}

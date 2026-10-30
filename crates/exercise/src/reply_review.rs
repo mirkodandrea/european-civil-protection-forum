@@ -22,6 +22,9 @@
 //! * a question may go to another role than the author (cross-role
 //!   inconsistency), still only as a draft;
 //! * the EXCON closes the review when it wants; open questions stay listed.
+//!   Once every suggestion is decided and no question is open it closes by
+//!   itself. A closed review settles its reply (no longer pending), so each
+//!   later reply to the same inject is a distinct item.
 //!
 //! Model code: no HTTP, no LLM. The caller runs the model outside the lock
 //! and hands its JSON answer to [`Exercise::ingest_reading`], which validates it.
@@ -32,7 +35,10 @@ use serde_json::{json, Value};
 use sim::{Actor, Command, Verdict};
 
 use crate::queue::ExconWhen;
-use crate::{ExecutionRecord, Exercise, MsgKind, Phase, ProposalStatus, Source, MASTER};
+use crate::{
+    ApprovalRecord, ExecutionRecord, Exercise, MsgKind, Phase, ProposalStatus, Review, Source,
+    MASTER,
+};
 
 /// Suggestions kept per reply (the model may return fewer).
 const MAX_ITEMS: usize = 12;
@@ -976,6 +982,7 @@ impl Exercise {
             MASTER,
             json!({"review_item": id, "proposal": item.proposal, "role": item.role, "queue_id": queued, "run_at_s": run_at_s}),
         );
+        self.close_if_handled(item.proposal);
         Ok(None)
     }
 
@@ -1060,6 +1067,7 @@ impl Exercise {
         );
         // Later suggestions are checked against what is now committed.
         self.recheck_items(item.proposal);
+        self.close_if_handled(item.proposal);
         Ok(execution)
     }
 
@@ -1074,6 +1082,7 @@ impl Exercise {
             .filter_map(|i| i.queued)
             .map(|q| (q, self.action_runs.get(&format!("excon:{q}")).map(|r| r.status)))
             .collect();
+        let mut reopened = Vec::new();
         for (q, status) in runs {
             let Some(it) = self.review.items.iter_mut().find(|i| i.queued == Some(q)) else { continue };
             match status {
@@ -1086,8 +1095,13 @@ impl Exercise {
                     it.state = ItemState::Complete;
                     it.execution = None;
                     it.queued = None;
+                    reopened.push(it.proposal);
                 }
             }
+        }
+        // A withdrawn action is open again: so is the review of its reply.
+        for pid in reopened {
+            self.reopen_review(pid);
         }
     }
 
@@ -1099,7 +1113,9 @@ impl Exercise {
         }
         item.state = ItemState::Ignored;
         item.note = note.map(|n| n.chars().take(500).collect());
+        let pid = item.proposal;
         self.record("review_item_ignored", MASTER, json!({"item": id}));
+        self.close_if_handled(pid);
         Ok(())
     }
 
@@ -1111,6 +1127,7 @@ impl Exercise {
         }
         item.state = ItemState::Incomplete;
         let pid = item.proposal;
+        self.reopen_review(pid);
         self.recheck_items(pid);
         self.record("review_item_restored", MASTER, json!({"item": id}));
         Ok(())
@@ -1267,11 +1284,13 @@ impl Exercise {
             bail!("question {qid} is already {:?}", q.state);
         }
         q.state = QuestionState::Discarded;
+        let pid = q.proposal;
         self.record(
             "review_question_discarded",
             MASTER,
             json!({"question": qid}),
         );
+        self.close_if_handled(pid);
         Ok(())
     }
 
@@ -1359,8 +1378,13 @@ impl Exercise {
     }
 
     /// The EXCON closes the review of `pid`: unsent drafts are discarded,
-    /// open suggestions and unanswered questions stay listed.
+    /// open suggestions and unanswered questions stay listed. The reply is
+    /// handled: it leaves every pending list (see [`Exercise::settle_reply`]).
     pub fn close_review(&mut self, pid: u64) -> Result<()> {
+        self.close_review_as(pid, "closed by EXCON")
+    }
+
+    fn close_review_as(&mut self, pid: u64, why: &str) -> Result<()> {
         let r = self.review_mut(pid)?;
         r.status = ReviewStatus::Closed;
         for q in self
@@ -1371,8 +1395,114 @@ impl Exercise {
         {
             q.state = QuestionState::Discarded;
         }
-        self.record("review_closed", MASTER, json!({"proposal": pid}));
+        self.record("review_closed", MASTER, json!({"proposal": pid, "why": why}));
+        self.settle_reply(pid);
         Ok(())
+    }
+
+    /// Whether the EXCON has handled every suggestion of reply `pid` (queued,
+    /// executed, failed or ignored) and no question waits for review or for
+    /// the player's answer.
+    pub fn reply_handled(&self, pid: u64) -> bool {
+        self.review.items.iter().filter(|i| i.proposal == pid).all(|i| {
+            matches!(
+                i.state,
+                ItemState::Queued | ItemState::Executed | ItemState::Failed | ItemState::Ignored
+            )
+        }) && !self
+            .review
+            .questions
+            .iter()
+            .any(|q| q.proposal == pid && matches!(q.state, QuestionState::Draft | QuestionState::Sent))
+    }
+
+    /// After an EXCON act on reply `pid`: once nothing is left to decide the
+    /// review closes by itself, so the next reply to the same inject is a new
+    /// item and this one never surfaces again as pending.
+    fn close_if_handled(&mut self, pid: u64) {
+        let ready = self.review(pid).is_some_and(|r| r.status == ReviewStatus::Ready);
+        if ready && self.reply_handled(pid) {
+            let _ = self.close_review_as(pid, "every suggestion handled");
+        }
+    }
+
+    /// A closed review gets something to decide again (an ignored suggestion
+    /// restored, a queued action withdrawn): it is open again.
+    fn reopen_review(&mut self, pid: u64) {
+        if let Some(r) = self.review.reviews.iter_mut().find(|r| r.proposal == pid) {
+            if r.status == ReviewStatus::Closed {
+                r.status = ReviewStatus::Ready;
+                self.record("review_reopened", MASTER, json!({"proposal": pid}));
+            }
+        }
+    }
+
+    /// The reply behind a closed review is decided: it leaves the pending
+    /// replies of its inject (Risposte row, nav badge) with the verdict of
+    /// what the EXCON did — approved (every suggestion run), partially
+    /// approved (some run, some ignored) or acknowledged (nothing run).
+    /// Nothing is sent to the player: the EXCON speaks through questions,
+    /// injects and outcomes. A reply already decided is left alone.
+    fn settle_reply(&mut self, pid: u64) {
+        let Some(p) = self.proposal(pid) else { return };
+        if p.decision.is_some()
+            || !matches!(
+                p.status,
+                ProposalStatus::Pending | ProposalStatus::NeedsClarification | ProposalStatus::Parsing
+            )
+        {
+            return;
+        }
+        let items: Vec<&ReviewItem> = self.review.items.iter().filter(|i| i.proposal == pid).collect();
+        let run: Vec<Command> = items
+            .iter()
+            .filter(|i| matches!(i.state, ItemState::Queued | ItemState::Executed | ItemState::Failed))
+            .filter_map(|i| command_of(&i.kind, &i.params).ok())
+            .collect();
+        let not_run = items.len() - run.len();
+        let review = if run.is_empty() {
+            Review::Acknowledged
+        } else if not_run > 0 {
+            Review::PartiallyApproved
+        } else {
+            Review::Approved
+        };
+        let persona = self.persona_for(None, p.inject_id);
+        let record = ApprovalRecord {
+            resource_limits: None,
+            approve: true,
+            actor: MASTER.into(),
+            turn: self.turn,
+            t_s: self.world.time_s(),
+            wall_ms: crate::wall_ms(),
+            note: None,
+            persona,
+            edited: false,
+            proposed_commands: Vec::new(),
+            effective_commands: run,
+            rejected_actions: Vec::new(),
+            review,
+        };
+        if let Ok(p) = self.proposal_mut(pid) {
+            p.decision = Some(record);
+        }
+        // Terminal: the reply's actions run as EXCON review items, never as
+        // this proposal's commands.
+        let _ = self.transition(
+            pid,
+            ProposalStatus::Acknowledged,
+            MASTER,
+            "Reply handled by EXCON (review closed)",
+        );
+        self.record("reply_handled", MASTER, json!({"proposal": pid, "review": review}));
+    }
+
+    /// The EXCON decided reply `pid` directly (approve, reject, acknowledge):
+    /// its AI review is closed too, unsent drafts discarded.
+    pub(crate) fn close_review_after_decision(&mut self, pid: u64) {
+        if self.review(pid).is_some_and(|r| r.status != ReviewStatus::Closed) {
+            let _ = self.close_review_as(pid, "reply decided by EXCON");
+        }
     }
 
     /// Undo the reviews of rolled-back turns (the world is restored).
@@ -1403,11 +1533,16 @@ impl Exercise {
                 .filter(|q| q.state == s)
                 .count()
         };
-        let i = |s: ItemState| self.review.items.iter().filter(|i| i.state == s).count();
+        // Suggestions of a handled (closed) reply are no longer waiting.
+        let open = |i: &&ReviewItem| {
+            self.review(i.proposal).is_none_or(|r| r.status != ReviewStatus::Closed)
+        };
+        let i = |s: ItemState| self.review.items.iter().filter(open).filter(|i| i.state == s).count();
         let infeasible = self
             .review
             .items
             .iter()
+            .filter(open)
             .filter(|i| i.state == ItemState::Complete && matches!(i.verdict, Some(Verdict::Rejected { .. })))
             .count();
         json!({

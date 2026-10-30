@@ -184,6 +184,29 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
     let roles = list(&props.stat["roles"]).to_vec();
     let counts = &board["counts"];
     let n = |k: &str| counts[k].as_u64().unwrap_or(0);
+    let (open_reviews, handled) = split_reviews(reviews);
+    let group = |r: &Value| review_group(r, props, &roles, &edits, &open);
+    html! {<section class="card review-board" id="review-board" aria-labelledby="review-board-title">
+        <header class="rb-head"><h2 id="review-board-title">{tr("Azioni dalle risposte","Actions from the replies")}</h2>
+            <span class="pill rb-tone-ok" hidden={n("complete")==0} data-review-count="complete">{crate::exfmt!("{} da eseguire","{} to execute",n("complete"))}</span>
+            <span class="pill rb-tone-gap" hidden={n("drafts")==0} data-review-count="drafts">{if n("drafts")==1{tr("1 domanda da rivedere","1 question to review").to_string()}else{crate::exfmt!("{} domande da rivedere","{} questions to review",n("drafts"))}}</span>
+            <span class="pill rb-tone-wait" hidden={n("awaiting_answer")==0} data-review-count="awaiting">{crate::exfmt!("{} in attesa di risposta","{} awaiting an answer",n("awaiting_answer"))}</span>
+            <span class="pill" hidden={n("reading")==0}>{tr("L’AI sta leggendo…","The AI is reading…")}</span>
+        </header>
+        <p class="muted rb-intro">{tr("I player rispondono solo a parole. L’AI propone azioni del catalogo con la fonte; nulla accade finché non la metti in coda (si applica al prossimo avanzamento del tempo), e nessuna domanda parte senza Invia.","Players reply in words only. The AI proposes catalogue actions with their source; nothing happens until you queue it (it applies at the next time advance), and no question leaves without Send.")}</p>
+        if reviews.is_empty(){<p class="muted">{tr("Nessuna risposta dei player da valutare.","No player replies to review.")}</p>}
+        {for open_reviews.iter().map(|r|group(r))}
+        if !handled.is_empty(){<details class="rb-handled" data-review-handled={handled.len().to_string()}><summary>{crate::exfmt!("Risposte gestite ({})","Handled replies ({})",handled.len())}</summary>
+            {for handled.iter().map(|r|group(r))}</details>}
+    </section>}
+}
+
+/// Reviews still to handle first; closed (handled) ones apart, newest first.
+pub fn split_reviews(reviews: &[Value]) -> (Vec<&Value>, Vec<&Value>) {
+    reviews.iter().partition(|r| r["status"] != "closed")
+}
+
+fn review_group(r: &Value, props: &ReviewBoardProps, roles: &[Value], edits: &UseStateHandle<BTreeMap<String, String>>, open: &UseStateHandle<Option<u64>>) -> Html {
     let set = {
         let edits = edits.clone();
         move |key: String| {
@@ -199,16 +222,9 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
         let a = props.action.clone();
         Callback::from(move |_: MouseEvent| a.emit(Action::post(path.clone(), body.clone())))
     };
-    html! {<section class="card review-board" id="review-board" aria-labelledby="review-board-title">
-        <header class="rb-head"><h2 id="review-board-title">{tr("Azioni dalle risposte","Actions from the replies")}</h2>
-            <span class="pill rb-tone-ok" hidden={n("complete")==0} data-review-count="complete">{crate::exfmt!("{} da eseguire","{} to execute",n("complete"))}</span>
-            <span class="pill rb-tone-gap" hidden={n("drafts")==0} data-review-count="drafts">{if n("drafts")==1{tr("1 domanda da rivedere","1 question to review").to_string()}else{crate::exfmt!("{} domande da rivedere","{} questions to review",n("drafts"))}}</span>
-            <span class="pill rb-tone-wait" hidden={n("awaiting_answer")==0} data-review-count="awaiting">{crate::exfmt!("{} in attesa di risposta","{} awaiting an answer",n("awaiting_answer"))}</span>
-            <span class="pill" hidden={n("reading")==0}>{tr("L’AI sta leggendo…","The AI is reading…")}</span>
-        </header>
-        <p class="muted rb-intro">{tr("I player rispondono solo a parole. L’AI propone azioni del catalogo con la fonte; nulla accade finché non la metti in coda (si applica al prossimo avanzamento del tempo), e nessuna domanda parte senza Invia.","Players reply in words only. The AI proposes catalogue actions with their source; nothing happens until you queue it (it applies at the next time advance), and no question leaves without Send.")}</p>
-        if reviews.is_empty(){<p class="muted">{tr("Nessuna risposta dei player da valutare.","No player replies to review.")}</p>}
-        {for reviews.iter().map(|r|{
+    let roles = roles.to_vec();
+    let (edits, open) = (edits.clone(), open.clone());
+    {
             let pid=r["proposal"].as_u64().unwrap_or(0);
             let status=text(&r["status"]);
             let diff=&r["diff"];
@@ -304,8 +320,7 @@ pub fn review_board(props: &ReviewBoardProps) -> Html {
                 if !closed{{ask_form(pid,&r["role"],&roles,&edits,&props.action,props.busy)}}
                 </div>
             </article>}
-        })}
-    </section>}
+    }
 }
 
 /// "Scrivi una domanda": an EXCON-written draft, reviewed like the AI's.
@@ -365,5 +380,13 @@ mod tests {
         assert_eq!(param_value("at", "2800, 2250"), json!({"x": 2800.0, "y": 2250.0}));
         assert_eq!(param_value("at", "F4:N"), json!("F4:N"));
         assert_eq!(param_text(&json!({"x": 2800.0, "y": 2250.0})), "2800,2250");
+    }
+    #[test]
+    fn handled_replies_leave_the_open_list() {
+        let reviews = vec![json!({"proposal":10,"status":"ready"}), json!({"proposal":5,"status":"closed"}), json!({"proposal":3,"status":"reading"})];
+        let (open, handled) = split_reviews(&reviews);
+        assert_eq!(open.iter().map(|r| r["proposal"].as_u64().unwrap()).collect::<Vec<_>>(), vec![10, 3]);
+        assert_eq!(handled.len(), 1);
+        assert_eq!(handled[0]["proposal"], 5);
     }
 }

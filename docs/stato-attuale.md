@@ -74,6 +74,17 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   sono scartate); domande aperte e azioni da decidere restano visibili anche nel
   pannello del turno (chip «N domande aperte · M azioni da decidere») e nel badge
   della scheda Risposte.
+- **Ogni risposta è un elemento distinto** (playtest 30/10): quando l’EXCON ha
+  deciso ogni suggerimento (in coda, eseguito o ignorato) e non resta alcuna
+  domanda in bozza o in attesa, la revisione **si chiude da sola**; chiuderla a
+  mano, oppure approvare/rifiutare la risposta dalla finestra dell’inject, ha lo
+  stesso effetto. La risposta esce da «in attesa di approvazione», dal badge e
+  dai conteggi, e prende il verdetto di ciò che l’EXCON ha fatto (approvata,
+  approvata in parte, presa visione; stato `acknowledged`, nulla viene inviato
+  al player). Le risposte gestite finiscono in «Risposte gestite (N)», chiuso
+  per default; una nuova risposta allo stesso inject è un nuovo gruppo con i
+  propri suggerimenti e non riapre né rilegge le precedenti. Ripristinare un
+  suggerimento ignorato o annullare un’azione in coda riapre la revisione.
 - **Esecuzione**: `POST /api/master/review/execute/<id>` (eventuali `params`
   modificati) costruisce il `Command` e lo verifica per il ruolo che lo esegue
   (risorse e autorità di quel ruolo); come ogni azione EXCON sul mondo va **in
