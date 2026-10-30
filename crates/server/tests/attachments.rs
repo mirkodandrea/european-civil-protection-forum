@@ -49,7 +49,8 @@ fn pdf(extra: usize) -> String {
 }
 
 fn body(parent: u64, basis: &str, attachment: Value) -> Value {
-    json!({"kind": "decision", "reply_to": parent, "narrative": "Il sindaco avvisa la popolazione", "basis": basis, "attachment": attachment})
+    json!({"kind": "decision", "reply_to": parent, "narrative": "Il sindaco avvisa la popolazione", "basis": basis,
+        "basis_note": "Piano comunale, scheda 4", "rationale": "Il fuoco minaccia le case", "attachment": attachment})
 }
 
 #[tokio::test]

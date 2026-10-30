@@ -43,6 +43,19 @@ fn body(m: &Value) -> &str {
     }
 }
 
+/// Why the conversation was started, in EXCON's language (English console:
+/// the English copy of the rationale).
+fn reason(c: &Value, roles: &[Value]) -> Html {
+    let r = &c["reason"];
+    if !r.is_object() {
+        return html! {};
+    }
+    let lang = if crate::i18n_excon::is_en() { "en" } else { "it" };
+    let rationale = if lang == "en" && !text(&r["rationale_en"]).is_empty() { text(&r["rationale_en"]) } else { text(&r["rationale"]) };
+    let head = crate::i18n::tf(lang, "conv_reason_by", &[&role_name(roles, text(&c["created_by"]))]);
+    crate::inject_panel::reason_card(&head, crate::i18n::t(lang, crate::reply_composer::conversation_basis_label(text(&r["basis"]))), text(&r["reference"]), rationale)
+}
+
 fn state_label(proposals: &Value, pid: u64) -> Option<&'static str> {
     let lang = if crate::i18n_excon::is_en() { "en" } else { "it" };
     list(proposals).iter().find(|p| p["id"] == pid).map(|p| crate::i18n::t(lang, crate::i18n_risposte::response_state(p)))
@@ -109,7 +122,8 @@ fn conversation(props: &ConvViewerProps, c: &Value) -> Html {
     };
     html! {<div key={cid} class="inj-chat conv-thread" data-conversation={cid.to_string()}>
         <div class="conv-head"><span><b>{people(c,roles)}</b><small>{crate::exfmt!("Conversazione #{} avviata da {}","Conversation #{} started by {}",cid,role_name(roles,text(&c["created_by"])))}</small></span></div>
-        {quote_card(&r["inject_message_id"],crate::i18n::ex("Inject"),&format!(" · {} · {}",text(&r["clock"]),role_name(roles,text(&r["role"]))),text(&r["title"]),text(&r["inject_text"]))}
+        {quote_card(&r["inject_message_id"],crate::i18n::ex("Inject"),&format!(" · {} · {}",text(&r["clock"]),role_name(roles,text(&r["role"]))),text(&r["title"]),text(&r["inject_text"]),None)}
+        {reason(c,roles)}
         <ol class="inj-chat-inner" role="log">
             if messages.is_empty(){<li class="inj-sys">{crate::exfmt!("Nessun messaggio","No messages")}</li>}
             {for messages.iter().map(|m|{

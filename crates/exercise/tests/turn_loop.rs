@@ -79,7 +79,7 @@ fn full_turn_inject_reply_approve_resolve() {
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Applied);
     assert_eq!(ex.proposal(p2).unwrap().status, ProposalStatus::Rejected);
     assert_eq!(ex.turn, 2);
-    assert!(ex.world.d.warned.contains("F4"));
+    assert!(ex.world.d.warned.contains_key("F4"));
     assert_eq!(ex.world.d.pools["fire_commander"]["air_tankers"].used, 1, "deployments persist across turns until explicitly returned");
     // Warned F4 evacuates in 10 min (+10 for the school): all out after 30.
     let school = ex.world.find_building("Pineta Primary School").unwrap();
@@ -143,12 +143,32 @@ fn rollback_restores_world_and_marks_proposals() {
     ex.attach_parse(pid, parsed(json!([{"type":"WaterDrop","at":{"x":3000.0,"y":2500.0}}]))).unwrap();
     ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
     ex.resolve_turn(None).unwrap();
+    let notes = ex.direct_command(&Command::IssueWarning { zone: "F4".into() }).unwrap();
+    assert!(notes[0].contains("population of F4 warned at"), "{notes:?}");
+    let logged = ex.log.iter().rev().find(|e| e.kind == "master_command").unwrap();
+    assert!(logged.data["result"]["ok"][0].as_str().unwrap().contains("10 min instead of 20"));
     ex.resolve_turn(None).unwrap();
     assert_eq!(ex.turn, 3);
+    assert!(ex.world.d.warned.contains_key("F4"));
+    // Fog of war: a role sees a warned zone only once it is told about it.
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!([]));
+    let o = ex.zone_observation(&["F4".into()], &["buildings".into()]).unwrap();
+    ex.acquire_map_layers("mayor", "Sala operativa", o, None, vec!["buildings".into()]).unwrap();
+    let pm = ex.player_map("mayor").unwrap();
+    assert_eq!(pm["warned"], json!(["F4"]));
+    assert!(pm["warnings"][0]["clock"].is_string());
+    assert!(pm["warnings"][0].get("people_inside").is_none());
+    assert_eq!(ex.player_map("fire_commander").unwrap()["warned"], json!([]));
     ex.rollback(1).unwrap();
     assert_eq!(ex.turn, 1);
     assert_eq!(ex.world.time_s(), 0);
     assert!(ex.world.d.drops.is_empty());
+    assert!(ex.world.d.warned.is_empty(), "warnings roll back with the world");
+    // What the mayor was told stays told (like every other observation), until a new reveal.
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!(["F4"]));
+    let o = ex.zone_observation(&["F4".into()], &["buildings".into()]).unwrap();
+    ex.acquire_map_layers("mayor", "Sala operativa", o, None, vec!["buildings".into()]).unwrap();
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!([]), "a fresh reveal clears it");
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::RolledBack);
     assert!(ex.inbox("mayor").iter().any(|m| m.kind == MsgKind::System));
     ex.resolve_turn(None).unwrap();
@@ -448,10 +468,10 @@ fn default_language_needs_no_confirmation_and_evidence_is_validated_before_recor
     ex.set_language("mayor", "it").unwrap();
     assert!(ex.players["mayor"].language_confirmed);
     assert!(ex.player_reply("mayor", "warn F4", mid, DecisionEvidence::judgment(" ")).is_err());
-    let unsafe_link = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Plan, reference:"Municipal plan".into() }, attachments:vec![Attachment {title:"Map".into(), url:"javascript:alert(1)".into()}] };
+    let unsafe_link = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Plan, reference:"Municipal plan".into(), rationale: None }, attachments:vec![Attachment {title:"Map".into(), url:"javascript:alert(1)".into()}] };
     assert!(ex.player_reply("mayor", "warn F4", mid, unsafe_link).is_err());
     assert!(ex.proposals.is_empty());
-    let evidence = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Procedure, reference:"Municipal warning procedure, section 3".into() }, attachments:vec![Attachment {title:"Warning map".into(), url:"https://example.test/warning-map.pdf".into()}] };
+    let evidence = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Procedure, reference:"Municipal warning procedure, section 3".into(), rationale: None }, attachments:vec![Attachment {title:"Warning map".into(), url:"https://example.test/warning-map.pdf".into()}] };
     let expected = serde_json::to_value(&evidence).unwrap();
     let pid = ex.player_reply("mayor", "warn F4", mid, evidence).unwrap();
     ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();

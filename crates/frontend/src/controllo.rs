@@ -35,11 +35,12 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "ignite", group: "Fuoco e interventi", icon: "🔥", label: "Innesco", tip: "Accende un nuovo focolaio nel punto scelto sulla mappa (almeno 40 m di raggio)." },
     Tool { id: "line", group: "Fuoco e interventi", icon: "✂", label: "Linea tagliafuoco", tip: "Apre una fascia senza combustibile tra due punti scelti sulla mappa." },
     Tool { id: "drop", group: "Fuoco e interventi", icon: "💧", label: "Lancio d’acqua", tip: "Un lancio aereo di acqua nel punto scelto." },
-    Tool { id: "extzone", group: "Fuoco e interventi", icon: "🧯", label: "Spegni zona", tip: "Spegne il fuoco in un’intera zona della griglia." },
-    Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto." },
+    Tool { id: "extzone", group: "Fuoco e interventi", icon: "🧯", label: "Spegni zona", tip: "Spegne il fuoco in tutta la zona della griglia scelta. La vegetazione non cambia." },
+    Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto. La vegetazione non cambia." },
     Tool { id: "extarea", group: "Fuoco e interventi", icon: "⬠", label: "Spegni area disegnata", tip: "Disegna sulla mappa un’area (almeno 3 vertici): il fuoco al suo interno si spegne subito in tutte le simulazioni. La vegetazione non cambia: il terreno non bruciato può riaccendersi se il fuoco lo raggiunge di nuovo." },
     Tool { id: "evac", group: "Fuoco e interventi", icon: "🚌", label: "Evacua zona", tip: "Ordina l’evacuazione di tutti gli edifici occupati di una zona." },
-    Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: dimezza il tempo di evacuazione." },
+    Tool { id: "evacborgo", group: "Fuoco e interventi", icon: "🏘", label: "Evacua borgo", tip: "Ordina l’evacuazione di tutte le case di un borgo, case sparse comprese: partenze scaglionate verso l’area di raccolta del borgo. Clicca una casa del borgo." },
+    Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: resta segnata sulla mappa come allertata (con l’ora) e un’evacuazione successiva lì richiede 10 min invece di 20. Non usa risorse e da sola non sposta nessuno." },
     Tool { id: "drone", group: "Risorse e squadre", icon: "🛰", label: "Drone di monitoraggio", tip: "Invia il drone del comandante antincendio sulla zona scelta: finché è in posizione tiene aggiornata la sua mappa. Per più zone usa il comando JSON (es. \"F3-G4\")." },
     Tool { id: "bstatus", group: "Fuoco e interventi", icon: "🏠", label: "Stato edificio", tip: "Forza lo stato di danno di un edificio scelto sulla mappa." },
     Tool { id: "correct", group: "Fuoco e interventi", icon: "↶", label: "Correggi ultimo intervento", tip: "Annulla l’ultimo intervento fisico, se nulla è cambiato dopo di esso." },
@@ -128,6 +129,7 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
         "extzone" => json!({"type":"Extinguish","area":zone()?}),
         "warn" => json!({"type":"IssueWarning","zone":zone()?}),
         "evac" => json!({"type":"EvacuateZone","zone":zone()?}),
+        "evacborgo" => json!({"type":"EvacuateDistrict","district":district_at(stat, points.first()?)?}),
         "drone" => json!({"type":"MonitorArea","zones":[zone()?]}),
         "line" => json!({"type":"CutFireLine","from":pt(0)?,"to":pt(1)?}),
         "extarea" => {
@@ -157,6 +159,27 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
         _ => return None,
     })
 }
+/// The borgo of the building clicked (or nearest the click, within 200 m).
+fn district_at(stat: &Value, pick: &Value) -> Option<String> {
+    let id = match pick["building_id"].as_u64() {
+        Some(id) => id,
+        None => {
+            let (x, y) = (pick["x"].as_f64()?, pick["y"].as_f64()?);
+            list(&stat["buildings"])
+                .iter()
+                .filter_map(|b| {
+                    let d = (b["pos"][0].as_f64()? - x).powi(2) + (b["pos"][1].as_f64()? - y).powi(2);
+                    (d < 40_000.).then_some((d, b["id"].as_u64()?))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))?
+                .1
+        }
+    };
+    list(&stat["districts"])
+        .iter()
+        .find(|d| list(&d["buildings"]).iter().any(|b| b.as_u64() == Some(id)))
+        .map(|d| text(&d["name"]).to_string())
+}
 /// Which map click hint applies.
 pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
     match (tool, picked) {
@@ -168,6 +191,7 @@ pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
         ("extarea", _) => "Area pronta. Ogni clic aggiunge un vertice; l’area si chiude da sola.",
         ("extzone" | "evac" | "warn" | "drone", _) => "Clicca una zona della mappa.",
         ("bstatus", _) => "Clicca un edificio sulla mappa.",
+        ("evacborgo", _) => "Clicca una casa del borgo sulla mappa.",
         _ => "Clicca sulla mappa il punto dell’intervento.",
     }
 }
@@ -182,6 +206,7 @@ pub fn tool_for(cmd: &Value) -> Option<&'static str> {
         "ExtinguishArea" => "extarea",
         "IssueWarning" => "warn",
         "EvacuateZone" => "evac",
+        "EvacuateDistrict" => "evacborgo",
         "MonitorArea" if list(&cmd["zones"]).len() <= 1 => "drone",
         "CutFireLine" if cmd["along"].is_null() => "line",
         "SetBuildingStatus" => "bstatus",
@@ -205,6 +230,11 @@ pub fn initial_points(cmd: &Value, stat: &Value) -> Vec<Value> {
         "Extinguish" => vec![zone(&cmd["area"])],
         "ExtinguishArea" => list(&cmd["polygon"]).iter().map(point).collect(),
         "IssueWarning" | "EvacuateZone" => vec![zone(&cmd["zone"])],
+        "EvacuateDistrict" => vec![list(&stat["districts"])
+            .iter()
+            .find(|d| text(&d["name"]) == text(&cmd["district"]) || text(&d["id"]) == text(&cmd["district"]))
+            .and_then(|d| list(&stat["places"]).iter().find(|p| p["name"] == d["name"]))
+            .and_then(|p| Some(json!({"x": p["pos"][0].as_f64()?, "y": p["pos"][1].as_f64()?})))],
         "MonitorArea" => vec![zone(&cmd["zones"][0])],
         "CutFireLine" => vec![point(&cmd["from"]), point(&cmd["to"])],
         "SetBuildingStatus" => {
@@ -306,6 +336,9 @@ pub struct ModalProps {
     pub map: Option<Html>,
     #[prop_or_default]
     pub extra_actions: Html,
+    /// Stay open after a successful apply (the dialog shows its own result).
+    #[prop_or_default]
+    pub keep_open: bool,
     #[prop_or_default]
     pub children: Html,
 }
@@ -323,10 +356,10 @@ pub fn modal(p: &ModalProps) -> Html {
         });
     }
     {
-        let (submitted, onclose, error) = (submitted.clone(), p.onclose.clone(), p.error.clone());
+        let (submitted, onclose, error, keep_open) = (submitted.clone(), p.onclose.clone(), p.error.clone(), p.keep_open);
         use_effect_with(p.done, move |done| {
             if let Some(at) = *submitted {
-                if *done > at && error.is_empty() {
+                if *done > at && error.is_empty() && !keep_open {
                     onclose.emit(());
                 }
             }
@@ -452,6 +485,13 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
     } else if tool == "extarea" && !points.is_empty() {
         // Every vertex, closed into a shaded polygon from the third on.
         Some(json!({"points": points.iter().map(|v| json!([v["x"], v["y"]])).collect::<Vec<_>>(), "closed": true}))
+    } else if matches!(tool, "extcircle" | "ignite") {
+        // The point with its disc, so the preview shows the area acted on.
+        points.last().map(|v| {
+            let mut v = v.clone();
+            v["radius_m"] = json!(params.radius_m);
+            v
+        })
     } else {
         points.last().cloned()
     };
@@ -775,10 +815,37 @@ fn with_neighbours(stat: &Value, names: &[String]) -> BTreeSet<String> {
     }
     out
 }
+/// Zones a reveal of `selected` would add to what the role already knows;
+/// the others only refresh their snapshot.
+pub(crate) fn new_zones(selected: &BTreeSet<String>, known: &[String]) -> Vec<String> {
+    selected.iter().filter(|z| !known.contains(z)).cloned().collect()
+}
+
+async fn master_get(path: &str) -> Result<Value, String> {
+    #[cfg(feature = "standalone")]
+    let token = "master".to_string();
+    #[cfg(not(feature = "standalone"))]
+    let token = api::token();
+    api::request(&token, path, None).await
+}
+
+/// "View as role": the role's territory and map as its player receives them.
+#[derive(Clone, PartialEq, Default)]
+struct RoleView {
+    role: String,
+    stat: Value,
+    view: Value,
+    language: String,
+    clock: String,
+    error: String,
+}
+
 #[function_component(KnowledgeModal)]
 pub fn knowledge_modal(p: &MapToolProps) -> Html {
     let c = &p.common;
     let role = use_state(String::new);
+    let view_as = use_state(|| false);
+    let role_view = use_state(RoleView::default);
     let source = use_state(|| ex("Rapporto EXCON").to_string());
     let layers = use_state(|| LAYERS.iter().map(|l| l.0.to_string()).collect::<BTreeSet<_>>());
     let zones = use_state(BTreeSet::<String>::new);
@@ -801,17 +868,88 @@ pub fn knowledge_modal(p: &MapToolProps) -> Html {
         let zones = zones.clone();
         html! {<button type="button" onclick={Callback::from(move |_| zones.set(set.clone()))}>{ex(label)}</button>}
     };
+    // The role's own map, fetched while "view as" is open and again whenever
+    // its knowledge changes (a reveal), an action completes or a minute passes.
+    {
+        let role_view = role_view.clone();
+        let stamp = c.master["role_knowledge"][role_id.as_str()].to_string();
+        let minute = c.state["turn_window"]["now_s"].as_i64().unwrap_or(0) / 60;
+        use_effect_with((role_id.clone(), *view_as, c.done, stamp, minute), move |(role, open, ..)| {
+            if *open && !role.is_empty() {
+                let (role, role_view) = (role.clone(), role_view.clone());
+                wasm_bindgen_futures::spawn_local(async move {
+                    let current = (*role_view).clone();
+                    let stat = if current.role == role && !current.stat.is_null() {
+                        Ok(current.stat.clone())
+                    } else {
+                        master_get(&format!("/api/master/player-static/{}", api::encode(&role))).await
+                    };
+                    let map = master_get(&format!("/api/master/player-map/{}", api::encode(&role))).await;
+                    role_view.set(match (stat, map) {
+                        (Ok(stat), Ok(m)) => RoleView {
+                            role,
+                            stat,
+                            view: crate::map::player_view(&m["map"], &m["deployments"]),
+                            language: text(&m["language"]).to_string(),
+                            clock: text(&m["clock"]).to_string(),
+                            error: String::new(),
+                        },
+                        (Err(e), _) | (_, Err(e)) => RoleView { role, error: e, ..Default::default() },
+                    });
+                });
+            }
+        });
+    }
+    // In "view as" the dialog stays open after a reveal: the selection is
+    // cleared and the role's map shows what it now knows.
+    {
+        let (zones, submitted_at) = (zones.clone(), c.done);
+        let (view_as_open, error_empty) = (*view_as, c.error.is_empty());
+        use_effect_with(submitted_at, move |_| {
+            if view_as_open && error_empty {
+                zones.set(BTreeSet::new());
+            }
+        });
+    }
     let ok = !zones.is_empty() && !layers.is_empty() && !source.trim().is_empty() && !role_id.is_empty();
     let onapply = {
         let (cb, role_id, source, zones, layers) = (c.action.clone(), role_id.clone(), source.clone(), zones.clone(), layers.clone());
         Callback::from(move |_| cb.emit(Action::post("/api/master/knowledge", json!({"role":role_id,"source":source.trim(),"zones":*zones,"layers":*layers}))))
+    };
+    let role_name = roles.iter().find(|r| text(&r["id"]) == role_id).map(|r| text(&r["name"]).to_string()).unwrap_or_else(|| role_id.clone());
+    let selected: Vec<String> = zones.iter().cloned().collect();
+    let adds = new_zones(&zones, &known);
+    let tabs = {
+        let tab = |on: bool, id: &'static str, label: String| {
+            let view_as = view_as.clone();
+            html! {<button type="button" id={id} aria-pressed={(*view_as == on).to_string()} onclick={Callback::from(move |_| view_as.set(on))}>{label}</button>}
+        };
+        html! {<div class="endpoint-picker view-as-tabs" role="group">
+            {tab(false, "view-excon", ex("Selezione EXCON").to_string())}
+            {tab(true, "view-as", format!("{} {}", ex("Vedi come"), role_name))}
+        </div>}
+    };
+    let map = if *view_as {
+        let rv = &*role_view;
+        let body = if !rv.error.is_empty() {
+            html! {<p class="error" role="alert">{rv.error.clone()}</p>}
+        } else if rv.role != role_id || rv.stat.is_null() {
+            html! {<p class="muted">{ex("Caricamento della mappa del ruolo…")}</p>}
+        } else {
+            html! {<SituationMap key={rv.role.clone()} id="view-as-map" stat={rv.stat.clone()} view={rv.view.clone()} simple=true onclick={onmap.clone()} selected_zones={selected.clone()} lang={rv.language.clone()}/>}
+        };
+        html! {<>{tabs}
+            <p id="view-as-caption" class="muted">{crate::exfmt!("La mappa di {} com’è ora sul suo schermo ({}). Velato: ciò che il ruolo non conosce. Riquadri verdi bordati di bianco: zone selezionate, anteprima di ciò che la rivelazione aggiungerebbe.", "{}'s map as it is now on their screen ({}). Veiled: what the role does not know. Green boxes outlined in white: selected zones, a preview of what the reveal would add.", role_name, rv.clock)}</p>{body}
+        </>}
+    } else {
+        html! {<>{tabs}{pick_map(&c.stat, &c.state, onmap, None, selected.clone(), known.clone())}</>}
     };
     let all = {
         let (cb, role_id, source) = (c.action.clone(), role_id.clone(), source.clone());
         Callback::from(move |_| cb.emit(Action::post("/api/master/knowledge", json!({"role":role_id,"source":source.trim(),"current_perimeter":true}))))
     };
     html! {<Modal title={tool_label("knowledge")} onclose={c.onclose.clone()} {onapply} apply_label={ex("Rivela le zone selezionate")} apply_disabled={!ok} busy={c.busy} done={c.done} error={c.error.clone()}
-        map={pick_map(&c.stat, &c.state, onmap, None, zones.iter().cloned().collect(), known.clone())}
+        keep_open={*view_as} {map}
         extra_actions={html!{<button type="button" disabled={c.busy || source.trim().is_empty() || role_id.is_empty()} onclick={all}>{ex("Pubblica l’intero perimetro")}</button>}}>
         <p class="muted">{ex("Clicca le zone da rivelare: il clic le aggiunge o le toglie. Il ruolo conosce solo ciò che pubblichi, come fotografia al momento della consegna.")}</p>
         <label>{ex("Ruolo")}<select id="report-role" onchange={{let role=role.clone();Callback::from(move|e|role.set(api::select(e)))}}>{for roles.iter().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==role_id}>{text(&r["name"])}</option>})}</select></label>
@@ -819,6 +957,7 @@ pub fn knowledge_modal(p: &MapToolProps) -> Html {
         <fieldset><legend>{ex("Livelli da rivelare")}</legend>{for LAYERS.iter().map(|(id,label)|{let id=id.to_string();let layers=layers.clone();let checked=layers.contains(&id);html!{<label class="mt-check"><input type="checkbox" {checked} onchange={Callback::from(move |_|{let mut next=(*layers).clone();if !next.remove(&id){next.insert(id.clone());}layers.set(next);})}/>{ex(label)}</label>}})}</fieldset>
         <div class="row">{preset("Nessuna", BTreeSet::new())}{preset("Zone in fiamme", burning.iter().cloned().collect())}{preset("In fiamme + adiacenti", with_neighbours(&c.stat,&burning))}{preset("Tutta la mappa", zone_names(&c.stat).into_iter().collect())}</div>
         <p>{if zones.is_empty(){ex("Nessuna zona selezionata. Clicca la mappa.").to_string()}else{format!("{} {}: {}", zones.len(), ex("zone selezionate"), zones.iter().cloned().collect::<Vec<_>>().join(", "))}}</p>
+        if !zones.is_empty() {<p id="reveal-adds" class="muted">{if adds.is_empty() {ex("Tutte già note al ruolo: la rivelazione ne aggiorna solo la fotografia.").to_string()} else {crate::exfmt!("Nuove per il ruolo: {} ({}).", "New to the role: {} ({}).", adds.len(), adds.join(", "))}}</p>}
         <label>{ex("Fonte del rapporto")}<input id="report-source" value={(*source).clone()} oninput={{let source=source.clone();Callback::from(move|e|source.set(api::input(e)))}}/></label>
     </Modal>}
 }
@@ -928,7 +1067,7 @@ pub fn controllo(p: &ControlloProps) -> Html {
     };
     let modal = match open.as_deref() {
         None => html! {},
-        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "extarea" | "evac" | "warn" | "drone" | "bstatus")) => {
+        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "extarea" | "evac" | "evacborgo" | "warn" | "drone" | "bstatus")) => {
             html! {<MapToolModal key={id.to_string()} tool={id.to_string()} common={common.clone()}/>}
         }
         Some("knowledge") => html! {<KnowledgeModal tool="knowledge" common={common.clone()}/>},
@@ -1009,6 +1148,13 @@ mod tests {
     use super::*;
     fn click(x: f64, y: f64, zone: &str) -> Value {
         json!({"x": x, "y": y, "zone": zone})
+    }
+    #[test]
+    fn reveal_preview_lists_only_zones_new_to_the_role() {
+        let selected: BTreeSet<String> = ["F4", "G5", "H6"].iter().map(|z| z.to_string()).collect();
+        assert_eq!(new_zones(&selected, &["G5".to_string()]), vec!["F4", "H6"]);
+        assert!(new_zones(&selected, &["F4".into(), "G5".into(), "H6".into()]).is_empty());
+        assert!(new_zones(&BTreeSet::new(), &[]).is_empty());
     }
     #[test]
     fn fire_line_needs_two_points_and_has_api_shape() {

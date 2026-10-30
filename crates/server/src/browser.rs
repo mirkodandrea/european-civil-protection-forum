@@ -33,6 +33,9 @@ pub struct JournalEntry {
     pub body: Value,
     /// Simulated seconds when the request was made.
     pub t_s: i64,
+    /// Wall-clock instant (ms) of the request; replays restore the exercise timers from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_ms: Option<u64>,
     #[serde(skip)]
     seq: u64,
     /// Still running when false; such a request is not part of the saved session.
@@ -99,6 +102,7 @@ pub async fn replay(s: AppState, entries: Vec<JournalEntry>, end_t_s: i64) -> Re
     flow::REPLAYING.store(true, Relaxed);
     let outcome = async {
         for (i, e) in entries.iter().enumerate() {
+            s.lock().replay_wall_ms = e.wall_ms.map(u128::from);
             flow::advance_to(&s, e.t_s).await;
             dispatch(s.clone(), &e.role, &e.url, Some(e.body.clone()))
                 .await
@@ -111,6 +115,7 @@ pub async fn replay(s: AppState, entries: Vec<JournalEntry>, end_t_s: i64) -> Re
     .await;
     {
         let mut ex = s.lock();
+        ex.replay_wall_ms = None;
         if ex.clock_control.running {
             let ratio = ex.clock_control.ratio;
             let _ = ex.configure_clock(false, ratio, "Session restored; clock paused");
@@ -213,6 +218,7 @@ pub async fn request(
                 url: url.into(),
                 body,
                 t_s,
+                wall_ms: Some(now_wall_ms()),
                 seq,
                 done: false,
             });
@@ -288,6 +294,12 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("GET", "/api/master/player-map/<role>") => {
+            get_master_player_map(principal.clone(), s.clone(), captures["role"].to_string()).await
+        }
+        ("GET", "/api/master/player-static/<role>") => {
+            get_master_player_static(principal.clone(), s.clone(), captures["role"].to_string()).await
+        }
         ("POST", "/api/master/references") => {
             post_references(
                 principal.clone(),
@@ -304,6 +316,7 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
             )
             .await
         }
+        ("GET", "/api/observer") => get_observer(principal.clone(), s.clone()).await,
         ("GET", "/api/state") => get_state(principal.clone(), s.clone()).await,
         ("GET", "/api/master") => get_master(principal.clone(), s.clone()).await,
         ("GET", "/api/attachments/<id>") => {
@@ -348,6 +361,14 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
         }
         ("POST", "/api/master/scenarios/validate") => {
             library::post_validate(
+                principal.clone(),
+                s.clone(),
+                decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
+            )
+            .await
+        }
+        ("POST", "/api/master/scenarios/translate") => {
+            library::post_translate(
                 principal.clone(),
                 s.clone(),
                 decode(body.clone().ok_or_else(|| bad("request body required"))?)?,
@@ -751,8 +772,11 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/master/access"),
     ("POST", "/api/master/knowledge"),
     ("POST", "/api/master/knowledge/refresh"),
+    ("GET", "/api/master/player-map/<role>"),
+    ("GET", "/api/master/player-static/<role>"),
     ("POST", "/api/master/references"),
     ("GET", "/api/evaluator"),
+    ("GET", "/api/observer"),
     ("GET", "/api/state"),
     ("GET", "/api/master"),
     ("GET", "/api/attachments/<id>"),
@@ -763,6 +787,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("GET", "/api/master/scenarios"),
     ("GET", "/api/master/scenarios/<id>"),
     ("POST", "/api/master/scenarios/validate"),
+    ("POST", "/api/master/scenarios/translate"),
     ("POST", "/api/master/scenarios/save"),
     ("POST", "/api/master/scenarios/delete"),
     ("GET", "/api/view/scene"),

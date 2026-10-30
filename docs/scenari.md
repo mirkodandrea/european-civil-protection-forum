@@ -15,13 +15,25 @@ Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Gene
 | Standalone (WASM) | `localStorage` (`ttx.standalone.packs`) più i pack incorporati | `ttx.standalone.active` |
 
 La sessione salvata contiene il pack da cui è partita: al riavvio si ricostruisce lo stesso scenario anche se la libreria è cambiata.
-Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km) e **Selvariva** (`selvariva_basin`, 6 × 6 km), con i pack `valverde_night_wind` e `selvariva_crisi_integrata`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
+Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km), **Selvariva** (`selvariva_basin`, 6 × 6 km) e l'**Isola di Roccavento** (`roccavento_island`, 8 × 8 km), con i pack `valverde_night_wind`, `selvariva_crisi_integrata` e `roccavento_valico`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
 
 I salvataggi browser nuovi registrano anche l’identità dei dati del territorio: un replay su una mappa modificata viene scartato con avviso. I salvataggi precedenti senza impronta restano leggibili. Il 3D locale ricostruisce la scena quando cambia scenario; il viewer remoto scarica la nuova scena fuori dal ciclo di rendering quando cambia territorio.
 
 Per aggiungere un territorio al server basta un nuovo `<id>.json` valido nella libreria; per includerlo anche nello standalone aggiungerlo a `crates/scenario/src/embedded.rs`, con eventuali pack, e ricostruire il browser. La feature `scenario/embedded` evita di incorporare i raster negli strumenti headless che non ne hanno bisogno.
 
-La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md).
+La traccia di conduzione in cinque turni, la visibilità della mappa, le assunzioni e i comandi di rigenerazione di Selvariva sono in [scenario-selvariva.md](scenario-selvariva.md). Roccavento, i suoi borghi e il comando «Evacua borgo» sono in [scenario-roccavento.md](scenario-roccavento.md).
+
+## Edifici: tipo e aspetto (`kind`, `visual_kind`)
+
+`kind` dice cosa fa la simulazione con l’edificio e ha tre valori. `house` (abitazione): contata nei totali del settore, elencata singolarmente solo se ha un nome o è colpita, occupanti evacuano in auto. `sensitive` (struttura sensibile: scuole, ospedali, RSA): gli occupanti non evacuano da soli e servono bus, sempre elencata. `facility` (altra struttura): sempre elencata, occupanti in auto. `visual_kind` («Aspetto» nell’editor: `school`, `town_hall`, `church`, `mill`…) cambia solo modello 3D ed etichette (categoria nelle tabelle di situazione, nomi evidenziati sulla mappa); capienza da rifugio (`shelter_capacity`) e occupanti sono campi a sé. I vecchi tipi (`school`, `hospital`, `fuel_station`, `sports_centre`, `town_hall`, `industrial`) si caricano ancora: diventano `sensitive` o `facility` e, se manca, l’aspetto prende il vecchio nome; al salvataggio esce il formato nuovo.
+
+## Borghi (`districts`)
+
+Un territorio può dichiarare i suoi borghi: `districts` (`id`, `name`, `buildings` per id, `gathering` facoltativa, nome di un edificio con capienza) e il ritmo `district_evacuation` (`per_min` persone al minuto, `prep_min` minuti di preparazione; predefiniti 6 e 5). Con i borghi è disponibile il comando `EvacuateDistrict` (vedi [scenario-roccavento.md](scenario-roccavento.md#evacua-borgo-evacuatedistrict)). Senza borghi il comando è rifiutato e nulla cambia. Un pack può sostituire `districts` e `district_evacuation` (campi `edits`); nell’editor la scheda «Borghi» li modifica (una casa appartiene a un solo borgo), con area di raccolta e ritmo delle partenze. La mappa parte inquadrata sulle case dei borghi e si usa così: clic su una casa la aggiunge o la toglie; trascinando si disegna un rettangolo che aggiunge le case comprese (Maiusc: le toglie; con «Solo case senza borgo», attivo di default, non ruba case agli altri borghi); «Aggiungi zona…» aggiunge le case di una zona della griglia; rotella o `+`/`−` ingrandiscono, `Sposta` (o Alt, o il tasto centrale) sposta la mappa, `0` o «Adatta» inquadra tutto; i tasti `1`–`9` scelgono il borgo e Ctrl+Z (o «↶ Annulla») annulla l’ultima modifica delle case. Sulla mappa ogni borgo ha il suo inviluppo convesso colorato, il nome, e il borgo scelto mostra l’area di raccolta; passando sopra una casa un suggerimento dà nome, persone, capienza e borgo, e una riga di stato dice cosa è cambiato (anche «spostata da … a …»). L’identificativo segue il nome finché non lo si cambia a mano.
+
+### Controlli dell’editor
+
+Mentre si modifica, lo scenario viene verificato in automatico (con una breve attesa dopo l’ultima modifica): le schede con problemi mostrano un contatore rosso, l’elenco in fondo permette di aprire la scheda interessata con «→ scheda», e nella scheda Borghi l’errore compare accanto al borgo. «Controlla» rilancia la verifica a mano e «Salva» mostra «Salvato ✓» quando non ci sono modifiche in sospeso. «Controlla» segnala borghi vuoti, duplicati, case sconosciute e aree di raccolta senza capienza.
 
 ## Da riga di comando
 
@@ -32,7 +44,7 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 
 ## API (solo EXCON)
 
-`GET /api/master/scenarios`, `GET /api/master/scenarios/<id>` (pack completo + nomi del territorio), `POST …/validate`, `…/save`, `…/delete`, `…/activate` (solo server). Tutti i problemi di un pack tornano insieme (400, uno per riga).
+`GET /api/master/scenarios`, `GET /api/master/scenarios/<id>` (pack completo + nomi del territorio), `POST …/validate`, `…/translate` (`{pack, language}` → etichette della mappa mancanti tradotte dall'AI, niente salvato), `…/save`, `…/delete`, `…/activate` (solo server). Tutti i problemi di un pack tornano insieme (400, uno per riga).
 
 ## Testi in più lingue (`translations`)
 
@@ -42,9 +54,18 @@ degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
 
 1. `translations` dello scenario: `{"it": {"Buses": "Autobus", ...}}`, lingua → testo
    inglese di origine → traduzione. Vale per ogni punto in cui compare la stringa
-   intera (corrispondenza esatta, non parziale).
+   intera (corrispondenza esatta, non parziale). Un pack può aggiungerne in
+   `edits.translations` (stessa forma), unite sopra quelle del territorio: così fanno
+   `selvariva_crisi_integrata` e `valverde_night_wind`, scritti in inglese con il testo
+   italiano originale in `translations.it` (anche note, obiettivi e testi degli inject,
+   che la console EXCON italiana mostra senza LLM).
 2. Glossario incorporato (`crates/scenario/src/glossary.rs`): ruoli e risorse standard
-   in tutte le lingue dei giocatori; testi completi della Valverde in italiano.
+   in tutte le lingue dei giocatori; testi completi della Valverde in italiano (azioni
+   degli inject comprese).
+
+I nomi di luoghi, edifici e strade dei territori restano quelli della mappa (anche se
+italiani, es. «Area festival delle Fonti»): sono chiavi con cui comandi e pack salvati
+ritrovano i luoghi, quindi non si traducono.
 3. Traduzione LLM a runtime (solo giocatori), una volta per testo e lingua, in cache;
    include i titoli degli inject scritti dall'EXCON.
 4. Senza LLM e senza voce: resta il testo dello scenario.
@@ -52,6 +73,31 @@ degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
 La sostituzione avviene sul server (`display_map` in `crates/server/src/lib.rs`) nelle
 viste di giocatore, `/api/static`, `/api/state` e `/api/master`; mai nell'editor scenario.
 Un ruolo scritto nella lingua del lettore non viene tradotto.
+
+### Etichette della mappa
+
+I nomi disegnati sulle mappe (luoghi, edifici con nome, strade, borghi, settori:
+`Scenario::map_texts`) hanno traduzioni **statiche** nella stessa `translations`, una
+tabella per lingua, inglese compreso (i territori Selvariva e Roccavento sono scritti
+in italiano). Regole:
+
+- Solo i **giocatori** le vedono: l'EXCON legge i nomi originali, che sono quelli che
+  i comandi usano. Le etichette non sono mai tradotte a runtime.
+- Il gazetteer dell'LLM aggiunge come `aliases` i nomi nelle lingue dei giocatori
+  (`Exercise::gazetteer`), così una risposta che li usa si risolve nel nome originale.
+- Territori inclusi: le ricette della factory (`scripts/scenario_factory.py landscape |
+  selvariva | roccavento`) chiamano `translations.fill` prima di scrivere: riportano le
+  traduzioni del file precedente il cui testo è ancora nel territorio e fanno tradurre
+  all'LLM le etichette mancanti (binario `translate-territory`, chiave in `.env`).
+  `--no-translate` lavora offline e segnala solo le etichette scoperte. `gen-scenario`
+  (`synthetic_valley.json`) riporta le traduzioni ma non chiama l'LLM. Per completare
+  un territorio esistente: `python3 scripts/factory/translations.py [TERRITORIO …]
+  [--lang xx …]`, che aggiunge solo le mancanti e aggiorna il manifest.
+- Editor scenario, scheda **Traduzioni**: copertura per lingua dei ruoli, tabella
+  modificabile nome originale → traduzione, «Genera le mancanti (AI)» per una lingua o
+  per tutte le lingue dei ruoli (`POST /api/master/scenarios/translate`). Le voci
+  generate restano modificabili e finiscono nel pack (`edits.translations`, che se
+  presente sostituisce quella del territorio) al salvataggio.
 
 ## Terminologia per i giocatori
 
@@ -103,7 +149,7 @@ Un'azione può, invece di un `command`, rivelare **conoscenza sulla mappa** ai d
  "reveal":{"kind":"exact","zones":"burning_and_adjacent","layers":["fire","roads"],"source":"Sala operativa"}}
 ```
 
-- **`exact`**: `zones` è un elenco (`["C3","D3"]`) oppure una regola calcolata all'esecuzione, `"burning"` (zone con celle in fiamme) o `"burning_and_adjacent"` (più le otto zone vicine); `layers` tra `fire, buildings, roads, lines, units` (predefinito `["fire"]`). Usa `zone_observation`. Una regola senza zone in fiamme fa fallire l'azione ("no zone is burning").
+- **`exact`**: `zones` è un elenco (`["C3","D3"]`) oppure una regola calcolata all'esecuzione, `"burning"` (zone con celle in fiamme) o `"burning_and_adjacent"` (più le otto zone vicine); `layers` tra `fire, buildings, roads, lines, units` (predefinito `["fire"]`; `buildings` comprende anche le zone allertate in vigore, con l’ora). Usa `zone_observation`. Una regola senza zone in fiamme fa fallire l'azione ("no zone is burning").
 - **`approximate`**: stima non verificata dell'incendio *reale* (celle in fiamme o bruciate, come nel raster del fuoco) calcolata dal simulatore all'esecuzione: baricentro, area (ha) e direzione di propagazione, con errore deliberato e deterministico (funzione di seme, id inject, id azione e ruolo, quindi ogni ruolo legge un errore diverso ma riproducibile): posizione entro `position_error_m` (predefinito 300, max 5000), area entro ±`area_error_frac` (predefinito 0.25) e arrotondata a due cifre significative, direzione ±10° arrotondata a 5°. La direzione è quella dal baricentro delle celle bruciate (dove il fuoco è passato) a quello delle celle in fiamme (il fronte); se distano meno di una cella (fuoco appena innescato) è il vento verso cui soffia (direzione del vento + 180°). Il giocatore vede un cerchio tratteggiato (area dichiarata + errore di posizione), una freccia e l'etichetta «fonte · ora · stima non verificata»; l'ultima stima ricevuta prevale. Non rivela zone.
 - `source` (facoltativo) è la fonte mostrata; predefinita il mittente dell'inject. Nel `KnowledgeEvent` si registrano `source_name` e (per `exact`) `layers`.
 - Nei pacchetti forniti: `I-01` (112) → `A-02` approssimata, `I-03` (sala operativa → fire_commander) → `A-03` esatta (`burning_and_adjacent`, fire + roads). Nell'editor Scenario un'azione `reveal` si mostra e si modifica come JSON al posto degli strumenti di comando.
@@ -157,6 +203,7 @@ pack sopra un territorio; il nuovo ambiente serve anche ad authoring geometrico.
 - **Web standalone:** dalla vista Scenario, «Apri editor scenario 3D», oppure
   aprire `?editor=1`. Richiede una build standalone
   (`./scripts/build_frontend.sh --features standalone`).
+- **Dalla schermata di partenza** (standalone): la scheda «Territori» elenca i territori inclusi e quelli creati nel browser. «Modifica copia» apre un territorio incluso come copia (`<id>-modificato`, non sovrascrivibile l’originale); «Modifica» riapre un territorio creato qui; «Nuovo territorio vuoto» parte da una griglia piatta. Il link è `?editor=1&territory=<id>`.
 - **App Bevy:** `cargo run --release -p app --bin scenario-editor`.
   Opzioni: `--scenarios-dir DIR` (default `data/scenarios`) e `--scenario ID`.
   La libreria comprende territori e pack, risolti sulla propria base.

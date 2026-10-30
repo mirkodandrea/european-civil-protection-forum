@@ -285,7 +285,7 @@ async fn master_player_llm_round_trip() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|a| a["action"] == "Issue warning to zone F4" && a["ok"] == true));
+        .any(|a| a["action"] == "Warn the population of zone F4" && a["ok"] == true));
     eventually(&app, "/api/player/fire_commander", |v| {
         v["inbox"]
             .as_array()
@@ -845,6 +845,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
     let app = app().await;
     let (_, mut before) = call(&app, "GET", "/api/state", None).await;
     before.as_object_mut().unwrap().remove("wall_ms");
+    before["progress"].as_object_mut().unwrap().remove("now_wall_ms");
     for path in [
         "/api/state",
         "/api/master",
@@ -911,6 +912,7 @@ async fn role_keys_protect_all_authoritative_reads_and_actions() {
     );
     let (_, mut after) = call(&app, "GET", "/api/state", None).await;
     after.as_object_mut().unwrap().remove("wall_ms");
+    after["progress"].as_object_mut().unwrap().remove("now_wall_ms");
     assert_eq!(before, after);
     let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
     assert!(
@@ -1017,6 +1019,16 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
     assert_eq!(zoned["map"]["known_zones"], json!(["G5"]));
     assert!(zoned["map"]["cells"].as_array().unwrap().len() > 2);
     assert!(zoned["map"].get("stats").is_none());
+}
+
+#[tokio::test]
+async fn the_observer_dashboard_is_served_and_linked() {
+    let app = app().await;
+    let (s, dashboard) = call(&app, "GET", "/api/observer", None).await;
+    assert_eq!(s, Status::Ok);
+    assert!(dashboard["turns"].is_array() && dashboard["wall_ms"].is_u64());
+    let (_, links) = call(&app, "GET", "/api/master/access", None).await;
+    assert_eq!(links["observer"]["url"], "/observer.html");
 }
 
 #[tokio::test]
@@ -2085,7 +2097,7 @@ async fn chat_is_direct_private_and_orders_wait_for_excon() {
         &app,
         "POST",
         "/api/player/mayor/actions",
-        Some(json!({"kind":"decision","basis":"operational_judgment","commands":[{"type":"IssueWarning","zone":"F4"}],"text":"Warn F4","reply_to":chat_id})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","commands":[{"type":"IssueWarning","zone":"F4"}],"text":"Warn F4","reply_to":chat_id})),
         Some("test-mayor"),
     )
     .await;
@@ -2403,7 +2415,7 @@ async fn excon_suggestions_read_everything_and_become_reviewed_actions() {
         &app,
         "POST",
         "/api/player/mayor/actions",
-        Some(json!({"kind":"decision","basis":"operational_judgment","narrative":"We alert the village of Pineta","reply_to":parent})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":"We alert the village of Pineta","reply_to":parent})),
         Some("test-mayor"),
     )
     .await;
@@ -2606,7 +2618,7 @@ async fn structured_player_actions_wait_for_review_without_ai() {
         .await
         .0;
     let before = call(&app, "GET", "/api/state", None).await.1["world"].clone();
-    let body = json!({"kind":"decision","basis":"operational_judgment","text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let body = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
     let (status, sent) = call_key(
         &app,
         "POST",
@@ -2641,7 +2653,7 @@ async fn structured_player_actions_wait_for_review_without_ai() {
         .0,
         Status::Forbidden
     );
-    let (status, _) = call_key(&app, "POST", "/api/player/mayor/actions", Some(json!({"kind":"decision","basis":"operational_judgment","text":"Invalid parent", "commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":999999})), Some("test-mayor")).await;
+    let (status, _) = call_key(&app, "POST", "/api/player/mayor/actions", Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"Invalid parent", "commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":999999})), Some("test-mayor")).await;
     assert_eq!(status, Status::BadRequest);
 }
 
@@ -2675,7 +2687,7 @@ async fn structured_fire_line_action_endpoints_terminate() {
     let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
         .await
         .0;
-    let body = json!({"kind":"decision","basis":"operational_judgment","text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
+    let body = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
     let (status, _) = call_key(&app, "POST", "/api/player/fire_commander/actions", Some(body), Some("test-fire")).await;
     assert_eq!(status, Status::Ok);
     let (_, master) = call(&app, "GET", "/api/master", None).await;
@@ -2703,7 +2715,7 @@ async fn factory_operational_fire_line_endpoints_are_fast() {
     ex.start().unwrap();
     let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access()).await.0;
     let t = std::time::Instant::now();
-    let body = json!({"kind":"decision","basis":"operational_judgment","text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
+    let body = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"Linea · F4", "commands":[{"type":"CutFireLine","from":"F4","to":"G4"}]});
     let (status, sent) = call_key(&app, "POST", "/api/player/fire_commander/actions", Some(body), Some("test-fire")).await;
     assert_eq!(status, Status::Ok);
     eprintln!("submit {:?}", t.elapsed());
@@ -2732,7 +2744,7 @@ async fn rejection_note_reaches_the_player() {
     let app = build(Arc::new(Mutex::new(ex)), llm::Llm::off(), None, access())
         .await
         .0;
-    let body = json!({"kind":"decision","basis":"operational_judgment","text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let body = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"Warn F4", "commands":[{"type":"IssueWarning","zone":"F4"}]});
     let (status, sent) = call_key(&app, "POST", "/api/player/mayor/actions", Some(body), Some("test-mayor")).await;
     assert_eq!(status, Status::Ok);
     let pid = sent["proposal"].as_u64().unwrap();
@@ -3292,7 +3304,7 @@ async fn clarification_answer_is_translated_not_interpreted_and_proposal_stays_a
     let player = eventually(&app, "/api/player/mayor", |v| v["inbox"].as_array().unwrap().iter().any(|m| m["kind"] == "clarification")).await;
     let q = player["inbox"].as_array().unwrap().iter().find(|m| m["kind"] == "clarification").unwrap()["id"].as_u64().unwrap();
     // A structured action cannot be sent as the answer.
-    let (s, _) = call(&app, "POST", "/api/player/mayor/actions", Some(json!({"kind":"decision","basis":"operational_judgment","text":"x","commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":q}))).await;
+    let (s, _) = call(&app, "POST", "/api/player/mayor/actions", Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"x","commands":[{"type":"IssueWarning","zone":"F4"}],"reply_to":q}))).await;
     assert_eq!(s, Status::BadRequest);
     let parses_before = calls.lock().unwrap().iter().filter(|t| *t == "parse_reply").count();
     let (s, r) = call(&app, "POST", "/api/player/mayor/reply", Some(json!({"text": "lato nord", "reply_to": q}))).await;
@@ -3326,7 +3338,7 @@ async fn partial_approval_acknowledgement_and_review_states_over_http() {
     let shared = Arc::new(Mutex::new(ex));
     let app = build(shared.clone(), llm::Llm::off(), None, access()).await.0;
     // Two actions: EXCON approves the first and rejects the second with a reason.
-    let body = json!({"kind":"decision","basis":"operational_judgment","text":"Warn F4 and G4", "reply_to": parent,
+    let body = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","text":"Warn F4 and G4", "reply_to": parent,
         "commands":[{"type":"IssueWarning","zone":"F4"},{"type":"IssueWarning","zone":"G4"}]});
     let (_, sent) = call_key(&app, "POST", "/api/player/mayor/actions", Some(body), Some("test-mayor")).await;
     let pid = sent["proposal"].as_u64().unwrap();
@@ -3337,7 +3349,7 @@ async fn partial_approval_acknowledgement_and_review_states_over_http() {
         "reason":"Only F4 for now",
         "rejected_actions":[{"index":1,"reason":"G4 is not threatened yet"}]}))).await;
     assert_eq!(s, Status::Ok, "{out}");
-    assert!(out["facts_en"].as_str().unwrap().contains("NOT APPROVED: Issue warning to zone G4"));
+    assert!(out["facts_en"].as_str().unwrap().contains("NOT APPROVED: Warn the population of zone G4"));
     let (_, m) = call(&app, "GET", "/api/master", None).await;
     let p = m["proposals"].as_array().unwrap().iter().find(|p| p["id"] == pid).unwrap();
     assert_eq!((p["status"].as_str(), p["review"].as_str()), (Some("approved"), Some("partially_approved")));
@@ -3357,8 +3369,8 @@ async fn partial_approval_acknowledgement_and_review_states_over_http() {
     // The AI conversation of the player knows what was approved and what not.
     let context = shared.lock().unwrap().conversation("mayor");
     let last = context.iter().rev().find(|t| t.content.contains("FEEDBACK")).unwrap();
-    assert!(last.content.contains("APPROVED: Issue warning to zone F4"), "{}", last.content);
-    assert!(last.content.contains("NOT APPROVED: Issue warning to zone G4"), "{}", last.content);
+    assert!(last.content.contains("APPROVED: Warn the population of zone F4"), "{}", last.content);
+    assert!(last.content.contains("NOT APPROVED: Warn the population of zone G4"), "{}", last.content);
 
     // A reply with no actions (AI off: nothing interpreted) is acknowledged.
     let (_, r) = call_key(&app, "POST", "/api/player/mayor/reply", Some(json!({"text":"How many buses do we have?","reply_to":parent,
@@ -3499,4 +3511,50 @@ async fn excon_commands_queue_until_play() {
     let status = |id: u64| status(&m, id);
     assert_eq!(status(queued), "done");
     assert_eq!(status(later), "cancelled");
+}
+
+/// "View as role": EXCON reads a player's map exactly as the player receives
+/// it; players and evaluators cannot, and the fog of war is respected.
+#[tokio::test]
+async fn excon_views_a_role_map_as_the_player_sees_it() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":"G5","radius_m":60}))).await;
+    let uri = "/api/master/player-map/mayor";
+    // Never for players (own role included) or evaluators.
+    for path in [uri, "/api/master/player-static/mayor"] {
+        for key in ["test-mayor", "test-fire", "test-eval-one"] {
+            assert_eq!(call_key(&app, "GET", path, None, Some(key)).await.0, Status::Forbidden, "{path} {key}");
+        }
+        assert_eq!(call_key(&app, "GET", path, None, None).await.0, Status::Unauthorized);
+    }
+    assert_eq!(call(&app, "GET", "/api/master/player-map/nobody", None).await.0, Status::BadRequest);
+    assert_eq!(call(&app, "GET", "/api/master/player-static/nobody", None).await.0, Status::BadRequest);
+    // The territory as the player receives it: own role only.
+    let (st, territory) = call(&app, "GET", "/api/master/player-static/mayor", None).await;
+    assert_eq!(st, Status::Ok);
+    let (_, own) = call_key(&app, "GET", "/api/static", None, Some("test-mayor")).await;
+    assert_eq!(territory, own);
+    assert_eq!(territory["roles"].as_array().unwrap().len(), 1);
+
+    let (st, fogged) = call(&app, "GET", uri, None).await;
+    assert_eq!(st, Status::Ok, "{fogged}");
+    assert_eq!(fogged["role"], "mayor");
+    assert_eq!(fogged["map"]["known_zones"], json!([]));
+    assert!(fogged["map"]["cells"].as_array().unwrap().is_empty(), "unrevealed fire stays hidden");
+    assert!(fogged.get("world").is_none() && fogged["map"].get("fire").is_none());
+    let (_, player) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(fogged["map"], player["map"]);
+    assert_eq!(fogged["deployments"], player["deployments"]);
+
+    let reveal = json!({"role":"mayor","source":"Zone patrol","zones":["G5"],"layers":["fire","buildings"]});
+    assert_eq!(call(&app, "POST", "/api/master/knowledge", Some(reveal)).await.0, Status::Ok);
+    let (_, revealed) = call(&app, "GET", uri, None).await;
+    assert_eq!(revealed["map"]["known_zones"], json!(["G5"]));
+    assert!(!revealed["map"]["cells"].as_array().unwrap().is_empty());
+    let (_, player) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
+    assert_eq!(revealed["map"], player["map"]);
+    // The other role is still in the dark.
+    let (_, other) = call(&app, "GET", "/api/master/player-map/fire_commander", None).await;
+    assert_eq!(other["map"]["known_zones"], json!([]));
 }

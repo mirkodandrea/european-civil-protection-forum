@@ -104,13 +104,23 @@ jobs:
         run: |
           mkdir -p _branch
           cp web/standalone/ttx.html _branch/index.html
+          # The branch's own landing-page card (title, description, modes).
+          # Optional: branches that predate it get a generic card.
+          if [ -f release.json ]; then python3 -m json.tool release.json > /dev/null && cp release.json _branch/release.json; fi
           python3 - <<'PY'
-          import json, os
+          import json, os, subprocess
+          from datetime import datetime, timezone
           from pathlib import Path
+          commit = Path('/tmp/source-revision').read_text().strip()
           Path('_branch/version.json').write_text(json.dumps({
               'branch': os.environ['TTX_BRANCH'],
-              'commit': Path('/tmp/source-revision').read_text().strip(),
+              'commit': commit,
               'run': os.environ['GITHUB_RUN_ID'],
+              'run_number': os.environ['GITHUB_RUN_NUMBER'],
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'committed_at': subprocess.run(['git', 'show', '-s', '--format=%cI', commit],
+                                             capture_output=True, text=True, check=True).stdout.strip(),
+              'built_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
           }) + '\n')
           PY
       - uses: actions/upload-artifact@v4
@@ -153,8 +163,10 @@ jobs:
         with:
           name: standalone-dev
           path: _site/dev
-      - name: Build the version chooser
-        run: python3 scripts/stage_pages.py _site
+      - name: Build the landing page
+        run: |
+          python3 -m unittest scripts/test_stage_pages.py
+          python3 scripts/stage_pages.py _site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

@@ -48,7 +48,7 @@ fn scene() -> scenario::Scenario {
         Building {
             visual_kind: None,
             id: 2,
-            kind: BuildingKind::SportsCentre,
+            kind: BuildingKind::Facility,
             name: Some("Shelter".into()),
             pos: [380.0, 100.0],
             size: [10.0, 10.0],

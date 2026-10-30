@@ -133,6 +133,17 @@ pub struct MapProps {
     #[prop_or_default]
     pub focus: Option<(f64, f64, u32)>,
 }
+/// What a player's situation map draws: the role's `map` from the server
+/// (fog of war, reports, estimates) with its own missions. The player page and
+/// EXCON's "view as role" build it the same way.
+pub fn player_view(map: &Value, deployments: &Value) -> Value {
+    let mut view = map.clone();
+    if view.is_object() {
+        view["deployments"] = deployments.clone();
+    }
+    view
+}
+
 #[function_component(SituationMap)]
 pub fn situation_map(props: &MapProps) -> Html {
     let canvas = use_node_ref();
@@ -818,7 +829,11 @@ fn probe_lines(
         };
         out.push(format!(
             "{} · {}",
-            tf(lang, "insp_fuel", &[&fuel_label(lang, stat, fuel)]),
+            tf(lang, "insp_fuel", &[&if crate::fuel_palette::water_mask(stat, cols * rows).get(i) == Some(&true) {
+                crate::map_legend::lg(lang, "sea").to_string()
+            } else {
+                fuel_label(lang, stat, fuel)
+            }]),
             t(lang, name)
         ));
     }
@@ -1014,6 +1029,41 @@ fn texture(
     ox.draw_image_with_html_canvas_element_and_dw_and_dh(&mc, 0., 0., width, height)?;
     ctx.draw_image_with_html_canvas_element(&oc, 0., 0.)?;
     Ok(())
+}
+/// Amber diagonal hatching and outline over one warned zone (territory units).
+fn warned_zone(
+    ctx: &CanvasRenderingContext2d,
+    x0: f64,
+    y0: f64,
+    zs: f64,
+    s: f64,
+) -> Result<(), wasm_bindgen::JsValue> {
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(x0, y0, zs, zs);
+    ctx.clip();
+    ctx.set_fill_style_str("rgba(255,200,0,.14)");
+    ctx.fill_rect(x0, y0, zs, zs);
+    ctx.set_stroke_style_str("rgba(208,138,0,.6)");
+    ctx.set_line_width(2. * s);
+    ctx.begin_path();
+    let step = zs / 7.;
+    let mut d = step;
+    while d < 2. * zs {
+        ctx.move_to(x0 + d, y0);
+        ctx.line_to(x0 + d - zs, y0 + zs);
+        d += step;
+    }
+    ctx.stroke();
+    ctx.restore();
+    ctx.set_stroke_style_str("#d08a00");
+    ctx.set_line_width(3. * s);
+    ctx.stroke_rect(x0 + 1.5 * s, y0 + 1.5 * s, zs - 3. * s, zs - 3. * s);
+    Ok(())
+}
+/// "Day 1 14:20" -> "14:20".
+fn short_clock(clock: &str) -> &str {
+    clock.rsplit(' ').next().unwrap_or(clock)
 }
 /// A label collected during the world pass; `x`/`y` are bitmap-space anchor coordinates.
 struct LabelReq {
@@ -1298,21 +1348,21 @@ fn draw(
         .dyn_into::<CanvasRenderingContext2d>()?;
     let fuel = bytes(&stat["fuel"]);
     let fire = bytes(&v["fire"]);
+    // Base colours from the scenario's fuel classes (EU12 and legacy ids overlap),
+    // sea and lakes from the static water mask.
+    let palette = crate::fuel_palette::Palette::new(stat);
+    let water = crate::fuel_palette::water_mask(stat, cols * rows);
     let mut rgba = vec![0u8; cols * rows * 4];
     for i in 0..cols * rows {
         let bg = if !on(ml::BASE) {
-            ml::PLAIN_BG
-        } else {
-            match fuel.get(i).copied().unwrap_or(0) {
-            1 => [107, 142, 78],
-            2 => [154, 165, 90],
-            3 => [214, 208, 196],
-            4 => [217, 210, 138],
-            5 => [63, 107, 58],
-            6 => [194, 183, 110],
-            7 => [127, 163, 122],
-            _ => [200, 200, 190],
+            // Base off: plain ground, but the coast keeps its shape.
+            if water.get(i).copied().unwrap_or(false) {
+                crate::fuel_palette::PLAIN_WATER
+            } else {
+                ml::PLAIN_BG
             }
+        } else {
+            crate::fuel_palette::base(&palette, &fuel, &water, cols, rows, i)
         };
         let code = fire.get(i).copied().unwrap_or(0);
         let fg = if ml::fire_code_shown(code, hidden) {
@@ -1461,6 +1511,12 @@ fn draw(
                 let (x, y) = (col as f64 * zsize, row as f64 * zsize);
                 ctx.set_fill_style_str(fill);
                 ctx.fill_rect(x, y, zsize, zsize);
+                if !dash {
+                    // Light halo: the selection stays readable over a fogged (dark) player map.
+                    ctx.set_stroke_style_str("rgba(255,255,255,.85)");
+                    ctx.set_line_width(7. * s);
+                    ctx.stroke_rect(x + 2. * s, y + 2. * s, zsize - 4. * s, zsize - 4. * s);
+                }
                 ctx.set_stroke_style_str("#126752");
                 ctx.set_line_width(3. * s);
                 if dash {
@@ -1485,12 +1541,31 @@ fn draw(
         ctx.line_to(size, row as f64 * zsize);
         ctx.stroke();
     }
+    // Warned zones: amber hatching and outline, with a bell label and the
+    // time of the warning (persistent until rollback).
     for row in 0..z["rows"].as_u64().unwrap_or(0) {
         for col in 0..z["cols"].as_u64().unwrap_or(0) {
             let name = format!("{}{}", (b'A' + col as u8) as char, row + 1);
             if on(ml::CLOSURES) && list(&v["warned"]).contains(&json!(name)) {
-                ctx.set_fill_style_str("rgba(255,200,0,.15)");
-                ctx.fill_rect(col as f64 * zsize, row as f64 * zsize, zsize, zsize);
+                let (x0, y0) = (col as f64 * zsize, row as f64 * zsize);
+                warned_zone(&ctx, x0, y0, zsize, s)?;
+                let since = list(&v["warnings"])
+                    .iter()
+                    .find(|w| w["zone"] == json!(name))
+                    .map(|w| short_clock(text(&w["clock"])).to_string())
+                    .unwrap_or_default();
+                // Compact at overview (labels are cut at 18 characters); the word when zoomed.
+                let head = if vw.z >= 1.6 {
+                    format!("{} ", crate::map_legend::lg(lang, "warned_short"))
+                } else {
+                    String::new()
+                };
+                let txt = if since.is_empty() {
+                    format!("🔔 {head}{name}")
+                } else {
+                    format!("🔔 {head}{name} · {since}")
+                };
+                label(&txt, x0 + zsize / 2., y0 + zsize / 2., 0);
             }
         }
     }
@@ -1826,10 +1901,12 @@ fn draw(
     for (i, b) in list(&stat["buildings"]).iter().enumerate() {
         if let Some(name) = b["name"].as_str().filter(|s| !s.is_empty()) {
             let st = &v["buildings"][i];
-            let critical = matches!(
-                text(&b["kind"]),
-                "school" | "hospital" | "fuel_station" | "town_hall"
-            ) || st["damage"].as_u64().unwrap_or(0) > 0
+            let critical = text(&b["kind"]) == "sensitive"
+                || matches!(
+                    scenario::canonical_visual(text(&b["visual_kind"])),
+                    "fuel_station" | "town_hall"
+                )
+                || st["damage"].as_u64().unwrap_or(0) > 0
                 || st["threatened"] == true
                 || st["evacuating"] == true;
             label(
@@ -1929,6 +2006,16 @@ fn draw(
         }
     }
     if let Some(p) = pending.filter(|p| p["x"].is_number() && p["y"].is_number()) {
+        // The disc a radius tool acts on (circle extinguish, ignition).
+        if let Some(r) = p["radius_m"].as_f64().filter(|r| r.is_finite() && *r > 0.) {
+            ctx.begin_path();
+            ctx.arc(n(&p["x"]) * k, (h - n(&p["y"])) * k, r * k, 0., std::f64::consts::TAU)?;
+            ctx.set_fill_style_str("rgba(40,120,220,.22)");
+            ctx.fill();
+            ctx.set_stroke_style_str("#122b2c");
+            ctx.set_line_width(4. * s);
+            ctx.stroke();
+        }
         ctx.begin_path();
         ctx.arc(
             n(&p["x"]) * k,
@@ -1993,6 +2080,18 @@ fn scale_bar(
 #[cfg(test)]
 mod label_tests {
     use super::*;
+
+    #[test]
+    fn player_view_is_the_role_map_with_its_missions() {
+        let map = json!({"known_zones":["G5"],"cells":[{"row":1,"col":2,"state":1}]});
+        let deployments = json!([{"task":{"id":3}}]);
+        let v = player_view(&map, &deployments);
+        assert_eq!(v["known_zones"], json!(["G5"]));
+        assert_eq!(v["deployments"], deployments);
+        // Still fogged: a player view is never an authoritative one.
+        assert!(fog_zones(&json!({"zones":{"cols":8,"rows":8}}), &v).is_some());
+        assert_eq!(player_view(&Value::Null, &deployments), Value::Null);
+    }
 
     #[test]
     fn labels_are_compact_at_overview_and_complete_when_zoomed() {

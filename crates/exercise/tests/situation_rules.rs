@@ -33,7 +33,7 @@ fn ids(list: &[Suggestion]) -> Vec<&str> {
 #[test]
 fn houses_are_summed_per_sector() {
     let mut ex = started(120);
-    let school = ex.world.scn.buildings.iter().find(|b| b.kind == scenario::BuildingKind::School).unwrap().pos;
+    let school = ex.world.scn.buildings.iter().find(|b| b.category() == "school").unwrap().pos;
     ignite_near(&mut ex, school);
     let preview = ex.preview_job().unwrap().run().unwrap();
     let list = ex.suggestions(Some(&preview));
@@ -89,6 +89,7 @@ fn evacuees_on_a_road_that_is_cut_and_isolated_places() {
         completed: false,
         waiting: false,
         at_risk: false,
+        gathering: false,
         detail: String::new(),
     });
     assert!(ex.suggestions(None).iter().all(|s| s.rule != "evac_route_cut"), "road still open");

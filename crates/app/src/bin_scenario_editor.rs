@@ -37,7 +37,7 @@ impl viz::editor::Storage for Files {
         // Native writes are atomic. Authored copies have their own territory id.
         let path = self.0.join(format!("{}.json", s.id));
         if self.0.join(format!("{}.pack.json", s.id)).exists() {
-            return Err("Esiste un pack con questo ID: clona con un nuovo identificativo".into());
+            return Err("A pack with this ID already exists: clone it with a new identifier".into());
         }
         let temp = self.0.join(format!("{}.json.tmp", s.id));
         s.save(&temp).map_err(|e| e.to_string())?;

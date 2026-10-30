@@ -167,6 +167,15 @@ pub struct FireLine {
     pub width_m: f32,
 }
 
+/// A zone whose population has been warned.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Warning {
+    pub zone: String,
+    /// Simulated second the warning was issued, and its clock label.
+    pub t_s: i64,
+    pub clock: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Drop {
     pub at: Pos,
@@ -174,6 +183,28 @@ pub struct Drop {
     /// Simulated second of the drop.
     #[serde(default)]
     pub t_s: i64,
+}
+
+/// The ground an EXCON extinguish intervention covered, world metres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum ExtinguishShape {
+    /// `[x0, y0, x1, y1]`: a zone of the map grid, or a sector.
+    Rect { bounds: [f32; 4] },
+    Disc { centre: Pos, radius_m: f32 },
+    /// Vertices in order, as drawn.
+    Polygon { vertices: Vec<Pos> },
+}
+
+/// An EXCON `Extinguish` / `ExtinguishArea`: the fire went out at once, with
+/// no units. A viewer may stage crews there for a while to make it legible.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Extinguished {
+    pub shape: ExtinguishShape,
+    /// Simulated second of the intervention.
+    pub t_s: i64,
+    /// Burning cells put out.
+    pub cells_out: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -252,6 +283,9 @@ pub struct ViewState {
     pub road_segments: Vec<RoadSegment>,
     pub lines: Vec<FireLine>,
     pub drops: Vec<Drop>,
+    /// EXCON extinguish interventions (the most recent few), oldest first.
+    #[serde(default)]
+    pub extinguished: Vec<Extinguished>,
     pub traffic: Vec<Vehicle>,
     pub deployments: Vec<Deployment>,
     /// Whether evacuation traffic is modelled (then `traffic` carries it and
@@ -260,6 +294,9 @@ pub struct ViewState {
     pub traffic_model: bool,
     /// Zones with an issued warning.
     pub warned: Vec<String>,
+    /// The same warnings with the time they were issued, oldest first.
+    #[serde(default)]
+    pub warnings: Vec<Warning>,
     pub last_turn: Option<TurnWindow>,
     /// While a turn is being simulated.
     pub resolving: Option<TurnWindow>,

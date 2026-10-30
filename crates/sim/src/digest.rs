@@ -69,7 +69,7 @@ impl World {
         }
         let populated: Vec<Value> = zones
             .iter()
-            .map(|(z, v)| json!({"zone": z, "buildings": v[0], "people_inside": v[1], "evacuated": v[2], "damaged_or_destroyed": v[3], "threatened": v[4], "warned": self.d.warned.contains(z)}))
+            .map(|(z, v)| json!({"zone": z, "buildings": v[0], "people_inside": v[1], "evacuated": v[2], "damaged_or_destroyed": v[3], "threatened": v[4], "warned_at": self.d.warned.get(z).map(|&t| self.clock_at(t))}))
             .collect();
         let roads: Vec<Value> = self
             .scn
@@ -99,6 +99,8 @@ impl World {
             "totals": {"buildings_damaged": s.damaged, "buildings_destroyed": s.destroyed, "buildings_threatened": s.threatened, "people_evacuated": s.evacuated_people, "people_at_risk": s.people_at_risk, "people_sheltered": s.sheltered},
             "facilities": facilities,
             "populated_zones": populated,
+            "warnings_in_force": self.warnings().iter().map(|w| json!({"zone": w.zone, "since": w.clock, "people_still_inside": w.people_inside,
+                "effect": format!("population warned: an evacuation of {} takes {} min instead of {}", w.zone, crate::EVAC_WARNED_MIN, crate::EVAC_MIN)})).collect::<Vec<_>>(),
             "roads": roads,
             "resources": pools,
             "resources_this_turn": pools,
@@ -110,6 +112,40 @@ impl World {
     /// Place names, zone layout and resource meanings: the static context an
     /// LLM needs to turn words into commands.
     pub fn gazetteer(&self) -> Value {
+        self.gazetteer_for(&[])
+    }
+
+    /// [`World::gazetteer`] with the names players read in `languages` (the
+    /// scenario's static map-label translations) as aliases, so a reply that
+    /// uses them resolves to the source name commands need.
+    pub fn gazetteer_for(&self, languages: &[String]) -> Value {
+        let maps: Vec<_> = languages.iter().map(|l| self.scn.display_map(l)).collect();
+        let local = |name: &str| {
+            let mut out: Vec<&str> = maps.iter().filter_map(|m| m.get(name).map(String::as_str)).collect();
+            out.sort();
+            out.dedup();
+            out
+        };
+        let mut g = self.gazetteer_source();
+        for key in ["places", "facilities", "roads"] {
+            for item in g[key].as_array_mut().into_iter().flatten() {
+                let names = local(item["name"].as_str().unwrap_or_default());
+                if names.is_empty() {
+                    continue;
+                }
+                let mut aliases = item["aliases"].as_array().cloned().unwrap_or_default();
+                for n in names {
+                    if !aliases.iter().any(|a| a == n) {
+                        aliases.push(json!(n));
+                    }
+                }
+                item["aliases"] = Value::Array(aliases);
+            }
+        }
+        g
+    }
+
+    fn gazetteer_source(&self) -> Value {
         let z = self.scn.zones;
         json!({
             "map": format!("{:.0} x {:.0} m. Evacuation-zone grid {}x{} of {:.0} m squares: columns {}..{} west to east, rows 1..{} north to south (A1 = north-west corner). Zone edges: \"F3:N\" / \"F3:S\" / \"F3:E\" / \"F3:W\".",
@@ -181,7 +217,8 @@ impl World {
             "roads": self.d.roads,
             "lines": self.d.lines,
             "drops": self.d.drops,
-            "warned": self.d.warned,
+            "warned": self.d.warned.keys().collect::<Vec<_>>(),
+            "warnings": self.warnings(),
             "shelters": self.d.shelters,
             "pools": self.d.pools,
             "allocations": self.d.allocations,
@@ -189,6 +226,24 @@ impl World {
             "arrivals": self.d.arrivals,
             "burning_zones": self.burning_zones(),
         })
+    }
+
+    /// Sea and lakes (ground below `scenario::editor::SEA_LEVEL_M`) as a
+    /// base64 bitset over the raster cells, bit `i % 8` of byte `i / 8`
+    /// (LSB first); `null` on a territory without water. The UIs get no DEM,
+    /// so this is how the 2D map tells the sea from bare ground.
+    pub fn water_mask_b64(&self) -> Value {
+        let sea = scenario::editor::SEA_LEVEL_M;
+        if !self.scn.dem.iter().any(|&z| z < sea) {
+            return Value::Null;
+        }
+        let mut bits = vec![0u8; self.scn.dem.len().div_ceil(8)];
+        for (i, &z) in self.scn.dem.iter().enumerate() {
+            if z < sea {
+                bits[i / 8] |= 1 << (i % 8);
+            }
+        }
+        json!(base64::engine::general_purpose::STANDARD.encode(bits))
     }
 
     /// Static scenario data for the web UIs (fuel raster included, no DEM).
@@ -206,6 +261,7 @@ impl World {
             "id": self.scn.id,
             "name": self.scn.name,
             "description": self.scn.description,
+            "water": self.water_mask_b64(),
             "grid": self.scn.grid,
             "zones": self.scn.zones,
             "fuel": base64::engine::general_purpose::STANDARD.encode(fuel),
@@ -214,6 +270,7 @@ impl World {
             "roads": self.scn.roads,
             "road_segments": self.network.segments(),
             "places": self.scn.places,
+            "districts": self.scn.districts,
             "roles": self.scn.roles,
             "resource_types": self.scn.resource_types,
             "reinforcements": self.scn.reinforcements,

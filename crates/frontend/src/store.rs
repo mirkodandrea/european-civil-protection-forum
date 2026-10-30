@@ -60,9 +60,9 @@ pub fn get(key: &str) -> Option<String> {
 
 pub fn set(key: &str, value: &str) -> Result<(), String> {
     storage()
-        .ok_or("archiviazione del browser non disponibile")?
+        .ok_or(crate::i18n::ex("archiviazione del browser non disponibile"))?
         .set_item(key, value)
-        .map_err(|_| "spazio del browser esaurito o archiviazione bloccata".to_string())
+        .map_err(|_| crate::i18n::ex("spazio del browser esaurito o archiviazione bloccata").to_string())
 }
 
 pub fn remove(key: &str) {
@@ -85,7 +85,7 @@ pub fn load_session() -> Option<SavedSession> {
         }
         _ => {
             remove(SESSION_KEY);
-            set_notice("La sessione salvata non è compatibile con il formato o il territorio attuale ed è stata scartata.");
+            set_notice(crate::i18n::ex("La sessione salvata non è compatibile con il formato o il territorio attuale ed è stata scartata."));
             None
         }
     }
@@ -169,7 +169,7 @@ pub fn save_territory(s: &scenario::Scenario) -> Result<(), String> {
         || saved_packs().contains_key(&s.id)
     {
         return Err(
-            "Identificativo già usato da un territorio incluso o un pack: clona con un nuovo ID"
+            crate::i18n::ex("Identificativo già usato da un territorio incluso o un pack: clona con un nuovo ID")
                 .into(),
         );
     }
@@ -268,7 +268,7 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
             || authored_territories().contains_key(&pack.id)
             || embedded_packs().iter().any(|p| p.id == pack.id)
         {
-            return Err(format!("«{}» è uno scenario incluso nell’app", pack.id));
+            return Err(crate::exfmt!("«{}» è uno scenario incluso nell’app", "«{}» is a scenario built into the app", pack.id));
         }
         let mut packs = saved_packs();
         packs.insert(pack.id.clone(), pack.clone());
@@ -276,7 +276,7 @@ impl server::library::ScenarioLibrary for BrowserLibrary {
     }
     fn delete(&self, id: &str) -> Result<(), String> {
         let mut packs = saved_packs();
-        packs.remove(id).ok_or("scenario non trovato")?;
+        packs.remove(id).ok_or(crate::i18n::ex("scenario non trovato"))?;
         store_packs(&packs)?;
         if get(ACTIVE_KEY).as_deref() == Some(id) {
             remove(ACTIVE_KEY);
@@ -424,7 +424,7 @@ pub fn backend() -> crate::settings::Backend {
                         _ => &[SESSION_KEY, PACKS_KEY, ACTIVE_KEY, API_KEY],
                     };
                     restart(keys);
-                    Ok("Eliminato".into())
+                    Ok(crate::i18n::ex("Eliminato").into())
                 }
             }
         })

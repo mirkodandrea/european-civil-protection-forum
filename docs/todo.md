@@ -26,11 +26,10 @@ vegetazione. Restano da decidere:
   all'applicazione. Una velocità impostata dall'EXCON (es. ettari/ora, o un
   fronte che avanza nel poligono) richiede un compito progressivo in `sim`
   integrato sul tempo simulato.
-- Gli altri percorsi che cambiano ancora la vegetazione (combustibile →
-  non vegetato): `Extinguish` su zona/cerchio (`FireSim::extinguish_cells`,
-  anche sulle celle in fiamme), `CutFireLine` istantanea e progressiva
-  (`FireSim::fire_line`). Da decidere se `Extinguish` debba usare la nuova
-  regola; la linea tagliafuoco per definizione toglie combustibile.
+- `Extinguish` su zona/luogo/cerchio usa la stessa regola dal 30/10 (playtest:
+  «Spegni zona» toglieva la vegetazione di tutta la zona). Cambia ancora la
+  vegetazione solo `CutFireLine` (`FireSim::fire_line`), che per definizione
+  toglie combustibile.
 - Aggiungere lo strumento anche ai comandi allegati alle narrazioni e alle
   azioni degli inject (`staged_commands.rs`, `action_form.rs`), oggi esclusi.
 

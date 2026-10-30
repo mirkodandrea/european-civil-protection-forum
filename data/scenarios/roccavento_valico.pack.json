@@ -1,0 +1,141 @@
+{
+  "id": "roccavento_valico",
+  "name": "Roccavento — il fuoco del valico",
+  "base": "roccavento_island",
+  "description": "L’incendio di riferimento del gioco Isola di Roccavento (caso «medium»): parte sopra Le Terrazze alle 13:00 con vento da ESE a 36 km/h e combustibile molto secco (5%), viene segnalato solo alle 13:30 e alle 13:45 il vento gira da NE, spingendo il fronte verso il valico e Pian dei Grilli. Tre ruoli, turni da 30 minuti, sei borghi e circa 1.500 residenti; l’isola non ha uscite via terra e ogni rinforzo arriva dal continente. Tempi, dotazioni e capienze sono ipotesi di esercitazione.",
+  "edits": {
+    "start_clock_s": 46800,
+    "turn_minutes": 30,
+    "weather": { "wind_dir_deg": 119.0, "wind_speed_kmh": 36.0, "moisture_pct": 5.0 },
+    "default_persona": "Direzione esercitazione — Isola di Roccavento",
+    "msel": [
+      {
+        "id": "RV-01",
+        "at_s": 1800,
+        "turn": 2,
+        "title": "Fumo sopra Le Terrazze",
+        "sender": "Centrale 112",
+        "recipients": ["all"],
+        "text": "Ore 13:30. Più residenti di Le Terrazze chiamano per una colonna di fumo nella pineta sopra il borgo, verso il crinale. Il fuoco brucia probabilmente da tempo: nessuno lo ha visto partire. La posizione sulla mappa è ricavata dalle chiamate ed è solo indicativa.",
+        "objective": "Prima valutazione con informazioni incerte e un incendio già sviluppato. Nota EXCON: l’innesco è un’azione anticipata che parte da sola alle 13:00 (inizio esercitazione); la stima approssimata legge il fuoco reale, quindi se si disattiva l’innesco va disattivata anche la stima.",
+        "event": "Segnalazione tardiva",
+        "actions": [
+          {
+            "id": "RV-A01",
+            "title": "Innesco nella pineta sopra Le Terrazze",
+            "command": { "type": "Ignite", "at": { "x": 5590.0, "y": 4370.0 }, "radius_m": 60.0 },
+            "offset_s": -1800,
+            "note": "Caso «medium» del gioco: il fuoco brucia da 30 minuti quando arriva la segnalazione."
+          },
+          {
+            "id": "RV-R01",
+            "title": "Stima dalle chiamate (112)",
+            "reveal": { "kind": "approximate", "position_error_m": 400.0, "area_error_frac": 0.35 },
+            "offset_s": 0,
+            "note": "Stima incerta dalle chiamate dei residenti."
+          }
+        ]
+      },
+      {
+        "id": "RV-02",
+        "at_s": 1860,
+        "turn": 2,
+        "title": "Bollettino: rotazione del vento",
+        "sender": "Servizio meteo",
+        "recipients": ["all"],
+        "text": "Ore 13:31. Vento da est-sud-est a 36 km/h, umidità del combustibile fine al 5%. Nei prossimi 15–30 minuti è prevista una rotazione da nord-est con la stessa intensità: il flusso si incanalerà lungo il crinale verso il valico.",
+        "objective": "Osservare se il cambio annunciato entra nel piano (Pian dei Grilli e Le Ghiande oltre il valico) prima che avvenga.",
+        "event": "Segnalazione tardiva",
+        "actions": [
+          {
+            "id": "RV-A02",
+            "title": "Il vento gira da nord-est",
+            "command": { "type": "SetWeather", "wind_dir_deg": 50.0, "wind_speed_kmh": 36.0 },
+            "offset_s": 840,
+            "note": "Alle 13:45, come nel caso «medium» (45 minuti dall’innesco)."
+          }
+        ]
+      },
+      {
+        "id": "RV-03",
+        "at_s": 3000,
+        "turn": 3,
+        "title": "Le prime squadre sul posto",
+        "sender": "Osservatori sul territorio",
+        "recipients": ["dos", "sala_operativa"],
+        "text": "Ore 13:50. Le squadre arrivate da Castelvento riferiscono fiamme alte nella macchia lungo la Strada del Passo e il vento ormai da nord-est. Il rilievo delle zone in fiamme e di quelle vicine è sulla mappa con l’ora in cui è stato fatto.",
+        "objective": "Verificare come la direzione delle operazioni sceglie dove impiegare poche squadre e se chiede subito rinforzi dal continente.",
+        "event": "Il fuoco verso il valico",
+        "actions": [
+          {
+            "id": "RV-R03",
+            "title": "Rilievo delle squadre",
+            "reveal": { "kind": "exact", "zones": "burning_and_adjacent", "layers": ["fire", "roads"], "source": "Squadre AIB" },
+            "offset_s": 0
+          }
+        ]
+      },
+      {
+        "id": "RV-04",
+        "at_s": 3600,
+        "turn": 3,
+        "title": "Le Ghiande non vuole partire",
+        "sender": "Osservatori sul territorio",
+        "recipients": ["comune"],
+        "text": "Ore 14:00. Gli agricoltori delle case sparse di Le Ghiande dicono che resteranno a difendere il bestiame. Il borgo non ha un’area di raccolta propria; a Le Terrazze molti residenti chiedono dove andare.",
+        "objective": "Priorità tra borghi, scelta delle destinazioni e gestione di chi rifiuta di partire. Nota EXCON: un borgo alla volta, le aree di raccolta vanno aperte; la decisione su Le Ghiande resta narrativa.",
+        "event": "Il fuoco verso il valico"
+      },
+      {
+        "id": "RV-05",
+        "at_s": 5400,
+        "turn": 4,
+        "title": "Il porto e il traghetto",
+        "sender": "Capitaneria di porto",
+        "recipients": ["comune", "sala_operativa"],
+        "text": "Ore 14:30. Il traghetto di linea può attraccare al porto entro un’ora: può portare rinforzi dal continente o ospitare a bordo fino a 300 persone di San Rocco. Non può fare entrambe le cose nello stesso viaggio.",
+        "objective": "Compromesso tra rinforzi e accoglienza; coordinamento tra comune e sala operativa. Nota EXCON: l’esito è narrativo; i rinforzi seguono comunque le richieste approvate.",
+        "event": "Risorse dal continente"
+      },
+      {
+        "id": "RV-06",
+        "at_s": 7200,
+        "turn": 5,
+        "title": "La radio chiede notizie",
+        "sender": "Radio dell’isola",
+        "recipients": ["comune", "sala_operativa"],
+        "text": "Ore 15:00. La radio dell’isola va in onda tra dieci minuti e chiede quali borghi sono evacuati, dove andare e se le strade per il porto sono aperte. Sui social circola una foto della Rocca avvolta dal fumo.",
+        "objective": "Comunicazione pubblica coerente con le decisioni prese; ruoli che si allineano prima di parlare.",
+        "event": "Informazione pubblica",
+        "actions": [
+          {
+            "id": "RV-R06",
+            "title": "Stima dal satellite",
+            "reveal": { "kind": "approximate", "position_error_m": 250.0, "area_error_frac": 0.25, "source": "Servizio satellitare" },
+            "offset_s": 0
+          }
+        ]
+      },
+      {
+        "id": "RV-07",
+        "at_s": 9000,
+        "turn": 6,
+        "title": "Quadro consolidato",
+        "sender": "Osservatori sul territorio",
+        "recipients": ["all"],
+        "text": "Ore 15:30. Quadro consolidato delle zone in fiamme e di quelle vicine: fuoco, edifici, strade, linee e unità. Serve per il punto di situazione della sala operativa.",
+        "objective": "Punto di situazione: cosa è cambiato, cosa resta esposto, quali rinforzi servono ancora.",
+        "event": "Informazione pubblica",
+        "actions": [
+          {
+            "id": "RV-R07",
+            "title": "Quadro consolidato",
+            "reveal": { "kind": "exact", "zones": "burning_and_adjacent", "layers": ["fire", "buildings", "roads", "lines", "units"] },
+            "offset_s": 0
+          }
+        ]
+      }
+    ]
+  },
+  "run": { "seed": 1, "realizations": 32, "cutoff": 0.5, "operational_model": true }
+}

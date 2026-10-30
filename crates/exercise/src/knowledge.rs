@@ -53,6 +53,17 @@ pub struct UnitObs {
     pub target: Option<[f32; 2]>,
 }
 
+/// A population warning in force in an observed zone (zone and time only, never
+/// the people still inside).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WarningObs {
+    pub zone: String,
+    /// Simulated second the warning was issued.
+    pub t_s: i64,
+    pub clock: String,
+}
+
 pub use scenario::ZONE_LAYERS;
 
 /// An unverified report of where the fire is: a circle with a spread
@@ -98,6 +109,11 @@ pub struct MapObservation {
     /// Unverified fire estimates; the latest one a role received is shown.
     #[serde(default)]
     pub estimates: Vec<FireEstimate>,
+    /// Population warnings in force in `zones` when observed (part of the
+    /// `buildings` layer). `None`: warnings were not observed, so what the role
+    /// knew of these zones stands; `Some` replaces it for every zone in `zones`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<WarningObs>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -187,6 +203,16 @@ impl Exercise {
             || o.units.len() > 1000
         {
             bail!("invalid reported dynamic state");
+        }
+        if let Some(ws) = &o.warnings {
+            if ws.iter().any(|w| {
+                !o.zones.contains(&w.zone)
+                    || w.t_s < 0
+                    || w.t_s > self.world.time_s()
+                    || w.clock.chars().count() > 40
+            }) {
+                bail!("invalid reported warning");
+            }
         }
         Ok(())
     }
@@ -407,6 +433,21 @@ impl Exercise {
                     });
                 }
             }
+            // Warnings in force in these zones (zone and time; the population stays hidden).
+            let warned = view["warnings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|w| {
+                    let zone = w["zone"].as_str()?.to_string();
+                    o.zones.contains(&zone).then(|| WarningObs {
+                        zone,
+                        t_s: w["t_s"].as_i64().unwrap_or(0),
+                        clock: w["clock"].as_str().unwrap_or_default().into(),
+                    })
+                })
+                .collect();
+            o.warnings = Some(warned);
         }
         if has("roads") {
             for r in scn.roads.iter().filter(|r| r.drivable) {
@@ -660,7 +701,17 @@ impl Exercise {
             .map(|e| e.observation.forecast_products.clone())
             .unwrap_or_default();
         let mut zone_updates = serde_json::Map::new();
+        // Warned zones the role has been told about: the latest observation of each zone wins.
+        let mut warnings = std::collections::BTreeMap::new();
         for event in self.knowledge_events.iter().filter(|e| e.role == role) {
+            if let Some(ws) = &event.observation.warnings {
+                for z in &event.observation.zones {
+                    warnings.remove(z);
+                }
+                for w in ws {
+                    warnings.insert(w.zone.clone(), w);
+                }
+            }
             for z in &event.observation.zones {
                 zone_updates.insert(z.clone(), json!(event.t_s));
             }
@@ -687,11 +738,16 @@ impl Exercise {
                 }
             }
         }
+        let mut warnings_sorted = warnings.values().collect::<Vec<_>>();
+        warnings_sorted.sort_by_key(|w| (w.t_s, w.zone.clone()));
         Ok(
             json!({"cells":cells.values().collect::<Vec<_>>(), "reported_locations":locations,
             "forecast_products":forecast_products,
             "known_zones":self.known_zones(role), "observed_units":units,
-            "roads":roads, "lines":lines, "drops":drops, "warned":[], "burning_zones":[],
+            "roads":roads, "lines":lines, "drops":drops, "burning_zones":[],
+            // Warned zones as last observed by this role (fog of war), zone and time only.
+            "warned":warnings.keys().collect::<Vec<_>>(),
+            "warnings":warnings_sorted,
             "buildings":(0..self.world.scn.buildings.len()).map(|i| buildings.get(&i).cloned().unwrap_or(Value::Null)).collect::<Vec<_>>(),
             // The latest estimate, until a later disclosure of the fire itself supersedes it.
             "estimates":self.knowledge_events.iter().enumerate().rev().find(|(_, e)| e.role == role && !e.observation.estimates.is_empty())
@@ -718,7 +774,7 @@ impl Exercise {
             .ok_or_else(|| anyhow::anyhow!("unknown role {role}"))?;
         let full = self.world.static_view();
         Ok(
-            json!({"id":full["id"], "name":full["name"], "grid":full["grid"], "zones":full["zones"], "fuel":full["fuel"], "fuel_names":full["fuel_names"],
+            json!({"id":full["id"], "name":full["name"], "grid":full["grid"], "zones":full["zones"], "fuel":full["fuel"], "fuel_names":full["fuel_names"], "water":full["water"],
             "buildings":self.world.scn.buildings.iter().map(|b| json!({"id":b.id,"kind":b.kind,"name":b.name,"pos":b.pos,"size":b.size})).collect::<Vec<_>>(),
             "roads":self.world.scn.roads.iter().map(|r| json!({"id":r.id,"name":r.name,"points":r.points})).collect::<Vec<_>>(),
             "places":full["places"], "roles":[own],

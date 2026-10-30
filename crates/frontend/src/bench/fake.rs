@@ -97,6 +97,11 @@ pub struct Proposal {
     pub clarification_request: Option<String>,
     pub outcomes: Vec<Value>,
     pub t_s: i64,
+    /// What the player said the reply rests on, its reference (plan or
+    /// law) and why (rationale).
+    pub basis: Option<String>,
+    pub basis_note: Option<String>,
+    pub rationale: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,8 +123,25 @@ pub struct Conversation {
     pub quote: u64,
     pub delivery: u64,
     pub participants: Vec<String>,
+    /// Why the creator started it: basis, reference (plan or law), rationale.
+    pub reason: (String, Option<String>, String),
     /// (id, from, text, reply_to, t_s)
     pub messages: Vec<(u64, String, String, Option<u64>, i64)>,
+}
+
+/// Same rule as `exercise::conversations::ConversationReason::new`: starting
+/// a conversation needs a basis (plan or procedure, law, or personal
+/// initiative), the reference of a plan or law, and a rationale.
+pub fn conversation_reason(b: &Value) -> Result<(String, Option<String>, String), String> {
+    let filled = |k: &str| b[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+    let basis = b["basis"].as_str().filter(|v| ["plan", "procedure", "law", "operational_judgment"].contains(v))
+        .ok_or("say why you start this conversation: a plan or procedure, a law or regulation, or personal initiative")?;
+    let reference = filled("basis_note").filter(|_| basis != "operational_judgment");
+    if basis != "operational_judgment" && reference.is_none() {
+        return Err("say which plan, procedure or law the conversation rests on (e.g. the plan's section or the article)".into());
+    }
+    let rationale = filled("rationale").ok_or("starting a conversation needs its rationale: why you start it")?;
+    Ok((basis.to_string(), reference, rationale))
 }
 
 #[derive(Clone, Debug)]
@@ -134,7 +156,6 @@ pub struct Planned {
 /// What happened on the fake server (the step checks of the benches read it).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Trace {
-    pub player_suggestions: u32,
     pub excon_suggestions: u32,
     pub rechecks: u32,
 }
@@ -290,6 +311,9 @@ impl Fake {
             clarification_request: None,
             outcomes: Vec::new(),
             t_s: t,
+            basis: None,
+            basis_note: None,
+            rationale: None,
         });
         let mid = self.id();
         self.messages.push(Message {
@@ -341,7 +365,6 @@ impl Fake {
                 Ok(json!({"delivery": delivery}))
             }
             (true, ["api", "player", role, "suggest-actions"]) if master || who == *role => {
-                self.trace.player_suggestions += 1;
                 Ok(self.suggestions(role, &[]))
             }
             (true, ["api", "player", role, "actions"]) if who == *role => {
@@ -358,6 +381,22 @@ impl Fake {
                 if b["kind"] == "decision" && !b["basis"].is_string() {
                     return Err("una decisione richiede il fondamento".into());
                 }
+                // A narrated reply to the sender: basis, reference of a plan
+                // or law, and rationale are required.
+                let filled = |k: &str| b[k].as_str().is_some_and(|t| !t.trim().is_empty());
+                let to_sender = b["to_players"].as_array().is_none_or(|p| p.is_empty());
+                if to_sender && filled("narrative") {
+                    let basis = b["basis"].as_str().unwrap_or("");
+                    if !["plan", "procedure", "law", "operational_judgment"].contains(&basis) {
+                        return Err("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement".into());
+                    }
+                    if basis != "operational_judgment" && !filled("basis_note") {
+                        return Err("say which plan, procedure or law the reply rests on (e.g. the plan's section or the article)".into());
+                    }
+                    if !filled("rationale") {
+                        return Err("a reply to the sender needs its rationale: why this decision".into());
+                    }
+                }
                 let pid = self.respond(
                     role,
                     &body_text(&b, "narrative"),
@@ -365,9 +404,13 @@ impl Fake {
                     b["reply_to"].as_u64(),
                     b["conversation"].as_u64(),
                 )?;
+                let p = self.proposal_mut(pid)?;
                 if communication {
-                    self.proposal_mut(pid)?.status = "informational";
+                    p.status = "informational";
                 }
+                p.basis = b["basis"].as_str().map(String::from);
+                p.basis_note = b["basis_note"].as_str().filter(|n| !n.trim().is_empty()).map(String::from);
+                p.rationale = b["rationale"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(String::from);
                 Ok(json!({"proposal": pid, "translation_failed": false}))
             }
             (true, ["api", "player", role, "reply"]) if who == *role => {
@@ -385,6 +428,7 @@ impl Fake {
                 if text.is_empty() {
                     return Err("messaggio vuoto".into());
                 }
+                let reason = conversation_reason(&b)?;
                 let mut participants = vec![role.to_string()];
                 participants.extend(
                     b["participants"]
@@ -401,6 +445,7 @@ impl Fake {
                     quote,
                     delivery,
                     participants,
+                    reason,
                     messages: vec![(mid, role.to_string(), text, None, t)],
                 });
                 Ok(json!({"conversation": cid}))
@@ -708,9 +753,13 @@ impl Fake {
             .iter()
             .find(|t| t.entries.iter().any(|e| e.2 == m.id))
             .map(|t| t.id);
+        // What a reply rests on, as the server's thread projection says.
+        let basis = (m.kind == "reply").then(|| m.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid))).flatten();
         json!({"id": m.id, "kind": m.kind, "from": m.from, "to": m.to, "turn": 1, "t_s": m.t_s, "clock": clock(m.t_s),
             "title": m.title, "text": m.text, "inject_id": m.delivery, "reply_to": m.reply_to,
-            "clarification_thread": clarification})
+            "clarification_thread": clarification,
+            "basis": basis.as_ref().map(|p| p.basis.clone()), "basis_note": basis.and_then(|p| p.basis_note.clone()),
+            "rationale": basis.and_then(|p| p.rationale.clone())})
     }
     fn thread_json(&self, t: &Thread) -> Value {
         json!({"id": t.id, "role": t.role, "inject_id": t.delivery, "status": t.status, "current_proposal": t.proposal,
@@ -719,17 +768,28 @@ impl Fake {
                 "proposal": t.proposal, "clock": clock(*t_s), "persona": if *author == "excon" { json!(PERSONA) } else { Value::Null }})).collect::<Vec<_>>()})
     }
     fn conversation_json(&self, c: &Conversation, viewer: Option<&str>) -> Value {
-        let quote = viewer
-            .and_then(|r| self.delivered(r, c.delivery))
+        // A participant who never received the inject reads its title only.
+        let own = viewer.and_then(|r| self.delivered(r, c.delivery));
+        let quote = own
             .or_else(|| self.messages.iter().find(|m| m.id == c.quote))
-            .map(|m| self.message_json(m))
+            .map(|m| {
+                let mut q = self.message_json(m);
+                let title_only = viewer.is_some() && own.is_none();
+                if title_only {
+                    q["text"] = Value::Null;
+                }
+                q["title_only"] = json!(title_only);
+                q
+            })
             .unwrap_or(Value::Null);
+        let (basis, reference, rationale) = &c.reason;
         let messages: Vec<Value> = c.messages.iter().map(|(id, from, text, reply_to, t_s)| json!({"id": id, "from": from, "turn": 1, "t_s": t_s,
             "clock": clock(*t_s), "text": text, "text_en": text, "original": text, "reply_to": reply_to})).collect();
         let responses: Vec<Value> = self.proposals.iter().filter(|p| p.via_conversation == Some(c.id))
             .map(|p| json!({"id": p.id, "by": p.role, "status": p.status, "narrative": p.narrative, "actions": p.commands.len()})).collect();
         json!({"id": c.id, "delivery": c.quote, "inject_id": c.delivery, "created_by": c.participants[0], "participants": c.participants,
             "turn": 1, "t_s": c.messages.first().map(|m| m.4).unwrap_or(0), "quote": quote, "messages": messages, "message_count": c.messages.len(),
+            "reason": {"basis": basis, "reference": reference, "rationale": rationale, "rationale_en": rationale},
             "responses": if viewer.is_some() { json!(responses) } else { json!(responses.iter().map(|r| r["id"].clone()).collect::<Vec<_>>()) }})
     }
 
@@ -766,7 +826,10 @@ impl Fake {
         let responses: Vec<Value> = self.messages.iter().filter(|m| m.kind == "inject").map(|m| {
             let mine = |p: &&Proposal| p.delivery == m.delivery && (p.role == m.to || self.conversations.iter().any(|c| Some(c.id) == p.via_conversation && c.participants.contains(&m.to) && c.quote == m.id));
             let replies: Vec<Value> = self.messages.iter().filter(|r| r.kind == "reply" && r.from == m.to && r.delivery == m.delivery)
-                .map(|r| json!({"id": r.id, "proposal": r.proposal, "text": r.text, "original": r.text, "clock": clock(r.t_s), "reply_to": r.reply_to, "basis": "operational_judgment"})).collect();
+                .map(|r| json!({"id": r.id, "proposal": r.proposal, "text": r.text, "original": r.text, "clock": clock(r.t_s), "reply_to": r.reply_to,
+                    "basis": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).map(|p| p.basis.clone().unwrap_or_else(|| "operational_judgment".into())),
+                    "basis_note": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).and_then(|p| p.basis_note.clone()),
+                    "rationale": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).and_then(|p| p.rationale.clone())})).collect();
             let pending: Vec<Value> = self.proposals.iter().filter(mine).filter(|p| ["pending", "needs_clarification"].contains(&p.status))
                 .map(|p| json!({"id": p.id, "status": p.status, "summary": p.original, "original": p.original, "role": p.role,
                     "narrative": p.narrative, "carries_actions": p.carries_actions,
@@ -831,7 +894,7 @@ mod tests {
                 "mayor",
                 "/api/player/mayor/actions",
                 Some(
-                    json!({"kind": "decision", "basis": "operational_judgment", "narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
+                    json!({"kind": "decision", "basis": "operational_judgment", "rationale": "Le famiglie evacuate devono stare al coperto", "narrative": "Apriamo la palestra", "commands": [], "reply_to": inject}),
                 ),
             )
             .unwrap();
@@ -839,6 +902,10 @@ mod tests {
         // `kind` is required, and a decision needs its basis.
         assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"narrative": "x", "reply_to": inject}))).is_err());
         assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"kind": "decision", "narrative": "x", "reply_to": inject}))).is_err());
+        // A reply to the sender also needs its rationale, and a plan its reference.
+        let reply = |extra: Value| { let mut b = json!({"kind": "communication", "narrative": "x", "reply_to": inject}); for (k, v) in extra.as_object().unwrap() { b[k] = v.clone(); } b };
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({"basis": "operational_judgment"})))).is_err());
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({"basis": "plan", "rationale": "y"})))).is_err());
         let m = f.master();
         let row = m["inject_responses"]
             .as_array()
@@ -931,7 +998,18 @@ mod tests {
         .unwrap();
         assert_eq!(f.threads[0].status, "closed");
         // A conversation linked to the inject shows up for both players and EXCON.
-        let c = f.handle("mayor", "/api/player/mayor/conversations", Some(json!({"delivery": inject, "participants": ["police"], "text": "Chiudete la SP12?"}))).unwrap();
+        // Starting it needs its reason, as on the server.
+        let start = json!({"delivery": inject, "participants": ["police"], "text": "Chiudete la SP12?"});
+        assert!(f.handle("mayor", "/api/player/mayor/conversations", Some(start.clone())).unwrap_err().contains("why you start"));
+        let mut law = start.clone();
+        law["basis"] = json!("law");
+        law["rationale"] = json!("x");
+        assert!(f.handle("mayor", "/api/player/mayor/conversations", Some(law)).unwrap_err().contains("which plan"));
+        let mut start = start;
+        start["basis"] = json!("operational_judgment");
+        start["basis_note"] = json!("ignored");
+        start["rationale"] = json!(" La Polizia chiude la strada ");
+        let c = f.handle("mayor", "/api/player/mayor/conversations", Some(start)).unwrap();
         let cid = c["conversation"].as_u64().unwrap();
         f.handle(
             "police",
@@ -950,6 +1028,11 @@ mod tests {
             f.player("police")["linked_conversations"][0]["quote"]["to"],
             "police"
         );
+        // Police received the inject too: its own copy, text included.
+        assert!(f.player("police")["linked_conversations"][0]["quote"]["text"].is_string());
+        let reason = &f.player("police")["linked_conversations"][0]["reason"];
+        assert_eq!((reason["basis"].as_str(), reason["rationale"].as_str()), (Some("operational_judgment"), Some("La Polizia chiude la strada")));
+        assert!(reason["reference"].is_null(), "personal initiative has no reference");
         let row = f.master()["inject_responses"]
             .as_array()
             .unwrap()
@@ -958,6 +1041,28 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(row["conversations"].as_array().unwrap().len(), 1);
+    }
+
+    /// A participant who never received the inject reads its title only; the
+    /// reason travels with the conversation to participants and EXCON.
+    #[test]
+    fn a_guest_reads_the_inject_title_and_the_reason_only() {
+        let mut f = Fake::new("it");
+        f.plan("I2", "Strada chiusa", "La SP12 è bloccata da un albero.", &["mayor"]);
+        let d = f.send("I2", &["mayor".into()]).unwrap();
+        let inject = f.delivered("mayor", d).unwrap().id;
+        f.handle("mayor", "/api/player/mayor/conversations", Some(json!({"delivery": inject, "participants": ["police"], "text": "Potete aiutare?",
+            "basis": "plan", "basis_note": "Piano comunale, scheda 2", "rationale": "Serve la Polizia sulla SP12"}))).unwrap();
+        let guest = &f.player("police")["linked_conversations"][0];
+        assert_eq!(guest["quote"]["title"], "Strada chiusa");
+        assert!(guest["quote"]["text"].is_null());
+        assert_eq!(guest["quote"]["title_only"], true);
+        assert!(!f.player("police").to_string().contains("bloccata"));
+        assert_eq!(guest["reason"]["reference"], "Piano comunale, scheda 2");
+        assert_eq!(f.player("mayor")["linked_conversations"][0]["quote"]["text"], "La SP12 è bloccata da un albero.");
+        let row = f.master()["inject_responses"][0].clone();
+        assert_eq!(row["conversations"][0]["reason"]["rationale"], "Serve la Polizia sulla SP12");
+        assert!(row["conversations"][0]["quote"]["text"].is_string(), "EXCON reads everything");
     }
 
     #[test]

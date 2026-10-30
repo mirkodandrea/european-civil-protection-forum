@@ -52,8 +52,52 @@ pub const DAMAGE_EXPOSURE_S: f32 = 300.0;
 pub const DESTROY_EXPOSURE_S: f32 = 900.0;
 /// A building is "threatened" with fire burning within this distance.
 pub const THREAT_RADIUS_M: f32 = 300.0;
-/// Radius used by an `Extinguish` on a named place (not a zone).
+/// Buildings sit on non-burnable plots, so the fire "reaches" a building when
+/// a confirmed burning cell is at the edge of its plot: within this distance.
+pub const CONTACT_RADIUS_M: f32 = 50.0;
+
+/// Distance (building → cell centre) within which a confirmed burning cell
+/// counts as fire that has **reached** the building: [`CONTACT_RADIUS_M`], or
+/// the building's cell and its eight neighbours on coarse grids. Only fire in
+/// contact damages a building; anything farther (distant fire, the ensemble
+/// halo, modelled radiant/ember loads) can only make it *threatened*.
+pub fn contact_radius_m(cellsize: f32) -> f32 {
+    (cellsize * 1.5).max(CONTACT_RADIUS_M)
+}
+/// Radius used by an `Extinguish` on a named point (a place without its own
+/// `radius_m`, a facility, a road) — not a zone or a sector.
 pub const PLACE_EXTINGUISH_RADIUS_M: f32 = 250.0;
+
+/// The ground an `Extinguish` area covers, in world metres.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Footprint {
+    /// `[x0, y0, x1, y1]`: a whole zone of the map grid, or a sector.
+    Rect([f32; 4]),
+    /// Centre and radius: a circle, or a named place.
+    Disc(Pos, f32),
+}
+
+impl Footprint {
+    pub fn area_ha(&self) -> f64 {
+        match *self {
+            Footprint::Rect(b) => ((b[2] - b[0]) as f64 * (b[3] - b[1]) as f64) / 10_000.0,
+            Footprint::Disc(_, r) => std::f64::consts::PI * (r as f64).powi(2) / 10_000.0,
+        }
+    }
+    pub fn centre(&self) -> Pos {
+        match *self {
+            Footprint::Rect(b) => [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5],
+            Footprint::Disc(c, _) => c,
+        }
+    }
+    /// Half the diagonal of a rectangle, the radius of a disc.
+    pub fn reach_m(&self) -> f32 {
+        match *self {
+            Footprint::Rect(b) => 0.5 * ((b[2] - b[0]).powi(2) + (b[3] - b[1]).powi(2)).sqrt(),
+            Footprint::Disc(_, r) => r,
+        }
+    }
+}
 /// Most vertices an `ExtinguishArea` polygon may have.
 pub const MAX_POLYGON_VERTICES: usize = 200;
 
@@ -113,6 +157,18 @@ pub struct SimEvent {
     pub zone: Option<String>,
 }
 
+/// A warning in force, for the UIs and the AI.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WarningInfo {
+    pub zone: String,
+    /// Simulated second the warning was issued.
+    pub t_s: i64,
+    pub clock: String,
+    /// People still inside the zone's buildings, and occupied buildings.
+    pub people_inside: u32,
+    pub buildings: u32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Pool {
     pub total: u32,
@@ -167,6 +223,28 @@ pub struct DropRec {
     pub t_s: i64,
 }
 
+/// The ground an EXCON `Extinguish`/`ExtinguishArea` covered, in world metres.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum ExtinguishShape {
+    /// `[x0, y0, x1, y1]`: a zone of the map grid, or a sector.
+    Rect { bounds: [f32; 4] },
+    Disc { centre: Pos, radius_m: f32 },
+    /// Vertices in order, as drawn.
+    Polygon { vertices: Vec<Pos> },
+}
+
+/// A record of an EXCON intervention that put fire out, kept (like
+/// [`DropRec`]) so viewers can depict it; rolled back with the rest of [`Dyn`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtinguishRec {
+    pub shape: ExtinguishShape,
+    /// Burning cells put out.
+    pub cells_out: usize,
+    pub by: String,
+    pub t_s: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Arrival {
     pub role: String,
@@ -209,9 +287,12 @@ pub struct Dyn {
     pub roads: BTreeMap<String, RoadState>,
     pub lines: Vec<LineRec>,
     pub drops: Vec<DropRec>,
+    /// EXCON extinguish interventions, oldest first.
+    pub extinguished: Vec<ExtinguishRec>,
     /// Open shelters: building id -> people sheltered.
     pub shelters: BTreeMap<u32, u32>,
-    pub warned: BTreeSet<String>,
+    /// Warned zones: zone code -> simulated second the warning was issued.
+    pub warned: BTreeMap<String, i64>,
     pub pools: BTreeMap<String, BTreeMap<String, Pool>>,
     pub allocations: Vec<ResourceAllocation>,
     pub resource_events: Vec<ResourceEvent>,
@@ -239,9 +320,11 @@ impl WorldSnapshot {
 /// Precomputed geometry: which fire cells matter to each building and road.
 #[derive(Clone)]
 struct Cache {
-    /// Per building: (cell index, weight) within 70 m.
+    /// Per building: (cell index, weight) within [`contact_radius_m`].
     near: Vec<Vec<(usize, f32)>>,
     roads: Vec<(String, Vec<usize>)>,
+    /// Building ids of the borghi's gathering areas, resolved once.
+    gathering: BTreeSet<u32>,
 }
 
 #[derive(Clone)]
@@ -346,8 +429,9 @@ impl World {
                 roads,
                 lines: Vec::new(),
                 drops: Vec::new(),
+                extinguished: Vec::new(),
                 shelters: BTreeMap::new(),
-                warned: BTreeSet::new(),
+                warned: BTreeMap::new(),
                 pools,
                 allocations: Vec::new(),
                 resource_events: Vec::new(),
@@ -371,6 +455,55 @@ impl World {
 
     pub fn clock(&self) -> String {
         scenario::format_clock(self.scn.start_clock_s + self.time_s())
+    }
+
+    /// Wall-clock label of a simulated second.
+    pub fn clock_at(&self, t_s: i64) -> String {
+        scenario::format_clock(self.scn.start_clock_s + t_s)
+    }
+
+    /// Occupied buildings and people currently inside a zone.
+    pub fn zone_population(&self, code: &str) -> (u32, u32) {
+        self.buildings_in_zone(code)
+            .iter()
+            .map(|&i| self.d.buildings[i].people_inside)
+            .filter(|&n| n > 0)
+            .fold((0, 0), |(b, p), n| (b + 1, p + n))
+    }
+
+    /// The log line for a warning issued to `code` at `t_s`.
+    pub fn warning_text(&self, code: &str, t_s: i64) -> String {
+        let (buildings, people) = self.zone_population(code);
+        let who = if people > 0 {
+            format!(" ({people} people in {buildings} buildings)")
+        } else {
+            " (no occupied buildings)".to_string()
+        };
+        format!(
+            "population of {code} warned at {}{who}; an evacuation there will take {EVAC_WARNED_MIN} min instead of {EVAC_MIN}",
+            self.clock_at(t_s)
+        )
+    }
+
+    /// Warnings in force, oldest first, with the people still inside each zone.
+    pub fn warnings(&self) -> Vec<WarningInfo> {
+        let mut v: Vec<WarningInfo> = self
+            .d
+            .warned
+            .iter()
+            .map(|(zone, &t_s)| {
+                let (buildings, people_inside) = self.zone_population(zone);
+                WarningInfo {
+                    zone: zone.clone(),
+                    t_s,
+                    clock: self.clock_at(t_s),
+                    people_inside,
+                    buildings,
+                }
+            })
+            .collect();
+        v.sort_by_key(|w| (w.t_s, w.zone.clone()));
+        v
     }
 
     pub fn snapshot(&self) -> WorldSnapshot {
@@ -468,18 +601,14 @@ impl World {
                 let r = radius_m.unwrap_or(80.0);
                 json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":r,"nominal_area_ha":std::f64::consts::PI*(r as f64).powi(2)/10000.0})
             }
-            Command::Extinguish { area } => match area {
-                Area::Named(n) => {
-                    if let Some(code) = self.zone_code(n) {
-                        let b = self.scn.zone_bounds(&code).unwrap();
-                        json!({"bounds_m":b,"nominal_area_ha":((b[2]-b[0])*(b[3]-b[1]))/10000.0})
-                    } else {
-                        json!({"centre_m":self.scn.resolve_place(n),"radius_m":PLACE_EXTINGUISH_RADIUS_M,"nominal_area_ha":std::f64::consts::PI*(PLACE_EXTINGUISH_RADIUS_M as f64).powi(2)/10000.0})
-                    }
+            Command::Extinguish { area } => match self.extinguish_footprint(area) {
+                Ok(f @ Footprint::Rect(b)) => {
+                    json!({"bounds_m":b,"nominal_area_ha":f.area_ha(),"effect":"puts out the fire inside; fuel and vegetation unchanged, unburnt ground can burn again later"})
                 }
-                Area::Circle { at, radius_m } => {
-                    json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":radius_m,"nominal_area_ha":std::f64::consts::PI*(*radius_m as f64).powi(2)/10000.0})
+                Ok(f @ Footprint::Disc(c, r)) => {
+                    json!({"centre_m":c,"radius_m":r,"nominal_area_ha":f.area_ha(),"effect":"puts out the fire inside; fuel and vegetation unchanged, unburnt ground can burn again later"})
                 }
+                Err(_) => serde_json::Value::Null,
             },
             Command::ExtinguishArea { polygon } => match self.resolve_polygon(polygon) {
                 Ok(poly) => {
@@ -506,6 +635,48 @@ impl World {
                 json!({"wind_direction":"degrees FROM","wind_speed":"km/h","fuel_moisture":"percent","spread":"future simulated time, stochastic ensemble; no instant perimeter change"})
             }
             _ => serde_json::Value::Null,
+        }
+    }
+
+    /// The ground an `Extinguish` covers: a zone code (`"F4"`) is the whole
+    /// zone; a sector name its bounds; a gazetteer place its own `radius_m`
+    /// (else [`PLACE_EXTINGUISH_RADIUS_M`]); any other named point (facility,
+    /// road) a [`PLACE_EXTINGUISH_RADIUS_M`] disc; a circle itself.
+    pub fn extinguish_footprint(&self, area: &Area) -> Result<Footprint, String> {
+        match area {
+            Area::Named(name) => {
+                if let Some(code) = self.zone_code(name) {
+                    if let Some(b) = self.scn.zone_bounds(&code) {
+                        return Ok(Footprint::Rect(b));
+                    }
+                }
+                let key = normalise(name);
+                if let Some(p) = self.scn.places.iter().find(|p| {
+                    normalise(&p.name) == key || p.aliases.iter().any(|a| normalise(a) == key)
+                }) {
+                    let r = p.radius_m.filter(|r| r.is_finite() && *r > 0.0);
+                    return Ok(Footprint::Disc(p.pos, r.unwrap_or(PLACE_EXTINGUISH_RADIUS_M)));
+                }
+                if let Some(s) = self
+                    .scn
+                    .sectors
+                    .iter()
+                    .find(|s| normalise(&s.id) == key || normalise(&s.name) == key)
+                {
+                    return Ok(Footprint::Rect(s.bounds));
+                }
+                self.scn
+                    .resolve_place(name)
+                    .map(|p| Footprint::Disc(p, PLACE_EXTINGUISH_RADIUS_M))
+                    .ok_or_else(|| format!("unknown area \"{name}\"{}", self.did_you_mean(name)))
+            }
+            Area::Circle { at, radius_m } => {
+                let p = self.resolve_loc(at)?;
+                if !radius_m.is_finite() || *radius_m <= 0.0 {
+                    return Err("radius must be positive".into());
+                }
+                Ok(Footprint::Disc(p, *radius_m))
+            }
         }
     }
 
@@ -689,6 +860,15 @@ impl World {
     pub fn reconcile_command(&self, cmd: &Command) -> (Command, Option<String>) {
         match cmd {
             Command::EvacuateZone { zone, destination } if self.zone_code(zone).is_none() => {
+                if let Some(d) = self.scn.district(zone) {
+                    return (
+                        Command::EvacuateDistrict {
+                            district: d.name.clone(),
+                            destination: destination.clone(),
+                        },
+                        Some(format!("«{zone}» is a borgo: treated as Evacuate borgo «{}»", d.name)),
+                    );
+                }
                 if let Some(i) = self.find_building(zone) {
                     let name = self.scn.buildings[i]
                         .name
@@ -721,6 +901,15 @@ impl World {
                         Some(format!("«{zone}» is not a zone code: warning zone {code}, where it lies")),
                     );
                 }
+            }
+            Command::EvacuateBuilding { building, destination }
+                if self.find_building(building).is_none() && self.scn.district(building).is_some() =>
+            {
+                let name = self.scn.district(building).map(|d| d.name.clone()).unwrap_or_default();
+                return (
+                    Command::EvacuateDistrict { district: name.clone(), destination: destination.clone() },
+                    Some(format!("«{building}» is a borgo, not a building: treated as Evacuate borgo «{name}»")),
+                );
             }
             Command::EvacuateBuilding { building, destination }
                 if self.find_building(building).is_none() && self.zone_code(building).is_some() =>
@@ -809,7 +998,8 @@ impl World {
             }
             let destination = match cmd {
                 Command::EvacuateZone { destination, .. }
-                | Command::EvacuateBuilding { destination, .. } => {
+                | Command::EvacuateBuilding { destination, .. }
+                | Command::EvacuateDistrict { destination, .. } => {
                     destination.as_deref().and_then(|d| self.find_building(d))
                 }
                 _ => None,
@@ -1115,6 +1305,20 @@ impl World {
                 self.check_evacuation_capacity(&[i], destination)?;
                 self.check_transport(&[i], role.is_some(), &mut take, &mut notes)?;
             }
+            Command::EvacuateDistrict {
+                district,
+                destination,
+            } => {
+                let idx = self.district_targets(district)?;
+                if idx.is_empty() {
+                    return Err(format!("borgo {district} has nobody left to evacuate"));
+                }
+                self.check_destination(destination, &mut notes)?;
+                self.check_evacuation_capacity(&idx, destination)?;
+                self.check_transport(&idx, role.is_some(), &mut take, &mut notes)?;
+                let people: u32 = idx.iter().map(|&i| self.d.buildings[i].people_inside).sum();
+                notes.push(format!("{} homes, {people} people", idx.len()));
+            }
             Command::IssueWarning { zone } => {
                 self.zone_code(zone)
                     .ok_or_else(|| self.unknown_zone(zone, None))?;
@@ -1173,19 +1377,9 @@ impl World {
                     );
                 }
             }
-            Command::Extinguish { area } => match area {
-                Area::Named(n) => {
-                    if self.zone_code(n).is_none() && self.scn.resolve_place(n).is_none() {
-                        return Err(format!("unknown area \"{n}\""));
-                    }
-                }
-                Area::Circle { at, radius_m } => {
-                    self.resolve_loc(at)?;
-                    if !radius_m.is_finite() || *radius_m <= 0.0 {
-                        return Err("radius must be positive".into());
-                    }
-                }
-            },
+            Command::Extinguish { area } => {
+                self.extinguish_footprint(area)?;
+            }
             Command::ExtinguishArea { polygon } => {
                 self.resolve_polygon(polygon)?;
             }
@@ -1549,14 +1743,43 @@ impl World {
                     z,
                 );
             }
+            Command::EvacuateDistrict {
+                district,
+                destination,
+            } => {
+                let d = self.scn.district(district).unwrap().clone();
+                let n = self.start_district_evacuation(
+                    &d,
+                    destination.as_deref(),
+                    matches!(actor, Actor::Role(_)),
+                );
+                out.push(format!("{n} people leaving"));
+                let z = self
+                    .scn
+                    .places
+                    .iter()
+                    .find(|p| p.name == d.name)
+                    .and_then(|p| self.scn.zone_of(p.pos));
+                self.event(
+                    "evacuation_ordered",
+                    format!("{by} ordered evacuation of borgo {} ({n} people)", d.name),
+                    z,
+                );
+            }
             Command::IssueWarning { zone } => {
                 let code = self.zone_code(zone).unwrap();
-                self.d.warned.insert(code.clone());
-                self.event(
-                    "warning",
-                    format!("{by} issued a warning to zone {code}"),
-                    Some(code),
-                );
+                let note = match self.d.warned.get(&code) {
+                    Some(&at) => format!(
+                        "warning to {code} repeated (warned since {})",
+                        self.clock_at(at)
+                    ),
+                    None => {
+                        self.d.warned.insert(code.clone(), t);
+                        self.warning_text(&code, t)
+                    }
+                };
+                out.push(note.clone());
+                self.event("warning", format!("{by}: {note}"), Some(code));
             }
             Command::CloseRoad { road } => {
                 let id = self.find_road(road).unwrap();
@@ -1618,26 +1841,33 @@ impl World {
                 );
             }
             Command::Extinguish { area } => {
-                let n = match area {
-                    Area::Named(name) => match self.zone_code(name) {
-                        Some(code) => self
-                            .fire
-                            .extinguish_rect(self.scn.zone_bounds(&code).unwrap()),
-                        None => {
-                            let p = self.scn.resolve_place(name).unwrap();
-                            self.fire.extinguish(p, PLACE_EXTINGUISH_RADIUS_M)
+                // Same as a drawn area: every realization, fuel unchanged.
+                let foot = self.extinguish_footprint(area)?;
+                let n = match foot {
+                    Footprint::Rect(b) => self.fire.extinguish_rect(b),
+                    Footprint::Disc(p, r) => self.fire.extinguish(p, r),
+                }
+                .map_err(|e| e.to_string())?;
+                out.push(format!("{n} burning cells put out; fuel unchanged"));
+                self.d.extinguished.push(ExtinguishRec {
+                    shape: match foot {
+                        Footprint::Rect(bounds) => ExtinguishShape::Rect { bounds },
+                        Footprint::Disc(centre, radius_m) => {
+                            ExtinguishShape::Disc { centre, radius_m }
                         }
                     },
-                    Area::Circle { at, radius_m } => {
-                        let p = self.resolve_loc(at)?;
-                        self.fire.extinguish(p, *radius_m)
-                    }
-                };
-                out.push(format!("{n} burning cells put out"));
+                    cells_out: n,
+                    by: by.clone(),
+                    t_s: t,
+                });
                 self.event(
                     "extinguished",
-                    format!("Fire put out: {}", cmd.describe()),
-                    None,
+                    format!(
+                        "Fire put out: {} ({:.1} ha, {n} burning cells)",
+                        cmd.describe(),
+                        foot.area_ha()
+                    ),
+                    self.scn.zone_of(foot.centre()),
                 );
             }
             Command::ExtinguishArea { polygon } => {
@@ -1649,6 +1879,12 @@ impl World {
                     .map_err(|e| e.to_string())?;
                 out.push(format!("{n} burning cells put out; fuel unchanged"));
                 let centre = polygon_centroid(&poly);
+                self.d.extinguished.push(ExtinguishRec {
+                    shape: ExtinguishShape::Polygon { vertices: poly.clone() },
+                    cells_out: n,
+                    by: by.clone(),
+                    t_s: t,
+                });
                 self.event(
                     "extinguished",
                     format!(
@@ -1846,7 +2082,7 @@ impl World {
                 .scn
                 .zone_of(self.scn.buildings[i].pos)
                 .unwrap_or_default();
-            let warned = self.d.warned.contains(&zone);
+            let warned = self.d.warned.contains_key(&zone);
             let b = &mut self.d.buildings[i];
             let leaving = b.people_inside.saturating_sub(b.evac_pending);
             if leaving == 0 {
@@ -1868,6 +2104,94 @@ impl World {
                 let destination = b.evac_destination;
                 self.schedule_traffic(i, leaving, ready, destination);
             }
+            total += leaving;
+        }
+        total
+    }
+
+    /// Occupied homes of a borgo not already leaving.
+    pub(crate) fn district_targets(&self, key: &str) -> Result<Vec<usize>, String> {
+        let d = self.scn.district(key).ok_or_else(|| {
+            let known: Vec<&str> = self.scn.districts.iter().map(|d| d.name.as_str()).collect();
+            if known.is_empty() {
+                format!("this scenario has no borghi (unknown \"{key}\")")
+            } else {
+                format!("unknown borgo \"{key}\" (borghi: {})", known.join(", "))
+            }
+        })?;
+        Ok(d.buildings
+            .iter()
+            .filter_map(|id| self.scn.buildings.iter().position(|b| b.id == *id))
+            .filter(|&i| {
+                let b = &self.d.buildings[i];
+                b.people_inside > b.evac_pending
+            })
+            .collect())
+    }
+
+    /// Building id of a borgo's gathering area.
+    fn gathering_of(&self, d: &scenario::District) -> Option<u32> {
+        let name = d.gathering.as_deref()?;
+        self.scn
+            .buildings
+            .iter()
+            .find(|b| b.name.as_deref() == Some(name))
+            .map(|b| b.id)
+    }
+
+    /// Gathering areas of every borgo: usable without `OpenShelter`.
+    pub(crate) fn is_gathering(&self, id: u32) -> bool {
+        self.cache.gathering.contains(&id)
+    }
+
+    /// The borgo's pace (`Scenario::district_evacuation`): everyone prepares,
+    /// then homes leave in order of distance from the departure point (the
+    /// road point nearest the homes' centre), at most `per_min` people a minute.
+    fn start_district_evacuation(
+        &mut self,
+        d: &scenario::District,
+        destination: Option<&str>,
+        constrained: bool,
+    ) -> u32 {
+        let t = self.time_s();
+        let pace = self.scn.district_evacuation;
+        let Ok(mut idx) = self.district_targets(&d.id) else {
+            return 0;
+        };
+        let n = idx.len().max(1) as f32;
+        let centre = idx.iter().fold([0.0, 0.0], |c, &i| {
+            let p = self.scn.buildings[i].pos;
+            [c[0] + p[0] / n, c[1] + p[1] / n]
+        });
+        let departure = self.network.nearest_point(centre).unwrap_or(centre);
+        let dist = |i: usize| network::distance(self.scn.buildings[i].pos, departure);
+        idx.sort_by(|&a, &b| dist(a).total_cmp(&dist(b)));
+        let dest = destination
+            .and_then(|d| self.find_building(d))
+            .map(|i| self.scn.buildings[i].id)
+            .or_else(|| self.gathering_of(d));
+        let mut gone = 0.0_f32;
+        let mut total = 0;
+        for i in idx {
+            let mut ready = t + i64::from(pace.prep_min) * 60 + (gone / pace.per_min * 60.0).round() as i64;
+            if self.scn.buildings[i].kind.needs_transport() && constrained {
+                ready += 10 * 60;
+            }
+            let b = &mut self.d.buildings[i];
+            let leaving = b.people_inside.saturating_sub(b.evac_pending);
+            b.evac_pending += leaving;
+            b.evac_done_at = Some(b.evac_done_at.map_or(ready, |r| r.min(ready)));
+            b.evac_destination = dest.or(b.evac_destination);
+            if self.scn.operations.traffic {
+                let first = self.d.traffic.vehicles.len();
+                self.schedule_traffic(i, leaving, ready, dest);
+                if destination.is_none() {
+                    for v in &mut self.d.traffic.vehicles[first..] {
+                        v.gathering = true;
+                    }
+                }
+            }
+            gone += leaving as f32;
             total += leaving;
         }
         total
@@ -1895,6 +2219,7 @@ impl World {
 
     fn step_buildings(&mut self, dt: f32) {
         let t = self.time_s();
+        let gathering = self.cache.gathering.clone();
         let state = self.fire.state();
         let burning: Vec<Pos> = state
             .iter()
@@ -1910,15 +2235,21 @@ impl World {
         let mut events = Vec::new();
         for (i, b) in self.d.buildings.iter_mut().enumerate() {
             let spec = &self.scn.buildings[i];
-            // Exposure from burning cells within 70 m.
+            // Damage needs confirmed fire in contact with the building (a
+            // burning cell of the thresholded ensemble at the edge of its
+            // plot). Distant fire, the uncertainty halo and far radiant/ember
+            // loads only make it threatened, so the map, the impact report and
+            // the AI never report damage the fire has not reached.
             let legacy_w = self.cache.near[i]
                 .iter()
                 .filter(|(c, _)| state[*c] == CellFire::Burning)
                 .map(|(_, w)| *w)
                 .fold(0.0, f32::max);
-            let w = if self.scn.operations.intensity_exposure {
+            let w = if legacy_w <= 0.0 {
+                0.0
+            } else if self.scn.operations.intensity_exposure {
                 let load = &self.d.hazard.loads[i];
-                load.radiant + load.ember / 3.0
+                (load.radiant + load.ember / 3.0).min(1.0)
             } else {
                 legacy_w
             };
@@ -1989,6 +2320,8 @@ impl World {
                     if let Some(dest) = b.evac_destination {
                         if let Some(n) = self.d.shelters.get_mut(&dest) {
                             *n += moved;
+                        } else if gathering.contains(&dest) {
+                            self.d.shelters.insert(dest, moved);
                         }
                     }
                     if spec.name.is_some() {
@@ -2176,22 +2509,17 @@ pub struct Stats {
 
 impl Cache {
     fn build(scn: &Scenario, fire: &FireSim) -> Cache {
+        let contact = contact_radius_m(scn.grid.cellsize);
         let near = scn
             .buildings
             .iter()
             .map(|b| {
-                fire.cells_in_radius(b.pos, 70.0)
+                fire.cells_in_radius(b.pos, contact)
                     .into_iter()
                     .map(|c| {
                         let q = scn.cell_centre(c);
                         let d = ((q[0] - b.pos[0]).powi(2) + (q[1] - b.pos[1]).powi(2)).sqrt();
-                        let w = if d <= 30.0 {
-                            1.0
-                        } else if d <= 50.0 {
-                            0.5
-                        } else {
-                            0.2
-                        };
+                        let w = if d <= 30.0 { 1.0 } else { 0.5 };
                         (scn.grid.index(c), w)
                     })
                     .collect()
@@ -2212,7 +2540,18 @@ impl Cache {
                 (r.id.clone(), cells)
             })
             .collect();
-        Cache { near, roads }
+        let gathering = scn
+            .districts
+            .iter()
+            .filter_map(|d| d.gathering.as_deref())
+            .filter_map(|g| scn.buildings.iter().find(|b| b.name.as_deref() == Some(g)))
+            .map(|b| b.id)
+            .collect();
+        Cache {
+            near,
+            roads,
+            gathering,
+        }
     }
 }
 

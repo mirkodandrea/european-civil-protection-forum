@@ -5,7 +5,11 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
 async fn client(llm: llm::Llm, lang: &str) -> Client {
-    let scenario = Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED));
+    client_with(llm, lang, scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED)).await
+}
+
+async fn client_with(llm: llm::Llm, lang: &str, scenario: scenario::Scenario) -> Client {
+    let scenario = Arc::new(scenario);
     let mut ex = exercise::Exercise::new(sim::World::new(scenario, 1).unwrap());
     ex.start().unwrap();
     ex.set_language("mayor", lang).unwrap();
@@ -80,6 +84,42 @@ fn every_player_language_translates_the_standard_roles_and_resources() {
         }
     }
     assert!(scn.display_map("en").is_empty());
+}
+
+/// A territory with static map-label translations, `place` being one of its places.
+fn translated_territory(lang: &str, translation: &str) -> (scenario::Scenario, String) {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    let place = scn.places[0].name.clone();
+    scn.translations.entry(lang.into()).or_default().insert(place.clone(), translation.into());
+    (scn, place)
+}
+
+#[rocket::async_test]
+async fn players_read_map_labels_in_their_language_and_the_excon_the_source_names() {
+    for lang in ["fr", "en"] {
+        let (scn, place) = translated_territory(lang, "Lieu traduit");
+        assert!(scn.map_texts().contains(&place));
+        let c = client_with(llm::Llm::off(), lang, scn).await;
+        let player = get(&c, "/api/static", "mayor-test").await;
+        assert!(player["places"].as_array().unwrap().iter().any(|p| p["name"] == "Lieu traduit"), "{lang}");
+        assert!(!player.to_string().contains(&format!("\"{place}\"")), "{lang}: {place} left in the player map");
+        // The EXCON's commands name places by their source names.
+        let excon = get(&c, "/api/static", "master-test").await;
+        assert!(excon["places"].as_array().unwrap().iter().any(|p| p["name"] == place.as_str()));
+        assert!(!excon.to_string().contains("Lieu traduit"));
+    }
+}
+
+#[test]
+fn the_llm_gazetteer_knows_the_names_players_read() {
+    let (scn, place) = translated_territory("fr", "Lieu traduit");
+    let mut ex = exercise::Exercise::new(sim::World::new(Arc::new(scn), 1).unwrap());
+    let has_alias = |g: &Value| {
+        g["places"].as_array().unwrap().iter().any(|p| p["name"] == place.as_str() && p["aliases"].as_array().unwrap().iter().any(|a| a == "Lieu traduit"))
+    };
+    assert!(!has_alias(&ex.gazetteer()), "no French player yet");
+    ex.set_language("mayor", "fr").unwrap();
+    assert!(has_alias(&ex.gazetteer()));
 }
 
 #[test]

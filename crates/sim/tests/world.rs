@@ -86,6 +86,41 @@ fn school_evacuation_needs_buses_and_takes_time() {
 }
 
 #[test]
+fn warning_is_persistent_timed_visible_and_rolled_back() {
+    let mut w = world();
+    w.advance(5 * 60).unwrap();
+    let before = w.snapshot();
+    let out = w.apply(&Command::IssueWarning { zone: "f4".into() }, &role("mayor")).unwrap();
+    // A readable effect line with time, population and consequence.
+    let line = out.join(" ");
+    assert!(line.contains("population of F4 warned at") && line.contains(&w.clock_at(300)), "{line}");
+    assert!(line.contains("people in") && line.contains("10 min instead of 20"), "{line}");
+    assert!(w.d.events.iter().any(|e| e.kind == "warning" && e.zone.as_deref() == Some("F4") && e.text.contains("warned at")));
+    assert_eq!(w.d.warned.get("F4"), Some(&300));
+    // Visible to the UIs and the AI.
+    let warnings = w.warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!((warnings[0].zone.as_str(), warnings[0].t_s), ("F4", 300));
+    assert!(warnings[0].people_inside > 0);
+    let view = w.view();
+    assert_eq!(view["warned"], serde_json::json!(["F4"]));
+    assert_eq!(view["warnings"][0]["t_s"], 300);
+    let digest = w.digest(None);
+    assert_eq!(digest["warnings_in_force"][0]["zone"], "F4");
+    assert!(digest["warnings_in_force"][0]["effect"].as_str().unwrap().contains("10 min instead of 20"));
+    assert!(digest["populated_zones"].as_array().unwrap().iter().any(|z| z["zone"] == "F4" && z["warned_at"] == serde_json::json!(w.clock_at(300))));
+    // Repeating keeps the original time.
+    w.advance(60).unwrap();
+    let again = w.apply(&Command::IssueWarning { zone: "F4".into() }, &Actor::Master).unwrap();
+    assert!(again[0].contains("warned since"), "{again:?}");
+    assert_eq!(w.d.warned.get("F4"), Some(&300));
+    // Rollback removes it.
+    w.restore(&before).unwrap();
+    assert!(w.d.warned.is_empty());
+    assert!(w.warnings().is_empty());
+}
+
+#[test]
 fn evacuate_zone_by_code_with_warning_and_shelter() {
     let mut w = world();
     w.apply(&Command::OpenShelter { building: "Valverde Sports Centre".into() }, &role("mayor")).unwrap();
@@ -377,4 +412,89 @@ fn unmatched_names_get_suggestions() {
     let v = w.validate(&Command::EvacuateBuilding { building: "F4".into(), destination: None }, &role("mayor"));
     let Verdict::Rejected { reason } = v else { panic!() };
     assert!(reason.contains("is a zone"), "{reason}");
+}
+
+/// Burning cells of the "actual" fire among `cells`.
+fn burning_in(w: &World, cells: &[scenario::Cell]) -> usize {
+    cells.iter().filter(|c| w.fire.cell_state(**c) == fire::CellFire::Burning).count()
+}
+
+#[test]
+fn extinguish_zone_puts_out_the_whole_zone_and_keeps_fuel() {
+    // Playtest: "extinguish zone" acted like a single cell and wiped the
+    // vegetation. A zone puts out every burning cell inside it, like a drawn area.
+    let mut w = world();
+    w.advance(25 * 60).unwrap();
+    let zone = w.scn.zone_of(scenario::synthetic::IGNITION).unwrap();
+    let b = w.scn.zone_bounds(&zone).unwrap();
+    let cells = w.fire.cells_in_rect(b);
+    let inside = burning_in(&w, &cells);
+    assert!(inside > 1, "need a fire spread over the zone, got {inside} burning cells");
+    let veg = w.fire.vegetation().to_vec();
+    let cmd = Command::Extinguish { area: Area::Named(zone.to_lowercase()) };
+    assert_eq!(w.command_geometry(&cmd)["bounds_m"], serde_json::json!(b));
+    let notes = w.apply(&cmd, &Actor::Master).unwrap();
+    assert!(notes.iter().any(|n| n.contains(&format!("{inside} burning cells put out")) && n.contains("fuel unchanged")), "{notes:?}");
+    assert_eq!(burning_in(&w, &cells), 0);
+    assert_eq!(w.fire.vegetation(), &veg[..], "Extinguish must not change the vegetation");
+    w.advance(10 * 60).unwrap();
+    assert_eq!(w.fire.vegetation(), &veg[..], "no deferred fuel change either");
+}
+
+#[test]
+fn extinguish_named_place_covers_its_footprint_and_keeps_fuel() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    let at = scenario::synthetic::IGNITION;
+    scn.places.push(scenario::Place { name: "Burn Scar".into(), pos: at, radius_m: Some(600.0), ..Default::default() });
+    let mut w = World::new(Arc::new(scn), 1).unwrap();
+    let (x, y) = (at[0], at[1]);
+    w.apply(&Command::Ignite { at: Loc::Point { x, y }, radius_m: Some(scenario::synthetic::IGNITION_RADIUS_M) }, &Actor::Master).unwrap();
+    w.advance(60 * 60).unwrap();
+    let disc = w.fire.cells_in_radius(at, 600.0);
+    let near = w.fire.cells_in_radius(at, sim::PLACE_EXTINGUISH_RADIUS_M);
+    // The place's own radius matters: fire burns beyond the default 250 m.
+    assert!(burning_in(&w, &disc) > burning_in(&w, &near), "fire should reach past 250 m");
+    let veg = w.fire.vegetation().to_vec();
+    let cmd = Command::Extinguish { area: Area::Named("burn scar".into()) };
+    assert_eq!(w.command_geometry(&cmd)["radius_m"], serde_json::json!(600.0));
+    w.apply(&cmd, &Actor::Master).unwrap();
+    assert_eq!(burning_in(&w, &disc), 0);
+    assert_eq!(w.fire.vegetation(), &veg[..]);
+    // A gazetteer place without a radius keeps the 250 m default.
+    let pine = w.command_geometry(&Command::Extinguish { area: Area::Named("Pine Hill".into()) });
+    assert_eq!(pine["radius_m"], serde_json::json!(sim::PLACE_EXTINGUISH_RADIUS_M));
+    assert!(!w.validate(&Command::Extinguish { area: Area::Named("Nowhere at all".into()) }, &Actor::Master).is_ok());
+}
+
+#[test]
+fn extinguish_circle_keeps_fuel() {
+    let mut w = world();
+    w.advance(20 * 60).unwrap();
+    let veg = w.fire.vegetation().to_vec();
+    let [x, y] = scenario::synthetic::IGNITION;
+    w.apply(&Command::Extinguish { area: Area::Circle { at: Loc::Point { x, y }, radius_m: 2000.0 } }, &Actor::Master).unwrap();
+    assert_eq!(w.stats().burning_cells, 0);
+    w.advance(10 * 60).unwrap();
+    assert_eq!(w.fire.vegetation(), &veg[..]);
+}
+
+#[test]
+fn static_view_marks_ground_below_sea_level_as_water() {
+    use base64::Engine;
+    let dry = World::new(Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED)), 1).unwrap();
+    assert!(dry.static_view()["water"].is_null(), "no sea, no mask");
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    let cols = scn.grid.cols;
+    // The whole first row and one cell of the second row below sea level.
+    for i in (0..cols).chain([cols + 9]) {
+        scn.dem[i] = -2.0;
+    }
+    let w = World::new(Arc::new(scn), 1).unwrap();
+    let bits = base64::engine::general_purpose::STANDARD
+        .decode(w.static_view()["water"].as_str().unwrap())
+        .unwrap();
+    let wet = |i: usize| bits[i / 8] >> (i % 8) & 1 == 1;
+    assert_eq!(bits.len(), (cols * w.scn.grid.rows).div_ceil(8));
+    assert!((0..cols).all(wet) && wet(cols + 9));
+    assert!(!wet(cols) && !wet(cols + 8) && !wet(cols + 10));
 }

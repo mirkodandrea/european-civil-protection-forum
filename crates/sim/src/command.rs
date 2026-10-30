@@ -21,7 +21,8 @@ pub enum Loc {
     Named(String),
 }
 
-/// An area: a whole zone (`"F4"`), a named place (250 m around it), or a circle.
+/// An area: a whole zone (`"F4"`), a named place (its own `radius_m`, a
+/// sector's bounds, else 250 m around it), or a circle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Area {
@@ -91,7 +92,16 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         destination: Option<String>,
     },
-    /// Warn the population of a zone: halves the time an evacuation takes there.
+    /// Evacuate every home of a borgo (`Scenario::districts`, by name or id) at
+    /// the scenario's district pace, to its gathering area unless `destination`
+    /// names another shelter.
+    EvacuateDistrict {
+        district: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        destination: Option<String>,
+    },
+    /// Warn the population of a zone: the zone is marked warned (with the
+    /// time) and an evacuation there takes 10 min instead of 20.
     IssueWarning {
         zone: String,
     },
@@ -118,6 +128,7 @@ pub enum Command {
         radius_m: Option<f32>,
     },
     /// Put the fire out over an area (a whole zone, a place, or a circle).
+    /// Same rule as `ExtinguishArea`: every realization, fuel unchanged.
     Extinguish {
         area: Area,
     },
@@ -186,6 +197,7 @@ pub const ALL_KINDS: &[&str] = &[
     "Reconnoitre",
     "EvacuateZone",
     "EvacuateBuilding",
+    "EvacuateDistrict",
     "IssueWarning",
     "CloseRoad",
     "ReopenRoad",
@@ -212,6 +224,7 @@ impl Command {
             Command::Reconnoitre { .. } => "Reconnoitre",
             Command::EvacuateZone { .. } => "EvacuateZone",
             Command::EvacuateBuilding { .. } => "EvacuateBuilding",
+            Command::EvacuateDistrict { .. } => "EvacuateDistrict",
             Command::IssueWarning { .. } => "IssueWarning",
             Command::CloseRoad { .. } => "CloseRoad",
             Command::ReopenRoad { .. } => "ReopenRoad",
@@ -274,7 +287,19 @@ impl Command {
                         .unwrap_or_default()
                 )
             }
-            Command::IssueWarning { zone } => format!("Issue warning to zone {zone}"),
+            Command::EvacuateDistrict {
+                district,
+                destination,
+            } => {
+                format!(
+                    "Evacuate borgo {district}{}",
+                    destination
+                        .as_ref()
+                        .map(|d| format!(" to {d}"))
+                        .unwrap_or_default()
+                )
+            }
+            Command::IssueWarning { zone } => format!("Warn the population of zone {zone}"),
             Command::CloseRoad { road } => format!("Close road {road}"),
             Command::ReopenRoad { road } => format!("Reopen road {road}"),
             Command::OpenShelter { building } => format!("Open shelter at {building}"),
@@ -362,8 +387,12 @@ pub fn catalogue(allowed: &[String]) -> String {
             r#"{"type":"EvacuateBuilding","building":"Pineta Primary School","destination":"Valverde Sports Centre"}  — evacuate one named facility ("building" is its exact name from the gazetteer, never a zone code). Schools/hospitals need buses."#,
         ),
         (
+            "EvacuateDistrict",
+            r#"{"type":"EvacuateDistrict","district":"Borgo Alto"}  — evacuate every home of a borgo (village or hamlet named in the gazetteer, scattered houses included). People prepare, then leave a few per minute, nearest homes first, to the borgo's gathering area (no need to open it); destination optional (an open shelter instead). Prefer it over EvacuateZone when the order names a borgo."#,
+        ),
+        (
             "IssueWarning",
-            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone (grid code, never a building name); later evacuations there are faster."#,
+            r#"{"type":"IssueWarning","zone":"F4"}  — warn the population of a zone (grid code, never a building name). The zone stays marked as warned, with the time; any later evacuation there takes 10 min instead of 20. No resources; it moves nobody by itself."#,
         ),
         (
             "CloseRoad",
@@ -384,7 +413,7 @@ pub fn catalogue(allowed: &[String]) -> String {
         ),
         (
             "Extinguish",
-            r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place or a circle."#,
+            r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place (its radius, else 250 m) or a circle. Fuel is not removed, like ExtinguishArea."#,
         ),
         (
             "ExtinguishArea",
@@ -442,12 +471,8 @@ pub fn catalogue(allowed: &[String]) -> String {
 /// (a zone, a shelter, a school, the staging base, a role), so the model is
 /// never shown places from another scenario.
 pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
-    use scenario::BuildingKind::{School, SportsCentre};
-    let named = |kind: Option<scenario::BuildingKind>| {
-        scn.buildings
-            .iter()
-            .filter(|b| kind.is_none_or(|k| b.kind == k))
-            .find_map(|b| b.name.clone())
+    let named = |pick: fn(&scenario::Building) -> bool| {
+        scn.buildings.iter().filter(|b| pick(b)).find_map(|b| b.name.clone())
     };
     let zone = scn.zones.names().into_iter().next();
     let place = scn.places.first().map(|p| p.name.clone());
@@ -467,10 +492,11 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
             doc = doc.replace(from, &to);
         }
     };
-    swap("Valverde Sports Centre", named(Some(SportsCentre)).or_else(|| named(None)));
-    swap("Pineta Primary School", named(Some(School)).or_else(|| named(None)));
+    swap("Valverde Sports Centre", named(|b| b.shelter_capacity > 0).or_else(|| named(|_| true)));
+    swap("Pineta Primary School", named(|b| b.category() == "school").or_else(|| named(|_| true)));
     swap("Valverde Town Hall", staging);
     swap("Pine Hill", place);
+    swap("Borgo Alto", scn.districts.first().map(|d| d.name.clone()));
     swap("fire_commander", crew_role);
     swap("F3:S", zone.clone().map(|z| format!("{z}:S")));
     swap("F3-G4", zone.clone().map(|z| format!("{z}")));
@@ -504,6 +530,7 @@ pub fn missing_params(kind: &str, params: &serde_json::Value) -> Vec<&'static st
         "MonitorArea" => &["zones"],
         "Reconnoitre" | "EvacuateZone" | "IssueWarning" => &["zone"],
         "EvacuateBuilding" | "OpenShelter" | "SetBuildingStatus" => &["building"],
+        "EvacuateDistrict" => &["district"],
         "CloseRoad" | "ReopenRoad" => &["road"],
         "RequestReinforcement" => &["resource", "qty"],
         "Extinguish" => &["area"],
@@ -607,6 +634,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 21);
+        assert_eq!(ALL_KINDS.len(), 22);
     }
 }

@@ -1,0 +1,36 @@
+{
+  "title": "Roccavento island · borghi, evacuation and the 30/10 playtest fixes",
+  "status": "In development",
+  "description": "The next version: everything on main plus the Roccavento island, where settlements are managed borgo by borgo, and the fixes from the 30 October playtest.",
+  "scenario": "Roccavento island (borghi and districts), Valverde and Selvariva with their borghi",
+  "highlights": [
+    "EvacuateDistrict: evacuate a borgo with paced departures; Borghi tab in the scenario editor",
+    "Players reply in one box: «Reply to the inject», mandatory basis (plan, law or operational judgement) and rationale",
+    "EXCON replies close once handled; «View as <role>» shows a player's map in «Information to roles»",
+    "Buildings are damaged only when the confirmed fire reaches them; Extinguish keeps the vegetation",
+    "Warned zones stay marked with their time, behind the fog of war for players",
+    "Scenario texts in English, map labels in every player language"
+  ],
+  "modes": [
+    {
+      "query": "",
+      "name": "Full exercise",
+      "description": "Launcher, EXCON console, every player role and the 3D simulator in one browser window."
+    },
+    {
+      "query": "?bench=1",
+      "name": "Interaction bench",
+      "description": "EXCON and player screens of one small workflow side by side, against a fake server, to try the message flow between users."
+    },
+    {
+      "query": "?simbench=1",
+      "name": "Simulator bench",
+      "description": "3D simulator next to the EXCON control console: run, pause or jump the clock and apply actions at once. Nothing is saved."
+    },
+    {
+      "query": "?editor=1",
+      "name": "Scenario editor 3D",
+      "description": "Edit a complete scenario draft, terrain, roads and objects included, without starting an exercise."
+    }
+  ]
+}

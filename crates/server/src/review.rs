@@ -12,7 +12,7 @@
 //! | `send` | question | `{text?, persona?}` | the reviewed draft is sent (the only way) |
 //! | `discard` | question | | the draft (or unanswered question) is dropped |
 //! | `ask` | reply | `{to, text}` | an EXCON-written draft |
-//! | `close` | reply | | review closed; unsent drafts discarded |
+//! | `close` | reply | | review closed; unsent drafts discarded; the reply is settled (no longer pending) |
 //! | `reread` | reply | | the AI reads the thread again |
 
 use crate::access::Principal;
@@ -178,7 +178,7 @@ pub async fn read(state: AppState, pid: u64) {
             revision,
             context,
             catalogue,
-            ex.world.gazetteer(),
+            ex.gazetteer(),
             ex.language_of(exercise::MASTER),
         )
     };

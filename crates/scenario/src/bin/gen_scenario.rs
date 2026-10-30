@@ -18,9 +18,31 @@ fn main() -> Result<()> {
             other => anyhow::bail!("unknown argument {other}"),
         }
     }
-    let mut scn = scenario::synthetic::generate(seed);
+    let mut scn = scenario::synthetic::with_districts(scenario::synthetic::generate(seed));
     if operational {
         scn.enable_operational_model();
+    }
+    // Static translations live in the file: keep those whose source text is still used.
+    if let Ok(previous) = std::fs::read_to_string(&out) {
+        if let Ok(previous) = serde_json::from_str::<scenario::Scenario>(&previous) {
+            let texts: std::collections::BTreeSet<String> =
+                scn.map_texts().into_iter().chain(scn.translatable_texts()).collect();
+            for (lang, table) in previous.translations {
+                let kept: std::collections::BTreeMap<_, _> =
+                    table.into_iter().filter(|(k, _)| texts.contains(k)).collect();
+                if !kept.is_empty() {
+                    scn.translations.insert(lang, kept);
+                }
+            }
+        }
+    }
+    let missing = scn
+        .map_texts()
+        .iter()
+        .filter(|t| !scn.translations.get("it").is_some_and(|m| m.contains_key(*t)))
+        .count();
+    if missing > 0 {
+        eprintln!("{missing} map labels without translations: python3 scripts/factory/translations.py synthetic_valley");
     }
     scn.check()?;
     scn.save(&out)?;

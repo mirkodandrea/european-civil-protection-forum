@@ -1,0 +1,65 @@
+{
+  "recipe": "roccavento-island-v1",
+  "source": "/Users/mirko/dev/experiments/propagator_abm/data/scenarios/rocca_ventosa",
+  "source_id": "rocca_ventosa",
+  "source_sha256": {
+    "cover.json": "4a209f3334f45c69ac818284828b9dcf630f75dd0d95d57eeae50f03d3979e6b",
+    "cover.u8": "e1fae4fdfaad603790c2d499a585d7ed7d9b9c73b2ccd3f5aa3dfd367019114d",
+    "dem.f64": "d450d7fb58492afd96d7aa1e00b5118a410150076aa0d4a6ccf67f88167621f9",
+    "fuel.i32": "bbb2ae1d8c8a48a3b034fcb39aa333af06c477e0f2e3b338e4c54a755a82802b",
+    "game.json": "8573f6726448547ac94b996f1af712804b79d7f9de66bc2bf20abe7ccd254d85",
+    "island.json": "1859f36c58aad16b30bee09ffb9e1e0cb7043c93c829bbb1d647d60811f0379d",
+    "osm.json": "6811c7f1053c1733d6cbc4ff0d95337d529846f9ebf190622004718a7961bed1",
+    "params.json": "967369af1b738bd54ff941ee6100898329a5227d2f310c2d615c865dc6fed039",
+    "population.json": "4a68e61fd3fd7ce81f8196303e22cad50b2381d1b0278a25bd0d745738ae428d",
+    "render_terrain.f32": "1c1c69226936b0e862c31447409318c6647455961332a0f229f33a4cfecb3efb",
+    "render_terrain.json": "8cddcacfdc884238404b93671278c953b0b5016e2ecfb9d20d538c1988298b53",
+    "scenario.json": "6ff30a753f29f9d0c2bd70cd713678cef6b8269adc1f6c3b171fbf44b0f6d35d"
+  },
+  "physical_cell_m": 20.0,
+  "visual_posting_m": 10.0,
+  "world_size_m": [
+    8000.0,
+    8000.0
+  ],
+  "sea_cells": 91916,
+  "sea_bed_m": -3.0,
+  "buildings": 395,
+  "roads": 66,
+  "occupants": 1521,
+  "borghi": {
+    "Castelvento": {
+      "buildings": 97,
+      "people": 535,
+      "gathering": "Pianoro di nord-ovest"
+    },
+    "Pian dei Grilli": {
+      "buildings": 88,
+      "people": 256,
+      "gathering": "Incrocio con la Costiera"
+    },
+    "Fornaci": {
+      "buildings": 68,
+      "people": 259,
+      "gathering": "Pianoro di nord-ovest"
+    },
+    "San Rocco": {
+      "buildings": 78,
+      "people": 273,
+      "gathering": "Porto di Roccavento"
+    },
+    "Le Terrazze": {
+      "buildings": 31,
+      "people": 93,
+      "gathering": "Area di attesa di Castelvento"
+    },
+    "Le Ghiande": {
+      "buildings": 33,
+      "people": 105,
+      "gathering": null
+    }
+  },
+  "provenance": "propagator_abm Scenario Factory package (EUPL-1.2), imported unchanged; sea bed, borghi, gathering areas, roles and resources authored here.",
+  "scenario_sha256": "ed36e3ccf4bdcca73be53242d04804a3e4bfb9a026f6485b3f12d6ef7ae1253d",
+  "pack_sha256": "d2fe5f49dc8c04e67e4c491bbe978f056d082d3bc3acb2094b69afc31f20efb0"
+}

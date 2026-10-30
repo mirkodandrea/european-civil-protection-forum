@@ -30,6 +30,7 @@ mod bench;
 mod camera;
 mod deployments;
 mod effects;
+mod extinguish;
 mod fire_field;
 mod fire_shader;
 mod fire_textures;
@@ -89,7 +90,10 @@ pub struct Snapshot {
     pub road_segments: Vec<RoadSegment>,
     pub lines: Vec<FireLine>,
     pub drops: Vec<view::Drop>,
+    /// EXCON extinguish interventions, oldest first.
+    pub extinguished: Vec<view::Extinguished>,
     pub warned: Vec<String>,
+    pub warnings: Vec<view::Warning>,
     pub last_turn: Option<TurnWindow>,
     /// While a turn is being simulated.
     pub resolving: Option<TurnWindow>,
@@ -216,6 +220,7 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 effects::ground_work,
                 effects::wet_ground,
                 effects::evacuation,
+                extinguish::update,
                 effects::puffs,
             )
                 .after(sync),
@@ -237,7 +242,12 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 night::update,
                 deployments::night_vehicles,
                 deployments::update.after(frame::update),
-                camera::control.after(frame::update),
+                // After the panels are laid out: before them, egui's available
+                // rect is still the whole screen and the wheel over a panel zooms.
+                camera::control
+                    .after(frame::update)
+                    .after(hud::draw)
+                    .after(editor::draw),
                 camera::fire_lights.after(frame::update),
                 hud::draw.after(frame::update).after(fire_field::toggle),
                 editor::draw,
@@ -371,10 +381,12 @@ fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
     snap.road_segments = v.road_segments;
     snap.lines = v.lines;
     snap.drops = v.drops;
+    snap.extinguished = v.extinguished;
     snap.traffic = v.traffic;
     snap.deployments = v.deployments;
     snap.traffic_model = v.traffic_model;
     snap.warned = v.warned;
+    snap.warnings = v.warnings;
     snap.last_turn = v.last_turn;
     snap.resolving = v.resolving;
     snap.clock_running = v.clock_running;

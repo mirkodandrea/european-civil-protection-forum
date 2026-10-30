@@ -6,12 +6,12 @@
 //! [`ScenarioPack`] that names its base. Several packs can share one base, and
 //! a pack is a plain JSON file that can be copied, edited and versioned.
 use crate::{
-    InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
+    District, DistrictEvacuation, InjectTemplate, TimelineAction, OperationalGrant, Operations, Place, ReinforcementOffer,
     ResourceType, Role, Scenario, TacticalPolicy, WeatherSpec,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Shortest ignition radius that does not fizzle (single-cell ignitions die out).
 
@@ -61,6 +61,16 @@ pub struct ScenarioEdits {
     pub staging_base: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operational_grants: Option<Vec<OperationalGrant>>,
+    /// Borghi of the territory, for `EvacuateDistrict`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub districts: Option<Vec<District>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub district_evacuation: Option<DistrictEvacuation>,
+    /// Display texts in other languages (see [`Scenario::translations`]):
+    /// the complete table, replacing the territory's, so a pack that
+    /// translates its own texts also carries the territory's map labels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translations: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 /// Simulation options a pack may fix. Command-line options take precedence.
@@ -191,6 +201,15 @@ impl Scenario {
         if let Some(v) = &e.operational_grants {
             self.operational_grants = v.clone();
         }
+        if let Some(v) = &e.districts {
+            self.districts = v.clone();
+        }
+        if let Some(v) = e.district_evacuation {
+            self.district_evacuation = v;
+        }
+        if let Some(v) = &e.translations {
+            self.translations = v.clone();
+        }
         self.check()
     }
 
@@ -214,6 +233,9 @@ impl Scenario {
             operations: Some(self.operations.clone()),
             staging_base: Some(self.staging_base.clone().unwrap_or_default()),
             operational_grants: Some(self.operational_grants.clone()),
+            districts: Some(self.districts.clone()),
+            district_evacuation: Some(self.district_evacuation),
+            translations: Some(self.translations.clone()),
             ..Default::default()
         }
     }
@@ -232,89 +254,121 @@ impl Scenario {
         let role_ids: BTreeSet<&str> = roles.iter().map(|r| r.id.as_str()).collect();
 
         if e.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
-            out.push("Il nome dello scenario è obbligatorio".into());
+            out.push("The scenario name is required".into());
         }
         if !(0.0..360.0).contains(&weather.wind_dir_deg)
             || !(0.0..=200.0).contains(&weather.wind_speed_kmh)
             || !(1.0..=60.0).contains(&weather.moisture_pct)
         {
-            out.push("Meteo: direzione 0–359°, vento 0–200 km/h, umidità 1–60 %".into());
+            out.push("Weather: direction 0–359°, wind 0–200 km/h, moisture 1–60 %".into());
         }
         if e.start_clock_s.is_some_and(|t| !(0..=30 * 86_400).contains(&t)) {
-            out.push("Orario di inizio fuori intervallo".into());
+            out.push("Start time out of range".into());
         }
         if e.turn_minutes.is_some_and(|m| !(1..=1440).contains(&m)) {
-            out.push("Durata del turno: 1–1440 minuti".into());
+            out.push("Turn length: 1–1440 minutes".into());
         }
 
         for (n, r) in resources.iter().enumerate() {
-            let at = format!("Risorsa {}", n + 1);
+            let at = format!("Resource {}", n + 1);
             if !valid_id(&r.id) {
-                out.push(format!("{at}: identificativo «{}» non valido (a-z, 0-9, _ -)", r.id));
+                out.push(format!("{at}: invalid identifier «{}» (a-z, 0-9, _ -)", r.id));
             }
             if resources[..n].iter().any(|o| o.id == r.id) {
-                out.push(format!("{at}: identificativo «{}» duplicato", r.id));
+                out.push(format!("{at}: duplicate identifier «{}»", r.id));
             }
             if r.name.trim().is_empty() {
-                out.push(format!("{at}: il nome è obbligatorio"));
+                out.push(format!("{at}: the name is required"));
             }
             if r.speed_mps.is_some_and(|s| !(s.is_finite() && s > 0.0 && s <= 400.0)) {
-                out.push(format!("{at}: velocità fuori intervallo (0–400 m/s)"));
+                out.push(format!("{at}: speed out of range (0–400 m/s)"));
             }
         }
 
         for (n, r) in roles.iter().enumerate() {
-            let at = format!("Ruolo {}", n + 1);
+            let at = format!("Role {}", n + 1);
             if !valid_id(&r.id) || r.id == "all" || r.id == "master" {
-                out.push(format!("{at}: identificativo «{}» non valido (a-z, 0-9, _ -)", r.id));
+                out.push(format!("{at}: invalid identifier «{}» (a-z, 0-9, _ -)", r.id));
             }
             if roles[..n].iter().any(|o| o.id == r.id) {
-                out.push(format!("{at}: identificativo «{}» duplicato", r.id));
+                out.push(format!("{at}: duplicate identifier «{}»", r.id));
             }
             if r.name.trim().is_empty() {
-                out.push(format!("{at}: il nome è obbligatorio"));
+                out.push(format!("{at}: the name is required"));
             }
             if !["national", "regional", "local"].contains(&r.level.as_str()) {
-                out.push(format!("{at}: livello deve essere national, regional o local"));
+                out.push(format!("{at}: level must be national, regional or local"));
             }
             if r.language.len() != 2 || !r.language.chars().all(|c| c.is_ascii_lowercase()) {
-                out.push(format!("{at}: la lingua è un codice di due lettere (es. it)"));
+                out.push(format!("{at}: the language is a two-letter code (e.g. en)"));
             }
             for a in &r.allowed_actions {
                 if !vocab.role_actions.contains(&a.as_str()) {
-                    out.push(format!("{at}: azione «{a}» sconosciuta o riservata all’EXCON"));
+                    out.push(format!("{at}: action «{a}» is unknown or reserved to EXCON"));
                 }
             }
             for k in r.resources.keys() {
                 if !resource_ids.contains(k.as_str()) {
-                    out.push(format!("{at}: risorsa «{k}» non definita"));
+                    out.push(format!("{at}: resource «{k}» is not defined"));
                 }
             }
         }
 
         for (n, r) in e.reinforcements.as_deref().unwrap_or(&self.reinforcements).iter().enumerate() {
-            let at = format!("Rinforzo {}", n + 1);
+            let at = format!("Reinforcement {}", n + 1);
             if !resource_ids.contains(r.resource.as_str()) {
-                out.push(format!("{at}: risorsa «{}» non definita", r.resource));
+                out.push(format!("{at}: resource «{}» is not defined", r.resource));
             }
             if !role_ids.contains(r.assigned_to.as_str()) {
-                out.push(format!("{at}: ruolo «{}» non definito", r.assigned_to));
+                out.push(format!("{at}: role «{}» is not defined", r.assigned_to));
             }
             if r.max_qty == 0 {
-                out.push(format!("{at}: la quantità deve essere almeno 1"));
+                out.push(format!("{at}: the quantity must be at least 1"));
             }
         }
 
         for (n, p) in places.iter().enumerate() {
-            let at = format!("Luogo {}", n + 1);
+            let at = format!("Place {}", n + 1);
             if p.name.trim().is_empty() {
-                out.push(format!("{at}: il nome è obbligatorio"));
+                out.push(format!("{at}: the name is required"));
             }
             if places[..n].iter().any(|o| o.name == p.name) {
-                out.push(format!("{at}: nome «{}» duplicato", p.name));
+                out.push(format!("{at}: duplicate name «{}»", p.name));
             }
             if self.cell_of(p.pos).is_none() {
-                out.push(format!("{at}: posizione fuori dalla mappa"));
+                out.push(format!("{at}: position outside the map"));
+            }
+        }
+
+        let districts = e.districts.as_deref().unwrap_or(&self.districts);
+        let mut claimed: BTreeMap<u32, &str> = BTreeMap::new();
+        for (n, d) in districts.iter().enumerate() {
+            let at = format!("Borgo {}", n + 1);
+            if d.id.trim().is_empty() || d.name.trim().is_empty() {
+                out.push(format!("{at}: identificativo e nome sono obbligatori"));
+            }
+            if districts[..n].iter().any(|o| o.id == d.id || o.name == d.name) {
+                out.push(format!("{at}: identificativo o nome «{}» duplicato", d.name));
+            }
+            if d.buildings.is_empty() {
+                out.push(format!("{at}: indica almeno una casa"));
+            }
+            for id in &d.buildings {
+                if !self.buildings.iter().any(|b| b.id == *id) {
+                    out.push(format!("{at}: edificio {id} sconosciuto"));
+                } else if let Some(other) = claimed.insert(*id, d.id.as_str()) {
+                    out.push(format!("{at}: l’edificio {id} è già nel borgo «{other}»"));
+                }
+            }
+            if let Some(g) = d.gathering.as_deref() {
+                if !self.buildings.iter().any(|b| b.name.as_deref() == Some(g) && b.shelter_capacity > 0) {
+                    out.push(format!("{at}: l’area di raccolta «{g}» non è un edificio con capienza"));
+                }
+            }
+        }
+        if let Some(de) = e.district_evacuation {
+            if !(de.per_min.is_finite() && de.per_min > 0.0) || de.prep_min > 240 {
+                out.push("Ritmo di evacuazione dei borghi: persone al minuto > 0 e preparazione al massimo 240 min".into());
             }
         }
 
@@ -322,20 +376,20 @@ impl Scenario {
         for (n, i) in msel.iter().enumerate() {
             let at = format!("Inject {}", n + 1);
             if i.id.trim().is_empty() || i.title.trim().is_empty() || i.text.trim().is_empty() {
-                out.push(format!("{at}: identificativo, titolo e testo sono obbligatori"));
+                out.push(format!("{at}: identifier, title and text are required"));
             }
             if msel[..n].iter().any(|o| o.id == i.id) {
-                out.push(format!("{at}: identificativo «{}» duplicato", i.id));
+                out.push(format!("{at}: duplicate identifier «{}»", i.id));
             }
             if i.turn == 0 {
-                out.push(format!("{at}: il turno parte da 1"));
+                out.push(format!("{at}: turns start at 1"));
             }
             if i.recipients.is_empty() {
-                out.push(format!("{at}: indica almeno un destinatario (o «all»)"));
+                out.push(format!("{at}: give at least one recipient (or «all»)"));
             }
             for rcp in &i.recipients {
                 if rcp != "all" && !role_ids.contains(rcp.as_str()) {
-                    out.push(format!("{at}: destinatario «{rcp}» sconosciuto"));
+                    out.push(format!("{at}: unknown recipient «{rcp}»"));
                 }
             }
         }
@@ -343,22 +397,22 @@ impl Scenario {
         let mut action_ids: BTreeSet<&str> = BTreeSet::new();
         for (n, i) in msel.iter().enumerate() {
             for a in &i.actions {
-                let at = format!("Inject {}, azione «{}»", n + 1, a.id);
+                let at = format!("Inject {}, action «{}»", n + 1, a.id);
                 if a.id.trim().is_empty() || a.title.trim().is_empty() {
-                    out.push(format!("{at}: identificativo e titolo sono obbligatori"));
+                    out.push(format!("{at}: identifier and title are required"));
                 }
                 if !action_ids.insert(a.id.as_str()) {
-                    out.push(format!("{at}: identificativo duplicato"));
+                    out.push(format!("{at}: duplicate identifier"));
                 }
                 if a.reveal.is_some() {
                     if !a.command.is_null() {
-                        out.push(format!("{at}: comando e rivelazione insieme: sceglierne uno"));
+                        out.push(format!("{at}: command and reveal together: choose one"));
                     }
                 } else if !a.command.is_object() {
-                    out.push(format!("{at}: il comando deve essere un oggetto JSON"));
+                    out.push(format!("{at}: the command must be a JSON object"));
                 }
                 if a.reveal.is_some() && a.offset_s < 0 {
-                    out.push(format!("{at}: una rivelazione non può precedere il suo inject"));
+                    out.push(format!("{at}: a reveal cannot come before its inject"));
                 }
             }
         }
@@ -368,7 +422,7 @@ impl Scenario {
             let mut probe = Scenario::probe(self);
             probe.places = places.to_vec();
             if probe.resolve_place(base).is_none() {
-                out.push(format!("Base di partenza: luogo «{base}» sconosciuto"));
+                out.push(format!("Staging base: unknown place «{base}»"));
             }
         }
         out
@@ -408,6 +462,8 @@ impl Scenario {
             buildings: vec![],
             roads: vec![],
             sectors: self.sectors.clone(),
+            districts: self.districts.clone(),
+            district_evacuation: self.district_evacuation,
             zones: self.zones,
             places: vec![],
             resource_types: vec![],
@@ -438,6 +494,46 @@ mod tests {
     }
 
     #[test]
+    fn packs_carry_map_label_translations_and_english_is_a_target() {
+        let mut b = base();
+        let place = b.places[0].name.clone();
+        assert!(b.map_texts().contains(&place));
+        b.translations.entry("it".into()).or_default().insert(place.clone(), "Luogo".into());
+        let mut e = ScenarioEdits::default();
+        let mut s = b.clone();
+        s.apply_edits(&e).unwrap();
+        assert_eq!(s.display_map("it")[&place], "Luogo", "absent edits keep the territory's");
+        e.translations = Some([("en".to_string(), [(place.clone(), "Place".to_string())].into())].into());
+        s.apply_edits(&e).unwrap();
+        assert_eq!(s.display_map("en")[&place], "Place");
+        assert!(!s.display_map("it").contains_key(&place));
+        assert_eq!(s.edits().translations, e.translations);
+    }
+
+    #[test]
+    fn districts_are_editable_and_checked() {
+        let s = base();
+        let ids: Vec<u32> = s.buildings.iter().take(3).map(|b| b.id).collect();
+        let d = |id: &str, buildings: Vec<u32>| District { id: id.into(), name: id.into(), buildings, gathering: None };
+        let ok = ScenarioEdits { districts: Some(vec![d("a", ids[..2].to_vec())]), ..Default::default() };
+        assert!(s.edit_problems(&ok, &vocab()).is_empty());
+        let mut built = s.clone();
+        built.apply_edits(&ok).unwrap();
+        assert_eq!(built.edits().districts, ok.districts);
+        for (bad, why) in [
+            (vec![d("a", vec![])], "no houses"),
+            (vec![d("a", vec![u32::MAX])], "unknown building"),
+            (vec![d("a", ids[..2].to_vec()), d("b", ids[1..].to_vec())], "house in two boroughs"),
+            (vec![d("a", ids[..1].to_vec()), d("a", ids[1..].to_vec())], "duplicate id"),
+        ] {
+            let e = ScenarioEdits { districts: Some(bad), ..Default::default() };
+            assert!(!s.edit_problems(&e, &vocab()).is_empty(), "{why}");
+        }
+        let slow = ScenarioEdits { district_evacuation: Some(DistrictEvacuation { per_min: 0.0, prep_min: 5 }), ..Default::default() };
+        assert!(!s.edit_problems(&slow, &vocab()).is_empty());
+    }
+
+    #[test]
     fn full_snapshot_round_trips_and_is_valid() {
         let s = base();
         let e = s.edits();
@@ -459,6 +555,7 @@ mod tests {
         "Reconnoitre",
         "EvacuateZone",
         "EvacuateBuilding",
+        "EvacuateDistrict",
         "IssueWarning",
         "CloseRoad",
         "ReopenRoad",
@@ -479,7 +576,7 @@ mod tests {
         for bad in [0, 1441] {
             let e = ScenarioEdits { turn_minutes: Some(bad), ..Default::default() };
             let p = s.edit_problems(&e, &vocab());
-            assert!(p.iter().any(|m| m.contains("Durata del turno")), "{p:?}");
+            assert!(p.iter().any(|m| m.contains("Turn length")), "{p:?}");
         }
         // Packs written before the field existed leave it absent.
         let old: ScenarioEdits = serde_json::from_str("{}").unwrap();

@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use std::rc::Rc;
 use yew::prelude::*;
 
+mod districts;
+mod translations;
+
 fn token() -> String {
     #[cfg(feature = "standalone")]
     return "master".into();
@@ -302,7 +305,7 @@ fn roles_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel) ->
                 let l = p.edits.roles.get_or_insert_with(Vec::new);
                 let n = l.len() + 1;
                 l.push(Role {
-                    id: format!("role_{n}"), name: format!("Ruolo {n}"), level: "local".into(), language: "en".into(),
+                    id: format!("role_{n}"), name: crate::exfmt!("Ruolo {}", "Role {}", n), level: "local".into(), language: "en".into(),
                     description: String::new(), allowed_actions: vec![], resources: Default::default(),
                 });
             }));
@@ -461,7 +464,8 @@ fn action_tip(action: &str) -> &'static str {
         "DeployEngine" => "Invia un’autobotte o una squadra a terra in un luogo: agisce dopo il viaggio dalla base, se le strade sono praticabili.",
         "EvacuateZone" => "Ordina di evacuare tutta una zona della griglia, con i suoi edifici e abitanti.",
         "EvacuateBuilding" => "Ordina di evacuare un singolo edificio, ad esempio una scuola o una casa di riposo.",
-        "IssueWarning" => "Emette un’allerta alla popolazione di un luogo; ha effetto dopo il tempo di diffusione.",
+        "EvacuateDistrict" => "Ordina di evacuare tutte le case di un borgo, case sparse comprese: dopo la preparazione partono poche persone al minuto, prima le più vicine alla strada, verso l’area di raccolta del borgo.",
+        "IssueWarning" => "Allerta la popolazione di una zona: la zona resta segnata come allertata (con l’ora) e un’evacuazione successiva lì è due volte più rapida.",
         "CloseRoad" => "Chiude una strada o un tratto: il traffico civile non passa, i mezzi di soccorso sì.",
         "ReopenRoad" => "Riapre una strada chiusa in precedenza.",
         "OpenShelter" => "Apre un centro di accoglienza dove portare gli evacuati.",
@@ -905,7 +909,7 @@ fn injects_view(props: &InjectsProps) -> Html {
                     let (json, message) = (json.clone(), message.clone());
                     upd(open, move |p, _: MouseEvent| match serde_json::from_str::<Vec<InjectTemplate>>(&json) {
                         Ok(v) => { p.edits.msel = Some(v); message.set(ex("Inject importati nell’editor · salva per conservarli").to_string()); }
-                        Err(e) => message.set(format!("JSON non valido: {e}")),
+                        Err(e) => message.set(crate::exfmt!("JSON non valido: {}", "Invalid JSON: {}", e)),
                     })
                 }}>{ex("Importa JSON")}</button>
             </div>
@@ -1158,10 +1162,26 @@ fn advanced_tab(o: &Open, open: &UseStateHandle<Option<Open>>) -> Html {
 
 // ------------------------------------------------------------ the view
 
+/// The tab a validation problem belongs to, from the prefix `edit_problems` gives it.
+fn problem_tab(problem: &str) -> &'static str {
+    let starts = |p: &[&str]| p.iter().any(|x| problem.starts_with(x));
+    if starts(&["Ruolo", "Risorsa", "Rinforzo"]) {
+        "team"
+    } else if starts(&["Borgo", "Ritmo di evacuazione"]) {
+        "districts"
+    } else if starts(&["Inject"]) {
+        "injects"
+    } else {
+        "general"
+    }
+}
+
 const TABS: &[(&str, &str, &str)] = &[
     ("general", "Generale", "Nome, descrizione, ora di inizio, durata dei turni e meteo iniziale."),
     ("team", "Ruoli e risorse", "Chi partecipa, quali mezzi ha e quali rinforzi può richiedere."),
+    ("districts", "Borghi", "Le località evacuabili in blocco con «Evacua borgo»: case scelte sulla mappa, area di raccolta e ritmo delle partenze."),
     ("injects", "Timeline", "Inject (messaggi) con le loro azioni (cambiamenti del mondo, inneschi compresi) che l’EXCON invia durante l’esercitazione."),
+    ("translations", "Traduzioni", "I nomi della mappa nelle lingue dei giocatori: scritti a mano o generati con l’AI."),
     ("advanced", "Avanzate", "Impostazioni tecniche: modello operativo, seme casuale, realizzazioni dell’ensemble."),
 ];
 
@@ -1222,7 +1242,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                             tab.set("general".into());
                             open.set(Some(Open { pack, reference: v["reference"].clone(), saved_id, dirty: as_copy }));
                         }
-                        Err(e) => message.set(format!("Scenario non leggibile: {e}")),
+                        Err(e) => message.set(crate::exfmt!("Scenario non leggibile: {}", "Scenario not readable: {}", e)),
                     },
                     Err(e) => message.set(e),
                 }
@@ -1336,6 +1356,33 @@ pub fn scenario_editor(props: &Props) -> Html {
         })
     };
 
+    // Live validation: the problems follow the edits (debounced), so tabs and
+    // fields show them without pressing "Controlla".
+    let generation = use_mut_ref(|| 0u64);
+    {
+        let (problems, generation, current) = (problems.clone(), generation.clone(), current.clone());
+        let key = (*open).as_ref().map(|o| serde_json::to_string(&o.pack).unwrap_or_default());
+        use_effect_with(key, move |_| {
+            let pack = current.borrow().as_ref().map(|o| o.pack.clone());
+            *generation.borrow_mut() += 1;
+            let mine = *generation.borrow();
+            if let Some(pack) = pack {
+                wasm_bindgen_futures::spawn_local(async move {
+                    gloo_timers::future::TimeoutFuture::new(500).await;
+                    if *generation.borrow() != mine {
+                        return;
+                    }
+                    if let Ok(v) = call("/api/master/scenarios/validate", Some(json!({"pack": pack}))).await {
+                        if *generation.borrow() == mine {
+                            problems.set(list(&v["problems"]).iter().map(|p| text(p).to_string()).collect());
+                        }
+                    }
+                });
+            }
+            || ()
+        });
+    }
+
     let act = {
         let (message, refresh, busy) = (message.clone(), refresh.clone(), busy.clone());
         Callback::from(move |(path, id): (&'static str, String)| {
@@ -1388,7 +1435,7 @@ pub fn scenario_editor(props: &Props) -> Html {
         </section>
         <section class="card settings-scenarios">
             <h2>{ex("Scenari")}</h2>
-            if cfg!(feature="standalone") {<a class="button" href="?editor=1">{"Apri editor scenario 3D"}</a>}
+            if cfg!(feature="standalone") {<a class="button" href="?editor=1">{ex("Apri editor scenario 3D")}</a>}
             <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, meteo e inject con le loro azioni. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
             <ul class="scenario-legend muted">
                 <li><span class="pill">{ex("in corso")}</span> {ex("è l’esercitazione che sta girando ora.")}</li>
@@ -1419,7 +1466,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                                             tab.set("general".into());
                                             open.set(Some(Open { pack, reference: v["reference"].clone(), saved_id: None, dirty: true }));
                                         }
-                                        Err(e) => message.set(format!("Territorio «{}» non disponibile: {e}", pack.base)),
+                                        Err(e) => message.set(crate::exfmt!("Territorio «{}» non disponibile: {}", "Territory «{}» not available: {}", pack.base, e)),
                                     },
                                     Err(e) => message.set(e),
                                 }
@@ -1480,29 +1527,38 @@ pub fn scenario_editor(props: &Props) -> Html {
                         let tab = tab.clone();
                         let id = id.to_string();
                         let on = *tab == id;
-                        html!{<button role="tab" aria-selected={on.to_string()} title={ex(tip)} class={classes!(on.then_some("active"))} data-tab={id.clone()} onclick={Callback::from(move |_| tab.set(id.clone()))}>{ex(label)}</button>}
+                        let bad = problems.iter().filter(|p| problem_tab(p) == id.as_str()).count();
+                        html!{<button role="tab" aria-selected={on.to_string()} title={ex(tip)} class={classes!(on.then_some("active"))} data-tab={id.clone()} onclick={Callback::from(move |_| tab.set(id.clone()))}>{ex(label)}
+                            if bad > 0 {<span class="tab-badge" title={crate::exfmt!("{} da correggere", "{} to fix", bad)}>{bad}</span>}</button>}
                     })}
                 </nav>
                 <div class="scenario-tab" role="tabpanel">
                     {match tab.as_str() {
                         "team" => team_tab(o, &open),
+                        "districts" => districts::districts_tab(o, &open, &problems),
                         "injects" => injects_tab(o, &open, &json, &message),
+                        "translations" => translations::translations_tab(o, &open),
                         "advanced" => advanced_tab(o, &open),
                         _ => general(o, &open),
                     }}
                 </div></div>
                 if !problems.is_empty() {
                     <div class="error scenario-problems" role="alert"><strong>{format!("{} ({})", ex("Da correggere prima di salvare:"), problems.len())}</strong>
-                        <ul>{for problems.iter().map(|p| html!{<li>{p.clone()}</li>})}</ul></div>
+                        <ul>{for problems.iter().map(|p| {
+                            let target = problem_tab(p);
+                            let label = TABS.iter().find(|t| t.0 == target).map(|t| t.1).unwrap_or("");
+                            let tab = tab.clone();
+                            html!{<li>{p.clone()}{" "}<button type="button" class="link" title={ex("Apre la scheda con il problema.")} onclick={Callback::from(move |_| tab.set(target.to_string()))}>{format!("→ {}", ex(label))}</button></li>}
+                        })}</ul></div>
                 }
                 if !message.is_empty() {<p role="status" id="scenario-message">{(*message).clone()}</p>}
                 <div class="scenario-actions">
                     <div class="row">
-                        <button id="save-scenario" class="primary" disabled={*busy}
+                        <button id="save-scenario" class={classes!(if o.dirty || o.saved_id.is_none() {"primary"} else {""})} disabled={*busy}
                             title={ex("Salva lo scenario nella libreria. Non tocca l’esercitazione in corso.")}
-                            onclick={{let save = save.clone(); Callback::from(move |_| save.emit(false))}}>{if *busy {ex("Attendere…")} else {ex("Salva")}}</button>
+                            onclick={{let save = save.clone(); Callback::from(move |_| save.emit(false))}}>{if *busy {ex("Attendere…")} else if !o.dirty && o.saved_id.is_some() {ex("Salvato ✓")} else {ex("Salva")}}</button>
                         {twice("save-start".into(), ex("Salva e avvia").to_string(), "", "Salva lo scenario e avvia subito una nuova esercitazione. La sessione in corso viene scartata.", {let save = save.clone(); Callback::from(move |_| save.emit(true))})}
-                        <button disabled={*busy} title={ex("Verifica lo scenario senza salvare e segnala gli errori da correggere.")} onclick={validate}>{ex("Controlla")}</button>
+                        <button disabled={*busy} title={ex("Verifica lo scenario senza salvare. Le verifiche girano già da sole mentre modifichi: qui le rilanci a mano.")} onclick={validate}>{ex("Controlla")}</button>
                     </div>
                     <div class="row scenario-transfer">
                         <button id="export-scenario" title={ex("Scarica lo scenario intero come file JSON.")} onclick={{
@@ -1567,7 +1623,7 @@ async fn read_pack(file: web_sys::File) -> Result<ScenarioPack, String> {
         .map_err(|_| ex("File non leggibile").to_string())?
         .as_string()
         .unwrap_or_default();
-    serde_json::from_str(&text).map_err(|e| format!("JSON non valido: {e}"))
+    serde_json::from_str(&text).map_err(|e| crate::exfmt!("JSON non valido: {}", "Invalid JSON: {}", e))
 }
 
 /// Begin a new exercise from `id`. In the browser the page reloads into it.
@@ -1581,5 +1637,26 @@ pub(crate) async fn start_scenario(id: &str) -> Result<String, String> {
     {
         call("/api/master/scenarios/activate", Some(json!({"id": id}))).await?;
         Ok(ex("Nuova esercitazione avviata").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::problem_tab;
+
+    #[test]
+    fn problems_land_on_the_tab_that_fixes_them() {
+        for (p, tab) in [
+            ("Ruolo 2: il nome è obbligatorio", "team"),
+            ("Risorsa 1: identificativo duplicato", "team"),
+            ("Rinforzo 1: quantità", "team"),
+            ("Borgo 3: indica almeno una casa", "districts"),
+            ("Ritmo di evacuazione dei borghi: ...", "districts"),
+            ("Inject 4, azione «a»: ...", "injects"),
+            ("Meteo: direzione", "general"),
+            ("Base di partenza: luogo «x» sconosciuto", "general"),
+        ] {
+            assert_eq!(problem_tab(p), tab, "{p}");
+        }
     }
 }

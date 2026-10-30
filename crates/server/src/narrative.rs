@@ -123,6 +123,13 @@ pub(crate) struct ResponseBody {
     /// What the response is based on: required for a decision.
     #[serde(default)]
     pub basis: Option<exercise::BasisKind>,
+    /// Which plan, procedure or law applies (required for a plan/law basis
+    /// in a reply to the sender).
+    #[serde(default)]
+    pub basis_note: Option<String>,
+    /// Why this decision: required in a narrated reply to the sender.
+    #[serde(default)]
+    pub rationale: Option<String>,
     /// PDF of the plan or law cited (plan/law basis only).
     #[serde(default)]
     pub attachment: Option<AttachmentBody>,
@@ -172,6 +179,8 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
         reply_to: body.reply_to,
         conversation: body.conversation,
         basis: body.basis,
+        basis_note: body.basis_note,
+        rationale: body.rationale,
         document: body.attachment.map(AttachmentBody::decode).transpose()?,
         kind: body.kind,
         to_persona: body.to_persona,
@@ -180,6 +189,16 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
     };
     let (language, targets, turn, revision) = {
         let ex = s.lock();
+        // A session saved before a new conversation needed its reason is
+        // replayed as a personal initiative with a placeholder rationale.
+        if crate::flow::REPLAYING.load(std::sync::atomic::Ordering::Relaxed)
+            && ex.response_starts_conversation(&role, &response)
+            && response.basis.is_none()
+            && response.rationale.as_deref().is_none_or(|r| r.trim().is_empty())
+        {
+            response.basis = Some(exercise::BasisKind::OperationalJudgment);
+            response.rationale = Some(exercise::conversations::LEGACY_REASON.into());
+        }
         ex.validate_player_response(&role, &response)?;
         let targets = response
             .to_players

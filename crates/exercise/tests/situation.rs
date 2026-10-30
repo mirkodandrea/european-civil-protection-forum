@@ -159,7 +159,7 @@ fn threatened_world() -> Exercise {
         .scn
         .buildings
         .iter()
-        .find(|b| b.kind == scenario::BuildingKind::School)
+        .find(|b| b.category() == "school")
         .cloned()
         .unwrap();
     let p = [b.pos[0] - 150.0, b.pos[1]];

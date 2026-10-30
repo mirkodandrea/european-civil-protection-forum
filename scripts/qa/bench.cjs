@@ -14,9 +14,13 @@ const out=process.env.TTX_QA_OUT||path.join('runs/bench-review',new Date().toISO
 async function done(page,n){
   await page.locator(`[data-bench-step="${n}"][data-status="done"]`).waitFor({timeout:10000});
 }
+// Players reply in words only (2026-10-29): a reply has nothing for EXCON to
+// approve, so these benches stop at the player's reply (their last step is the
+// legacy approval of the old player-action flow).
+const playerOnly={inject:3,conversation:3};
 async function allDone(page,id){
   const steps=page.locator('[data-bench-step]');
-  const n=await steps.count();
+  const n=playerOnly[id]||await steps.count();
   for(let i=1;i<=n;i++)await done(page,i);
   console.log(`${id}: ${n} steps done`);
 }
@@ -36,20 +40,14 @@ const benches={
     await excon.locator('[data-bench-send="I1"]').click();
     await excon.locator('[data-send]').click();await done(page,1);
     await openInject(page,'mayor');await done(page,2);
-    await mayor.locator('[data-reply-direct]').click();
+    // One composer under the inject: recipient visible, basis, reference, rationale, one Send.
+    await mayor.locator('[data-reply-composer] [data-to="sender"]:checked').waitFor();
     await mayor.locator('#response-narrative').fill('Apriamo il centro operativo comunale e informiamo la popolazione.');
-    await mayor.locator('#kind-decision').check();await mayor.locator('#basis-operational_judgment').check();
+    await mayor.locator('#basis-plan').click();
+    await mayor.locator('[data-basis-note]').fill('Piano comunale di protezione civile, scheda 2');
+    await mayor.locator('[data-rationale]').fill('Il fumo raggiunge il paese: la popolazione va informata subito.');
     await mayor.locator('[data-respond]').click();await done(page,3);
-    await openResponse(page,'mayor');await excon.locator('[data-approve]').click();
-  },
-  async suggest(page){
-    const police=col(page,'police');
-    await openInject(page,'police');await police.locator('[data-reply-direct]').click();await done(page,1);
-    await police.locator('#response-narrative').fill('Chiudiamo la SP12 ai curiosi e avvisiamo la zona E3.');
-    await police.locator('[data-add-suggestion="0"]').click();await done(page,2);
-    await police.locator('#basis-operational_judgment').check();
-    await police.locator('[data-respond]').click();await done(page,3);
-    await col(page,'excon').locator('[data-response$=":police"] [data-reply-state="Pending"]').waitFor();
+    await openResponse(page,'mayor');await excon.locator('[data-reply-basis="plan"]').first().waitFor();
   },
   async 'excon-suggest'(page){
     const excon=col(page,'excon');
@@ -75,25 +73,37 @@ const benches={
   },
   async conversation(page){
     const mayor=col(page,'mayor'),police=col(page,'police'),excon=col(page,'excon');
-    await openInject(page,'mayor');await mayor.locator('[data-reply-conversation]').click();
+    // Under the inject: "To → other players", pick the Police, say why
+    // (basis, reference, rationale: required to start it), one Send.
+    await openInject(page,'mayor');await mayor.locator('[data-reply-composer] [data-to="players"]').check();
     await mayor.locator('[data-conv-person="police"]').check();
-    await mayor.locator('#conv-first').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
-    await mayor.locator('[data-create-conversation]').click();await done(page,1);
+    await mayor.locator('#response-narrative').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
+    assert.equal(await mayor.locator('[data-send-conversation]').isDisabled(),true,'no reason, no conversation');
+    await mayor.locator('#basis-plan').click();
+    await mayor.locator('[data-basis-note]').fill('Piano comunale di protezione civile, scheda 3 (viabilità)');
+    await mayor.locator('[data-rationale]').fill('La chiusura della SP12 spetta alla Polizia: va coordinata prima di evacuare.');
+    await mayor.locator('[data-send-conversation]').click();await done(page,1);
+    // Inside the conversation the same box defaults to its participants.
     await openInject(page,'police');await police.locator('[data-conv-row]').click();
-    await police.locator('#conv-text').fill('Sì, pattuglia in posizione tra 10 minuti.');
+    await police.locator('[data-reply-composer][data-reply-to="players"]').waitFor();
+    // The participant reads why the conversation was started.
+    assert.match(await police.locator('[data-conv-reason]').innerText(),/scheda 3[\s\S]*spetta alla Polizia/);
+    await police.locator('#response-narrative').fill('Sì, pattuglia in posizione tra 10 minuti.');
     await police.locator('[data-send-conversation]').click();await done(page,2);
     await mayor.locator('[data-conversation] [data-conv-message]').nth(1).waitFor();
-    await mayor.locator('[data-respond-from-conversation]').click();
+    // Same box, recipient switched to the inject's sender: the reply to the inject.
+    await mayor.locator('[data-reply-composer] [data-to="sender"]').check();
     await mayor.locator('#response-narrative').fill('D’accordo con la Polizia: SP12 chiusa, poi evacuiamo F4.');
-    await mayor.locator('#kind-decision').check();await mayor.locator('#basis-operational_judgment').check();
+    await mayor.locator('#basis-operational_judgment').click();
+    await mayor.locator('[data-rationale]').fill('Prima liberiamo la strada, poi evacuiamo in sicurezza.');
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');
     await excon.locator('[data-linked-conversation]').first().waitFor();
     // The response opens the conversation it came from in the viewer.
     await excon.locator('.response-dialog [data-inspect-conversation]').first().click();
     await excon.locator('.conv-viewer [data-conv-message]').first().waitFor();
+    assert.match(await excon.locator('.conv-viewer [data-conv-reason]').innerText(),/spetta alla Polizia/,'EXCON reads the reason');
     await excon.locator('[data-close-conv-viewer]').click();
-    await excon.locator('[data-approve]').click();
   },
   async decide(page){
     const excon=col(page,'excon');
@@ -114,7 +124,8 @@ const benches={
   const page=await browser.newPage({viewport:{width:1680,height:1000}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   try{
-    for(const [id,run] of Object.entries(benches)){
+    const only=(process.env.TTX_BENCH_ONLY||'').split(',').filter(Boolean);
+    for(const [id,run] of Object.entries(benches).filter(([id])=>!only.length||only.includes(id))){
       await page.goto(`${base}?bench=1&b=${id}`);
       await page.locator(`[data-bench="${id}"]`).waitFor({timeout:60000});
       assert.equal(await page.locator('[data-bench-step][data-status="active"]').count(),1,`${id}: one active step`);

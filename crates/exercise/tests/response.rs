@@ -37,6 +37,7 @@ fn narrative(text: &str, parent: u64) -> PlayerResponse {
         narrative_en: text.into(),
         reply_to: Some(parent),
         basis: Some(BasisKind::OperationalJudgment),
+        rationale: Some("Rationale stated by the player".into()),
         ..Default::default()
     }
 }
@@ -57,6 +58,7 @@ fn a_response_needs_a_narrative_or_an_action() {
     let none = PlayerResponse {
         reply_to: Some(parent),
         basis: Some(BasisKind::OperationalJudgment),
+        rationale: Some("Rationale stated by the player".into()),
         ..Default::default()
     };
     assert!(ex.player_response("mayor", none).is_err());
@@ -65,6 +67,7 @@ fn a_response_needs_a_narrative_or_an_action() {
         narrative_en: "x".into(),
         reply_to: Some(parent),
         basis: Some(BasisKind::OperationalJudgment),
+        rationale: Some("Rationale stated by the player".into()),
         ..Default::default()
     };
     assert!(ex.player_response("mayor", blank).is_err());
@@ -97,6 +100,7 @@ fn actions_only_is_the_operational_proposal_it_always_was() {
                 commands: vec![warn()],
                 reply_to: Some(parent),
                 basis: Some(BasisKind::OperationalJudgment),
+                rationale: Some("Rationale stated by the player".into()),
                 ..Default::default()
             },
         )
@@ -181,10 +185,21 @@ fn authority_and_inject_ownership_still_apply() {
                 narrative: Some("x".into()),
                 narrative_en: "x".into(),
                 basis: Some(BasisKind::OperationalJudgment),
+                rationale: Some("Rationale stated by the player".into()),
                 ..Default::default()
             }
         )
         .is_err());
+}
+
+/// The reason the mayor gives for starting the conversation.
+fn why() -> conversations::ConversationReason {
+    conversations::ConversationReason::new(
+        Some(BasisKind::Plan),
+        Some("Piano comunale, scheda 4"),
+        Some("La Regione decide sull'evacuazione"),
+    )
+    .unwrap()
 }
 
 fn conversation(ex: &mut Exercise, parent: u64) -> u64 {
@@ -200,6 +215,7 @@ fn conversation(ex: &mut Exercise, parent: u64) -> u64 {
                 "We need your view on the smoke".into(),
             )]),
             false,
+            why(),
         )
         .unwrap();
     cid
@@ -285,6 +301,7 @@ fn only_the_recipient_starts_a_conversation_and_outsiders_cannot_read_it() {
             "hello",
             &BTreeMap::new(),
             false,
+            why(),
         )
     };
     assert!(
@@ -297,14 +314,18 @@ fn only_the_recipient_starts_a_conversation_and_outsiders_cannot_read_it() {
     assert!(start(&mut ex, "mayor", &["master"]).is_err());
     assert!(start(&mut ex, "mayor", &["regional_cp", "regional_cp"]).is_err());
     let cid = conversation(&mut ex, parent);
-    // Quoted inject: the guest never received it but reads it through the conversation.
+    // Quoted inject: the guest never received it, so it reads only its
+    // title (to group the conversation under it), never its text.
     let guest = ex.player_linked_conversations("regional_cp");
     assert_eq!(guest.len(), 1);
     assert_eq!(guest[0]["quote"]["title"], "Smoke over the village");
-    assert_eq!(
-        guest[0]["quote"]["text"],
-        "Residents report smoke from the north."
-    );
+    assert!(guest[0]["quote"]["text"].is_null());
+    assert_eq!(guest[0]["quote"]["title_only"], true);
+    assert!(!json!(guest).to_string().contains("Residents report smoke"));
+    // The creator received it and keeps the text.
+    let own = ex.player_linked_conversations("mayor");
+    assert_eq!(own[0]["quote"]["text"], "Residents report smoke from the north.");
+    assert_eq!(own[0]["quote"]["title_only"], false);
     assert!(ex
         .inbox("regional_cp")
         .iter()
@@ -364,14 +385,97 @@ fn only_the_recipient_starts_a_conversation_and_outsiders_cannot_read_it() {
 }
 
 #[test]
-fn the_quote_falls_back_to_the_english_copy_when_languages_differ() {
+fn a_guest_never_reads_the_inject_text_in_any_language_or_ai_context() {
     let (mut ex, parent) = fixture();
     ex.set_language("mayor", "it").unwrap();
     ex.set_language("regional_cp", "fr").unwrap();
-    conversation(&mut ex, parent);
+    let cid = conversation(&mut ex, parent);
     let guest = ex.player_linked_conversations("regional_cp");
-    let m = ex.messages.iter().find(|m| m.id == parent).unwrap();
-    assert_eq!(guest[0]["quote"]["text"], m.text_en);
+    assert!(guest[0]["quote"]["text"].is_null(), "no English fallback either");
+    // Neither the AI reading for the guest nor the guest's own AI conversation
+    // carry the inject text.
+    let ctx = ex
+        .player_suggestion_context("regional_cp", "We advise", Some(parent), Some(cid), &[])
+        .unwrap();
+    let seen = format!("{}{}{}", ctx.digest, ctx.conversations, json!(ctx.history));
+    assert!(seen.contains("Smoke over the village"), "the title is there");
+    assert!(!seen.contains("Residents report smoke"), "{seen}");
+    // A guest answering the inject from the conversation: the proposal's thread
+    // keeps the title only too.
+    let p = ex
+        .player_response(
+            "regional_cp",
+            PlayerResponse { conversation: Some(cid), ..narrative("Evacuate now", parent) },
+        )
+        .unwrap();
+    assert!(!json!(ex.proposal(p).unwrap().thread).to_string().contains("Residents report smoke"));
+    // EXCON still reads everything.
+    let full = ex.excon_suggestion_context(p).unwrap();
+    assert!(full.conversations.to_string().contains("Residents report smoke"));
+}
+
+#[test]
+fn a_recipient_invited_to_a_conversation_keeps_their_own_copy() {
+    let (mut ex, _) = fixture();
+    let ids = ex
+        .send_inject(None, "Road closed", "112", &["mayor".into(), "regional_cp".into()], "The SP12 is blocked.", &BTreeMap::new())
+        .unwrap();
+    let (cid, _) = ex
+        .start_linked_conversation("mayor", ids[0], &["regional_cp".into(), "fire_commander".into()], "Che facciamo?", "What now?", &BTreeMap::new(), false, why())
+        .unwrap();
+    let cp = ex.player_linked_conversations("regional_cp");
+    assert_eq!(cp[0]["id"], cid);
+    assert_eq!(cp[0]["quote"]["text"], "The SP12 is blocked.");
+    assert_eq!(cp[0]["quote"]["title_only"], false);
+    let fc = ex.player_linked_conversations("fire_commander");
+    assert_eq!(fc[0]["quote"]["title"], "Road closed");
+    assert!(fc[0]["quote"]["text"].is_null());
+}
+
+#[test]
+fn starting_a_conversation_needs_its_reason_and_participants_read_it() {
+    use conversations::ConversationReason as Why;
+    // Validation: a basis, the reference of a plan or law, and a rationale.
+    let msg = |r: anyhow::Result<Why>| r.unwrap_err().to_string();
+    assert!(msg(Why::new(None, None, Some("x"))).contains("why you start"));
+    assert!(msg(Why::new(Some(BasisKind::Law), Some(" "), Some("x"))).contains("which plan, procedure or law"));
+    assert!(msg(Why::new(Some(BasisKind::Plan), Some("Piano"), Some("  "))).contains("rationale"));
+    assert!(msg(Why::new(Some(BasisKind::OperationalJudgment), None, Some(&"x".repeat(2001)))).contains("2000"));
+    // Personal initiative needs no reference; a leftover one is dropped.
+    let own = Why::new(Some(BasisKind::OperationalJudgment), Some("Piano"), Some(" Il vento gira ")).unwrap();
+    assert_eq!((own.reference.as_deref(), own.rationale.as_str()), (None, "Il vento gira"));
+    assert_eq!(own.line(), "personal initiative: Il vento gira");
+    // Stored on the conversation, shown to participants (in their language),
+    // to EXCON, in the log and in every participant's AI conversation.
+    let (mut ex, parent) = fixture();
+    let mut reason = why();
+    reason.rationale_en = "The Region decides on evacuation".into();
+    reason.texts = BTreeMap::from([("regional_cp".into(), "La Région décide".into())]);
+    let (cid, _) = ex
+        .start_linked_conversation("mayor", parent, &["regional_cp".into()], "Parere?", "Opinion?", &BTreeMap::new(), false, reason)
+        .unwrap();
+    let c = ex.linked_conversation(cid).unwrap();
+    assert_eq!(c.reason.basis, BasisKind::Plan);
+    assert_eq!(c.reason.reference.as_deref(), Some("Piano comunale, scheda 4"));
+    let guest = &ex.player_linked_conversations("regional_cp")[0]["reason"];
+    assert_eq!(guest["rationale"], "La Région décide");
+    assert_eq!(guest["basis"], "plan");
+    assert_eq!(guest["reference"], "Piano comunale, scheda 4");
+    assert_eq!(ex.player_linked_conversations("mayor")[0]["reason"]["rationale"], "La Regione decide sull'evacuazione");
+    let master = &ex.master_linked_conversations()[0]["reason"];
+    assert_eq!(master["rationale"], "La Regione decide sull'evacuazione");
+    assert_eq!(master["rationale_en"], "The Region decides on evacuation");
+    assert!(ex.log.iter().any(|e| e.kind == "conversation_started" && e.data.to_string().contains("The Region decides")));
+    for role in ["mayor", "regional_cp"] {
+        assert!(json!(ex.conversation(role)).to_string().contains("reason: plans (Piano comunale, scheda 4): The Region decides on evacuation"), "{role}");
+    }
+    // The AI contexts that read conversations carry it.
+    let ctx = ex.player_suggestion_context("regional_cp", "We advise", Some(parent), Some(cid), &[]).unwrap();
+    assert!(ctx.conversations.to_string().contains("La Région décide"));
+    let p = ex.player_response("mayor", narrative("We evacuate", parent)).unwrap();
+    assert!(ex.excon_suggestion_context(p).unwrap().conversations.to_string().contains("The Region decides"));
+    // Later messages need no reason.
+    ex.post_conversation_message("regional_cp", cid, "Ok", None, "Ok", &BTreeMap::new(), false).unwrap();
 }
 
 #[test]

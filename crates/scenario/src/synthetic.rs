@@ -153,7 +153,7 @@ pub fn generate(seed: u64) -> Scenario {
     let mut buildings = Vec::new();
     fn add(
         v: &mut Vec<Building>,
-        kind: BuildingKind,
+        (kind, visual): (BuildingKind, Option<&str>),
         name: Option<&str>,
         pos: Pos,
         size: [f32; 2],
@@ -163,7 +163,7 @@ pub fn generate(seed: u64) -> Scenario {
         let id = v.len() as u32 + 1;
         v.push(Building {
             id,
-            visual_kind: None,
+            visual_kind: visual.map(str::to_string),
             kind,
             name: name.map(str::to_string),
             pos,
@@ -178,7 +178,7 @@ pub fn generate(seed: u64) -> Scenario {
     // Named facilities first, so their ids are stable across seeds.
     add(
         &mut buildings,
-        BuildingKind::School,
+        (BuildingKind::Sensitive, Some("school")),
         Some("Pineta Primary School"),
         [2760.0, 2210.0],
         [40.0, 24.0],
@@ -187,7 +187,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::FuelStation,
+        (BuildingKind::Facility, Some("fuel_station")),
         Some("Pineta Fuel Station"),
         [2470.0, 2020.0],
         [24.0, 16.0],
@@ -196,7 +196,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::TownHall,
+        (BuildingKind::Facility, Some("town_hall")),
         Some("Valverde Town Hall"),
         [1600.0, 1330.0],
         [30.0, 24.0],
@@ -205,7 +205,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::Hospital,
+        (BuildingKind::Sensitive, Some("hospital")),
         Some("Valverde Hospital"),
         [1440.0, 1160.0],
         [50.0, 30.0],
@@ -214,7 +214,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::SportsCentre,
+        (BuildingKind::Facility, Some("sports_centre")),
         Some("Valverde Sports Centre"),
         [1830.0, 1150.0],
         [50.0, 36.0],
@@ -223,7 +223,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::Industrial,
+        (BuildingKind::Facility, Some("industrial")),
         Some("Valverde Timber Mill"),
         [2150.0, 1650.0],
         [60.0, 30.0],
@@ -278,7 +278,7 @@ pub fn generate(seed: u64) -> Scenario {
         let occ = rng.gen_range(1..=5);
         add(
             &mut buildings,
-            BuildingKind::House,
+            (BuildingKind::House, None),
             None,
             p,
             [14.0, 12.0],
@@ -333,6 +333,8 @@ pub fn generate(seed: u64) -> Scenario {
         buildings,
         roads: roads(),
         sectors,
+        districts: vec![],
+        district_evacuation: Default::default(),
         zones: ZoneGrid { cols: 8, rows: 8, size_m: 500.0 },
         places: places(),
         resource_types: resource_types(),
@@ -357,6 +359,31 @@ pub fn generate(seed: u64) -> Scenario {
             scn.fuel[idx] = NON_VEGETATED;
         }
     }
+    scn
+}
+
+/// The shipped valley also names its borghi (one per sector with enough homes,
+/// gathering at the sports centre). Kept out of [`generate`] so tests that
+/// reshape the buildings stay valid.
+pub fn with_districts(mut scn: Scenario) -> Scenario {
+    scn.districts = scn
+        .sectors
+        .iter()
+        .filter_map(|sec| {
+            let buildings: Vec<u32> = scn
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::House && b.sector == sec.id)
+                .map(|b| b.id)
+                .collect();
+            (buildings.len() >= 5).then(|| crate::District {
+                id: sec.id.clone(),
+                name: sec.name.clone(),
+                buildings,
+                gathering: Some("Valverde Sports Centre".into()),
+            })
+        })
+        .collect();
     scn
 }
 
@@ -630,25 +657,25 @@ fn msel() -> Vec<InjectTemplate> {
     ];
     msel[0].actions.push(InjectAction {
         id: "A-01".into(),
-        title: "Innesco Pine Hill".into(),
+        title: "Pine Hill ignition".into(),
         command: serde_json::json!({"type": "Ignite", "at": {"x": IGNITION[0], "y": IGNITION[1]}, "radius_m": IGNITION_RADIUS_M}),
         reveal: None,
         offset_s: 0,
-        note: "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01.".into(),
+        note: "The fire starts on Pine Hill at 13:00, as reported by inject I-01.".into(),
     });
     // Fog of war: the 112 call gives an unverified estimate; the fire
     // operations room reports the zones in and around the fire.
     msel[0].actions.push(InjectAction {
         id: "A-02".into(),
-        title: "Stima dell'incendio (112)".into(),
+        title: "Fire estimate (112)".into(),
         command: serde_json::Value::Null,
         reveal: Some(RevealSpec::Approximate { position_error_m: 400.0, area_error_frac: 0.3, source: None }),
         offset_s: 0,
-        note: "I ruoli vedono sulla mappa una stima non verificata della posizione e dell'estensione.".into(),
+        note: "Roles see an unverified estimate of the position and extent on the map.".into(),
     });
     msel[2].actions.push(InjectAction {
         id: "A-03".into(),
-        title: "Mappa del fuoco (sala operativa)".into(),
+        title: "Fire map (operations room)".into(),
         command: serde_json::Value::Null,
         reveal: Some(RevealSpec::Exact {
             zones: RevealZones::Rule(ZoneRule::BurningAndAdjacent),
@@ -656,7 +683,7 @@ fn msel() -> Vec<InjectTemplate> {
             source: None,
         }),
         offset_s: 0,
-        note: "Il comandante vede il fuoco e le strade nelle zone interessate.".into(),
+        note: "The commander sees the fire and the roads in the affected zones.".into(),
     });
     let exact = |id: &str, title: &str, layers: &[&str], note: &str| InjectAction {
         id: id.into(),
@@ -670,21 +697,21 @@ fn msel() -> Vec<InjectTemplate> {
         offset_s: 0,
         note: note.into(),
     };
-    msel[4].actions.push(exact("A-05", "Strade viste dalla polizia", &["roads"],
-        "Sindaco e comandante vedono lo stato delle strade intorno al fuoco."));
-    msel[5].actions.push(exact("A-06", "Fronte verso il distributore", &["fire", "buildings"],
-        "Il fuoco e gli edifici minacciati nelle zone interessate."));
+    msel[4].actions.push(exact("A-05", "Roads seen by the police", &["roads"],
+        "The mayor and the commander see the state of the roads around the fire."));
+    msel[5].actions.push(exact("A-06", "Front towards the fuel station", &["fire", "buildings"],
+        "The fire and the threatened buildings in the affected zones."));
     // The ERCC sees the fire from satellite products: position and size only.
     msel[6].actions.push(InjectAction {
         id: "A-07".into(),
-        title: "Stima satellitare (ERCC)".into(),
+        title: "Satellite estimate (ERCC)".into(),
         command: serde_json::Value::Null,
         reveal: Some(RevealSpec::Approximate { position_error_m: 200.0, area_error_frac: 0.15, source: None }),
         offset_s: 0,
-        note: "La Regione vede una stima da prodotti satellitari.".into(),
+        note: "The region sees an estimate from satellite products.".into(),
     });
-    msel[7].actions.push(exact("A-08", "Quadro operativo", &["fire", "lines", "units"],
-        "Fuoco, linee e squadre nelle zone interessate."));
+    msel[7].actions.push(exact("A-08", "Operational picture", &["fire", "lines", "units"],
+        "Fire, lines and crews in the affected zones."));
     msel
 }
 
@@ -709,7 +736,7 @@ mod tests {
         assert!(s
             .buildings
             .iter()
-            .any(|b| b.kind == BuildingKind::School && b.sector == "pineta"));
+            .any(|b| b.category() == "school" && b.kind.needs_transport() && b.sector == "pineta"));
         assert!(s.buildings.iter().any(|b| b.shelter_capacity > 0));
         assert_eq!(s.roles.len(), 3);
     }

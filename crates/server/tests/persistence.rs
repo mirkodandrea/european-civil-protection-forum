@@ -298,7 +298,7 @@ async fn narrative_approval_and_outcome_survive_restart_without_physical_executi
     assert_eq!(post(&c,&s,"/api/player/mayor/language",json!({"language":"en"})).await.0,Status::Ok);
     post(&c,&s,"/api/master/inject",json!({"title":"Support","sender":"112","recipients":["mayor"],"text":"Psychological support requested"})).await;
     let parent=s.lock().messages.iter().find(|m|m.kind==exercise::MsgKind::Inject&&m.to=="mayor").unwrap().id;
-    let(status,got)=post(&c,&s,"/api/player/mayor/actions",json!({"kind":"decision","basis":"operational_judgment","narrative":"Activate support","reply_to":parent})).await;
+    let(status,got)=post(&c,&s,"/api/player/mayor/actions",json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":"Activate support","reply_to":parent})).await;
     assert_eq!(status,Status::Ok,"{got}");let id=got["proposal"].as_u64().unwrap();
     assert_eq!(post(&c,&s,&format!("/api/master/proposals/{id}/decide"),json!({"approve":true})).await.0,Status::Ok);
     assert_eq!(post(&c,&s,&format!("/api/master/proposals/{id}/narrative-outcome"),json!({"text":"EXCON assigns a support team"})).await.0,Status::Ok);
@@ -329,7 +329,7 @@ async fn attached_pdf_survives_a_restart() {
     let mut bytes = b"%PDF-1.4\n".to_vec();
     bytes.resize(3 * 1024 * 1024, b'x');
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let (status, got) = post(&c, &s, "/api/player/mayor/actions", json!({"kind":"decision","reply_to":parent,"narrative":"We follow the plan","basis":"plan",
+    let (status, got) = post(&c, &s, "/api/player/mayor/actions", json!({"kind":"decision","reply_to":parent,"narrative":"We follow the plan","basis":"plan","basis_note":"Plan section 3","rationale":"The plan covers it",
         "attachment":{"name":"plan.pdf","content_type":"application/pdf","data":data}})).await;
     assert_eq!(status, Status::Ok, "{got}");
     let id = got["proposal"].as_u64().unwrap();
@@ -343,4 +343,86 @@ async fn attached_pdf_survives_a_restart() {
     let doc = ex.document_of(id).expect("document restored").clone();
     assert_eq!(doc.name, "plan.pdf");
     assert_eq!(ex.file_for(None, doc.id).unwrap().bytes.len(), bytes.len());
+}
+
+/// A session saved before starting a conversation needed its reason still
+/// loads: the old requests are replayed with a placeholder reason.
+#[tokio::test(flavor = "multi_thread")]
+async fn conversations_saved_without_a_reason_still_replay() {
+    let _gate = gate();
+    let d = dir("conv-reason");
+    let p = storage(&d);
+    let (c, s) = boot(&p).await;
+    assert_eq!(post(&c, &s, "/api/master/start", json!({})).await.0, Status::Ok);
+    post(&c, &s, "/api/master/inject", json!({"title":"Smoke","sender":"112","recipients":["mayor"],"text":"Smoke over the village"})).await;
+    let parent = s.lock().messages.iter().find(|m| m.kind == exercise::MsgKind::Inject && m.to == "mayor").unwrap().id;
+    let (status, got) = post(&c, &s, "/api/player/mayor/conversations", json!({"delivery":parent,"participants":["regional_cp"],"text":"Parere?","basis":"operational_judgment","rationale":"Serve la Regione"})).await;
+    assert_eq!(status, Status::Ok, "{got}");
+    let (status, got) = post(&c, &s, "/api/player/mayor/actions", json!({"reply_to":parent,"kind":"communication","narrative":"Vi giro il messaggio","to_players":["fire_commander"],"basis":"operational_judgment","rationale":"Anche i VVF"})).await;
+    assert_eq!(status, Status::Ok, "{got}");
+    server::flow::settle(&s).await;
+    p.autosave(&s, true);
+    let mut saved = storage(&d).load_session().unwrap();
+    // Strip the reasons, as an older client sent them.
+    let mut stripped = 0;
+    for e in saved.journal.iter_mut().filter(|e| e.uri.contains("/conversations") || e.uri.contains("/actions")) {
+        let mut body: Value = serde_json::from_str(&e.body).unwrap();
+        for k in ["basis", "basis_note", "rationale"] {
+            body.as_object_mut().unwrap().remove(k);
+        }
+        e.body = body.to_string();
+        stripped += 1;
+    }
+    assert_eq!(stripped, 2);
+    let p2 = storage(&d);
+    let (c2, s2) = boot(&p2).await;
+    persist::restore(&s2, server::replay_rocket(&s2), saved).await.unwrap();
+    {
+        let ex = s2.lock();
+        assert_eq!(ex.linked_conversations.len(), 2);
+        assert!(ex.linked_conversations.iter().all(|c| c.reason.rationale == exercise::conversations::LEGACY_REASON));
+    }
+    // Outside a replay the reason is required again.
+    let (status, _) = post(&c2, &s2, "/api/player/mayor/conversations", json!({"delivery":parent,"participants":["fire_commander","regional_cp"],"text":"Ancora?"})).await;
+    assert_eq!(status, Status::BadRequest);
+}
+
+/// The exercise timers come back from the journal: the start instant is the
+/// one recorded when the EXCON first started, not the time of the restart.
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_keeps_the_exercise_start_instant() {
+    let _gate = gate();
+    let d = dir("timers");
+    let p = storage(&d);
+    let (c, s) = boot(&p).await;
+    assert_eq!(post(&c, &s, "/api/master/start", json!({})).await.0, Status::Ok);
+    let started = s.lock().started_wall_ms.expect("start recorded");
+    let r = c
+        .get("/api/state")
+        .header(Header::new("Authorization", format!("Bearer {}", s.access.master)))
+        .dispatch()
+        .await;
+    let state: Value = r.into_json().await.unwrap();
+    let progress = &state["progress"];
+    assert_eq!(progress["turn"], 1);
+    assert_eq!(progress["counting"], true);
+    assert_eq!(progress["turn_len_s"], 30 * 60);
+    assert!(progress["planned_turns"].as_u64().unwrap() >= 1);
+    assert_eq!(progress["started_wall_ms"].as_u64(), Some(started as u64));
+    p.autosave(&s, true);
+
+    let p2 = storage(&d);
+    let mut session = p2.load_session().expect("saved session");
+    let recorded = session.journal[0].wall_ms.expect("journal keeps the wall clock");
+    assert!(recorded as u128 <= started && started - (recorded as u128) < 5_000);
+    // Pretend the start happened an hour ago.
+    let hour_ago = recorded - 3_600_000;
+    session.journal[0].wall_ms = Some(hour_ago);
+    let (_c2, s2) = boot(&p2).await;
+    persist::restore(&s2, server::replay_rocket(&s2), session).await.unwrap();
+    let ex = s2.lock();
+    assert_eq!(ex.started_wall_ms, Some(hour_ago as u128));
+    assert_eq!(ex.turn_wall_ms, Some(hour_ago as u128));
+    assert_eq!(ex.replay_wall_ms, None, "the replay clock is released");
+    assert!(ex.progress().elapsed_ms >= 3_600_000);
 }

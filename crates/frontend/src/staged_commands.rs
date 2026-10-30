@@ -12,7 +12,7 @@ use serde_json::Value;
 use yew::prelude::*;
 
 /// Controllo tools that produce a world-changing command.
-const TOOL_IDS: [&str; 9] = ["ignite", "line", "drop", "extcircle", "extzone", "evac", "warn", "bstatus", "weather"];
+const TOOL_IDS: [&str; 10] = ["ignite", "line", "drop", "extcircle", "extzone", "evac", "evacborgo", "warn", "bstatus", "weather"];
 
 #[derive(Properties, PartialEq)]
 pub struct StagedProps {

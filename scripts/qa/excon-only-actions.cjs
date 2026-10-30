@@ -103,16 +103,17 @@ function reading(user, gazetteer) {
     // 1. The DOS replies in words, next to the guidance; no action controls.
     await openInject(fire, 'fire_commander');
     await shot('01-player-inject');
-    await fire.locator('[data-reply-direct]').click();
-    const work = fire.locator('.work-modal');
+    // One composer under the inject (recipient, text, basis, one Send).
+    const work = fire.locator('[data-reply-composer]');
     await work.waitFor();
-    for (const forbidden of ['#kind-decision', '[data-add-action]', '#basis-plan', '[data-suggested-action]'])
+    for (const forbidden of ['#kind-decision', '[data-add-action]', '[data-suggested-action]'])
       assert.equal(await work.locator(forbidden).count(), 0, `no ${forbidden} on the player page`);
+    await work.locator('#basis-operational_judgment').waitFor();
+    await work.locator('.reply-guide-more summary').click();
     await work.locator('[data-reply-guide]').waitFor();
     await work.locator('#response-narrative').fill(DOS);
     await shot('02-player-reply-guidance');
     await work.locator('[data-respond]').click();
-    await work.waitFor({ state: 'hidden' });
     await fire.locator('[data-response-state="rs_sent"]').first().waitFor();
     await shot('03-player-reply-sent');
 
@@ -179,9 +180,8 @@ function reading(user, gazetteer) {
 
     // 7. The Mayor replies; the EXCON executes what is feasible.
     await openInject(mayor, 'mayor');
-    await mayor.locator('[data-reply-direct]').click();
-    await mayor.locator('.work-modal #response-narrative').fill(MAYOR);
-    await mayor.locator('.work-modal [data-respond]').click();
+    await mayor.locator('[data-reply-composer] #response-narrative').fill(MAYOR);
+    await mayor.locator('[data-reply-composer] [data-respond]').click();
     await toBoard();
     await board.locator('[data-review]').filter({ hasText: /Evacuiamo/ }).locator('[data-review-item]').nth(2).waitFor({ timeout: 20000 });
     await shot('11-excon-mayor-suggestions');

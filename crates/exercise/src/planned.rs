@@ -11,6 +11,18 @@ impl Exercise {
         Some(evidence.basis.kind)
     }
 
+    /// The player's own reference or rationale for that basis, if written.
+    pub(crate) fn basis_note_of(&self, proposal: Option<u64>) -> Option<String> {
+        let evidence = self.proposal(proposal?)?.evidence.as_ref()?;
+        let reference = evidence.basis.reference.trim();
+        (!reference.is_empty() && !reference.starts_with(crate::response::DECLARED)).then(|| reference.to_string())
+    }
+
+    /// Why the player took the decision (the reply's rationale), if written.
+    pub(crate) fn rationale_of(&self, proposal: Option<u64>) -> Option<String> {
+        self.proposal(proposal?)?.evidence.as_ref()?.basis.rationale.clone()
+    }
+
     /// Planned time of an MSEL inject in simulated seconds from start: the live
     /// schedule if any, then the scenario's own `at_s`, otherwise the start of
     /// its suggested turn, counted with the scenario's turn length (not the
@@ -123,7 +135,7 @@ impl Exercise {
                             "actions": p.commands.len(), "outcomes": p.narrative_outcomes.len(),
                             "executed": p.executions.iter().filter(|e| e.ok).count()})),
                         "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation),
-                        "basis": self.basis_of(r.proposal), "document": r.proposal.and_then(|pid| self.document_of(pid))})
+                        "basis": self.basis_of(r.proposal), "basis_note": self.basis_note_of(r.proposal), "rationale": self.rationale_of(r.proposal), "document": r.proposal.and_then(|pid| self.document_of(pid))})
                     })
                     .collect();
                 // Latest EXCON verdict on this recipient's responses (newest last).
@@ -159,7 +171,7 @@ impl Exercise {
                     .map(|p| {
                         json!({"id": p.id, "status": p.status, "review": p.review, "summary": p.summary,
                         "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
-                        "basis": self.basis_of(Some(p.id)), "document": self.document_of(p.id),
+                        "basis": self.basis_of(Some(p.id)), "basis_note": self.basis_note_of(Some(p.id)), "rationale": self.rationale_of(Some(p.id)), "document": self.document_of(p.id),
                         "role": p.source.label(), "conversation": p.via_conversation,
                         "narrative": p.narrative, "carries_actions": p.carries_actions,
                         "awaiting_clarification": p.status == ProposalStatus::NeedsClarification
@@ -195,6 +207,8 @@ impl Exercise {
                         "text": if t.to != MASTER { &t.text_en } else if t.kind == MsgKind::Chat { t.text_excon.as_ref().unwrap_or(&t.text) } else { t.text_excon.as_ref().unwrap_or(&t.text_en) }, "original": original, "reply_to": t.reply_to,
                         "clarification_thread": clarification,
                         "basis": if t.kind == MsgKind::Reply { self.basis_of(t.proposal) } else { None },
+                        "basis_note": if t.kind == MsgKind::Reply { self.basis_note_of(t.proposal) } else { None },
+                        "rationale": if t.kind == MsgKind::Reply { self.rationale_of(t.proposal) } else { None },
                         "document": if t.kind == MsgKind::Reply { t.proposal.and_then(|pid| self.document_of(pid)) } else { None }})
                     })
                     .collect();

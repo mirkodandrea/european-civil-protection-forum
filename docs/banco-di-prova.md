@@ -8,7 +8,7 @@ quello corrente evidenziato.
 - **Componenti reali, server simulato.** Le colonne usano gli stessi
   componenti della console (`Risposte`, `Proposal`, `SendDialog`) e la stessa
   schermata del player (`PlayerView`: elenco inject, thread, chiarimenti,
-  conversazioni collegate, composizione della risposta con suggerimenti AI).
+  conversazioni collegate, composizione della risposta).
   Il server è un finto server in memoria (`crates/frontend/src/bench/fake.rs`)
   che risponde agli stessi percorsi e con le stesse forme JSON. Niente HTTP,
   niente `exercise`, niente simulatore, niente LLM: i suggerimenti AI sono
@@ -16,16 +16,17 @@ quello corrente evidenziato.
 - **Flussi piccoli e indipendenti** (`bench/workflows.rs`), 3–4 passi ciascuno:
   1. *Inject → narrativa*: EXCON invia, il Sindaco apre e risponde con una
      narrativa, EXCON approva in Risposte.
-  2. *Suggerimenti AI al player*: la Polizia scrive la narrativa, arrivano i
-     suggerimenti automatici, ne associa uno (una sola azione per risposta),
-     indica il fondamento e invia; EXCON vede l’azione.
-  3. *EXCON: suggerisci azioni*: su una narrativa senza azioni EXCON chiede i
+  2. *EXCON: suggerisci azioni*: su una narrativa senza azioni EXCON chiede i
      suggerimenti, li aggiunge, approva; il Sindaco vede l’esito.
-  4. *Chiarimento*: EXCON chiede, il Sindaco risponde nel thread, EXCON chiude.
-  5. *Conversazione tra player*: Sindaco e Polizia discutono l’inject, la
-     risposta nasce dalla conversazione, EXCON la ispeziona nel visore delle
+  3. *Chiarimento*: EXCON chiede, il Sindaco risponde nel thread, EXCON chiude.
+  4. *Conversazione tra player*: il Sindaco avvia la conversazione dal box di
+     risposta sotto l’inject (A chi → Altri player) dicendo perché (piano,
+     legge o iniziativa personale, riferimento, motivo: obbligatori come sul
+     server), Sindaco e Polizia
+     discutono, il Sindaco risponde all’inject dallo stesso box nella
+     conversazione (A chi → mittente), EXCON la ispeziona nel visore delle
      conversazioni e decide.
-  6. *Decisione sulle azioni*: EXCON approva, approva in parte, modifica o
+  5. *Decisione sulle azioni*: EXCON approva, approva in parte, modifica o
      rifiuta due azioni; la Polizia vede l’esito per azione.
 - Lo stato dei passi è calcolato dal finto server e dai campi del player, mai
   memorizzato. «Ricomincia» riparte dal seme del flusso; cambiare scheda
@@ -44,7 +45,7 @@ standalone (`scripts/build_standalone.sh`, anche su Pages) la include, quindi
 
 ```bash
 ./scripts/dev_bench.sh                 # Trunk + live reload, standalone+bench
-# → http://127.0.0.1:8080/?bench=1     (un flusso: &b=inject|suggest|excon-suggest|clarify|conversation|decide)
+# → http://127.0.0.1:8080/?bench=1     (un flusso: &b=inject|excon-suggest|clarify|conversation|decide)
 PORT=8091 ./scripts/dev_bench.sh       # altra porta
 
 TTX_BENCH=1 ./scripts/build_frontend.sh   # build server con bench.html

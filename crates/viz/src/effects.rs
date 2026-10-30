@@ -30,7 +30,7 @@ use crate::frame::{height_at, to_bevy, EXAGGERATION};
 use crate::{Scn, Snapshot};
 
 /// More puffs than this and new ones are skipped (the oldest still fade out).
-const MAX_PUFFS: usize = 2400;
+pub(crate) const MAX_PUFFS: usize = 2400;
 /// Drops older than this (simulated seconds) when first seen are not replayed,
 /// so joining a running exercise does not set off its whole history.
 const REPLAY_WINDOW_S: i64 = 900;
@@ -58,10 +58,10 @@ const FIRE_AVOID_M: f32 = 700.0;
 pub struct EffectAssets {
     puff: Handle<Mesh>,
     water: Handle<StandardMaterial>,
-    mist: Handle<StandardMaterial>,
-    steam: Handle<StandardMaterial>,
+    pub(crate) mist: Handle<StandardMaterial>,
+    pub(crate) steam: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
-    jet: Handle<StandardMaterial>,
+    pub(crate) jet: Handle<StandardMaterial>,
     wet: Handle<StandardMaterial>,
 }
 
@@ -99,11 +99,11 @@ pub fn setup(
 #[derive(Default)]
 pub struct Noise(u32);
 impl Noise {
-    fn next(&mut self) -> f32 {
+    pub(crate) fn next(&mut self) -> f32 {
         self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         (self.0 >> 8) as f32 / (1u32 << 24) as f32
     }
-    fn signed(&mut self) -> f32 {
+    pub(crate) fn signed(&mut self) -> f32 {
         self.next() * 2.0 - 1.0
     }
 }
@@ -120,17 +120,17 @@ pub struct Puff {
     floor: f32,
 }
 
-struct PuffSpec {
-    at: Vec3,
-    vel: Vec3,
-    size: f32,
-    grow: f32,
-    life: f32,
-    gravity: f32,
-    drag: f32,
+pub(crate) struct PuffSpec {
+    pub at: Vec3,
+    pub vel: Vec3,
+    pub size: f32,
+    pub grow: f32,
+    pub life: f32,
+    pub gravity: f32,
+    pub drag: f32,
 }
 
-fn spawn_puff(
+pub(crate) fn spawn_puff(
     commands: &mut Commands,
     fx: &EffectAssets,
     material: &Handle<StandardMaterial>,
@@ -445,7 +445,7 @@ fn jet_targets(s: &Scenario, snap: &Snapshot, p: Pos) -> Vec<Pos> {
 
 /// A ribbon along `points` (position, width): two quads crossed, one flat and
 /// one upright, so the stream reads as a body of water from any side.
-fn arc_mesh(points: &[(Vec3, f32)]) -> Mesh {
+pub(crate) fn arc_mesh(points: &[(Vec3, f32)]) -> Mesh {
     let (mut pos, mut nrm, mut uv, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let n = points.len();
     for (i, &(p, w)) in points.iter().enumerate() {

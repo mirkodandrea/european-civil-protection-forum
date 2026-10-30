@@ -268,14 +268,20 @@ fn basis_name(kind: &str) -> &'static str {
     })
 }
 
-/// What a reply rests on and the PDF behind it, with the button that opens it.
-fn basis_chip(basis: &Value, document: &Value, on_pdf: &Callback<(u64, String)>) -> Html {
-    if !basis.is_string() && !document.is_object() {
+/// What a reply rests on (with the player's reference), why (the
+/// player's rationale) and the PDF behind it, with the button that opens it.
+fn basis_chip(m: &Value, on_pdf: &Callback<(u64, String)>) -> Html {
+    let (basis, document) = (&m["basis"], &m["document"]);
+    let note = text(&m["basis_note"]).to_string();
+    let why = text(&m["rationale"]).to_string();
+    if !basis.is_string() && !document.is_object() && why.is_empty() {
         return html! {};
     }
     let doc = document.as_object().map(|_| (document["id"].as_u64().unwrap_or(0), text(&document["name"]).to_string()));
     html! {<div class="reply-basis" data-reply-basis={text(basis).to_string()}>
         <span class="pill reply-basis-kind">{crate::exfmt!("Fondamento: {}","Basis: {}",basis_name(text(basis)))}</span>
+        if !note.is_empty(){<span class="reply-basis-note" data-reply-basis-note="">{note}</span>}
+        if !why.is_empty(){<p class="reply-rationale-line" data-reply-rationale=""><b>{crate::exfmt!("Motivazione: ","Rationale: ")}</b>{why}</p>}
         if let Some((id,name))=doc{<button type="button" class="reply-doc" data-open-pdf={id.to_string()} onclick={{let on_pdf=on_pdf.clone();let name=name.clone();Callback::from(move |_|on_pdf.emit((id,name.clone())))}}>{format!("PDF · {name}")}</button>}
     </div>}
 }
@@ -283,7 +289,7 @@ fn basis_chip(basis: &Value, document: &Value, on_pdf: &Callback<(u64, String)>)
 /// The basis line of the reply that opened proposal `pid`.
 fn basis_line(r: &Value, pid: &Value, on_pdf: &Callback<(u64, String)>) -> Html {
     match list(&r["replies"]).iter().find(|m| m["proposal"] == *pid) {
-        Some(m) => basis_chip(&m["basis"], &m["document"], on_pdf),
+        Some(m) => basis_chip(m, on_pdf),
         None => html! {},
     }
 }
@@ -369,7 +375,7 @@ fn thread_view(props: &RisposteProps, r: &Value, roles: &[Value], on_pdf: &Callb
                 if !text(&m["title"]).is_empty(){<b class="thread-title">{text(&m["title"])}</b>}
                 <p class="thread-text">{text(&m["text"])}</p>
                 {response_line(r,m,roles,on_conv)}
-                {basis_chip(&m["basis"],&m["document"],on_pdf)}
+                {basis_chip(m,on_pdf)}
                 if !original.is_empty()&&original!=text(&m["text"]){<small class="muted">{crate::exfmt!("Originale: {}","Original: {}",original)}</small>}
                 if m["reply_to"].is_number(){<small class="thread-reply-to">{crate::exfmt!("In risposta al messaggio #{}","In reply to message #{}",m["reply_to"])}</small>}
             </li>}

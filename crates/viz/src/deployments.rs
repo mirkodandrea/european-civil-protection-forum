@@ -36,6 +36,11 @@ impl DeploymentPalette {
         };
         (self.models[name].0.clone(), material.clone())
     }
+    /// The articulated parts of a unit model (wheels, beacons, limbs), each
+    /// mesh centred on its rig pivot.
+    pub fn parts(&self, name: &str) -> &[(Handle<Mesh>, Rig)] {
+        &self.models[name].1
+    }
 }
 /// Altitude a monitoring drone flies at, metres above the ground (a symbol
 /// altitude, like the tankers': at 50 m real it would vanish in the canopy).

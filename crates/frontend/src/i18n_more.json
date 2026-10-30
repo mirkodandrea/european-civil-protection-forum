@@ -45,6 +45,8 @@
   "To send, reply to a message or wait for an inject.": "Pour envoyer, répondez à un message ou attendez un inject.",
   "Turn recap": "Récapitulatif du tour",
   "Update received": "Mise à jour reçue",
+  "Warned": "Alertée",
+  "Warned zone (time)": "Zone alertée (heure)",
   "Water / retardant": "Eau / retardant",
   "You can respond and propose actions": "Vous pouvez répondre et proposer des actions",
   "a_MonitorArea": "Surveillance drone",
@@ -189,7 +191,10 @@
   "work_need_orders": "Les ordres ne sont pas ouverts : attendez la phase d'ordres.",
   "work_need_place": "Entrez une zone ou un lieu (cliquez sur la carte ou saisissez-le).",
   "work_need_response": "Rédigez un narratif ou ajoutez au moins une action.",
-  "work_need_second": "Entrez également le second point de la ligne."
+  "work_need_second": "Entrez également le second point de la ligne.",
+  "a_EvacuateDistrict": "Évacuation du village",
+  "Sea / lake": "Mer / lac",
+  "darker = more susceptible": "plus foncé = plus sensible"
  },
  "de": {
   "Active fire front": "Aktive Feuerfront",
@@ -237,6 +242,8 @@
   "To send, reply to a message or wait for an inject.": "Zum Senden auf eine Nachricht antworten oder auf einen Inject warten.",
   "Turn recap": "Rückblick der Runde",
   "Update received": "Update empfangen",
+  "Warned": "Gewarnt",
+  "Warned zone (time)": "Gewarnte Zone (Uhrzeit)",
   "Water / retardant": "Wasser / Löschmittel",
   "You can respond and propose actions": "Sie können antworten und Aktionen vorschlagen",
   "a_MonitorArea": "Drohnenüberwachung",
@@ -381,7 +388,10 @@
   "work_need_orders": "Befehle sind nicht offen: Warten Sie auf die Befehlsphase.",
   "work_need_place": "Geben Sie eine Zone oder einen Ort ein (Karte anklicken oder eingeben).",
   "work_need_response": "Schreiben Sie ein Narrativ oder fügen Sie mindestens eine Aktion hinzu.",
-  "work_need_second": "Geben Sie auch den zweiten Punkt der Linie ein."
+  "work_need_second": "Geben Sie auch den zweiten Punkt der Linie ein.",
+  "a_EvacuateDistrict": "Evakuierung des Dorfes",
+  "Sea / lake": "Meer / See",
+  "darker = more susceptible": "dunkler = anfälliger"
  },
  "es": {
   "Active fire front": "Frente de fuego activo",
@@ -429,6 +439,8 @@
   "To send, reply to a message or wait for an inject.": "Para enviar, responda a un mensaje o espere a un mensaje de control.",
   "Turn recap": "Resumen del turno",
   "Update received": "Actualización recibida",
+  "Warned": "Alertada",
+  "Warned zone (time)": "Zona alertada (hora)",
   "Water / retardant": "Agua / retardante",
   "You can respond and propose actions": "Puede responder y proponer acciones",
   "a_MonitorArea": "Monitoreo con drones",
@@ -573,7 +585,10 @@
   "work_need_orders": "Las órdenes no están abiertas: espere a la fase de órdenes.",
   "work_need_place": "Ingrese una zona o un lugar (haga clic en el mapa o escríbalo).",
   "work_need_response": "Escriba una narrativa o añada al menos una acción.",
-  "work_need_second": "Ingrese también el segundo punto de la línea."
+  "work_need_second": "Ingrese también el segundo punto de la línea.",
+  "a_EvacuateDistrict": "Evacuación del pueblo",
+  "Sea / lake": "Mar / lago",
+  "darker = more susceptible": "más oscuro = más susceptible"
  },
  "pt": {
   "Active fire front": "Frente de fogo ativa",
@@ -621,6 +636,8 @@
   "To send, reply to a message or wait for an inject.": "Para enviar, responda a uma mensagem ou aguarde por um inject.",
   "Turn recap": "Resumo do turno",
   "Update received": "Atualização recebida",
+  "Warned": "Alertada",
+  "Warned zone (time)": "Zona alertada (hora)",
   "Water / retardant": "Água / retardante",
   "You can respond and propose actions": "Pode responder e propor ações",
   "a_MonitorArea": "Monitorização por drone",
@@ -765,7 +782,10 @@
   "work_need_orders": "As ordens não estão abertas: aguarde pela fase de ordens.",
   "work_need_place": "Introduza uma zona ou local (clique no mapa ou escreva).",
   "work_need_response": "Escreva uma narrativa ou adicione pelo menos uma ação.",
-  "work_need_second": "Introduza também o segundo ponto da linha."
+  "work_need_second": "Introduza também o segundo ponto da linha.",
+  "a_EvacuateDistrict": "Evacuação da aldeia",
+  "Sea / lake": "Mar / lago",
+  "darker = more susceptible": "mais escuro = mais suscetível"
  },
  "ro": {
   "Active fire front": "Front activ de incendiu",
@@ -813,6 +833,8 @@
   "To send, reply to a message or wait for an inject.": "Pentru a trimite, răspundeți la un mesaj sau așteptați un inject.",
   "Turn recap": "Recapitulare tur",
   "Update received": "Actualizare primită",
+  "Warned": "Avertizată",
+  "Warned zone (time)": "Zonă avertizată (ora)",
   "Water / retardant": "Apă / retardant",
   "You can respond and propose actions": "Puteți răspunde și propune acțiuni",
   "a_MonitorArea": "Monitorizare dronă",
@@ -957,7 +979,10 @@
   "work_need_orders": "Ordinele nu sunt deschise: așteptați faza de ordine.",
   "work_need_place": "Introduceți o zonă sau un loc (faceți clic pe hartă sau tastați-l).",
   "work_need_response": "Scrieți o narațiune sau adăugați cel puțin o acțiune.",
-  "work_need_second": "Introduceți și al doilea punct al liniei."
+  "work_need_second": "Introduceți și al doilea punct al liniei.",
+  "a_EvacuateDistrict": "Evacuarea satului",
+  "Sea / lake": "Mare / lac",
+  "darker = more susceptible": "mai închis = mai susceptibil"
  },
  "el": {
   "Active fire front": "Ενεργό μέτωπο φωτιάς",
@@ -1005,6 +1030,8 @@
   "To send, reply to a message or wait for an inject.": "Για να στείλετε, απαντήστε σε ένα μήνυμα ή περιμένετε ένα inject.",
   "Turn recap": "Ανακεφαλαίωση γύρου",
   "Update received": "Ελήφθη ενημέρωση",
+  "Warned": "Προειδοποίηση",
+  "Warned zone (time)": "Ζώνη σε προειδοποίηση (ώρα)",
   "Water / retardant": "Νερό / επιβραδυντικό",
   "You can respond and propose actions": "Μπορείτε να απαντήσετε και να προτείνετε ενέργειες",
   "a_MonitorArea": "Παρακολούθηση με drone",
@@ -1149,7 +1176,10 @@
   "work_need_orders": "Οι διαταγές δεν είναι ανοιχτές: περιμένετε τη φάση των διαταγών.",
   "work_need_place": "Εισαγάγετε μια ζώνη ή μια τοποθεσία (κάντε κλικ στον χάρτη ή πληκτρολογήστε την).",
   "work_need_response": "Γράψτε μια αφήγηση ή προσθέστε τουλάχιστον μία ενέργεια.",
-  "work_need_second": "Εισαγάγετε επίσης το δεύτερο σημείο της γραμμής."
+  "work_need_second": "Εισαγάγετε επίσης το δεύτερο σημείο της γραμμής.",
+  "a_EvacuateDistrict": "Εκκένωση χωριού",
+  "Sea / lake": "Θάλασσα / λίμνη",
+  "darker = more susceptible": "πιο σκούρο = πιο ευπαθές"
  },
  "uk": {
   "Active fire front": "Активний фронт пожежі",
@@ -1197,6 +1227,8 @@
   "To send, reply to a message or wait for an inject.": "Щоб надіслати, дайте відповідь на повідомлення або дочекайтеся inject.",
   "Turn recap": "Підсумок ходу",
   "Update received": "Оновлення отримано",
+  "Warned": "Попереджено",
+  "Warned zone (time)": "Попереджена зона (час)",
   "Water / retardant": "Вода / антипірен",
   "You can respond and propose actions": "Ви можете відповідати та пропонувати дії",
   "a_MonitorArea": "Моніторинг дроном",
@@ -1341,7 +1373,10 @@
   "work_need_orders": "Накази не відкриті: дочекайтеся фази наказів.",
   "work_need_place": "Введіть зону або місце (натисніть на карту або введіть текст).",
   "work_need_response": "Напишіть розповідь або додайте принаймні одну дію.",
-  "work_need_second": "Також введіть другу точку лінії."
+  "work_need_second": "Також введіть другу точку лінії.",
+  "a_EvacuateDistrict": "Евакуація села",
+  "Sea / lake": "Море / озеро",
+  "darker = more susceptible": "темніше = вразливіше"
  },
  "hy": {
   "Active fire front": "Հրդեհի ակտիվ ճակատ",
@@ -1389,6 +1424,8 @@
   "To send, reply to a message or wait for an inject.": "Ուղարկելու համար պատասխանեք հաղորդագրությանը կամ սպասեք inject-ի։",
   "Turn recap": "Քայլի ամփոփում",
   "Update received": "Թարմացումը ստացված է",
+  "Warned": "Զգուշացված",
+  "Warned zone (time)": "Զգուշացված գոտի (ժամ)",
   "Water / retardant": "Ջուր / հրդեհաշիջող նյութ",
   "You can respond and propose actions": "Դուք կարող եք պատասխանել և առաջարկել գործողություններ",
   "a_MonitorArea": "Անօդաչուի մոնիտորինգ",
@@ -1533,7 +1570,10 @@
   "work_need_orders": "Հրամանները բաց չեն. սպասեք հրամանների փուլին:",
   "work_need_place": "Մուտքագրեք գոտի կամ վայր (սեղմեք քարտեզի վրա կամ մուտքագրեք):",
   "work_need_response": "Գրեք պատմողական կամ ավելացրեք առնվազն մեկ գործողություն:",
-  "work_need_second": "Մուտքագրեք նաև գծի երկրորդ կետը:"
+  "work_need_second": "Մուտքագրեք նաև գծի երկրորդ կետը:",
+  "a_EvacuateDistrict": "Գյուղի տարհանում",
+  "Sea / lake": "Ծով / լիճ",
+  "darker = more susceptible": "ավելի մուգ = ավելի զգայուն"
  },
  "ka": {
   "Active fire front": "ხანძრის აქტიური ფრონტი",
@@ -1581,6 +1621,8 @@
   "To send, reply to a message or wait for an inject.": "გასაგზავნად უპასუხეთ შეტყობინებას ან დაელოდეთ ახალს.",
   "Turn recap": "ეტაპის შეჯამება",
   "Update received": "განახლება მიღებულია",
+  "Warned": "გაფრთხილებული",
+  "Warned zone (time)": "გაფრთხილებული ზონა (დრო)",
   "Water / retardant": "წყალი / ანტიპირენი",
   "You can respond and propose actions": "შეგიძლიათ უპასუხოთ და შესთავაზოთ მოქმედებები",
   "a_MonitorArea": "დრონით მონიტორინგი",
@@ -1725,7 +1767,10 @@
   "work_need_orders": "ბრძანებები არ არის გახსნილი: დაელოდეთ ბრძანებების ფაზას.",
   "work_need_place": "შეიყვანეთ ზონა ან ადგილი (დააწკაპუნეთ რუკაზე ან აკრიფეთ).",
   "work_need_response": "დაწერეთ ნარატივი ან დაამატეთ მინიმუმ ერთი მოქმედება.",
-  "work_need_second": "ასევე შეიყვანეთ ხაზის მეორე წერტილი."
+  "work_need_second": "ასევე შეიყვანეთ ხაზის მეორე წერტილი.",
+  "a_EvacuateDistrict": "სოფლის ევაკუაცია",
+  "Sea / lake": "ზღვა / ტბა",
+  "darker = more susceptible": "უფრო მუქი = უფრო მგრძნობიარე"
  },
  "az": {
   "Active fire front": "Aktiv yanğın cəbhəsi",
@@ -1773,6 +1818,8 @@
   "To send, reply to a message or wait for an inject.": "Göndərmək üçün mesaja cavab verin və ya inject gözləyin.",
   "Turn recap": "Növbənin xülasəsi",
   "Update received": "Yeniləmə alındı",
+  "Warned": "Xəbərdarlıq",
+  "Warned zone (time)": "Xəbərdarlıq edilmiş zona (vaxt)",
   "Water / retardant": "Su / yanğınsöndürən maddə",
   "You can respond and propose actions": "Cavab verə və hərəkətlər təklif edə bilərsiniz",
   "a_MonitorArea": "PUA monitorinqi",
@@ -1917,6 +1964,9 @@
   "work_need_orders": "Əmrlər açıq deyil: əmrlər mərhələsini gözləyin.",
   "work_need_place": "Zona və ya yer daxil edin (xəritəyə klikləyin və ya yazın).",
   "work_need_response": "Nəqli yazın və ya ən azı bir hərəkət əlavə edin.",
-  "work_need_second": "Xəttin ikinci nöqtəsini də daxil edin."
+  "work_need_second": "Xəttin ikinci nöqtəsini də daxil edin.",
+  "a_EvacuateDistrict": "Kəndin təxliyəsi",
+  "Sea / lake": "Dəniz / göl",
+  "darker = more susceptible": "tünd = daha həssas"
  }
 }

@@ -13,6 +13,13 @@
 //!   commands still need EXCON approval and feasibility checks and are the
 //!   only part that can touch the world.
 //!
+//! A narrated reply to the inject's sender (the player's answer, which the
+//! EXCON's AI reads) also needs its basis, the reference for a plan,
+//! procedure or law, and the player's rationale ("why this decision"). A
+//! message to other players is coordination and needs none of them, unless
+//! it starts a new conversation: then the same three fields are its reason
+//! ([`crate::conversations::ConversationReason`]).
+//!
 //! A narrative needs an inject to answer. A response addressed to players is
 //! also posted in a conversation with them linked to the inject.
 use crate::{BasisKind, DecisionBasis, DecisionEvidence, Exercise, PdfUpload, MsgKind, ParsedInput, Phase, ProposalStatus, MASTER};
@@ -57,6 +64,13 @@ pub struct PlayerResponse {
     pub conversation: Option<u64>,
     /// What the response rests on (plans, laws or operational judgement).
     pub basis: Option<BasisKind>,
+    /// Which plan, procedure or law applies, in the player's own words
+    /// (needs `basis`; required for a plan, procedure or law basis in a
+    /// narrated reply to the sender).
+    pub basis_note: Option<String>,
+    /// Why the player decided this, in their own words: required, with
+    /// `basis`, in a narrated reply to the inject's sender.
+    pub rationale: Option<String>,
     /// PDF of the plan or law the response cites; needs a plan/law basis.
     pub document: Option<PdfUpload>,
     /// Communication or decision (required by the API; a decision needs `basis`).
@@ -76,6 +90,12 @@ impl PlayerResponse {
     }
     pub fn is_communication(&self) -> bool {
         self.kind == ResponseKind::Communication
+    }
+    fn rationale_text(&self) -> Option<&str> {
+        self.rationale.as_deref().map(str::trim).filter(|t| !t.is_empty())
+    }
+    fn note_text(&self) -> Option<&str> {
+        self.basis_note.as_deref().map(str::trim).filter(|t| !t.is_empty())
     }
 }
 
@@ -97,7 +117,31 @@ impl Exercise {
             }
             self.validate_document(role, document)?;
         }
+        if let Some(note) = r.basis_note.as_deref().filter(|n| !n.trim().is_empty()) {
+            if r.basis.is_none() {
+                bail!("say what the reference or rationale is: plan or procedure, law or operational judgement");
+            }
+            if note.chars().count() > 2000 {
+                bail!("the reference or rationale is limited to 2000 characters");
+            }
+        }
+        if r.rationale_text().is_some_and(|t| t.chars().count() > 2000) {
+            bail!("the rationale is limited to 2000 characters");
+        }
         let narrative = r.narrative_text();
+        // A narrated reply to the inject's sender is what the EXCON's AI reads:
+        // it states its basis, the reference for a plan or law, and why.
+        if narrative.is_some() && r.to_players.is_empty() {
+            let Some(kind) = r.basis else {
+                bail!("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement");
+            };
+            if kind != BasisKind::OperationalJudgment && r.note_text().is_none() {
+                bail!("say which plan, procedure or law the reply rests on (e.g. the plan's section or the article)");
+            }
+            if r.rationale_text().is_none() {
+                bail!("a reply to the sender needs its rationale: why this decision");
+            }
+        }
         if narrative.is_none() && r.commands.is_empty() {
             bail!("a response needs a narrative or at least one action");
         }
@@ -189,6 +233,9 @@ impl Exercise {
                 }
                 None => {}
             }
+            if self.players_conversation(role, r).is_none() {
+                Self::new_conversation_reason(r)?;
+            }
         }
         if self.clarification_target(role, reply_to).is_some() {
             bail!("this answers an open question: send it as a text answer, or create a new action without replying to the question");
@@ -229,14 +276,26 @@ impl Exercise {
             ),
             None => (None, Vec::new()),
         };
+        let basis_note = r.note_text().map(str::to_string);
+        let rationale = r.rationale_text().map(str::to_string);
         let evidence = match r.basis {
             Some(kind) => Some(DecisionEvidence {
                 basis: DecisionBasis {
                     kind,
-                    reference: match &r.document {
-                        Some(d) => format!("Declared by the player: {}; document {}", basis_label(kind), d.name),
-                        None => format!("Declared by the player: {}", basis_label(kind)),
+                    // The player's own reference or rationale when given
+                    // (what `DecisionBasis::reference` documents), else the
+                    // declared kind alone.
+                    reference: {
+                        let mut reference = match &basis_note {
+                            Some(n) => n.clone(),
+                            None => format!("{DECLARED}{}", basis_label(kind)),
+                        };
+                        if let Some(d) = &r.document {
+                            reference.push_str(&format!("; document {}", d.name));
+                        }
+                        reference
                     },
+                    rationale: rationale.clone(),
                 },
                 attachments: Vec::new(),
             }),
@@ -344,9 +403,15 @@ impl Exercise {
             // The AI context keeps what the player said the decision rests on.
             if let Some(kind) = r.basis {
                 note.push_str(&format!("\n[basis] {}", basis_label(kind)));
+                if let Some(n) = &basis_note {
+                    note.push_str(&format!(": {n}"));
+                }
                 if let Some(d) = &document {
                     note.push_str(&format!("; attached PDF: {}", d.name));
                 }
+            }
+            if let Some(why) = &rationale {
+                note.push_str(&format!("\n[rationale] {why}"));
             }
             self.converse(role, "user", note);
             self.record(
@@ -379,6 +444,43 @@ impl Exercise {
         Ok(pid)
     }
 
+    /// The conversation a response to players goes into, if one exists: the
+    /// one it was written from, or one on the same inject with exactly these
+    /// participants. `None`: the response starts a new conversation.
+    pub fn players_conversation(&self, role: &str, r: &PlayerResponse) -> Option<u64> {
+        let parent = r.reply_to?;
+        let mut wanted: Vec<&str> = r.to_players.iter().map(String::as_str).collect();
+        wanted.push(role);
+        wanted.sort_unstable();
+        r.conversation.or_else(|| {
+            self.linked_conversations
+                .iter()
+                .rev()
+                .find(|c| {
+                    let mut have: Vec<&str> = c.participants.iter().map(String::as_str).collect();
+                    have.sort_unstable();
+                    c.delivery == parent && have == wanted
+                })
+                .map(|c| c.id)
+        })
+    }
+
+    /// Whether this response to players would open a new conversation (and so
+    /// needs its reason).
+    pub fn response_starts_conversation(&self, role: &str, r: &PlayerResponse) -> bool {
+        !r.to_players.is_empty() && self.players_conversation(role, r).is_none()
+    }
+
+    /// The reason of a conversation a response to players starts: its basis,
+    /// reference and rationale.
+    fn new_conversation_reason(r: &PlayerResponse) -> Result<crate::conversations::ConversationReason> {
+        crate::conversations::ConversationReason::new(
+            r.basis,
+            r.basis_note.as_deref(),
+            r.rationale.as_deref(),
+        )
+    }
+
     /// Post a response addressed to players in the conversation linked to the
     /// inject: the one it was written from, an existing one with exactly these
     /// participants, or a new one. Returns the conversation id.
@@ -391,21 +493,7 @@ impl Exercise {
         text_en: &str,
     ) -> Result<u64> {
         let parent = r.reply_to.expect("validated reply_to");
-        let mut wanted: Vec<&str> = r.to_players.iter().map(String::as_str).collect();
-        wanted.push(role);
-        wanted.sort_unstable();
-        let existing = r.conversation.or_else(|| {
-            self.linked_conversations
-                .iter()
-                .rev()
-                .find(|c| {
-                    let mut have: Vec<&str> = c.participants.iter().map(String::as_str).collect();
-                    have.sort_unstable();
-                    c.delivery == parent && have == wanted
-                })
-                .map(|c| c.id)
-        });
-        let (cid, mid) = match existing {
+        let (cid, mid) = match self.players_conversation(role, r) {
             Some(cid) => {
                 let mid = self.push_conversation_message(
                     cid, role, text, text_en, &r.texts, Some(parent), r.translation_failed,
@@ -413,7 +501,14 @@ impl Exercise {
                 (cid, mid)
             }
             None => self.start_linked_conversation(
-                role, parent, &r.to_players, text, text_en, &r.texts, r.translation_failed,
+                role,
+                parent,
+                &r.to_players,
+                text,
+                text_en,
+                &r.texts,
+                r.translation_failed,
+                Self::new_conversation_reason(r)?,
             )?,
         };
         if let Some(m) = self
@@ -427,6 +522,9 @@ impl Exercise {
         Ok(cid)
     }
 }
+
+/// Prefix of a basis reference the player did not write (kind only).
+pub const DECLARED: &str = "Declared by the player: ";
 
 /// English wording of a basis for logs and the AI context.
 pub fn basis_label(kind: BasisKind) -> &'static str {

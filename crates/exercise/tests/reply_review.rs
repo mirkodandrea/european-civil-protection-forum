@@ -39,6 +39,8 @@ fn reply(ex: &mut Exercise, role: &str, parent: u64, text: &str) -> u64 {
             narrative_en: text.into(),
             reply_to: Some(parent),
             kind: ResponseKind::Communication,
+            basis: Some(BasisKind::OperationalJudgment),
+            rationale: Some("The fire threatens the village".into()),
             ..Default::default()
         },
     )
@@ -592,4 +594,91 @@ fn a_reviewed_action_waits_for_play_and_runs_as_its_role() {
     assert_eq!(item.state, ItemState::Executed, "{:?}", item.execution);
     assert!(item.execution.as_ref().unwrap().ok);
     assert!(ex.world.d.tasks.iter().any(|t| t.role == "fire_commander"));
+}
+
+/// The player's stated basis (plan, procedure, law or operational judgement)
+/// and its reference or rationale travel with the reply: into the evidence,
+/// the player's AI conversation and the thread the AI reads for the EXCON.
+#[test]
+fn the_reply_basis_reaches_the_ai_reading() {
+    let mut ex = exercise();
+    let parent = inject(&mut ex, &["mayor"], INJECT)[0];
+    let pid = ex
+        .player_response(
+            "mayor",
+            PlayerResponse {
+                narrative: Some("Apriamo la palestra come area di attesa".into()),
+                narrative_en: "We open the gym as a waiting area".into(),
+                reply_to: Some(parent),
+                kind: ResponseKind::Communication,
+                basis: Some(BasisKind::Plan),
+                basis_note: Some("Piano comunale di protezione civile, scheda 4".into()),
+                rationale: Some("Le famiglie evacuate devono attendere al coperto".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let basis = &ex.proposal(pid).unwrap().evidence.as_ref().unwrap().basis;
+    assert_eq!(basis.kind, BasisKind::Plan);
+    assert!(basis.reference.contains("scheda 4"), "{}", basis.reference);
+    assert!(
+        ex.conversations["mayor"].iter().any(|t| t.content.contains("[basis] plans: Piano comunale")),
+        "the player's AI conversation keeps the basis"
+    );
+    ex.begin_review(pid).unwrap();
+    let context = ex.review_context(pid).unwrap();
+    let reply = context.thread.as_array().unwrap().iter().find(|e| e["kind"] == "reply").unwrap();
+    assert_eq!(reply["basis"]["kind"], "plan");
+    assert!(reply["basis"]["reference"].as_str().unwrap().contains("scheda 4"));
+    assert_eq!(reply["basis"]["rationale"], "Le famiglie evacuate devono attendere al coperto");
+    assert!(
+        ex.conversations["mayor"].iter().any(|t| t.content.contains("[rationale] Le famiglie evacuate")),
+        "the player's AI conversation keeps the rationale"
+    );
+    let view = ex.review_view();
+    let row = view["reviews"].as_array().unwrap().iter().find(|r| r["proposal"] == pid).unwrap();
+    assert_eq!(row["rationale"], "Le famiglie evacuate devono attendere al coperto", "the EXCON board shows why");
+    // A reply to the sender needs its basis, the reference of a plan or law,
+    // and the rationale; a message to other players needs none of them.
+    let base = PlayerResponse {
+        narrative: Some("Evacuiamo F4".into()),
+        narrative_en: "We evacuate F4".into(),
+        reply_to: Some(parent),
+        kind: ResponseKind::Communication,
+        basis: Some(BasisKind::Law),
+        basis_note: Some("L. 225/1992, art. 15".into()),
+        rationale: Some("Il fuoco raggiunge le case entro un'ora".into()),
+        ..Default::default()
+    };
+    assert!(ex.validate_player_response("mayor", &base).is_ok());
+    let err = |r: PlayerResponse| ex.validate_player_response("mayor", &r).unwrap_err().to_string();
+    assert!(err(PlayerResponse { basis: None, basis_note: None, ..base.clone() }).contains("basis"));
+    assert!(err(PlayerResponse { basis_note: Some("  ".into()), ..base.clone() }).contains("which plan, procedure or law"));
+    assert!(err(PlayerResponse { rationale: Some(" ".into()), ..base.clone() }).contains("rationale"));
+    let judgement = PlayerResponse { basis: Some(BasisKind::OperationalJudgment), basis_note: None, ..base.clone() };
+    assert!(ex.validate_player_response("mayor", &judgement).is_ok(), "no reference for operational judgement");
+    // A message to other players that opens a conversation states why
+    // (basis, reference of a plan or law, rationale); once it exists, the
+    // coordination inside it needs none of them.
+    let to_players = PlayerResponse { basis: None, basis_note: None, rationale: None, to_players: vec!["fire_commander".into()], ..base.clone() };
+    assert!(err(to_players.clone()).contains("why you start this conversation"));
+    let opening = PlayerResponse { basis: Some(BasisKind::OperationalJudgment), rationale: Some("Serve il parere dei VVF".into()), ..to_players.clone() };
+    assert!(ex.validate_player_response("mayor", &opening).is_ok(), "personal initiative needs no reference");
+    let reason = exercise::conversations::ConversationReason::new(Some(BasisKind::OperationalJudgment), None, Some("Serve il parere dei VVF")).unwrap();
+    ex.start_linked_conversation("mayor", parent, &["fire_commander".into()], "Che ne pensate?", "What do you think?", &BTreeMap::new(), false, reason).unwrap();
+    assert!(ex.validate_player_response("mayor", &to_players).is_ok(), "coordination in a conversation needs no basis");
+    // Sessions saved before the rationale existed still load.
+    let old: DecisionEvidence = serde_json::from_value(json!({"basis": {"kind": "plan", "reference": "Piano, scheda 4"}})).unwrap();
+    assert!(old.basis.rationale.is_none());
+    assert!(serde_json::to_value(&old).unwrap()["basis"].get("rationale").is_none());
+    // A rationale has to say what kind of basis it is.
+    let orphan = PlayerResponse {
+        narrative: Some("Evacuiamo".into()),
+        narrative_en: "We evacuate".into(),
+        reply_to: Some(parent),
+        kind: ResponseKind::Communication,
+        basis_note: Some("Esperienza".into()),
+        ..Default::default()
+    };
+    assert!(ex.validate_player_response("mayor", &orphan).is_err());
 }

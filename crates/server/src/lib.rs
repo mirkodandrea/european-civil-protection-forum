@@ -94,31 +94,40 @@ const TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
 /// Most texts translated at runtime for one view.
 const MAX_RUNTIME_TEXTS: usize = 60;
 
-/// English source text -> text in `language` for the scenario-authored
-/// content players read (role, resource and inject texts, senders). The
-/// built-in glossary and the scenario's own `translations` come first and work
-/// without an LLM; the rest (and `extra`, e.g. titles of injects the EXCON
-/// wrote) is translated once per language and cached. What cannot be
-/// translated stays in the scenario's language.
+/// Source text -> text in `language` for the scenario-authored content
+/// (role, resource and inject texts, senders; for a player also the map
+/// labels). The built-in glossary and the scenario's own `translations` come
+/// first and work without an LLM; for a player the rest (and `extra`, e.g.
+/// titles of injects the EXCON wrote) is translated once per language and
+/// cached. What cannot be translated stays in the scenario's language. Map
+/// labels are only ever static: the EXCON keeps the territory's names, which
+/// its commands use.
 async fn display_map(
     s: &AppState,
     language: &str,
     extra: Vec<String>,
-    use_llm: bool,
+    player: bool,
 ) -> std::collections::BTreeMap<String, String> {
-    if language == "en" {
-        return Default::default();
-    }
     let (mut map, mut texts) = {
         let ex = s.lock();
         let scn = &ex.world.scn;
+        let mut map = scn.display_map(language);
+        if !player {
+            for name in scn.map_texts() {
+                map.remove(&name);
+            }
+        }
         let mut texts = scn.translatable_texts();
         // A role written in the player's language needs no translation.
         for r in scn.roles.iter().filter(|r| r.language == language) {
             texts.retain(|t| *t != r.name && *t != r.description);
         }
-        (scn.display_map(language), texts)
+        (map, texts)
     };
+    if language == "en" {
+        return map;
+    }
+    let use_llm = player;
     texts.extend(extra);
     texts.sort();
     texts.dedup();
@@ -286,6 +295,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_access_links,
                 post_knowledge,
                 post_knowledge_refresh,
+                get_master_player_map,
+                get_master_player_static,
                 forecast::compute,
                 forecast::publish,
                 situation::get_impact,
@@ -304,6 +315,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_cancel_schedule,
                 post_execute,
                 get_evaluator,
+                get_observer,
                 assessment::get,
                 get_static,
                 get_state,
@@ -352,6 +364,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 library::get_scenarios,
                 library::get_scenario,
                 library::post_validate,
+                library::post_translate,
                 library::post_save,
                 library::post_delete_scenario,
                 library::post_activate,
@@ -519,6 +532,14 @@ pub(crate) const MAX_BODY_BYTES: usize = 15 * 1024 * 1024;
 
 type ApiResult = Result<Json<Value>, ApiError>;
 
+/// Wall clock in ms since the epoch (journals record it with each request).
+pub(crate) fn now_wall_ms() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(Status::BadRequest, msg.into())
 }
@@ -554,7 +575,7 @@ async fn get_access(principal: Principal) -> ApiResult {
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
     Ok(Json(
-        json!({"players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>()}),
+        json!({"players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>(), "observer": {"url": "/observer.html"}}),
     ))
 }
 
@@ -669,6 +690,16 @@ async fn get_evaluator(
     Ok(Json(s.lock().evaluator_view(&filter)?))
 }
 
+/// Observer dashboard (`observer.html`, EXCON identity): see [`exercise::observer`].
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/observer"))]
+async fn get_observer(principal: Principal, s: AppState) -> ApiResult {
+    let map = excon_display_map(&s, &principal).await;
+    let mut view = json!(s.lock().observer_dashboard());
+    view["wall_ms"] = json!(web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    scenario::glossary::localize_value(&mut view, &map);
+    Ok(Json(view))
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/state"))]
 async fn get_state(principal: Principal, s: AppState) -> ApiResult {
     let map = excon_display_map(&s, &principal).await;
@@ -683,6 +714,7 @@ async fn get_state(principal: Principal, s: AppState) -> ApiResult {
         "turn": ex.turn,
         "phase": ex.phase,
         "turn_minutes": ex.turn_minutes,
+        "progress": ex.progress(),
         "speed": ex.speed,
         "resolving": ex.resolving.as_ref().map(|r| json!({"turn": r.turn, "from_s": r.from_s, "to_s": r.to_s, "minutes": r.minutes, "partial": r.partial})),
         "turn_window": {"start_s": ex.turn_start_s, "planned_end_s": ex.planned_end_s(), "now_s": ex.world.time_s(), "substeps": ex.substeps},
@@ -781,8 +813,9 @@ async fn get_attachment(principal: Principal, s: AppState, id: u64) -> ApiResult
     })))
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
-async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
+/// The display texts a player of `role` reads (their language, plus the titles
+/// and senders of the injects they received). Empty for an unknown role.
+async fn player_display_map(s: &AppState, role: &str) -> std::collections::BTreeMap<String, String> {
     let (language, extra) = {
         let ex = s.lock();
         let extra = ex
@@ -791,12 +824,63 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
             .filter(|m| m.kind == exercise::MsgKind::Inject)
             .flat_map(|m| [m.title.clone().unwrap_or_default(), m.from.clone()])
             .collect::<Vec<_>>();
-        (ex.players.get(&role).map(|p| p.language.clone()), extra)
+        (ex.players.get(role).map(|p| p.language.clone()), extra)
     };
-    let map = match language {
-        Some(language) => display_map(&s, &language, extra, true).await,
+    match language {
+        Some(language) => display_map(s, &language, extra, true).await,
         None => Default::default(),
-    };
+    }
+}
+
+/// The role's own missions as its map draws them.
+fn player_deployments(ex: &Exercise, role: &str) -> Vec<Value> {
+    ex.world.d.tasks.iter().filter(|t| t.role == role).map(|t| json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect()
+}
+
+/// "View as role" for EXCON: the map exactly as the player of `role` receives
+/// it in `GET /api/player/<role>` (fog of war, own missions, player language).
+/// Read-only, master only.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/player-map/<role>"))]
+async fn get_master_player_map(principal: Principal, s: AppState, role: String) -> ApiResult {
+    if !matches!(principal, Principal::Master) {
+        return Err(bad("EXCON only"));
+    }
+    let map = player_display_map(&s, &role).await;
+    let ex = s.lock();
+    let player = ex
+        .players
+        .get(&role)
+        .cloned()
+        .ok_or_else(|| bad(format!("unknown role {role}")))?;
+    let mut view = json!({
+        "role": role,
+        "language": player.language,
+        "time_s": ex.world.time_s(),
+        "clock": ex.world.clock(),
+        "map": ex.player_map(&role)?,
+        "deployments": player_deployments(&ex, &role),
+    });
+    scenario::glossary::localize_value(&mut view, &map);
+    scrub_excon(&ex, &mut view, &player.language, &role);
+    Ok(Json(view))
+}
+
+/// The static territory the player of `role` receives from `GET /api/static`
+/// (their place names and language). Master only, for "view as role".
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/player-static/<role>"))]
+async fn get_master_player_static(principal: Principal, s: AppState, role: String) -> ApiResult {
+    if !matches!(principal, Principal::Master) {
+        return Err(bad("EXCON only"));
+    }
+    if !s.lock().players.contains_key(&role) {
+        return Err(bad(format!("unknown role {role}")));
+    }
+    get_static(s, Principal::Player { role }).await
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
+async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
+    let map = player_display_map(&s, &role).await;
     let ex = s.lock();
     let player = ex
         .players
@@ -847,7 +931,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "turn_summaries": ex.player_turn_summaries(&role),
         "resources": ex.world.d.pools.get(&role),
         "resource_accounting": ex.resource_accounting(Some(&role))[&role],
-        "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),
+        "deployments":player_deployments(&ex, &role),
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
         "clarification_threads": ex.player_clarification_threads(&role).into_iter().chain(ex.player_review_threads(&role)).collect::<Vec<_>>(),

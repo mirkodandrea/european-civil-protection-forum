@@ -26,19 +26,23 @@ mod i18n_more;
 mod label_layout;
 mod i18n_review;
 mod i18n_reply;
+mod i18n_console;
 mod i18n_risposte;
 mod pdf_view;
 mod proposal_drafts;
 mod place_pick;
 mod player_view;
 mod map;
+mod fuel_palette;
 mod map_legend;
 mod map_layers;
 #[cfg(not(feature = "standalone"))]
 mod maptest;
 mod notifications;
+mod observer;
 mod render;
 mod risposte;
+mod reply_composer;
 mod review_board;
 mod situation;
 mod staged_commands;
@@ -55,6 +59,7 @@ mod store;
 mod tactical;
 mod timeline;
 mod timeline_plan;
+mod timers;
 mod widgets;
 
 use api::{list, text, window};
@@ -67,11 +72,9 @@ use yew::prelude::*;
 #[derive(Clone, PartialEq)]
 pub enum ActionKind {
     Ordinary,
-    WorkSubmit,
-    /// A new linked conversation: open it once the server created it.
-    ConvStart,
-    /// A message in a linked conversation: clear the composer.
-    ConvSend,
+    /// A reply from the composer of this context (`reply_composer`): clear
+    /// its draft; open the conversation it started, if any.
+    ReplySent(String),
     Store(String),
     Send(String, String),
     Download,
@@ -236,9 +239,6 @@ pub enum Msg {
     OpenInject(String),
     /// Open the drill-down of a response row (empty: back to the list).
     OpenInjectDetail(String),
-    OpenWork(Option<String>),
-    /// Answer the inject delivery `.0` from the linked conversation `.1`.
-    OpenWorkConv(String, String),
     CloseInject,
     View(String),
     Field(String, String),
@@ -709,6 +709,16 @@ impl Component for App {
                     }
                     Ok(value) => {
                         self.notice = crate::i18n::ex("Operazione completata").into();
+                        // Say what the simulator did (e.g. "population of F4 warned at 14:20 …").
+                        let notes = list(&value["results"])
+                            .iter()
+                            .filter(|r| r["ok"] == true && r["queued"].is_null())
+                            .flat_map(|r| list(&r["notes"]).iter().map(|n| crate::render::localize_note(text(n))).collect::<Vec<_>>())
+                            .filter(|n| !n.is_empty())
+                            .collect::<Vec<_>>();
+                        if !notes.is_empty() {
+                            self.notice = format!("{} · {}", self.notice, notes.join(" · "));
+                        }
                         let failures = list(&value["results"])
                             .iter()
                             .filter(|r| r["ok"] == false)
@@ -755,17 +765,9 @@ impl Component for App {
                                     self.error = e
                                 }
                             }
-                            ActionKind::WorkSubmit => {
-                                player_view::response_sent(&mut self.fields);
-                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
-                            }
-                            ActionKind::ConvStart => {
-                                player_view::conversation_started(&mut self.fields, value["conversation"].as_u64());
-                                self.notice = crate::i18n::ex("Inviato").into();
-                            }
-                            ActionKind::ConvSend => {
-                                player_view::conversation_sent(&mut self.fields);
-                                self.notice = crate::i18n::ex("Inviato").into();
+                            ActionKind::ReplySent(ctx) => {
+                                crate::reply_composer::reply_sent(&mut self.fields, &ctx, &value);
+                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Inviato")}.into();
                             }
                             ActionKind::ClearField(key) => {
                                 self.fields.remove(&key);
@@ -775,19 +777,6 @@ impl Component for App {
                     }
                 }
                 self.request_refresh(ctx);
-            }
-            Msg::OpenWorkConv(parent, conversation) => {
-                player_view::open_work_conv(&mut self.fields, &self.state, &self.own, parent, conversation);
-                self.error.clear();
-                focus_when_rendered("#response-narrative", 10);
-            }
-            Msg::OpenWork(parent) => {
-                let parent = parent
-                    .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
-                    .unwrap_or_default();
-                player_view::open_work(&mut self.fields, parent);
-                self.error.clear();
-                focus_when_rendered("#response-narrative", 10);
             }
             Msg::OpenInjectDetail(key) => player_view::open_inject_detail(&mut self.fields, key),
             Msg::OpenInject(id) => {
@@ -1031,7 +1020,7 @@ impl Component for App {
             </section></div>};
         }
         html! {<>
-            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div><div class="grow"/>
+            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div>if self.is_master()&&!self.is_evaluator()&&!self.state["progress"].is_null(){<timers::ExerciseTimers progress={self.state["progress"].clone()}/>}<div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
             {self.view_notification_bell(ctx)}
             </header>
@@ -1093,13 +1082,20 @@ fn main() {
         return;
     }
     #[cfg(not(feature = "standalone"))]
-    if api::window()
-        .location()
-        .pathname()
-        .unwrap_or_default()
-        .ends_with("maptest.html")
-    {
+    let path = api::window().location().pathname().unwrap_or_default();
+    #[cfg(not(feature = "standalone"))]
+    if path.ends_with("maptest.html") {
         yew::Renderer::<maptest::MapTest>::new().render();
+    } else if path.ends_with("observer.html") {
+        // One observer in a controlled room: it reads as the EXCON, in the
+        // EXCON console language of this browser (Italian by default).
+        let lang = crate::store_lang();
+        yew::Renderer::<observer::Observers>::with_props(observer::ObserverProps {
+            token: server_master(),
+            lang,
+            visible: true,
+        })
+        .render();
     } else {
         // `Renderer::new` would use `AppProps::default()`, where `visible` is
         // false (the `prop_or(true)` only applies inside `html!`): the page
@@ -1112,6 +1108,22 @@ fn main() {
     }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();
+}
+
+/// The EXCON identity (`server::access::MASTER_KEY`): no secret, the room is trusted.
+#[cfg(not(feature = "standalone"))]
+fn server_master() -> String {
+    "master".into()
+}
+
+/// The EXCON console language this browser chose (`ttx_excon_lang`), Italian by default.
+#[allow(dead_code)]
+fn store_lang() -> String {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
+        .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+        .unwrap_or_else(|| "it".into())
 }
 
 /// True when this browser session already stored `key`.

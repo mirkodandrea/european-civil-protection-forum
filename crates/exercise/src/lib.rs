@@ -48,10 +48,13 @@ pub mod actions;
 pub mod queue;
 pub mod situation;
 pub mod suggestions;
+pub mod progress;
+pub use progress::Progress;
+pub mod observer;
 
 /// Minutes an evacuation takes (see `sim::EVAC_MIN`); the lead time of warnings.
 pub const EVAC_LEAD_MIN: i64 = sim::EVAC_MIN;
-pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
+pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation, WarningObs};
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -299,6 +302,10 @@ pub struct DecisionBasis {
     pub kind: BasisKind,
     /// Procedure/plan reference or the player's operational rationale.
     pub reference: String,
+    /// Why the player took this decision, in their own words (a reply to
+    /// the inject's sender requires it; older sessions have none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +327,7 @@ impl DecisionEvidence {
             basis: DecisionBasis {
                 kind: BasisKind::OperationalJudgment,
                 reference: reference.into(),
+                rationale: None,
             },
             attachments: Vec::new(),
         }
@@ -328,6 +336,9 @@ impl DecisionEvidence {
     pub fn validate(&self) -> Result<()> {
         if self.basis.reference.trim().is_empty() || self.basis.reference.chars().count() > 2000 {
             bail!("decision basis requires a reference or rationale (up to 2000 characters)");
+        }
+        if self.basis.rationale.as_ref().is_some_and(|r| r.chars().count() > 2000) {
+            bail!("the rationale is limited to 2000 characters");
         }
         if self.attachments.len() > 20 {
             bail!("at most 20 evidence links are allowed");
@@ -597,6 +608,16 @@ pub struct Exercise {
     pub turn_start_s: i64,
     /// Intermediate advances made inside the open turn.
     pub substeps: Vec<SubStep>,
+    /// Wall-clock instant (ms) of the first start; kept across rollbacks (see [`progress`]).
+    pub started_wall_ms: Option<u128>,
+    /// Wall-clock instant the exercise ended.
+    pub ended_wall_ms: Option<u128>,
+    /// Wall-clock instant the open turn began.
+    pub turn_wall_ms: Option<u128>,
+    /// While a saved session is replayed: the instant the request being
+    /// replayed was originally made, used instead of the wall clock for the
+    /// instants above.
+    pub replay_wall_ms: Option<u128>,
     pub players: BTreeMap<String, Player>,
     pub messages: Vec<Message>,
     pub proposals: Vec<Proposal>,
@@ -680,6 +701,10 @@ impl Exercise {
             turn_minutes,
             turn_start_s: 0,
             substeps: Vec::new(),
+            started_wall_ms: None,
+            ended_wall_ms: None,
+            turn_wall_ms: None,
+            replay_wall_ms: None,
             players,
             messages: Vec::new(),
             proposals: Vec::new(),
@@ -795,6 +820,14 @@ impl Exercise {
         self.players.keys().cloned().collect()
     }
 
+    /// The LLM gazetteer, with the map names in the players' languages as aliases.
+    pub fn gazetteer(&self) -> Value {
+        let mut languages: Vec<String> = self.players.values().map(|p| p.language.clone()).collect();
+        languages.sort();
+        languages.dedup();
+        self.world.gazetteer_for(&languages)
+    }
+
     pub fn language_of(&self, role: &str) -> String {
         if role == MASTER {
             return self.excon_language.clone();
@@ -882,6 +915,9 @@ impl Exercise {
         self.turn = 1;
         self.phase = Phase::Orders;
         self.turn_start_s = self.world.time_s();
+        let now = self.now_wall_ms();
+        self.started_wall_ms.get_or_insert(now);
+        self.turn_wall_ms = Some(now);
         self.substeps.clear();
         self.world.new_turn();
         self.snapshots.push((1, self.world.snapshot()));
@@ -1052,6 +1088,7 @@ impl Exercise {
         self.turn += 1;
         self.phase = Phase::Orders;
         self.turn_start_s = self.world.time_s();
+        self.turn_wall_ms = Some(self.now_wall_ms());
         self.substeps.clear();
         self.world.new_turn();
         self.snapshots.push((self.turn, self.world.snapshot()));
@@ -1101,6 +1138,7 @@ impl Exercise {
         self.turn = turn;
         self.phase = Phase::Orders;
         self.turn_start_s = self.world.time_s();
+        self.turn_wall_ms = Some(self.now_wall_ms());
         self.substeps.clear();
         self.last_turn = None;
         self.record("rollback", MASTER, json!({"to_turn": turn}));
@@ -1120,6 +1158,7 @@ impl Exercise {
         }
         self.stop_clock("Exercise ended");
         self.phase = Phase::Debrief;
+        self.ended_wall_ms.get_or_insert(self.now_wall_ms());
         self.record(
             "exercise_ended",
             MASTER,
@@ -2582,6 +2621,8 @@ impl Exercise {
             facts.push(format!("Note from {who}: {n}"));
         }
         self.proposal_mut(pid)?.master_note = note;
+        // Decided directly: its AI review (if any) is over too.
+        self.close_review_after_decision(pid);
         let facts_en = facts.join("\n");
         self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "review": review, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
         Ok(DecisionOutcome {

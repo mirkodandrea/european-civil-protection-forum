@@ -56,13 +56,13 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
     let (c, _, parent) = fixture().await;
     let path = "/api/player/mayor/actions";
     let warn = json!({"type":"IssueWarning","zone":"F4"});
-    let (status, _) = call(&c, "mayor", path, Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent}))).await;
+    let (status, _) = call(&c, "mayor", path, Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent}))).await;
     assert_eq!(status, Status::BadRequest, "neither narrative nor actions");
     let (status, body) = call(
         &c,
         "mayor",
         path,
-        Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"narrative":"Avviso i volontari"})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"narrative":"Avviso i volontari"})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -70,7 +70,7 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
         &c,
         "mayor",
         path,
-        Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"text":"Avviso F4","commands":[warn]})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"text":"Avviso F4","commands":[warn]})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -78,7 +78,7 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
         &c,
         "mayor",
         path,
-        Some(json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"narrative":"Avviso e informo","commands":[warn]})),
+        Some(json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"narrative":"Avviso e informo","commands":[warn]})),
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -126,7 +126,7 @@ async fn one_route_takes_narrative_actions_or_both_and_refuses_neither() {
 #[tokio::test]
 async fn a_linked_conversation_lets_another_player_answer_the_inject() {
     let (c, _, parent) = fixture().await;
-    let respond = json!({"kind":"decision","basis":"operational_judgment","reply_to":parent,"narrative":"Warning from regional level","commands":[{"type":"IssueWarning","zone":"F4"}]});
+    let respond = json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","reply_to":parent,"narrative":"Warning from regional level","commands":[{"type":"IssueWarning","zone":"F4"}]});
     // Without a conversation the non-recipient cannot answer.
     let (status, _) = call(
         &c,
@@ -136,8 +136,28 @@ async fn a_linked_conversation_lets_another_player_answer_the_inject() {
     )
     .await;
     assert_eq!(status, Status::BadRequest);
+    // Starting a conversation needs its reason: a basis, the reference of a
+    // plan or law, and why (400 with a clear message otherwise).
+    let bare = json!({"delivery":parent,"participants":["regional_cp"],"text":"Ci serve il vostro parere"});
+    let (status, body) = call(&c, "mayor", "/api/player/mayor/conversations", Some(bare.clone())).await;
+    assert_eq!(status, Status::BadRequest);
+    assert!(body.to_string().contains("why you start this conversation"), "{body}");
+    let mut plan = bare.clone();
+    plan["basis"] = json!("plan");
+    plan["rationale"] = json!("La Regione coordina");
+    let (status, body) = call(&c, "mayor", "/api/player/mayor/conversations", Some(plan.clone())).await;
+    assert_eq!(status, Status::BadRequest);
+    assert!(body.to_string().contains("which plan, procedure or law"), "{body}");
+    plan["rationale"] = json!(" ");
+    plan["basis_note"] = json!("Piano comunale, scheda 4");
+    let (status, body) = call(&c, "mayor", "/api/player/mayor/conversations", Some(plan)).await;
+    assert_eq!(status, Status::BadRequest);
+    assert!(body.to_string().contains("rationale"), "{body}");
     // Only the recipient starts a conversation.
-    let start = json!({"delivery":parent,"participants":["regional_cp"],"text":"Ci serve il vostro parere"});
+    let mut start = bare;
+    start["basis"] = json!("plan");
+    start["basis_note"] = json!("Piano comunale, scheda 4");
+    start["rationale"] = json!("La Regione decide se evacuare");
     let (status, _) = call(
         &c,
         "fire_commander",
@@ -157,11 +177,17 @@ async fn a_linked_conversation_lets_another_player_answer_the_inject() {
     let (status, body) = call(&c, "mayor", "/api/player/mayor/conversations", Some(start)).await;
     assert_eq!(status, Status::Ok, "{body}");
     let cid = body["conversation"].as_u64().unwrap();
-    // The guest reads the quoted inject, the outsider sees nothing.
+    // The guest reads the inject's title only and why the conversation was
+    // started; the outsider sees nothing.
     let (_, guest) = call(&c, "regional_cp", "/api/player/regional_cp", None).await;
     let conv = &guest["linked_conversations"][0];
     assert_eq!(conv["quote"]["title"], "Smoke");
+    assert!(conv["quote"]["text"].is_null(), "{conv}");
+    assert!(!guest.to_string().contains("Smoke over the village"));
     assert_eq!(conv["messages"][0]["text"], "Ci serve il vostro parere");
+    assert_eq!(conv["reason"]["basis"], "plan");
+    assert_eq!(conv["reason"]["reference"], "Piano comunale, scheda 4");
+    assert_eq!(conv["reason"]["rationale"], "La Regione decide se evacuare");
     assert!(guest["inbox"]
         .as_array()
         .unwrap()
@@ -213,10 +239,13 @@ async fn a_linked_conversation_lets_another_player_answer_the_inject() {
     assert_eq!(pending["role"], "regional_cp");
     assert_eq!(pending["conversation"], cid);
     assert_eq!(master["linked_conversations"][0]["message_count"], 2);
+    assert_eq!(master["linked_conversations"][0]["reason"]["rationale"], "La Regione decide se evacuare");
+    assert_eq!(master["inject_responses"][0]["conversations"][0]["reason"]["reference"], "Piano comunale, scheda 4");
     assert!(master["linked_conversations"][0]["messages"].to_string().contains("Ci serve il vostro parere"));
     // Players keep out of each other's private conversation.
     let (_, mayor) = call(&c, "mayor", "/api/player/mayor", None).await;
     assert_eq!(mayor["linked_conversations"][0]["id"], cid);
+    assert_eq!(mayor["linked_conversations"][0]["quote"]["text"], "Smoke over the village", "the recipient keeps the text");
     assert_eq!(
         mayor["linked_conversations"][0]["responses"][0]["id"],
         pending["id"]

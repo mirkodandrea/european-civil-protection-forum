@@ -439,7 +439,11 @@ pub fn control(
     let s = &scn.0;
     let now = time.elapsed_seconds();
     let dt = time.delta_seconds().min(0.1);
-    let over_ui = egui.ctx_mut().wants_pointer_input();
+    // Panels do not always count as "wanting" the pointer, so the wheel over a
+    // side panel also counts as over the UI when it is outside the free rect.
+    let ctx = egui.ctx_mut();
+    let over_ui = ctx.wants_pointer_input()
+        || ctx.pointer_latest_pos().is_some_and(|p| !ctx.available_rect().contains(p));
     let manual = input.navigate(
         &mut o,
         &mut navigation,

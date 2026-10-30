@@ -10,7 +10,7 @@ import json
 
 import numpy as np
 
-from . import grid, terrain, vegetation, roads
+from . import grid, terrain, vegetation, roads, districts, translations
 from .network import generate as road_network, grade_roadbeds
 from .layout import corners, mtv
 
@@ -134,6 +134,7 @@ def generate(template, seed=11):
                   fuel_translation=mapping.tolist(),physical_cell_m=20,visual_posting_m=5,
                   buildings=len(scn['buildings']),roads=len(network),occupants=sum(b['occupants'] for b in scn['buildings']),
                   elevation_range_m=[float(z.min()),float(z.max())],max_drivable_grade=max(grades))
+    districts.valverde(scn)
     return scn,manifest
 
 
@@ -144,6 +145,7 @@ def landscape(args):
     if template['grid'] != dict(rows=200,cols=200,cellsize=20):
         raise ValueError('The Valverde recipe requires the 4 km, 20 m TTX template')
     scn,manifest=generate(template,args.seed)
+    translations.fill(scn,args.output,llm=getattr(args,'translate',True))
     args.output.parent.mkdir(parents=True,exist_ok=True)
     text=json.dumps(scn,ensure_ascii=False,separators=(',',':'))+'\n'
     args.output.write_text(text)

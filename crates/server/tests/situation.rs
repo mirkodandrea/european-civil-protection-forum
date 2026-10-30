@@ -30,7 +30,7 @@ async fn app_with(llm: llm::Llm) -> (TestApp, server::AppState) {
         .scn
         .buildings
         .iter()
-        .find(|b| b.kind == scenario::BuildingKind::School)
+        .find(|b| b.category() == "school")
         .cloned()
         .unwrap();
     ex.direct_command(&sim::Command::Ignite {

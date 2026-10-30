@@ -179,26 +179,46 @@ pub struct WeatherSpec {
     pub moisture_pct: f64,
 }
 
+/// What the model distinguishes about a building. What it *is* (school,
+/// church, mill…) is `Building::visual_kind`, which only labels and draws it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildingKind {
+    /// Counted in sector totals, listed only when named or affected;
+    /// occupants leave by car.
     House,
-    School,
-    Hospital,
-    FuelStation,
-    SportsCentre,
-    TownHall,
-    Industrial,
+    /// Occupants cannot self-evacuate by car and need buses (schools,
+    /// hospitals, care homes). Always listed.
+    #[serde(alias = "school", alias = "hospital")]
+    Sensitive,
+    /// Any other facility: always listed, occupants leave by car.
+    #[serde(alias = "fuel_station", alias = "sports_centre", alias = "town_hall", alias = "industrial")]
+    Facility,
 }
 
 impl BuildingKind {
     /// Buildings whose occupants cannot self-evacuate by car and need buses.
     pub fn needs_transport(self) -> bool {
-        matches!(self, BuildingKind::School | BuildingKind::Hospital)
+        self == BuildingKind::Sensitive
+    }
+}
+
+/// Kinds of the former seven-kind list. Loading one sets `visual_kind` to it
+/// (when unset), so a school stays drawn and labelled as a school.
+const LEGACY_KINDS: [&str; 6] = ["school", "hospital", "fuel_station", "sports_centre", "town_hall", "industrial"];
+
+/// The single spelling of a visual kind (importers write some differently).
+pub fn canonical_visual(kind: &str) -> &str {
+    match kind {
+        "fuel" => "fuel_station",
+        "townhall" => "town_hall",
+        "assembly_area" => "assembly",
+        other => other,
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Building {
     pub id: u32,
     pub kind: BuildingKind,
@@ -224,6 +244,37 @@ pub struct Building {
     pub rotation_deg: f32,
 }
 
+impl Serialize for Building {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        Building::serialize(self, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Building {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let mut v = serde_json::Value::deserialize(d)?;
+        if let Some(legacy) = v["kind"].as_str().filter(|k| LEGACY_KINDS.contains(k)).map(str::to_owned) {
+            if v["visual_kind"].is_null() {
+                v["visual_kind"] = legacy.into();
+            }
+        }
+        Building::deserialize(v).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Building {
+    /// What the building is, for tables and labels: `house` for homes, else
+    /// its visual kind, else its model kind.
+    pub fn category(&self) -> &str {
+        match (self.kind, self.visual_kind.as_deref()) {
+            (BuildingKind::House, _) => "house",
+            (_, Some(v)) => canonical_visual(v),
+            (BuildingKind::Sensitive, None) => "sensitive",
+            (BuildingKind::Facility, None) => "facility",
+        }
+    }
+}
+
 fn is_zero(v: &f32) -> bool {
     *v == 0.0
 }
@@ -239,6 +290,40 @@ pub struct Road {
     pub id: String,
     pub name: String,
     pub points: Vec<Pos>,
+}
+
+/// A borgo: the homes of one locality, evacuated together by
+/// `EvacuateDistrict`. Membership is explicit, not geometric: scattered
+/// houses belong to their locality wherever they stand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct District {
+    pub id: String,
+    pub name: String,
+    /// Building ids.
+    pub buildings: Vec<u32>,
+    /// Named building where evacuees gather when the order names no
+    /// destination; usable without `OpenShelter`. `None`: the nearest
+    /// reachable gathering area, open shelter or map exit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gathering: Option<String>,
+}
+
+/// How a district evacuation leaves: everyone prepares for `prep_min`, then
+/// at most `per_min` people depart per minute, nearest homes to the borgo's
+/// departure point first.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DistrictEvacuation {
+    pub per_min: f32,
+    pub prep_min: u32,
+}
+
+impl Default for DistrictEvacuation {
+    fn default() -> Self {
+        Self {
+            per_min: 6.0,
+            prep_min: 5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -755,6 +840,11 @@ pub struct Scenario {
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
     pub sectors: Vec<Sector>,
+    /// Borghi, for `EvacuateDistrict`. Empty: the command is unavailable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub districts: Vec<District>,
+    #[serde(default)]
+    pub district_evacuation: DistrictEvacuation,
     pub zones: ZoneGrid,
     pub places: Vec<Place>,
     pub resource_types: Vec<ResourceType>,
@@ -766,10 +856,12 @@ pub struct Scenario {
     /// persona applies. Empty: a built-in neutral name ("Operations room").
     #[serde(default)]
     pub default_persona: String,
-    /// Texts of this scenario in other languages: language code -> English
-    /// source text -> translation (role and resource names and descriptions,
-    /// inject titles, senders). Overrides [`glossary`]; missing entries stay English
-    /// or are translated at runtime.
+    /// Texts of this scenario in other languages: language code -> source
+    /// text -> translation (role and resource names and descriptions, inject
+    /// titles, senders, and the map labels of [`Scenario::map_texts`]).
+    /// Overrides [`glossary`]; missing entries stay in the source language or
+    /// are translated at runtime. Territories authored in another language
+    /// than English may carry an `en` table too.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub translations: BTreeMap<String, BTreeMap<String, String>>,
     pub reinforcements: Vec<ReinforcementOffer>,
@@ -788,18 +880,31 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    /// English source text -> text in `lang`: built-in glossary overlaid with
-    /// this scenario's `translations`. Empty for the working language.
+    /// Source text -> text in `lang`: built-in glossary overlaid with this
+    /// scenario's `translations`. For the working language (English) only the
+    /// scenario's own `en` table, for territories authored in another language.
     pub fn display_map(&self, lang: &str) -> BTreeMap<String, String> {
-        if lang == "en" {
-            return BTreeMap::new();
-        }
         let mut map = glossary::builtin(lang);
         if let Some(own) = self.translations.get(lang) {
             map.extend(own.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         map.retain(|k, v| k != v && !v.trim().is_empty());
         map
+    }
+
+    /// Names drawn on the maps: places, named buildings, roads, borghi and
+    /// sectors. Players read them in their language; commands keep using
+    /// these source names.
+    pub fn map_texts(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.places.iter().map(|p| p.name.clone()).collect();
+        out.extend(self.buildings.iter().filter_map(|b| b.name.clone()));
+        out.extend(self.roads.iter().map(|r| r.name.clone()));
+        out.extend(self.districts.iter().map(|d| d.name.clone()));
+        out.extend(self.sectors.iter().map(|s| s.name.clone()));
+        out.retain(|t| !t.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Scenario-authored texts players read, which need a translation.
@@ -949,6 +1054,34 @@ impl Scenario {
         anyhow::ensure!(
             building_ids.len() == self.buildings.len() && road_ids.len() == self.roads.len(),
             "duplicate building or road id"
+        );
+        let mut district_keys = std::collections::BTreeSet::new();
+        for d in &self.districts {
+            let own: std::collections::BTreeSet<String> =
+                [normalise(&d.id), normalise(&d.name)].into();
+            anyhow::ensure!(
+                own.iter().all(|k| district_keys.insert(k.clone())),
+                "duplicate district {}",
+                d.id
+            );
+            anyhow::ensure!(
+                !d.buildings.is_empty() && d.buildings.iter().all(|id| building_ids.contains(id)),
+                "district {} lists no or unknown buildings",
+                d.id
+            );
+            if let Some(g) = &d.gathering {
+                anyhow::ensure!(
+                    self.buildings.iter().any(|b| b.name.as_deref() == Some(g.as_str())
+                        && b.shelter_capacity > 0),
+                    "district {}: gathering area «{g}» is not a building with capacity",
+                    d.id
+                );
+            }
+        }
+        let e = &self.district_evacuation;
+        anyhow::ensure!(
+            e.per_min.is_finite() && e.per_min > 0.0 && e.prep_min <= 240,
+            "invalid district evacuation pace"
         );
         for b in &self.buildings {
             anyhow::ensure!(
@@ -1135,6 +1268,15 @@ impl Scenario {
 
     /// Resolve a free-form name against named places, facilities, sectors and
     /// roads — case-insensitive, aliases included. Returns the world position.
+    /// A borgo by id or name (also «borgo di X»), ignoring case and punctuation.
+    pub fn district(&self, key: &str) -> Option<&District> {
+        let key = normalise(key);
+        let bare = key.strip_prefix("borgodi").unwrap_or(&key);
+        self.districts
+            .iter()
+            .find(|d| [normalise(&d.id), normalise(&d.name)].iter().any(|k| k == &key || k == bare))
+    }
+
     pub fn resolve_place(&self, name: &str) -> Option<Pos> {
         let key = normalise(name);
         if key.is_empty() {
@@ -1231,18 +1373,54 @@ mod tests {
 
     #[test]
     fn visual_category_is_optional_and_does_not_replace_operational_kind() {
-        let legacy = serde_json::json!({"id":1,"kind":"sports_centre","name":"Assembly",
+        let plain = serde_json::json!({"id":1,"kind":"facility","name":"Assembly",
             "pos":[20.,20.],"size":[30.,30.],"occupants":0,"sector":"a","shelter_capacity":100});
-        let b: super::Building = serde_json::from_value(legacy.clone()).unwrap();
+        let b: super::Building = serde_json::from_value(plain.clone()).unwrap();
         assert!(b.visual_kind.is_none());
-        assert_eq!(serde_json::to_value(&b).unwrap(), legacy);
-        let mut authored = legacy;
+        assert_eq!(b.category(), "facility");
+        assert_eq!(serde_json::to_value(&b).unwrap(), plain);
+        let mut authored = plain;
         authored["visual_kind"] = serde_json::json!("assembly");
         let b: super::Building = serde_json::from_value(authored.clone()).unwrap();
-        assert_eq!(b.kind, super::BuildingKind::SportsCentre);
+        assert_eq!(b.kind, super::BuildingKind::Facility);
         assert_eq!(b.shelter_capacity, 100);
         assert!(!b.kind.needs_transport());
         assert_eq!(serde_json::to_value(&b).unwrap(), authored);
+    }
+
+    #[test]
+    fn legacy_kinds_load_as_model_kind_plus_visual_kind() {
+        let at = |kind: &str, visual: Option<&str>| {
+            let mut v = serde_json::json!({"id":1,"kind":kind,"pos":[0.,0.],"size":[10.,10.],
+                "occupants":5,"sector":"a"});
+            if let Some(visual) = visual {
+                v["visual_kind"] = visual.into();
+            }
+            serde_json::from_value::<super::Building>(v).unwrap()
+        };
+        for (kind, model) in [
+            ("school", super::BuildingKind::Sensitive),
+            ("hospital", super::BuildingKind::Sensitive),
+            ("fuel_station", super::BuildingKind::Facility),
+            ("sports_centre", super::BuildingKind::Facility),
+            ("town_hall", super::BuildingKind::Facility),
+            ("industrial", super::BuildingKind::Facility),
+        ] {
+            let b = at(kind, None);
+            assert_eq!(b.kind, model);
+            assert_eq!(b.visual_kind.as_deref(), Some(kind));
+            assert_eq!(b.category(), kind);
+        }
+        // An authored visual kind wins; importer spellings are canonicalised.
+        assert_eq!(at("sports_centre", Some("assembly")).category(), "assembly");
+        assert_eq!(at("town_hall", Some("townhall")).category(), "town_hall");
+        assert!(at("school", None).kind.needs_transport());
+        // Homes stay homes whatever they look like.
+        assert_eq!(at("house", Some("church")).category(), "house");
+        // A migrated building saves in the new form.
+        let saved = serde_json::to_value(at("school", None)).unwrap();
+        assert_eq!(saved["kind"], "sensitive");
+        assert_eq!(saved["visual_kind"], "school");
     }
 
     use super::*;
