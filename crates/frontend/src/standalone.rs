@@ -130,6 +130,16 @@ fn launcher(props: &LauncherProps) -> Html {
             .flatten()
             .map(|s| (s.pack.name.clone(), s.journal.len()))
     });
+    let territories = use_memo((), |_| {
+        let own = crate::store::authored_territories();
+        let mut all: Vec<(String, String, bool)> = scenario::embedded::TERRITORIES
+            .iter()
+            .filter(|t| !own.contains_key(t.id))
+            .map(|t| (t.id.to_string(), t.name.to_string(), false))
+            .collect();
+        all.extend(own.values().map(|s| (s.id.clone(), s.name.clone(), true)));
+        all
+    });
     let selected = use_state(|| {
         library
             .active()
@@ -212,6 +222,13 @@ fn launcher(props: &LauncherProps) -> Html {
             })}</div>
             <p class="muted">{"Ogni partecipante sceglie la propria lingua nella scheda del ruolo; quella dello scenario è proposta."}if saved.is_some(){{" La sessione salvata verrà eliminata."}}</p>
             <button id="start-session" class={classes!(saved.is_none().then_some("primary"))} onclick={start}>{"Avvia nuova esercitazione"}</button>
+          </section>
+          <section class="card" id="launch-territories"><h2>{"Territori"}</h2>
+            <p class="muted">{"Modifica la mappa di un territorio (terreno, vegetazione, edifici, strade, luoghi) nell’editor 3D. I territori inclusi si aprono come copia; il risultato compare tra gli scenari."}</p>
+            <ul class="launcher-territories">{for territories.iter().map(|(id, name, own)| html!{
+              <li><span><strong>{name}</strong>if *own {{" · creato qui"}}</span><a class="button" id={format!("edit-territory-{id}")} href={format!("?editor=1&territory={id}")}>{if *own {"Modifica"} else {"Modifica copia"}}</a></li>
+            })}</ul>
+            <a class="button" id="new-territory" href="?editor=1">{"Nuovo territorio vuoto"}</a>
           </section>
           <section class="card" id="launch-options"><h2>{"Opzioni"}</h2>
             <h3>{"Lingua della console EXCON"}</h3>

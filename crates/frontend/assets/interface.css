@@ -1049,3 +1049,4 @@ body:has(.simbench){height:100dvh;overflow:hidden}
 .dist-legend .lg.own{background:#d9480f}.dist-legend .lg.other{background:#1c7ed6}.dist-legend .lg.free{background:#8a948c}.dist-legend .lg.sq{border-radius:2px;background:#8a948c;border:1px solid #222}.dist-legend .lg.ring{background:none;border:2px dashed #0f6b4d}
 @media(max-width:1250px){.dist-work{grid-template-columns:1fr}}
 .scenario-editor #scenario-form>.scenario-problems{max-height:12dvh;padding:6px 12px;font-size:13px}.scenario-editor .scenario-problems ul{margin:2px 0 0;padding-left:18px}.scenario-editor .scenario-problems li{margin:0}
+.launcher-territories{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:6px}.launcher-territories li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}

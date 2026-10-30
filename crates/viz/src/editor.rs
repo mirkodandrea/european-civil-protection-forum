@@ -101,6 +101,7 @@ impl Editor {
 
 pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
     let library = storage.list()?;
+    let first_id = scene.id.clone();
     let document = Arc::new(Mutex::new(Document::new(scene).map_err(|e| e.to_string())?));
     let editor = Editor {
         document: document.clone(),
@@ -129,7 +130,7 @@ pub fn run(scene: Scenario, storage: Box<dyn Storage>) -> Result<(), String> {
         drag: None,
         drag_at: None,
         message: String::new(),
-        new_id: "nuovo-scenario".into(),
+        new_id: first_id,
         cells: 64,
         spacing: 20.,
         pending: None,

@@ -44,6 +44,26 @@ impl viz::editor::Storage for BrowserStorage {
         crate::store::save_territory(s)
     }
 }
+/// The territory named by `?territory=ID` (launcher), else an empty one. A
+/// territory shipped with the app cannot be overwritten, so it opens as a copy.
+fn initial_scene() -> Result<Scenario, String> {
+    let search = crate::api::window().location().search().unwrap_or_default();
+    let wanted = search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|p| p.strip_prefix("territory="))
+        .map(|id| id.to_string());
+    let Some(id) = wanted else {
+        return scenario::editor::blank("nuovo-scenario", 64, 20.).map_err(|e| e.to_string());
+    };
+    let mut s = crate::store::authoring_base(&id)?;
+    if scenario::embedded::territory(&id).is_ok() {
+        s.id = format!("{id}-modificato");
+        s.name = format!("{} (copia)", s.name);
+    }
+    Ok(s)
+}
+
 pub fn start() {
     let window = crate::api::window();
     let document = window.document().unwrap();
@@ -63,8 +83,7 @@ pub fn start() {
         .unwrap();
     listener.forget();
     document.body().unwrap().set_inner_html("<a href='?' style='position:fixed;right:12px;top:55px;z-index:9;background:#16212a;color:white;padding:8px'>Torna al TTX</a><div style='position:fixed;inset:0'><canvas id='standalone-3d' aria-label='Editor scenario 3D' style='width:100%;height:100%'></canvas></div>");
-    let result = scenario::editor::blank("nuovo-scenario", 64, 20.)
-        .map_err(|e| e.to_string())
+    let result = initial_scene()
         .and_then(|s| viz::editor::run(s, Box::new(BrowserStorage)));
     if let Err(e) = result {
         document

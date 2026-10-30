@@ -165,6 +165,7 @@ pack sopra un territorio; il nuovo ambiente serve anche ad authoring geometrico.
 - **Web standalone:** dalla vista Scenario, «Apri editor scenario 3D», oppure
   aprire `?editor=1`. Richiede una build standalone
   (`./scripts/build_frontend.sh --features standalone`).
+- **Dalla schermata di partenza** (standalone): la scheda «Territori» elenca i territori inclusi e quelli creati nel browser. «Modifica copia» apre un territorio incluso come copia (`<id>-modificato`, non sovrascrivibile l’originale); «Modifica» riapre un territorio creato qui; «Nuovo territorio vuoto» parte da una griglia piatta. Il link è `?editor=1&territory=<id>`.
 - **App Bevy:** `cargo run --release -p app --bin scenario-editor`.
   Opzioni: `--scenarios-dir DIR` (default `data/scenarios`) e `--scenario ID`.
   La libreria comprende territori e pack, risolti sulla propria base.
