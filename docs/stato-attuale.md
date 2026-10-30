@@ -529,7 +529,15 @@ applicano subito, anche mentre il tempo scorre. Nessun salvataggio. Dettagli:
 ## Capacità modellate
 
 - Propagazione del fuoco influenzata da terreno, combustibile e meteo, calcolata
-  con più realizzazioni; esposizione e danni agli edifici.
+  con più realizzazioni; esposizione e danni agli edifici. Un edificio è
+  **danneggiato/distrutto** solo se il fuoco confermato (celle raggiunte da
+  almeno `cutoff` delle realizzazioni e in fiamme ora) brucia a contatto con il
+  suo lotto, entro `sim::contact_radius_m` (50 m, o una cella e mezza su griglie
+  più grosse): 300 s di esposizione per il danno, 900 s per la distruzione. Fuoco
+  più lontano (entro 300 m), alone d'incertezza dell'ensemble e carichi
+  radianti/da faville del modello operativo lo rendono solo **minacciato**. Mappa
+  Situazione, impatto, digest per l'AI ed eventi leggono tutti questo stesso
+  stato (`sim::World::step_buildings`; test `crates/sim/tests/building_damage.rs`).
 - Avvisi ed evacuazioni di edifici o zone, rifugi e destinazioni, traffico
   d'evacuazione e risorse di trasporto.
 - Interventi antincendio, tra cui linee tagliafuoco, lanci d'acqua e autobotti.
