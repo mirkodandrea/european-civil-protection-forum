@@ -66,10 +66,9 @@ pub struct ScenarioEdits {
     pub districts: Option<Vec<District>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub district_evacuation: Option<DistrictEvacuation>,
-    /// Display texts in other languages: language code -> source text ->
-    /// translation. Merged entry by entry over the base's own `translations`
-    /// (see [`Scenario::translations`]), so a pack that translates its own
-    /// texts keeps the territory's map labels in every language.
+    /// Display texts in other languages (see [`Scenario::translations`]):
+    /// the complete table, replacing the territory's, so a pack that
+    /// translates its own texts also carries the territory's map labels.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translations: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
@@ -209,10 +208,7 @@ impl Scenario {
             self.district_evacuation = v;
         }
         if let Some(v) = &e.translations {
-            for (lang, texts) in v {
-                let own = self.translations.entry(lang.clone()).or_default();
-                own.extend(texts.iter().map(|(k, t)| (k.clone(), t.clone())));
-            }
+            self.translations = v.clone();
         }
         self.check()
     }
