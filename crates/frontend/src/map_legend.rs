@@ -19,6 +19,8 @@ pub fn lg(lang: &str, key: &'static str) -> &'static str {
         "forecast" => pair(l, "Previsione", "Forecast"),
         "cut" => pair(l, "Strada tagliata dal fuoco", "Road cut by fire"),
         "police_closure" => pair(l, "Chiusura polizia", "Police closure"),
+        "warned" => pair(l, "Zona allertata (ora)", "Warned zone (time)"),
+        "warned_short" => pair(l, "Allertata", "Warned"),
         "threatened" => pair(l, "Edificio minacciato", "Threatened building"),
         "damaged" => pair(l, "Danneggiato", "Damaged"),
         "destroyed" => pair(l, "Distrutto", "Destroyed"),
@@ -49,7 +51,7 @@ pub fn map_legend(props: &LegendProps) -> Html {
     html! {
         <ul class="map-legend map-legend-sym" aria-label={lg(l, "title")}>
             {sw("lg-fire", "fire")}{sw("lg-burnt", "burnt")}{sw("lg-possible", "possible")}{sw("lg-water", "water")}
-            {sw("lg-line", "line")}{sw("lg-forecast", "forecast")}{sw("lg-cut", "cut")}{sw("lg-closure", "police_closure")}
+            {sw("lg-line", "line")}{sw("lg-forecast", "forecast")}{sw("lg-cut", "cut")}{sw("lg-closure", "police_closure")}{sw("lg-warned", "warned")}
             {gl("▲", "g-threat", "threatened")}{gl("◆", "g-dmg", "damaged")}{gl("✕", "g-dest", "destroyed")}
             {gl("➜", "g-evac", "evacuating")}{gl("○", "g-done", "evacuated")}
             {sw("lg-unit", "unit")}{gl("◇", "g-target", "target")}{gl("◯", "g-rep", "reported")}

@@ -461,7 +461,7 @@ fn action_tip(action: &str) -> &'static str {
         "DeployEngine" => "Invia un’autobotte o una squadra a terra in un luogo: agisce dopo il viaggio dalla base, se le strade sono praticabili.",
         "EvacuateZone" => "Ordina di evacuare tutta una zona della griglia, con i suoi edifici e abitanti.",
         "EvacuateBuilding" => "Ordina di evacuare un singolo edificio, ad esempio una scuola o una casa di riposo.",
-        "IssueWarning" => "Emette un’allerta alla popolazione di un luogo; ha effetto dopo il tempo di diffusione.",
+        "IssueWarning" => "Allerta la popolazione di una zona: la zona resta segnata come allertata (con l’ora) e un’evacuazione successiva lì è due volte più rapida.",
         "CloseRoad" => "Chiude una strada o un tratto: il traffico civile non passa, i mezzi di soccorso sì.",
         "ReopenRoad" => "Riapre una strada chiusa in precedenza.",
         "OpenShelter" => "Apre un centro di accoglienza dove portare gli evacuati.",

@@ -89,7 +89,7 @@ fn partial_approval_keeps_the_right_actions_and_explains_the_rest() {
     // The player is told which action was approved and which was not, and why.
     let f = &out.facts_en;
     assert!(f.contains("approved 1 of the 2 actions"), "{f}");
-    assert!(f.contains("APPROVED: Issue warning to zone F4"), "{f}");
+    assert!(f.contains("APPROVED: Warn the population of zone F4"), "{f}");
     assert!(f.contains("NOT APPROVED: Evacuate zone F4"), "{f}");
     assert!(f.contains("Reason: Not enough buses for the whole zone"), "{f}");
     assert!(f.contains("Note from"), "{f}");

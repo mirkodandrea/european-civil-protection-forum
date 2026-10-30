@@ -55,6 +55,17 @@ fn action_note(master: &Value, e: &Value) -> String {
                 .unwrap_or_else(|| id.to_string());
             format!(" · {title}")
         }
+        "master_command" => {
+            let notes = list(&e["data"]["result"]["ok"])
+                .iter()
+                .map(|n| crate::render::localize_note(text(n)))
+                .collect::<Vec<_>>();
+            if notes.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", notes.join(" · "))
+            }
+        }
         "action_executed" => {
             let x = &e["data"]["execution"];
             let ok = if x["ok"] == true { "✓" } else { "✗" };
@@ -75,5 +86,8 @@ mod tests {
         let e = json!({"kind":"action_executed","data":{"execution":{"ok":false,"detail":"no route"}}});
         assert_eq!(action_note(&m, &e), " · ✗ no route");
         assert_eq!(action_note(&m, &json!({"kind":"message"})), "");
+        let e = json!({"kind":"master_command","data":{"result":{"ok":["3 buildings, 40 people"]}}});
+        assert!(action_note(&m, &e).starts_with(" · 3 "));
+        assert_eq!(action_note(&m, &json!({"kind":"master_command","data":{"result":{"error":"x"}}})), "");
     }
 }

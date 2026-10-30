@@ -86,6 +86,41 @@ fn school_evacuation_needs_buses_and_takes_time() {
 }
 
 #[test]
+fn warning_is_persistent_timed_visible_and_rolled_back() {
+    let mut w = world();
+    w.advance(5 * 60).unwrap();
+    let before = w.snapshot();
+    let out = w.apply(&Command::IssueWarning { zone: "f4".into() }, &role("mayor")).unwrap();
+    // A readable effect line with time, population and consequence.
+    let line = out.join(" ");
+    assert!(line.contains("population of F4 warned at") && line.contains(&w.clock_at(300)), "{line}");
+    assert!(line.contains("people in") && line.contains("10 min instead of 20"), "{line}");
+    assert!(w.d.events.iter().any(|e| e.kind == "warning" && e.zone.as_deref() == Some("F4") && e.text.contains("warned at")));
+    assert_eq!(w.d.warned.get("F4"), Some(&300));
+    // Visible to the UIs and the AI.
+    let warnings = w.warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!((warnings[0].zone.as_str(), warnings[0].t_s), ("F4", 300));
+    assert!(warnings[0].people_inside > 0);
+    let view = w.view();
+    assert_eq!(view["warned"], serde_json::json!(["F4"]));
+    assert_eq!(view["warnings"][0]["t_s"], 300);
+    let digest = w.digest(None);
+    assert_eq!(digest["warnings_in_force"][0]["zone"], "F4");
+    assert!(digest["warnings_in_force"][0]["effect"].as_str().unwrap().contains("10 min instead of 20"));
+    assert!(digest["populated_zones"].as_array().unwrap().iter().any(|z| z["zone"] == "F4" && z["warned_at"] == serde_json::json!(w.clock_at(300))));
+    // Repeating keeps the original time.
+    w.advance(60).unwrap();
+    let again = w.apply(&Command::IssueWarning { zone: "F4".into() }, &Actor::Master).unwrap();
+    assert!(again[0].contains("warned since"), "{again:?}");
+    assert_eq!(w.d.warned.get("F4"), Some(&300));
+    // Rollback removes it.
+    w.restore(&before).unwrap();
+    assert!(w.d.warned.is_empty());
+    assert!(w.warnings().is_empty());
+}
+
+#[test]
 fn evacuate_zone_by_code_with_warning_and_shelter() {
     let mut w = world();
     w.apply(&Command::OpenShelter { building: "Valverde Sports Centre".into() }, &role("mayor")).unwrap();

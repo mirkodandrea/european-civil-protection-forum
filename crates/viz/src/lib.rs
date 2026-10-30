@@ -90,6 +90,7 @@ pub struct Snapshot {
     pub lines: Vec<FireLine>,
     pub drops: Vec<view::Drop>,
     pub warned: Vec<String>,
+    pub warnings: Vec<view::Warning>,
     pub last_turn: Option<TurnWindow>,
     /// While a turn is being simulated.
     pub resolving: Option<TurnWindow>,
@@ -375,6 +376,7 @@ fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
     snap.deployments = v.deployments;
     snap.traffic_model = v.traffic_model;
     snap.warned = v.warned;
+    snap.warnings = v.warnings;
     snap.last_turn = v.last_turn;
     snap.resolving = v.resolving;
     snap.clock_running = v.clock_running;

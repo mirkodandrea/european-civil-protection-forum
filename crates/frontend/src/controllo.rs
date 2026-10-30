@@ -39,7 +39,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto." },
     Tool { id: "extarea", group: "Fuoco e interventi", icon: "⬠", label: "Spegni area disegnata", tip: "Disegna sulla mappa un’area (almeno 3 vertici): il fuoco al suo interno si spegne subito in tutte le simulazioni. La vegetazione non cambia: il terreno non bruciato può riaccendersi se il fuoco lo raggiunge di nuovo." },
     Tool { id: "evac", group: "Fuoco e interventi", icon: "🚌", label: "Evacua zona", tip: "Ordina l’evacuazione di tutti gli edifici occupati di una zona." },
-    Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: dimezza il tempo di evacuazione." },
+    Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: resta segnata sulla mappa come allertata (con l’ora) e un’evacuazione successiva lì richiede 10 min invece di 20. Non usa risorse e da sola non sposta nessuno." },
     Tool { id: "drone", group: "Risorse e squadre", icon: "🛰", label: "Drone di monitoraggio", tip: "Invia il drone del comandante antincendio sulla zona scelta: finché è in posizione tiene aggiornata la sua mappa. Per più zone usa il comando JSON (es. \"F3-G4\")." },
     Tool { id: "bstatus", group: "Fuoco e interventi", icon: "🏠", label: "Stato edificio", tip: "Forza lo stato di danno di un edificio scelto sulla mappa." },
     Tool { id: "correct", group: "Fuoco e interventi", icon: "↶", label: "Correggi ultimo intervento", tip: "Annulla l’ultimo intervento fisico, se nulla è cambiato dopo di esso." },

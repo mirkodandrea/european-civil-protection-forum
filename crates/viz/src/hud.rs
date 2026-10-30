@@ -308,6 +308,17 @@ pub fn draw(
             );
         }
     }
+    for w in &snap.warnings {
+        if let Some(b) = s.zone_bounds(&w.zone) {
+            label(
+                [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5],
+                60.0,
+                &format!("WARNED {} · {}", w.zone, w.clock),
+                13.0,
+                Color32::from_rgb(255, 200, 60),
+            );
+        }
+    }
     for b in &s.buildings {
         if let Some(n) = &b.name {
             label(b.pos, 45.0, n, 15.0, Color32::WHITE);

@@ -79,7 +79,7 @@ fn full_turn_inject_reply_approve_resolve() {
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::Applied);
     assert_eq!(ex.proposal(p2).unwrap().status, ProposalStatus::Rejected);
     assert_eq!(ex.turn, 2);
-    assert!(ex.world.d.warned.contains("F4"));
+    assert!(ex.world.d.warned.contains_key("F4"));
     assert_eq!(ex.world.d.pools["fire_commander"]["air_tankers"].used, 1, "deployments persist across turns until explicitly returned");
     // Warned F4 evacuates in 10 min (+10 for the school): all out after 30.
     let school = ex.world.find_building("Pineta Primary School").unwrap();
@@ -143,12 +143,23 @@ fn rollback_restores_world_and_marks_proposals() {
     ex.attach_parse(pid, parsed(json!([{"type":"WaterDrop","at":{"x":3000.0,"y":2500.0}}]))).unwrap();
     ex.decide(pid, Decision { approve: true, ..Default::default() }).unwrap();
     ex.resolve_turn(None).unwrap();
+    let notes = ex.direct_command(&Command::IssueWarning { zone: "F4".into() }).unwrap();
+    assert!(notes[0].contains("population of F4 warned at"), "{notes:?}");
+    let logged = ex.log.iter().rev().find(|e| e.kind == "master_command").unwrap();
+    assert!(logged.data["result"]["ok"][0].as_str().unwrap().contains("10 min instead of 20"));
     ex.resolve_turn(None).unwrap();
     assert_eq!(ex.turn, 3);
+    assert!(ex.world.d.warned.contains_key("F4"));
+    // Public warnings reach every role's map, without population counts.
+    let pm = ex.player_map("mayor").unwrap();
+    assert_eq!(pm["warned"], json!(["F4"]));
+    assert!(pm["warnings"][0]["clock"].is_string());
+    assert!(pm["warnings"][0].get("people_inside").is_none());
     ex.rollback(1).unwrap();
     assert_eq!(ex.turn, 1);
     assert_eq!(ex.world.time_s(), 0);
     assert!(ex.world.d.drops.is_empty());
+    assert!(ex.world.d.warned.is_empty(), "warnings roll back with the world");
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::RolledBack);
     assert!(ex.inbox("mayor").iter().any(|m| m.kind == MsgKind::System));
     ex.resolve_turn(None).unwrap();

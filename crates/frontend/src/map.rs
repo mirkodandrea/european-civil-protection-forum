@@ -1015,6 +1015,41 @@ fn texture(
     ctx.draw_image_with_html_canvas_element(&oc, 0., 0.)?;
     Ok(())
 }
+/// Amber diagonal hatching and outline over one warned zone (territory units).
+fn warned_zone(
+    ctx: &CanvasRenderingContext2d,
+    x0: f64,
+    y0: f64,
+    zs: f64,
+    s: f64,
+) -> Result<(), wasm_bindgen::JsValue> {
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(x0, y0, zs, zs);
+    ctx.clip();
+    ctx.set_fill_style_str("rgba(255,200,0,.14)");
+    ctx.fill_rect(x0, y0, zs, zs);
+    ctx.set_stroke_style_str("rgba(208,138,0,.6)");
+    ctx.set_line_width(2. * s);
+    ctx.begin_path();
+    let step = zs / 7.;
+    let mut d = step;
+    while d < 2. * zs {
+        ctx.move_to(x0 + d, y0);
+        ctx.line_to(x0 + d - zs, y0 + zs);
+        d += step;
+    }
+    ctx.stroke();
+    ctx.restore();
+    ctx.set_stroke_style_str("#d08a00");
+    ctx.set_line_width(3. * s);
+    ctx.stroke_rect(x0 + 1.5 * s, y0 + 1.5 * s, zs - 3. * s, zs - 3. * s);
+    Ok(())
+}
+/// "Day 1 14:20" -> "14:20".
+fn short_clock(clock: &str) -> &str {
+    clock.rsplit(' ').next().unwrap_or(clock)
+}
 /// A label collected during the world pass; `x`/`y` are bitmap-space anchor coordinates.
 struct LabelReq {
     text: String,
@@ -1485,12 +1520,31 @@ fn draw(
         ctx.line_to(size, row as f64 * zsize);
         ctx.stroke();
     }
+    // Warned zones: amber hatching and outline, with a bell label and the
+    // time of the warning (persistent until rollback).
     for row in 0..z["rows"].as_u64().unwrap_or(0) {
         for col in 0..z["cols"].as_u64().unwrap_or(0) {
             let name = format!("{}{}", (b'A' + col as u8) as char, row + 1);
             if on(ml::CLOSURES) && list(&v["warned"]).contains(&json!(name)) {
-                ctx.set_fill_style_str("rgba(255,200,0,.15)");
-                ctx.fill_rect(col as f64 * zsize, row as f64 * zsize, zsize, zsize);
+                let (x0, y0) = (col as f64 * zsize, row as f64 * zsize);
+                warned_zone(&ctx, x0, y0, zsize, s)?;
+                let since = list(&v["warnings"])
+                    .iter()
+                    .find(|w| w["zone"] == json!(name))
+                    .map(|w| short_clock(text(&w["clock"])).to_string())
+                    .unwrap_or_default();
+                // Compact at overview (labels are cut at 18 characters); the word when zoomed.
+                let head = if vw.z >= 1.6 {
+                    format!("{} ", crate::map_legend::lg(lang, "warned_short"))
+                } else {
+                    String::new()
+                };
+                let txt = if since.is_empty() {
+                    format!("🔔 {head}{name}")
+                } else {
+                    format!("🔔 {head}{name} · {since}")
+                };
+                label(&txt, x0 + zsize / 2., y0 + zsize / 2., 0);
             }
         }
     }
