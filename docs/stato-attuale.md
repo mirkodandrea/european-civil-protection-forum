@@ -28,12 +28,13 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
 
 - **Pagina del player**: mappa della situazione; inject e messaggi con risposta
   libera in **un solo box** (`frontend::reply_composer`, playtest 30/10) sotto
-  l’inject e sotto ogni conversazione collegata: **A chi** sempre visibile (il
-  mittente dell’inject, cioè la sala operativa, oppure altri player), il testo,
+  l’inject e sotto ogni conversazione collegata: **A chi** sempre visibile
+  («Risposta all’inject · <mittente>», cioè la sala operativa, oppure altri
+  player), il testo,
   **Su cosa si basa** (facoltativo: Piano o procedura / Legge o norma / Giudizio
   operativo, con una riga per *quale* piano o procedura o per il *perché*) e **un
   solo** pulsante «Invia a <destinatario>» (Ctrl/Cmd+Invio). Niente scelta
-  preliminare «Risposta diretta / Inizia una conversazione», niente modale, niente
+  preliminare «Risposta all’inject / Inizia una conversazione», niente modale, niente
   secondo pulsante «Rispondi» nella conversazione. Al mittente: `POST
   /api/player/<role>/actions` con `kind: "communication"`, `basis`, `basis_note`
   (stato «Inviata»); ad altri player sotto l’inject: nuova conversazione collegata
