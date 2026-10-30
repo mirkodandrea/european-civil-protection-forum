@@ -17,7 +17,7 @@
 //! | conversation | sender | `POST /api/player/<r>/actions` with `conversation` |
 //!
 //! Drafts are kept per context (`inj:<message>` or `conv:<id>`) in the
-//! player's fields: `draft:`, `to:`, `people:`, `basis:`, `basis_note:`.
+//! player's fields: `reply:`, `to:`, `people:`, `basis:`, `basis_note:`.
 use crate::{
     api::{self, list, text},
     i18n, Action, ActionKind, Msg,
@@ -61,9 +61,10 @@ impl Place<'_> {
 
 /// Draft field keys of context `ctx`.
 pub fn draft_key(ctx: &str) -> String {
-    format!("draft:{ctx}")
+    format!("reply:{ctx}")
 }
-const PER_CONTEXT: [&str; 5] = ["draft", "to", "people", "basis", "basis_note"];
+// Not `draft:…`: `Msg::Field` routes those keys to the chat and inject drafts.
+const PER_CONTEXT: [&str; 5] = ["reply", "to", "people", "basis", "basis_note"];
 
 /// The reply of context `ctx` was sent: its draft goes, the conversation it
 /// started (if any) opens.
@@ -120,7 +121,7 @@ impl crate::player_view::PlayerView {
             let key = format!("{k}:{ctx}");
             self.cb(move |v: String| Msg::Field(key.clone(), v))
         };
-        let draft = get("draft");
+        let draft = get("reply");
         let to = match get("to").as_str() {
             "sender" => To::Sender,
             "players" => To::Players,
@@ -203,7 +204,7 @@ impl crate::player_view::PlayerView {
             }
             <textarea id="response-narrative" data-response-narrative="" maxlength="8000" aria-label={i18n::t(l,"reply_text_label")}
                 placeholder={if to==To::Sender{i18n::t(l,"reply_ph")}else{i18n::t(l,"write")}} value={draft.clone()}
-                oninput={{let set=set("draft");Callback::from(move |e|set.emit(api::input(e)))}}
+                oninput={{let set=set("reply");Callback::from(move |e|set.emit(api::input(e)))}}
                 onkeydown={{let send=send.clone();Callback::from(move |e:KeyboardEvent|{if ready&&e.key()=="Enter"&&(e.ctrl_key()||e.meta_key()){e.prevent_default();send.emit(());}})}}/>
             if to==To::Sender {
                 <div class="reply-basis-pick" data-work-block="basis">
@@ -268,10 +269,10 @@ mod tests {
         for k in PER_CONTEXT {
             f.insert(format!("{k}:inj:7"), "x".to_string());
         }
-        f.insert("draft:conv:3".into(), "other".into());
+        f.insert("reply:conv:3".into(), "other".into());
         reply_sent(&mut f, "inj:7", &json!({"conversation": 4}));
         assert!(PER_CONTEXT.iter().all(|k| !f.contains_key(&format!("{k}:inj:7"))));
-        assert_eq!(f.get("draft:conv:3").map(String::as_str), Some("other"));
+        assert_eq!(f.get("reply:conv:3").map(String::as_str), Some("other"));
         assert_eq!(f.get("inj:conv").map(String::as_str), Some("4"));
         // A message inside a conversation does not move the player.
         reply_sent(&mut f, "conv:3", &json!({"conversation": 9}));

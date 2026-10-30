@@ -90,11 +90,11 @@ mod tests {
     fn opening_an_inject_leaves_any_conversation() {
         let mut f = BTreeMap::new();
         f.insert("inj:conv".to_string(), "2".to_string());
-        f.insert("draft:inj:3".to_string(), "Evacuiamo F4".to_string());
+        f.insert("reply:inj:3".to_string(), "Evacuiamo F4".to_string());
         open_inject_detail(&mut f, "3".into());
         assert_eq!(f.get("inj:open").map(String::as_str), Some("3"));
         assert!(!f.contains_key("inj:conv"));
         // Drafts are kept per inject or conversation, never thrown away by navigation.
-        assert_eq!(f.get("draft:inj:3").map(String::as_str), Some("Evacuiamo F4"));
+        assert_eq!(f.get("reply:inj:3").map(String::as_str), Some("Evacuiamo F4"));
     }
 }

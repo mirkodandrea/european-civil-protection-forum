@@ -56,11 +56,17 @@ function reading(user, gazetteer) {
     const back = fire.locator('[data-inject-back]');
     if (await back.count()) await back.click();
     await fire.locator('[data-inject-row]').first().click();
-    await fire.locator('[data-reply-direct]').click();
-    const work = fire.locator('.work-modal');
-    await work.locator('#response-narrative').fill(text);
-    await work.locator('[data-respond]').click();
-    await work.waitFor({ state: 'hidden' });
+    // One composer under the inject: reply to the inject's sender, one Send.
+    const box = fire.locator('[data-reply-composer]').first();
+    await box.locator('[data-to="sender"]').check();
+    const field = box.locator('#response-narrative');
+    await field.click();
+    await field.pressSequentially(text.slice(0, 1));
+    await field.fill(text);
+    await box.locator('[data-reply-send]:not([disabled])').waitFor();
+    await box.locator('[data-reply-send]').click();
+    await fire.locator('#response-narrative').first().waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-reply-composer] #response-narrative')?.value);
   };
   const open = () => board.locator(':scope > [data-review]');
   const handled = () => board.locator('.rb-handled [data-review]');
