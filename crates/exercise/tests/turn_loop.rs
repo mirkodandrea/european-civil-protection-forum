@@ -150,16 +150,25 @@ fn rollback_restores_world_and_marks_proposals() {
     ex.resolve_turn(None).unwrap();
     assert_eq!(ex.turn, 3);
     assert!(ex.world.d.warned.contains_key("F4"));
-    // Public warnings reach every role's map, without population counts.
+    // Fog of war: a role sees a warned zone only once it is told about it.
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!([]));
+    let o = ex.zone_observation(&["F4".into()], &["buildings".into()]).unwrap();
+    ex.acquire_map_layers("mayor", "Sala operativa", o, None, vec!["buildings".into()]).unwrap();
     let pm = ex.player_map("mayor").unwrap();
     assert_eq!(pm["warned"], json!(["F4"]));
     assert!(pm["warnings"][0]["clock"].is_string());
     assert!(pm["warnings"][0].get("people_inside").is_none());
+    assert_eq!(ex.player_map("fire_commander").unwrap()["warned"], json!([]));
     ex.rollback(1).unwrap();
     assert_eq!(ex.turn, 1);
     assert_eq!(ex.world.time_s(), 0);
     assert!(ex.world.d.drops.is_empty());
     assert!(ex.world.d.warned.is_empty(), "warnings roll back with the world");
+    // What the mayor was told stays told (like every other observation), until a new reveal.
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!(["F4"]));
+    let o = ex.zone_observation(&["F4".into()], &["buildings".into()]).unwrap();
+    ex.acquire_map_layers("mayor", "Sala operativa", o, None, vec!["buildings".into()]).unwrap();
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!([]), "a fresh reveal clears it");
     assert_eq!(ex.proposal(pid).unwrap().status, ProposalStatus::RolledBack);
     assert!(ex.inbox("mayor").iter().any(|m| m.kind == MsgKind::System));
     ex.resolve_turn(None).unwrap();

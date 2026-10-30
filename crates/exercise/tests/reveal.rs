@@ -172,6 +172,8 @@ fn validation_rejects_bad_reveals() {
 fn old_logs_and_packs_still_load() {
     let o: MapObservation = serde_json::from_str(r#"{"zones":["A1"]}"#).unwrap();
     assert!(o.estimates.is_empty());
+    assert!(o.warnings.is_none(), "observations saved before warnings were observed");
+    assert!(serde_json::to_value(&o).unwrap().get("warnings").is_none());
     let a: InjectAction = serde_json::from_str(r#"{"id":"X","title":"t","command":{"type":"SetWeather"}}"#).unwrap();
     assert!(a.reveal.is_none());
     let r: InjectAction = serde_json::from_str(r#"{"id":"X","title":"t","reveal":{"kind":"exact","zones":["A1"]}}"#).unwrap();
@@ -220,4 +222,56 @@ fn a_later_fire_map_supersedes_the_estimate() {
     assert!(ex.player_map("fire_commander").unwrap()["estimates"].as_array().unwrap().is_empty());
     // The mayor never saw the fire map, so the estimate stays.
     assert!(estimate(&ex, "mayor").is_object());
+}
+
+#[test]
+fn warned_zones_are_part_of_the_fog_of_war() {
+    use serde_json::json;
+    let mut ex = exercise_with(|_| {});
+    ex.direct_command(&sim::Command::IssueWarning { zone: "F4".into() }).unwrap();
+    // EXCON sees the warning at once; players only through what they are told.
+    assert!(ex.world.d.warned.contains_key("F4"));
+    for role in ["mayor", "fire_commander"] {
+        assert_eq!(ex.player_map(role).unwrap()["warned"], json!([]));
+    }
+    // A reveal without the buildings layer says nothing about warnings.
+    let fire = ex.zone_observation(&["F4".into()], &["fire".into()]).unwrap();
+    assert!(fire.warnings.is_none());
+    ex.acquire_map_layers("mayor", "Sala operativa", fire, None, vec!["fire".into()]).unwrap();
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!([]));
+    // A reveal of another zone with buildings does not show F4.
+    let elsewhere = ex.zone_observation(&["A1".into()], &["buildings".into()]).unwrap();
+    assert_eq!(elsewhere.warnings, Some(vec![]));
+    ex.acquire_map_layers("mayor", "Sala operativa", elsewhere, None, vec!["buildings".into()]).unwrap();
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!([]));
+    // Revealing F4 with buildings shows the warning (zone and time only).
+    let o = ex.zone_observation(&["F4".into(), "F5".into()], &["buildings".into()]).unwrap();
+    assert_eq!(o.warnings.as_ref().unwrap().len(), 1);
+    ex.acquire_map_layers("mayor", "Sala operativa", o, None, vec!["buildings".into()]).unwrap();
+    let pm = ex.player_map("mayor").unwrap();
+    assert_eq!(pm["warned"], json!(["F4"]));
+    assert_eq!(pm["warnings"][0]["zone"], "F4");
+    assert!(pm["warnings"][0].get("people_inside").is_none());
+    assert_eq!(ex.player_map("fire_commander").unwrap()["warned"], json!([]));
+    // A warning issued later reaches the mayor's map only with the next reveal/refresh.
+    ex.direct_command(&sim::Command::IssueWarning { zone: "F5".into() }).unwrap();
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!(["F4"]));
+    ex.refresh_role_maps(Some("EXCON"), &BTreeMap::new()).unwrap();
+    assert_eq!(ex.player_map("mayor").unwrap()["warned"], json!(["F4", "F5"]));
+    // Invented or out-of-zone warnings in an EXCON-authored observation are refused.
+    let mut bad = ex.zone_observation(&["A1".into()], &["buildings".into()]).unwrap();
+    bad.warnings = Some(vec![WarningObs { zone: "F4".into(), t_s: 0, clock: "x".into() }]);
+    assert!(ex.validate_observation(&bad).is_err());
+}
+
+#[test]
+fn player_ai_context_keeps_warnings_behind_the_fog() {
+    use serde_json::json;
+    let mut ex = exercise_with(|_| {});
+    ex.direct_command(&sim::Command::IssueWarning { zone: "F4".into() }).unwrap();
+    let ctx = ex.player_suggestion_context("mayor", "what now", None, None, &[]).unwrap();
+    assert_eq!(ctx.digest["map"]["warned"], json!([]));
+    assert_eq!(ctx.digest["map"]["warnings"], json!([]));
+    let text = ctx.digest.to_string();
+    assert!(!text.contains("warnings_in_force") && !text.contains("warned_at"), "{text}");
 }

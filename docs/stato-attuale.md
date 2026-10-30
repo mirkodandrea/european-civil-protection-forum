@@ -576,15 +576,33 @@ applicano subito, anche mentre il tempo scorre. Nessun salvataggio. Dettagli:
   take 10 min instead of 20» (localizzata in console, nel messaggio di esito
   dell'operazione e nella colonna dello storico), evento `warning` del sim,
   riga «WARNING …» nel feed del 3D; zona tratteggiata in ambra con bordo e
-  etichetta «🔔 Allertata F4 · 14:20» sulla mappa 2D EXCON e su quella dei
-  giocatori (livello «Chiusure e allerte», voce di legenda «Zona allertata»; i
-  giocatori vedono zona e ora, non i conteggi della popolazione); contorno e
-  tratteggio sempre visibili nella vista 3D con etichetta «WARNED F4 · ora»
+  etichetta «🔔 Allertata F4 · 14:20» sulla mappa 2D EXCON (livello «Chiusure
+  e allerte», voce di legenda «Zona allertata»); contorno e tratteggio sempre
+  visibili nella vista 3D con etichetta «WARNED F4 · ora»
   (`view::ViewState::warnings`, costruito da `server::view::extract`).
-  Per l'AI: `digest` ha `warnings_in_force` (zona, da quando, persone ancora
-  dentro, effetto) e `populated_zones[].warned_at`; `World::view` espone
-  `warned` (codici) e `warnings` (zona, ora, persone, edifici). Verifica nel
-  browser: `TTX_QA_URL=http://127.0.0.1:8080 node scripts/qa/warn-zone.cjs`.
+  **Fog of war (decisione 30/10):** le zone allertate seguono la nebbia come il
+  resto della mappa del giocatore. Fanno parte del livello «Edifici»
+  (`buildings`, stato della popolazione): una rivelazione di zone con quel
+  livello (strumento «Informazioni ai ruoli», azioni `reveal` degli inject,
+  aggiornamento a fine turno, drone/ricognizione) cattura in
+  `MapObservation.warnings` gli avvisi in vigore in quelle zone in quel
+  momento (solo zona e ora). `player_map(role)` mostra per ogni zona l'ultima
+  osservazione ricevuta dal ruolo: un avviso dato dopo resta invisibile fino
+  alla prossima rivelazione o aggiornamento, e una rivelazione con «Edifici»
+  di una zona non più allertata la toglie. Senza il livello «Edifici» (o con
+  osservazioni salvate prima di questo campo, `warnings` assente = non
+  osservato) ciò che il ruolo sapeva resta com'è; come per gli altri livelli,
+  dopo un rollback il giocatore conserva ciò che gli era stato detto finché
+  una nuova rivelazione non lo aggiorna. I contesti AI per i ruoli (digest di
+  `parse_reply` e dei suggerimenti al giocatore) leggono la stessa
+  `player_map`; l'EXCON e l'AI per l'EXCON vedono tutto.
+  Per l'AI dell'EXCON: `digest` ha `warnings_in_force` (zona, da quando,
+  persone ancora dentro, effetto) e `populated_zones[].warned_at`;
+  `World::view` espone `warned` (codici) e `warnings` (zona, ora, persone,
+  edifici). Test: `crates/exercise/tests/reveal.rs`
+  (`warned_zones_are_part_of_the_fog_of_war`). Verifica nel browser
+  (l'avviso compare al sindaco solo dopo la rivelazione con «Edifici»):
+  `TTX_QA_URL=http://127.0.0.1:8080 node scripts/qa/warn-zone.cjs`.
 - Interventi antincendio, tra cui linee tagliafuoco, lanci d'acqua e autobotti.
 - Chiusure stradali, viaggi delle risorse, richieste di rinforzi e gestione
   delle disponibilità.
