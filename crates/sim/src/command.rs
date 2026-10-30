@@ -21,7 +21,8 @@ pub enum Loc {
     Named(String),
 }
 
-/// An area: a whole zone (`"F4"`), a named place (250 m around it), or a circle.
+/// An area: a whole zone (`"F4"`), a named place (its own `radius_m`, a
+/// sector's bounds, else 250 m around it), or a circle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Area {
@@ -118,6 +119,7 @@ pub enum Command {
         radius_m: Option<f32>,
     },
     /// Put the fire out over an area (a whole zone, a place, or a circle).
+    /// Same rule as `ExtinguishArea`: every realization, fuel unchanged.
     Extinguish {
         area: Area,
     },
@@ -384,7 +386,7 @@ pub fn catalogue(allowed: &[String]) -> String {
         ),
         (
             "Extinguish",
-            r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place or a circle."#,
+            r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place (its radius, else 250 m) or a circle. Fuel is not removed, like ExtinguishArea."#,
         ),
         (
             "ExtinguishArea",

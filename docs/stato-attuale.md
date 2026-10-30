@@ -555,8 +555,13 @@ Il combustibile non bruciato resta: se un fronte ancora vivo fuori dall'area la
 raggiunge **dopo** lo spegnimento, può riaccenderla (contata da capo). Le faville
 già in volo (spotting, spento per default) atterrano comunque. Lo stato vive nel
 checkpoint del core e in `FireSnapshot` (rollback e «Correggi ultimo
-intervento»). Fixture visiva: `scripts/visual-fixtures/extinguish-area.json`. Diverso da «Spegni zona» / «Spegni area circolare» (`Extinguish`),
-che rendono il terreno non combustibile.
+intervento»). Fixture visiva: `scripts/visual-fixtures/extinguish-area.json`. «Spegni zona» e
+«Spegni area circolare» (`Extinguish`) seguono la stessa regola (dal playtest del
+30/10; prima rendevano non combustibile tutta l'area): una zona (`F4`) spegne
+tutte le celle in fiamme dell'intera zona, un luogo con nome il suo `radius_m`
+(un settore i suoi limiti, altrimenti 250 m), un cerchio il suo raggio; la
+vegetazione non cambia (`World::extinguish_footprint`, `FireSim::extinguish_rect`
+/ `extinguish` → `extinguish_area`).
 
 Le azioni disponibili e i loro effetti dipendono dallo scenario e dalla modalità
 del modello. Il modello operativo aggiunge routing stradale, code, viaggi,

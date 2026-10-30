@@ -1929,6 +1929,16 @@ fn draw(
         }
     }
     if let Some(p) = pending.filter(|p| p["x"].is_number() && p["y"].is_number()) {
+        // The disc a radius tool acts on (circle extinguish, ignition).
+        if let Some(r) = p["radius_m"].as_f64().filter(|r| r.is_finite() && *r > 0.) {
+            ctx.begin_path();
+            ctx.arc(n(&p["x"]) * k, (h - n(&p["y"])) * k, r * k, 0., std::f64::consts::TAU)?;
+            ctx.set_fill_style_str("rgba(40,120,220,.22)");
+            ctx.fill();
+            ctx.set_stroke_style_str("#122b2c");
+            ctx.set_line_width(4. * s);
+            ctx.stroke();
+        }
         ctx.begin_path();
         ctx.arc(
             n(&p["x"]) * k,
