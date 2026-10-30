@@ -268,18 +268,20 @@ fn basis_name(kind: &str) -> &'static str {
     })
 }
 
-/// What a reply rests on (with the player's reference or rationale) and the
-/// PDF behind it, with the button that opens it.
+/// What a reply rests on (with the player's reference), why (the
+/// player's rationale) and the PDF behind it, with the button that opens it.
 fn basis_chip(m: &Value, on_pdf: &Callback<(u64, String)>) -> Html {
     let (basis, document) = (&m["basis"], &m["document"]);
     let note = text(&m["basis_note"]).to_string();
-    if !basis.is_string() && !document.is_object() {
+    let why = text(&m["rationale"]).to_string();
+    if !basis.is_string() && !document.is_object() && why.is_empty() {
         return html! {};
     }
     let doc = document.as_object().map(|_| (document["id"].as_u64().unwrap_or(0), text(&document["name"]).to_string()));
     html! {<div class="reply-basis" data-reply-basis={text(basis).to_string()}>
         <span class="pill reply-basis-kind">{crate::exfmt!("Fondamento: {}","Basis: {}",basis_name(text(basis)))}</span>
         if !note.is_empty(){<span class="reply-basis-note" data-reply-basis-note="">{note}</span>}
+        if !why.is_empty(){<p class="reply-rationale-line" data-reply-rationale=""><b>{crate::exfmt!("Motivazione: ","Rationale: ")}</b>{why}</p>}
         if let Some((id,name))=doc{<button type="button" class="reply-doc" data-open-pdf={id.to_string()} onclick={{let on_pdf=on_pdf.clone();let name=name.clone();Callback::from(move |_|on_pdf.emit((id,name.clone())))}}>{format!("PDF · {name}")}</button>}
     </div>}
 }

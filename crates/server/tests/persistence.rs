@@ -298,7 +298,7 @@ async fn narrative_approval_and_outcome_survive_restart_without_physical_executi
     assert_eq!(post(&c,&s,"/api/player/mayor/language",json!({"language":"en"})).await.0,Status::Ok);
     post(&c,&s,"/api/master/inject",json!({"title":"Support","sender":"112","recipients":["mayor"],"text":"Psychological support requested"})).await;
     let parent=s.lock().messages.iter().find(|m|m.kind==exercise::MsgKind::Inject&&m.to=="mayor").unwrap().id;
-    let(status,got)=post(&c,&s,"/api/player/mayor/actions",json!({"kind":"decision","basis":"operational_judgment","narrative":"Activate support","reply_to":parent})).await;
+    let(status,got)=post(&c,&s,"/api/player/mayor/actions",json!({"kind":"decision","basis":"operational_judgment","rationale":"Stated rationale","narrative":"Activate support","reply_to":parent})).await;
     assert_eq!(status,Status::Ok,"{got}");let id=got["proposal"].as_u64().unwrap();
     assert_eq!(post(&c,&s,&format!("/api/master/proposals/{id}/decide"),json!({"approve":true})).await.0,Status::Ok);
     assert_eq!(post(&c,&s,&format!("/api/master/proposals/{id}/narrative-outcome"),json!({"text":"EXCON assigns a support team"})).await.0,Status::Ok);
@@ -329,7 +329,7 @@ async fn attached_pdf_survives_a_restart() {
     let mut bytes = b"%PDF-1.4\n".to_vec();
     bytes.resize(3 * 1024 * 1024, b'x');
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let (status, got) = post(&c, &s, "/api/player/mayor/actions", json!({"kind":"decision","reply_to":parent,"narrative":"We follow the plan","basis":"plan",
+    let (status, got) = post(&c, &s, "/api/player/mayor/actions", json!({"kind":"decision","reply_to":parent,"narrative":"We follow the plan","basis":"plan","basis_note":"Plan section 3","rationale":"The plan covers it",
         "attachment":{"name":"plan.pdf","content_type":"application/pdf","data":data}})).await;
     assert_eq!(status, Status::Ok, "{got}");
     let id = got["proposal"].as_u64().unwrap();

@@ -459,10 +459,10 @@ fn default_language_needs_no_confirmation_and_evidence_is_validated_before_recor
     ex.set_language("mayor", "it").unwrap();
     assert!(ex.players["mayor"].language_confirmed);
     assert!(ex.player_reply("mayor", "warn F4", mid, DecisionEvidence::judgment(" ")).is_err());
-    let unsafe_link = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Plan, reference:"Municipal plan".into() }, attachments:vec![Attachment {title:"Map".into(), url:"javascript:alert(1)".into()}] };
+    let unsafe_link = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Plan, reference:"Municipal plan".into(), rationale: None }, attachments:vec![Attachment {title:"Map".into(), url:"javascript:alert(1)".into()}] };
     assert!(ex.player_reply("mayor", "warn F4", mid, unsafe_link).is_err());
     assert!(ex.proposals.is_empty());
-    let evidence = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Procedure, reference:"Municipal warning procedure, section 3".into() }, attachments:vec![Attachment {title:"Warning map".into(), url:"https://example.test/warning-map.pdf".into()}] };
+    let evidence = DecisionEvidence { basis:DecisionBasis { kind:BasisKind::Procedure, reference:"Municipal warning procedure, section 3".into(), rationale: None }, attachments:vec![Attachment {title:"Warning map".into(), url:"https://example.test/warning-map.pdf".into()}] };
     let expected = serde_json::to_value(&evidence).unwrap();
     let pid = ex.player_reply("mayor", "warn F4", mid, evidence).unwrap();
     ex.attach_parse(pid, parsed(json!([{"type":"IssueWarning","zone":"F4"}]))).unwrap();

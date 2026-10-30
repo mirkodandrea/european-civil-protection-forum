@@ -1,5 +1,8 @@
 // Player reply flow (30/10 playtest): one composer, one Send, recipient always
-// visible, plans / procedures / operational judgement asked in the box.
+// visible. A reply to the inject's sender requires its basis (plan or
+// procedure, law or regulation, operational judgement), the reference of a
+// plan or law, and the rationale; Send stays disabled with a hint until then.
+// Messages to other players need none of it.
 // Drives the workflow bench (standalone+bench build, simulated server) and
 // takes one screenshot per state:
 //   PORT=8085 ./scripts/dev_bench.sh
@@ -29,16 +32,25 @@ const col=(page,id)=>page.locator(`[data-bench-col="${id}"]`);
     assert.equal(await mayor.locator('[data-reply-send]').count(),1,'one Send');
     for(const gone of ['[data-reply-direct]','[data-reply-conversation]','[data-respond-from-conversation]','[data-create-conversation]','.work-modal'])
       assert.equal(await page.locator(gone).count(),0,`no ${gone}`);
+    const send=mayor.locator('[data-reply-send]'),hint=mayor.locator('.reply-send-bar .work-hint');
+    const blocked=async(re,why)=>{assert.equal(await send.isDisabled(),true,`Send disabled: ${why}`);assert.match(await hint.innerText(),re,why);};
     await mayor.locator('#response-narrative').fill('Apriamo la palestra comunale come area di attesa per i residenti di F4.');
+    await blocked(/fondamento|si basa|rests on/i,'basis required');
+    await shot('1a-sender-needs-basis');
     await mayor.locator('#basis-plan').click();
+    await blocked(/quale piano|which plan/i,'plan reference required');
     await mayor.locator('[data-basis-note]').fill('Piano comunale di protezione civile, scheda 4 (aree di attesa)');
-    assert.match(await mayor.locator('[data-reply-send]').innerText(),/Invia a|Send to/);
+    await blocked(/motivazione|rationale/i,'rationale required');
+    await mayor.locator('[data-rationale]').fill('Il fronte può raggiungere F4 entro un’ora: i residenti devono attendere al coperto.');
+    assert.equal(await send.isDisabled(),false,'Send enabled once everything is filled');
+    assert.match(await send.innerText(),/Invia a|Send to/);
     await shot('1-inject-reply-to-sender');
     // Same box, recipient = other players: the basis row goes, the people appear.
     await box.locator('[data-to="players"]').check();
     await mayor.locator('[data-conv-person="police"]').check();
     await mayor.locator('#response-narrative').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
     assert.equal(await mayor.locator('[data-basis]').count(),0,'no basis for a coordination message');
+    assert.equal(await mayor.locator('[data-rationale]').count(),0,'no rationale for a coordination message');
     await shot('2-inject-to-players');
     await mayor.locator('[data-send-conversation]').click();
     await mayor.locator('[data-conversation]').waitFor();
@@ -53,13 +65,16 @@ const col=(page,id)=>page.locator(`[data-bench-col="${id}"]`);
     await mayor.locator('[data-reply-composer] [data-to="sender"]').check();
     await mayor.locator('#response-narrative').fill('D’accordo con la Polizia: SP12 chiusa, poi evacuiamo F4 verso la palestra.');
     await mayor.locator('#basis-operational_judgment').click();
-    await mayor.locator('[data-basis-note]').fill('Il fronte arriva in F4 entro un’ora: prima liberiamo la strada');
+    assert.equal(await mayor.locator('[data-basis-note]').count(),0,'no reference line for operational judgement');
+    await blocked(/motivazione|rationale/i,'rationale required');
+    await mayor.locator('[data-rationale]').fill('Il fronte arriva in F4 entro un’ora: prima liberiamo la strada');
     await shot('4-conversation-to-sender');
     await mayor.locator('[data-respond]').click();
     await mayor.locator('[data-conv-response]').first().waitFor();
     // EXCON sees the basis and the player's rationale.
     await excon.locator('[data-response$=":mayor"] .response-row').first().click();
-    await excon.locator('[data-reply-basis-note]').first().waitFor();
+    await excon.locator('[data-reply-rationale]').first().waitFor();
+    assert.match(await excon.locator('[data-reply-rationale]').first().innerText(),/liberiamo la strada/);
     await shot('5-excon-sees-basis');
     assert.deepEqual(errors,[],'no page errors');
     console.log(`player reply flow ok · screenshots in ${out}`);

@@ -1,8 +1,12 @@
 //! The player's one reply composer (30/10 playtest: "two options, then a
 //! second button, then a confirm: clunky"). The same box sits under an inject
 //! and under a conversation linked to it: a visible recipient ("To"), the
-//! text, what the reply rests on (plan or procedure, law, operational
-//! judgement, with the player's reference or rationale) and one Send.
+//! text and one Send. A reply to the inject's sender also states what it
+//! rests on (plan or procedure, law or regulation, operational judgement:
+//! required), which plan or law (required for those two) and the player's
+//! rationale ("Motivazione": why this decision, required); Send stays
+//! disabled, with a hint saying what is missing, until all of it is there.
+//! Messages to other players are coordination and need none of it.
 //!
 //! Players never act on the world: what they send to the inject's sender is a
 //! reply EXCON's AI reads to suggest catalogue actions (`exercise::reply_review`);
@@ -17,7 +21,8 @@
 //! | conversation | sender | `POST /api/player/<r>/actions` with `conversation` |
 //!
 //! Drafts are kept per context (`inj:<message>` or `conv:<id>`) in the
-//! player's fields: `reply:`, `to:`, `people:`, `basis:`, `basis_note:`.
+//! player's fields: `reply:`, `to:`, `people:`, `basis:`, `basis_note:`,
+//! `rationale:`.
 use crate::{
     api::{self, list, text},
     i18n, Action, ActionKind, Msg,
@@ -64,7 +69,7 @@ pub fn draft_key(ctx: &str) -> String {
     format!("reply:{ctx}")
 }
 // Not `draft:…`: `Msg::Field` routes those keys to the chat and inject drafts.
-const PER_CONTEXT: [&str; 5] = ["reply", "to", "people", "basis", "basis_note"];
+const PER_CONTEXT: [&str; 6] = ["reply", "to", "people", "basis", "basis_note", "rationale"];
 
 /// The reply of context `ctx` was sent: its draft goes, the conversation it
 /// started (if any) opens.
@@ -78,25 +83,49 @@ pub fn reply_sent(fields: &mut std::collections::BTreeMap<String, String>, ctx: 
     }
 }
 
-/// Body of the reply to the sender: words only, with the basis if given.
-pub fn reply_body(narrative: &str, parent: u64, conversation: Option<u64>, basis: &str, note: &str) -> Value {
+/// Body of the reply to the sender: the words, their basis, the reference
+/// (plan or law only) and the rationale.
+pub fn reply_body(narrative: &str, parent: u64, conversation: Option<u64>, basis: &str, note: &str, rationale: &str) -> Value {
     let mut body = json!({"kind": "communication", "narrative": narrative, "reply_to": parent, "conversation": conversation});
     if !basis.is_empty() {
         body["basis"] = json!(basis);
-        if !note.trim().is_empty() {
+        if needs_reference(basis) && !note.trim().is_empty() {
             body["basis_note"] = json!(note.trim());
         }
+    }
+    if !rationale.trim().is_empty() {
+        body["rationale"] = json!(rationale.trim());
     }
     body
 }
 
 /// The basis options, as the server names them, with their label and the
-/// placeholder of the reference/rationale field.
-pub const BASES: [(&str, &str, &str); 3] = [
-    ("plan", "basis_plan", "basis_note_plan"),
-    ("law", "basis_law", "basis_note_law"),
-    ("operational_judgment", "basis_judgment", "basis_note_judgment"),
+/// placeholder of the reference field (none for operational judgement).
+pub const BASES: [(&str, &str, Option<&str>); 3] = [
+    ("plan", "basis_plan", Some("basis_note_plan")),
+    ("law", "basis_law", Some("basis_note_law")),
+    ("operational_judgment", "basis_judgment", None),
 ];
+
+/// A plan or a law needs its reference (which one, which part).
+pub fn needs_reference(basis: &str) -> bool {
+    BASES.iter().any(|(v, _, h)| *v == basis && h.is_some())
+}
+
+/// What a reply to the sender still lacks (the hint key), in fill order.
+pub fn sender_missing(text: &str, basis: &str, note: &str, rationale: &str) -> Option<&'static str> {
+    if text.trim().is_empty() {
+        Some("need_text")
+    } else if !BASES.iter().any(|(v, _, _)| *v == basis) {
+        Some("need_reply_basis")
+    } else if needs_reference(basis) && note.trim().is_empty() {
+        Some("need_reference")
+    } else if rationale.trim().is_empty() {
+        Some("need_rationale")
+    } else {
+        None
+    }
+}
 
 impl crate::player_view::PlayerView {
     /// The context whose draft a map click writes into, if a composer is open.
@@ -129,6 +158,7 @@ impl crate::player_view::PlayerView {
         };
         let basis = get("basis");
         let note = get("basis_note");
+        let rationale = get("rationale");
         // The inject being answered: the delivery, or the conversation's quote.
         let (inject, parent, conversation): (&Value, u64, Option<u64>) = match &place {
             Place::Inject { msg } => (msg, msg["id"].as_u64().unwrap_or(0), None),
@@ -148,6 +178,8 @@ impl crate::player_view::PlayerView {
         };
         let missing = if self.state["phase"] != "orders" && to == To::Sender {
             Some("work_need_orders")
+        } else if to == To::Sender {
+            sender_missing(&draft, &basis, &note, &rationale)
         } else if draft.trim().is_empty() {
             Some("need_text")
         } else if recipients.is_empty() {
@@ -157,11 +189,12 @@ impl crate::player_view::PlayerView {
         };
         let cite = self.field("inj:conv_reply", "").parse::<u64>().ok();
         let send = {
-            let (own, draft, ctx, basis, note, picked) = (own.clone(), draft.trim().to_string(), ctx.clone(), basis.clone(), note.clone(), picked.clone());
+            let (own, draft, ctx, basis, note, rationale, picked) =
+                (own.clone(), draft.trim().to_string(), ctx.clone(), basis.clone(), note.clone(), rationale.clone(), picked.clone());
             let is_conv = matches!(place, Place::Conversation { .. });
             self.cb(move |_: ()| {
                 let (path, body) = match (is_conv, to) {
-                    (_, To::Sender) => (format!("/api/player/{own}/actions"), reply_body(&draft, parent, conversation, &basis, &note)),
+                    (_, To::Sender) => (format!("/api/player/{own}/actions"), reply_body(&draft, parent, conversation, &basis, &note, &rationale)),
                     (false, To::Players) => (format!("/api/player/{own}/conversations"), json!({"delivery": parent, "participants": picked, "text": draft})),
                     (true, To::Players) => (format!("/api/player/{own}/conversations/{}/messages", conversation.unwrap_or(0)), json!({"text": draft, "reply_to": cite})),
                 };
@@ -191,7 +224,7 @@ impl crate::player_view::PlayerView {
         };
         // Unique per player too: the bench shows several players on one page.
         let radio = format!("reply-to-{}-{}", own, ctx.replace(':', "-"));
-        let basis_hint = BASES.iter().find(|(v, _, _)| *v == basis).map(|(_, _, h)| *h);
+        let basis_hint = BASES.iter().find(|(v, _, _)| *v == basis).and_then(|(_, _, h)| *h);
         html! {<footer class="inj-composer reply-composer" data-reply-composer={ctx.clone()} data-reply-to={if to==To::Sender{"sender"}else{"players"}}>
             <fieldset class="reply-to" data-reply-recipient="">
                 <legend>{i18n::t(l,"to_label")}</legend>
@@ -208,7 +241,7 @@ impl crate::player_view::PlayerView {
                 onkeydown={{let send=send.clone();Callback::from(move |e:KeyboardEvent|{if ready&&e.key()=="Enter"&&(e.ctrl_key()||e.meta_key()){e.prevent_default();send.emit(());}})}}/>
             if to==To::Sender {
                 <div class="reply-basis-pick" data-work-block="basis">
-                    <span class="reply-basis-title">{i18n::t(l,"basis_title")}<small class="muted">{format!(" · {}",i18n::t(l,"basis_optional"))}</small></span>
+                    <span class="reply-basis-title">{i18n::t(l,"basis_title")}<small class="muted">{format!(" · {}",i18n::t(l,"basis_required"))}</small></span>
                     <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"basis_title")}>
                         {for BASES.iter().map(|(value,label,_)|{
                             let on=basis==*value;
@@ -218,9 +251,13 @@ impl crate::player_view::PlayerView {
                         })}
                     </div>
                     if let Some(hint)=basis_hint {
-                        <input type="text" class="reply-basis-note" data-basis-note="" maxlength="2000" placeholder={i18n::t(l,hint)} aria-label={i18n::t(l,hint)} value={note.clone()} oninput={{let set=set("basis_note");Callback::from(move |e|set.emit(api::input(e)))}}/>
+                        <input type="text" class="reply-basis-note" data-basis-note="" maxlength="2000" required=true placeholder={i18n::t(l,hint)} aria-label={i18n::t(l,hint)} value={note.clone()} oninput={{let set=set("basis_note");Callback::from(move |e|set.emit(api::input(e)))}}/>
                     }
                 </div>
+                <label class="reply-rationale" data-work-block="rationale">
+                    <span class="reply-basis-title">{i18n::t(l,"rationale_title")}<small class="muted">{format!(" · {}",i18n::t(l,"basis_required"))}</small></span>
+                    <textarea class="reply-rationale-text" data-rationale="" rows="2" maxlength="2000" required=true placeholder={i18n::t(l,"rationale_ph")} value={rationale.clone()} oninput={{let set=set("rationale");Callback::from(move |e|set.emit(api::input(e)))}}/>
+                </label>
             }
             if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
             <details class="reply-guide-more"><summary>{i18n::t(l,"guide_open")}</summary>{self.reply_guidance(l,false)}</details>
@@ -253,14 +290,37 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn a_reply_carries_its_basis_only_when_given() {
-        let b = reply_body("Evacuiamo F4", 7, None, "", "ignored");
+    fn a_reply_carries_its_basis_reference_and_rationale() {
+        let b = reply_body("Evacuiamo F4", 7, None, "", "ignored", " ");
         assert_eq!(b["kind"], "communication");
-        assert!(b.get("basis").is_none() && b.get("basis_note").is_none());
-        let b = reply_body("Evacuiamo F4", 7, Some(2), "plan", "  Piano comunale, scheda 4 ");
+        assert!(b.get("basis").is_none() && b.get("basis_note").is_none() && b.get("rationale").is_none());
+        let b = reply_body("Evacuiamo F4", 7, Some(2), "plan", "  Piano comunale, scheda 4 ", " Il fuoco arriva entro un'ora ");
         assert_eq!((b["basis"].as_str(), b["basis_note"].as_str()), (Some("plan"), Some("Piano comunale, scheda 4")));
+        assert_eq!(b["rationale"], "Il fuoco arriva entro un'ora");
         assert_eq!(b["conversation"], 2);
-        assert!(reply_body("x", 7, None, "operational_judgment", " ").get("basis_note").is_none());
+        // Operational judgement has no reference line: a leftover one is not sent.
+        let b = reply_body("x", 7, None, "operational_judgment", "Piano", "Perché");
+        assert!(b.get("basis_note").is_none());
+        assert_eq!(b["rationale"], "Perché");
+    }
+
+    /// Send waits for text, basis, the reference of a plan or law and the rationale.
+    #[test]
+    fn a_reply_to_the_sender_needs_basis_reference_and_rationale() {
+        assert_eq!(sender_missing(" ", "plan", "x", "y"), Some("need_text"));
+        assert_eq!(sender_missing("F4", "", "", "y"), Some("need_reply_basis"));
+        assert_eq!(sender_missing("F4", "gossip", "", "y"), Some("need_reply_basis"));
+        assert_eq!(sender_missing("F4", "plan", " ", "y"), Some("need_reference"));
+        assert_eq!(sender_missing("F4", "law", "", "y"), Some("need_reference"));
+        assert_eq!(sender_missing("F4", "law", "art. 15", " "), Some("need_rationale"));
+        assert_eq!(sender_missing("F4", "operational_judgment", "", " "), Some("need_rationale"));
+        assert_eq!(sender_missing("F4", "operational_judgment", "", "Il vento gira"), None);
+        assert_eq!(sender_missing("F4", "plan", "Scheda 4", "Il vento gira"), None);
+        for key in ["need_text", "need_reply_basis", "need_reference", "need_rationale", "rationale_title", "rationale_ph", "basis_required"] {
+            for l in ["it", "en"] {
+                assert!(crate::i18n_risposte::lookup(l, key).is_some(), "{l}:{key}");
+            }
+        }
     }
 
     #[test]
@@ -294,6 +354,6 @@ mod tests {
         for forbidden in ["action_pick::form(", "data-add-action", "suggest-actions", "\"commands\""] {
             assert!(!me.contains(forbidden), "composer has {forbidden}");
         }
-        assert!(me.contains("reply_guidance(l,false)") && me.contains("basis_title"));
+        assert!(me.contains("reply_guidance(l,false)") && me.contains("basis_title") && me.contains("data-rationale"));
     }
 }

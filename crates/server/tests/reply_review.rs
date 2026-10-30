@@ -92,7 +92,8 @@ fn item<'a>(r: &'a Value, kind: &str) -> &'a Value {
 async fn the_clarification_loop_over_http() {
     let (c, parent) = fixture().await;
     let (status, body) = call(&c, "fire_commander", "/api/player/fire_commander/actions",
-        Some(json!({"reply_to": parent, "kind": "communication", "narrative": "Mandiamo due squadre AIB sul lato nord di F4 e apriamo una linea tagliafuoco"}))).await;
+        Some(json!({"reply_to": parent, "kind": "communication", "basis": "operational_judgment", "rationale": "Il fronte avanza verso nord",
+            "narrative": "Mandiamo due squadre AIB sul lato nord di F4 e apriamo una linea tagliafuoco"}))).await;
     assert_eq!(status, Status::Ok, "{body}");
     let r = reviewed(&c, 1).await;
     let line = item(&r, "CutFireLine");
@@ -245,7 +246,7 @@ fn row<'a>(m: &'a Value, role: &str) -> &'a Value {
 
 async fn send_decision(c: &Client, parent: u64, text: &str) -> Value {
     let (status, body) = call(c, "fire_commander", "/api/player/fire_commander/actions",
-        Some(json!({"reply_to": parent, "kind": "decision", "basis": "operational_judgment", "narrative": text}))).await;
+        Some(json!({"reply_to": parent, "kind": "decision", "basis": "operational_judgment", "rationale": "Stated rationale", "narrative": text}))).await;
     assert_eq!(status, Status::Ok, "{body}");
     body["proposal"].clone()
 }
@@ -322,7 +323,8 @@ async fn successive_replies_stay_distinct() {
 #[tokio::test]
 async fn handled_communication_closes_its_review() {
     let (c, parent) = fixture().await;
-    let say = |text: &'static str| json!({"reply_to": parent, "kind": "communication", "narrative": text});
+    let say = |text: &'static str| json!({"reply_to": parent, "kind": "communication", "narrative": text,
+        "basis": "operational_judgment", "rationale": "Il fronte avanza"});
     let (s, _) = call(&c, "fire_commander", "/api/player/fire_commander/actions",
         Some(say("Mandiamo due squadre AIB sul lato nord di F4 e apriamo una linea tagliafuoco"))).await;
     assert_eq!(s, Status::Ok);

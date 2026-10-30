@@ -31,31 +31,41 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   l’inject e sotto ogni conversazione collegata: **A chi** sempre visibile
   («Risposta all’inject · <mittente>», cioè la sala operativa, oppure altri
   player), il testo,
-  **Su cosa si basa** (facoltativo: Piano o procedura / Legge o norma / Giudizio
-  operativo, con una riga per *quale* piano o procedura o per il *perché*) e **un
-  solo** pulsante «Invia a <destinatario>» (Ctrl/Cmd+Invio). Niente scelta
+  verso il mittente **Su cosa si basa** (obbligatorio: Piano o procedura / Legge o
+  norma / Giudizio operativo, con una riga obbligatoria per *quale* piano, procedura
+  o norma — non mostrata per il giudizio operativo) e la **Motivazione**
+  (obbligatoria: perché questa decisione), e **un solo** pulsante «Invia a
+  <destinatario>» (Ctrl/Cmd+Invio). Invia resta disabilitato, con un suggerimento
+  che dice cosa manca (testo, fondamento, riferimento, motivazione), finché tutto
+  non è compilato. I messaggi ad altri player (coordinamento) non chiedono né
+  fondamento né motivazione; il PDF allegato resta fuori dal box (decisione 30/10). Niente scelta
   preliminare «Risposta all’inject / Inizia una conversazione», niente modale, niente
   secondo pulsante «Rispondi» nella conversazione. Al mittente: `POST
-  /api/player/<role>/actions` con `kind: "communication"`, `basis`, `basis_note`
-  (stato «Inviata»); ad altri player sotto l’inject: nuova conversazione collegata
+  /api/player/<role>/actions` con `kind: "communication"`, `basis`, `basis_note`,
+  `rationale` (stato «Inviata»); ad altri player sotto l’inject: nuova conversazione collegata
   (`POST …/conversations`, che poi si apre); dentro una conversazione: messaggio ai
   suoi partecipanti (`POST …/conversations/<id>/messages`) oppure, scegliendo il
   mittente, risposta all’inject con `conversation` = id. Le bozze sono tenute per
   inject e per conversazione. Sotto il box la **guida alla risposta** (cosa, dove —
   zona come F4, lato di zona F4:N, luogo o coordinate —, con quali mezzi, entro
   quando, chi si informa, **su quale piano, procedura, norma o giudizio operativo
-  ci si basa**, con un esempio) e il materiale di decisione del ruolo (competenze e
+  ci si basa** e **perché** (motivazione), con un esempio) e il materiale di decisione del ruolo (competenze e
   risorse disponibili ora; descrizione e missioni nella scheda Funzione). Un clic
   sulla mappa scrive nel box aperto la zona o l’edificio. La stessa guida, in una
   riga, sta sopra la risposta a una domanda della sala operativa.
-- **Fondamento verso l’AI e l’EXCON**: `basis` + `basis_note` diventano
-  `Proposal.evidence.basis` (`reference` = parole del player, altrimenti «Declared
-  by the player: …»); il contesto AI del player riceve `[basis] plans: <nota>`
-  (letto da `parse_reply` e `suggest_actions`), il thread letto da `review_reply`
-  porta `basis {kind, reference}` sulla risposta (il prompt lo usa come contesto
-  per le note, mai come azione), e la console EXCON mostra il fondamento con la
-  nota (`basis_note`) in «Azioni dalle risposte» e in Risposte. Una nota senza
-  tipo di fondamento è rifiutata.
+- **Fondamento e motivazione verso l’AI e l’EXCON**: `basis` + `basis_note` +
+  `rationale` diventano `Proposal.evidence.basis` (`reference` = parole del player,
+  altrimenti «Declared by the player: …»; `rationale` opzionale nel formato salvato,
+  così le sessioni precedenti si caricano); il contesto AI del player riceve
+  `[basis] plans: <nota>` e `[rationale] <perché>` (letti da `parse_reply` e
+  `suggest_actions`), il thread letto da `review_reply` porta
+  `basis {kind, reference, rationale}` sulla risposta (il prompt li usa come
+  contesto per le note, mai come azione né come fonte di parametri), e la console
+  EXCON mostra fondamento, nota e **Motivazione** in «Azioni dalle risposte» e in
+  Risposte. Il server rifiuta (400, con messaggio chiaro) una risposta narrata al
+  mittente senza fondamento, senza riferimento per piano/procedura/legge o senza
+  motivazione; una nota senza tipo di fondamento è rifiutata. Le risposte ad altri
+  player (`to_players`) non ne hanno bisogno.
 - **Lettura AI per l’EXCON** (`llm::tasks::review_reply`, `exercise::reply_review`,
   `server::review`): ogni risposta di un player a un inject è letta per intero
   (inject, risposta, domande inviate, risposte) fuori dal mutex. L’AI propone
@@ -219,7 +229,7 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
    conversazioni nate dall’inject (sotto le risposte) e in fondo il **box di
    risposta unico** (vedi «Solo l’EXCON agisce» sopra): destinatario visibile,
-   testo, fondamento facoltativo, un solo Invia. Chi ha solo letto l’inject via
+   testo, fondamento e motivazione obbligatori verso il mittente, un solo Invia. Chi ha solo letto l’inject via
    conversazione apre la conversazione e risponde da lì. Ogni inject può ricevere
    più risposte.
 3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
@@ -340,11 +350,14 @@ Corpo di `POST /api/player/<role>/actions`, oltre a `narrative`, `commands`,
 `reply_to`, `conversation`, `basis`, `attachment`:
 
 - `kind`: `communication` (solo informazione: stato `informational` subito, senza
-  fondamento, senza approvazione EXCON, senza azioni; non blocca il flusso) o
+  approvazione EXCON, senza azioni; non blocca il flusso) o
   `decision` (fondamento obbligatorio — piano/procedura, legge/norma, giudizio
   operativo — anche se l’azione è solo narrata; revisione EXCON). `kind` è
   obbligatorio per ogni chiamante (422 se manca) e non c’è fondamento predefinito;
   anche `Exercise::player_actions` richiede il fondamento esplicito.
+- Ogni risposta **narrata al mittente** (senza `to_players`), di qualunque `kind`,
+  richiede `basis`, `basis_note` se il fondamento è piano/procedura/legge, e
+  `rationale` (perché, max 2000 caratteri).
 - `to_persona` / `to_players`: destinatario. Predefinito: il mittente fittizio
   dell’inject (`addressed_to.persona`). Con `to_players` la risposta è anche
   pubblicata, tradotta per ciascuno, in una conversazione collegata all’inject con
@@ -414,9 +427,10 @@ riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell
 ### Base della risposta e allegato PDF
 
 - Il box di risposta del player (`reply_composer.rs`) chiede, verso il mittente, il
-  **fondamento** facoltativo (Piano o procedura / Legge o norma / Giudizio operativo,
-  `basis` = `plan|law|operational_judgment`) e la nota `basis_note` (quale piano o
-  procedura, o il perché). Il PDF resta supportato dall’API ma il box non lo offre più
+  **fondamento** obbligatorio (Piano o procedura / Legge o norma / Giudizio operativo,
+  `basis` = `plan|law|operational_judgment`), il riferimento `basis_note` (quale piano,
+  procedura o norma; obbligatorio per piano e legge, assente per il giudizio
+  operativo) e la **motivazione** `rationale` (perché, obbligatoria). Il PDF resta supportato dall’API ma il box non lo offre più
   (era nel vecchio modale con tipo comunicazione/decisione e azioni). La base diventa `Proposal.evidence.basis.kind`
   (`BasisKind::Law` è nuovo) e compare in `inject_responses[].replies[]`, in
   `pending_proposals[]` e nei messaggi `reply` del `thread` come `basis` e `document`;

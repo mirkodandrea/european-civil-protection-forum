@@ -40,11 +40,12 @@ const benches={
     await excon.locator('[data-bench-send="I1"]').click();
     await excon.locator('[data-send]').click();await done(page,1);
     await openInject(page,'mayor');await done(page,2);
-    // One composer under the inject: recipient visible, basis, one Send.
+    // One composer under the inject: recipient visible, basis, reference, rationale, one Send.
     await mayor.locator('[data-reply-composer] [data-to="sender"]:checked').waitFor();
     await mayor.locator('#response-narrative').fill('Apriamo il centro operativo comunale e informiamo la popolazione.');
     await mayor.locator('#basis-plan').click();
     await mayor.locator('[data-basis-note]').fill('Piano comunale di protezione civile, scheda 2');
+    await mayor.locator('[data-rationale]').fill('Il fumo raggiunge il paese: la popolazione va informata subito.');
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');await excon.locator('[data-reply-basis="plan"]').first().waitFor();
   },
@@ -53,7 +54,8 @@ const benches={
     await openInject(page,'police');await police.locator('[data-reply-direct]').click();await done(page,1);
     await police.locator('#response-narrative').fill('Chiudiamo la SP12 ai curiosi e avvisiamo la zona E3.');
     await police.locator('[data-add-suggestion="0"]').click();await done(page,2);
-    await police.locator('#basis-operational_judgment').check();
+    await police.locator('#basis-operational_judgment').click();
+    await police.locator('[data-rationale]').fill('Troppi curiosi sulla SP12 rallentano i mezzi.');
     await police.locator('[data-respond]').click();await done(page,3);
     await col(page,'excon').locator('[data-response$=":police"] [data-reply-state="Pending"]').waitFor();
   },
@@ -96,6 +98,7 @@ const benches={
     await mayor.locator('[data-reply-composer] [data-to="sender"]').check();
     await mayor.locator('#response-narrative').fill('D’accordo con la Polizia: SP12 chiusa, poi evacuiamo F4.');
     await mayor.locator('#basis-operational_judgment').click();
+    await mayor.locator('[data-rationale]').fill('Prima liberiamo la strada, poi evacuiamo in sicurezza.');
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');
     await excon.locator('[data-linked-conversation]').first().waitFor();

@@ -1074,4 +1074,8 @@ body:has(.simbench){height:100dvh;overflow:hidden}
 .reply-send-bar .work-hint{flex:1 1 auto}.reply-send-bar button{white-space:nowrap;flex:none}
 span.reply-basis-note{font-size:12px;color:var(--muted);margin-left:6px}
 .rb-basis{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reply-rationale{display:flex;flex-direction:column;gap:4px;margin:0}
+.reply-rationale textarea{margin:0;min-height:52px;resize:vertical}
+p.reply-rationale-line{flex:1 1 100%;margin:2px 0 0;font-size:13px;white-space:pre-wrap}
+.rb-rationale{margin:4px 0 0;font-size:13px;white-space:pre-wrap}
 .inj-thread-status{display:block;padding:6px 16px 0}
