@@ -52,6 +52,18 @@ pub const DAMAGE_EXPOSURE_S: f32 = 300.0;
 pub const DESTROY_EXPOSURE_S: f32 = 900.0;
 /// A building is "threatened" with fire burning within this distance.
 pub const THREAT_RADIUS_M: f32 = 300.0;
+/// Buildings sit on non-burnable plots, so the fire "reaches" a building when
+/// a confirmed burning cell is at the edge of its plot: within this distance.
+pub const CONTACT_RADIUS_M: f32 = 50.0;
+
+/// Distance (building → cell centre) within which a confirmed burning cell
+/// counts as fire that has **reached** the building: [`CONTACT_RADIUS_M`], or
+/// the building's cell and its eight neighbours on coarse grids. Only fire in
+/// contact damages a building; anything farther (distant fire, the ensemble
+/// halo, modelled radiant/ember loads) can only make it *threatened*.
+pub fn contact_radius_m(cellsize: f32) -> f32 {
+    (cellsize * 1.5).max(CONTACT_RADIUS_M)
+}
 /// Radius used by an `Extinguish` on a named place (not a zone).
 pub const PLACE_EXTINGUISH_RADIUS_M: f32 = 250.0;
 /// Most vertices an `ExtinguishArea` polygon may have.
@@ -239,7 +251,7 @@ impl WorldSnapshot {
 /// Precomputed geometry: which fire cells matter to each building and road.
 #[derive(Clone)]
 struct Cache {
-    /// Per building: (cell index, weight) within 70 m.
+    /// Per building: (cell index, weight) within [`contact_radius_m`].
     near: Vec<Vec<(usize, f32)>>,
     roads: Vec<(String, Vec<usize>)>,
 }
@@ -1910,15 +1922,21 @@ impl World {
         let mut events = Vec::new();
         for (i, b) in self.d.buildings.iter_mut().enumerate() {
             let spec = &self.scn.buildings[i];
-            // Exposure from burning cells within 70 m.
+            // Damage needs confirmed fire in contact with the building (a
+            // burning cell of the thresholded ensemble at the edge of its
+            // plot). Distant fire, the uncertainty halo and far radiant/ember
+            // loads only make it threatened, so the map, the impact report and
+            // the AI never report damage the fire has not reached.
             let legacy_w = self.cache.near[i]
                 .iter()
                 .filter(|(c, _)| state[*c] == CellFire::Burning)
                 .map(|(_, w)| *w)
                 .fold(0.0, f32::max);
-            let w = if self.scn.operations.intensity_exposure {
+            let w = if legacy_w <= 0.0 {
+                0.0
+            } else if self.scn.operations.intensity_exposure {
                 let load = &self.d.hazard.loads[i];
-                load.radiant + load.ember / 3.0
+                (load.radiant + load.ember / 3.0).min(1.0)
             } else {
                 legacy_w
             };
@@ -2176,22 +2194,17 @@ pub struct Stats {
 
 impl Cache {
     fn build(scn: &Scenario, fire: &FireSim) -> Cache {
+        let contact = contact_radius_m(scn.grid.cellsize);
         let near = scn
             .buildings
             .iter()
             .map(|b| {
-                fire.cells_in_radius(b.pos, 70.0)
+                fire.cells_in_radius(b.pos, contact)
                     .into_iter()
                     .map(|c| {
                         let q = scn.cell_centre(c);
                         let d = ((q[0] - b.pos[0]).powi(2) + (q[1] - b.pos[1]).powi(2)).sqrt();
-                        let w = if d <= 30.0 {
-                            1.0
-                        } else if d <= 50.0 {
-                            0.5
-                        } else {
-                            0.2
-                        };
+                        let w = if d <= 30.0 { 1.0 } else { 0.5 };
                         (scn.grid.index(c), w)
                     })
                     .collect()
