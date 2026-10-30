@@ -1030,7 +1030,8 @@ pub(crate) fn interact(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    if contexts.ctx_mut().wants_pointer_input() {
+    let ctx = contexts.ctx_mut();
+    if ctx.wants_pointer_input() || ctx.pointer_latest_pos().is_some_and(|p| !ctx.available_rect().contains(p)) {
         if buttons.just_pressed(MouseButton::Left) {
             e.press = None;
         }
