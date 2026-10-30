@@ -64,8 +64,40 @@ pub const CONTACT_RADIUS_M: f32 = 50.0;
 pub fn contact_radius_m(cellsize: f32) -> f32 {
     (cellsize * 1.5).max(CONTACT_RADIUS_M)
 }
-/// Radius used by an `Extinguish` on a named place (not a zone).
+/// Radius used by an `Extinguish` on a named point (a place without its own
+/// `radius_m`, a facility, a road) — not a zone or a sector.
 pub const PLACE_EXTINGUISH_RADIUS_M: f32 = 250.0;
+
+/// The ground an `Extinguish` area covers, in world metres.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Footprint {
+    /// `[x0, y0, x1, y1]`: a whole zone of the map grid, or a sector.
+    Rect([f32; 4]),
+    /// Centre and radius: a circle, or a named place.
+    Disc(Pos, f32),
+}
+
+impl Footprint {
+    pub fn area_ha(&self) -> f64 {
+        match *self {
+            Footprint::Rect(b) => ((b[2] - b[0]) as f64 * (b[3] - b[1]) as f64) / 10_000.0,
+            Footprint::Disc(_, r) => std::f64::consts::PI * (r as f64).powi(2) / 10_000.0,
+        }
+    }
+    pub fn centre(&self) -> Pos {
+        match *self {
+            Footprint::Rect(b) => [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5],
+            Footprint::Disc(c, _) => c,
+        }
+    }
+    /// Half the diagonal of a rectangle, the radius of a disc.
+    pub fn reach_m(&self) -> f32 {
+        match *self {
+            Footprint::Rect(b) => 0.5 * ((b[2] - b[0]).powi(2) + (b[3] - b[1]).powi(2)).sqrt(),
+            Footprint::Disc(_, r) => r,
+        }
+    }
+}
 /// Most vertices an `ExtinguishArea` polygon may have.
 pub const MAX_POLYGON_VERTICES: usize = 200;
 
@@ -482,18 +514,14 @@ impl World {
                 let r = radius_m.unwrap_or(80.0);
                 json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":r,"nominal_area_ha":std::f64::consts::PI*(r as f64).powi(2)/10000.0})
             }
-            Command::Extinguish { area } => match area {
-                Area::Named(n) => {
-                    if let Some(code) = self.zone_code(n) {
-                        let b = self.scn.zone_bounds(&code).unwrap();
-                        json!({"bounds_m":b,"nominal_area_ha":((b[2]-b[0])*(b[3]-b[1]))/10000.0})
-                    } else {
-                        json!({"centre_m":self.scn.resolve_place(n),"radius_m":PLACE_EXTINGUISH_RADIUS_M,"nominal_area_ha":std::f64::consts::PI*(PLACE_EXTINGUISH_RADIUS_M as f64).powi(2)/10000.0})
-                    }
+            Command::Extinguish { area } => match self.extinguish_footprint(area) {
+                Ok(f @ Footprint::Rect(b)) => {
+                    json!({"bounds_m":b,"nominal_area_ha":f.area_ha(),"effect":"puts out the fire inside; fuel and vegetation unchanged, unburnt ground can burn again later"})
                 }
-                Area::Circle { at, radius_m } => {
-                    json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":radius_m,"nominal_area_ha":std::f64::consts::PI*(*radius_m as f64).powi(2)/10000.0})
+                Ok(f @ Footprint::Disc(c, r)) => {
+                    json!({"centre_m":c,"radius_m":r,"nominal_area_ha":f.area_ha(),"effect":"puts out the fire inside; fuel and vegetation unchanged, unburnt ground can burn again later"})
                 }
+                Err(_) => serde_json::Value::Null,
             },
             Command::ExtinguishArea { polygon } => match self.resolve_polygon(polygon) {
                 Ok(poly) => {
@@ -520,6 +548,48 @@ impl World {
                 json!({"wind_direction":"degrees FROM","wind_speed":"km/h","fuel_moisture":"percent","spread":"future simulated time, stochastic ensemble; no instant perimeter change"})
             }
             _ => serde_json::Value::Null,
+        }
+    }
+
+    /// The ground an `Extinguish` covers: a zone code (`"F4"`) is the whole
+    /// zone; a sector name its bounds; a gazetteer place its own `radius_m`
+    /// (else [`PLACE_EXTINGUISH_RADIUS_M`]); any other named point (facility,
+    /// road) a [`PLACE_EXTINGUISH_RADIUS_M`] disc; a circle itself.
+    pub fn extinguish_footprint(&self, area: &Area) -> Result<Footprint, String> {
+        match area {
+            Area::Named(name) => {
+                if let Some(code) = self.zone_code(name) {
+                    if let Some(b) = self.scn.zone_bounds(&code) {
+                        return Ok(Footprint::Rect(b));
+                    }
+                }
+                let key = normalise(name);
+                if let Some(p) = self.scn.places.iter().find(|p| {
+                    normalise(&p.name) == key || p.aliases.iter().any(|a| normalise(a) == key)
+                }) {
+                    let r = p.radius_m.filter(|r| r.is_finite() && *r > 0.0);
+                    return Ok(Footprint::Disc(p.pos, r.unwrap_or(PLACE_EXTINGUISH_RADIUS_M)));
+                }
+                if let Some(s) = self
+                    .scn
+                    .sectors
+                    .iter()
+                    .find(|s| normalise(&s.id) == key || normalise(&s.name) == key)
+                {
+                    return Ok(Footprint::Rect(s.bounds));
+                }
+                self.scn
+                    .resolve_place(name)
+                    .map(|p| Footprint::Disc(p, PLACE_EXTINGUISH_RADIUS_M))
+                    .ok_or_else(|| format!("unknown area \"{name}\"{}", self.did_you_mean(name)))
+            }
+            Area::Circle { at, radius_m } => {
+                let p = self.resolve_loc(at)?;
+                if !radius_m.is_finite() || *radius_m <= 0.0 {
+                    return Err("radius must be positive".into());
+                }
+                Ok(Footprint::Disc(p, *radius_m))
+            }
         }
     }
 
@@ -1220,19 +1290,9 @@ impl World {
                     );
                 }
             }
-            Command::Extinguish { area } => match area {
-                Area::Named(n) => {
-                    if self.zone_code(n).is_none() && self.scn.resolve_place(n).is_none() {
-                        return Err(format!("unknown area \"{n}\""));
-                    }
-                }
-                Area::Circle { at, radius_m } => {
-                    self.resolve_loc(at)?;
-                    if !radius_m.is_finite() || *radius_m <= 0.0 {
-                        return Err("radius must be positive".into());
-                    }
-                }
-            },
+            Command::Extinguish { area } => {
+                self.extinguish_footprint(area)?;
+            }
             Command::ExtinguishArea { polygon } => {
                 self.resolve_polygon(polygon)?;
             }
@@ -1688,26 +1748,22 @@ impl World {
                 );
             }
             Command::Extinguish { area } => {
-                let n = match area {
-                    Area::Named(name) => match self.zone_code(name) {
-                        Some(code) => self
-                            .fire
-                            .extinguish_rect(self.scn.zone_bounds(&code).unwrap()),
-                        None => {
-                            let p = self.scn.resolve_place(name).unwrap();
-                            self.fire.extinguish(p, PLACE_EXTINGUISH_RADIUS_M)
-                        }
-                    },
-                    Area::Circle { at, radius_m } => {
-                        let p = self.resolve_loc(at)?;
-                        self.fire.extinguish(p, *radius_m)
-                    }
-                };
-                out.push(format!("{n} burning cells put out"));
+                // Same as a drawn area: every realization, fuel unchanged.
+                let foot = self.extinguish_footprint(area)?;
+                let n = match foot {
+                    Footprint::Rect(b) => self.fire.extinguish_rect(b),
+                    Footprint::Disc(p, r) => self.fire.extinguish(p, r),
+                }
+                .map_err(|e| e.to_string())?;
+                out.push(format!("{n} burning cells put out; fuel unchanged"));
                 self.event(
                     "extinguished",
-                    format!("Fire put out: {}", cmd.describe()),
-                    None,
+                    format!(
+                        "Fire put out: {} ({:.1} ha, {n} burning cells)",
+                        cmd.describe(),
+                        foot.area_ha()
+                    ),
+                    self.scn.zone_of(foot.centre()),
                 );
             }
             Command::ExtinguishArea { polygon } => {

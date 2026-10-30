@@ -21,8 +21,7 @@
 //! | Ignition | `ignitions` | lights a patch |
 //! | Fire line (fuel break) | `vegetation_changes` → non-vegetated | the front cannot cross cleared cells |
 //! | Water drop | `additional_moisture` | wets fuel ahead of the front; decays 1 %/min |
-//! | Extinguish (EXCON, zone/circle) | `vegetation_changes` → non-vegetated over the area | nothing in the area can burn again; burning cells there are shown as burnt |
-//! | Extinguish area (EXCON, drawn polygon) | [`propagator_core::Propagator::extinguish`] on the pending front | burning cells stop and are shown as burnt; fuel untouched, so unburnt cells can burn again later |
+//! | Extinguish (EXCON: zone, place, circle or drawn polygon) | [`propagator_core::Propagator::extinguish`] on the pending front | burning cells stop and are shown as burnt; fuel untouched, so unburnt cells can burn again later |
 //! | Weather | `wind_dir`, `wind_speed`, `moisture` | from the next event on |
 //!
 //! Two things learnt the hard way in `propagator_abm` and kept here:
@@ -120,7 +119,6 @@ pub struct FireSnapshot {
     probability: Vec<f32>,
     intensity: Vec<f32>,
     cleared: Vec<bool>,
-    extinguished: Vec<bool>,
     extinguished_at: Vec<i32>,
     added_moisture: Vec<f32>,
 }
@@ -146,8 +144,6 @@ pub struct FireSim {
     last_refresh_s: i64,
     /// Cells turned into fuel breaks.
     cleared: Vec<bool>,
-    /// Cells put out by the EXCON; drawn as burnt.
-    extinguished: Vec<bool>,
     /// Last time each cell was put out by [`FireSim::extinguish_area`]
     /// (`i32::MIN` if never): realizations that reached the cell at or before
     /// it no longer count.
@@ -236,7 +232,6 @@ impl FireSim {
             scratch: Vec::with_capacity(options.realizations),
             last_refresh_s: -REFRESH_S,
             cleared: vec![false; n],
-            extinguished: vec![false; n],
             extinguished_at: vec![i32::MIN; n],
             added_moisture: vec![0.0; n],
             pending_veg: None,
@@ -427,7 +422,7 @@ impl FireSim {
     /// Clear fuel along a line. Returns the number of burnable cells cut.
     pub fn fire_line(&mut self, from: Pos, to: Pos, width_m: f32) -> usize {
         let cells = self.cells_along(from, to, width_m);
-        self.clear_cells(&cells, false)
+        self.clear_cells(&cells)
     }
 
     /// All cells whose centre lies inside `[x0, y0, x1, y1]`.
@@ -445,16 +440,18 @@ impl FireSim {
         out
     }
 
-    /// Put the fire out over a disc (EXCON power). Returns burning cells put out.
-    pub fn extinguish(&mut self, at: Pos, radius_m: f32) -> usize {
+    /// Put the fire out over a disc (EXCON power), fuel unchanged (see
+    /// [`FireSim::extinguish_area`]). Returns burning cells put out.
+    pub fn extinguish(&mut self, at: Pos, radius_m: f32) -> Result<usize> {
         let cells = self.cells_in_radius(at, radius_m);
-        self.extinguish_cells(&cells)
+        self.extinguish_area(&cells)
     }
 
-    /// Put the fire out over a rectangle, e.g. a whole evacuation zone.
-    pub fn extinguish_rect(&mut self, bounds: [f32; 4]) -> usize {
+    /// Put the fire out over a rectangle, e.g. a whole zone of the map grid,
+    /// fuel unchanged (see [`FireSim::extinguish_area`]).
+    pub fn extinguish_rect(&mut self, bounds: [f32; 4]) -> Result<usize> {
         let cells = self.cells_in_rect(bounds);
-        self.extinguish_cells(&cells)
+        self.extinguish_area(&cells)
     }
 
     /// All cells whose centre lies inside the polygon (world metres, any
@@ -517,21 +514,7 @@ impl FireSim {
         Ok(out)
     }
 
-    fn extinguish_cells(&mut self, cells: &[Cell]) -> usize {
-        let mut out = 0;
-        for c in cells {
-            let i = self.grid.index(*c);
-            if self.state[i] == CellFire::Burning {
-                self.extinguished[i] = true;
-                self.state[i] = CellFire::Burnt;
-                out += 1;
-            }
-        }
-        self.clear_cells(cells, true);
-        out
-    }
-
-    fn clear_cells(&mut self, cells: &[Cell], include_burning: bool) -> usize {
+    fn clear_cells(&mut self, cells: &[Cell]) -> usize {
         let (rows, cols) = (self.grid.rows, self.grid.cols);
         let g = self
             .pending_veg
@@ -539,7 +522,7 @@ impl FireSim {
         let mut n = 0;
         for c in cells {
             let i = c.row * cols + c.col;
-            if !self.burnable[i] || (!include_burning && self.state[i] != CellFire::Unburnt) {
+            if !self.burnable[i] || self.state[i] != CellFire::Unburnt {
                 continue;
             }
             g.as_mut_slice()[i] = self.cleared_fuel_code as f64;
@@ -671,8 +654,7 @@ impl FireSim {
                 let (_, kth, _) = self.scratch.select_nth_unstable(k - 1);
                 self.ignited_at[i] = (*kth).min(now);
             }
-            self.state[i] = if self.extinguished[i]
-                || self.ignited_at[i] <= put_out
+            self.state[i] = if self.ignited_at[i] <= put_out
                 || now - self.ignited_at[i] >= BURNOUT_S
             {
                 CellFire::Burnt
@@ -695,7 +677,6 @@ impl FireSim {
             probability: self.probability.clone(),
             intensity: self.intensity.clone(),
             cleared: self.cleared.clone(),
-            extinguished: self.extinguished.clone(),
             extinguished_at: self.extinguished_at.clone(),
             added_moisture: self.added_moisture.clone(),
         }
@@ -713,7 +694,6 @@ impl FireSim {
         self.probability = s.probability.clone();
         self.intensity = s.intensity.clone();
         self.cleared = s.cleared.clone();
-        self.extinguished = s.extinguished.clone();
         self.extinguished_at = s.extinguished_at.clone();
         self.added_moisture = s.added_moisture.clone();
         self.pending_veg = s.pending_veg.clone();

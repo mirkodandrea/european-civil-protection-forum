@@ -35,8 +35,8 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "ignite", group: "Fuoco e interventi", icon: "🔥", label: "Innesco", tip: "Accende un nuovo focolaio nel punto scelto sulla mappa (almeno 40 m di raggio)." },
     Tool { id: "line", group: "Fuoco e interventi", icon: "✂", label: "Linea tagliafuoco", tip: "Apre una fascia senza combustibile tra due punti scelti sulla mappa." },
     Tool { id: "drop", group: "Fuoco e interventi", icon: "💧", label: "Lancio d’acqua", tip: "Un lancio aereo di acqua nel punto scelto." },
-    Tool { id: "extzone", group: "Fuoco e interventi", icon: "🧯", label: "Spegni zona", tip: "Spegne il fuoco in un’intera zona della griglia." },
-    Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto." },
+    Tool { id: "extzone", group: "Fuoco e interventi", icon: "🧯", label: "Spegni zona", tip: "Spegne il fuoco in tutta la zona della griglia scelta. La vegetazione non cambia." },
+    Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto. La vegetazione non cambia." },
     Tool { id: "extarea", group: "Fuoco e interventi", icon: "⬠", label: "Spegni area disegnata", tip: "Disegna sulla mappa un’area (almeno 3 vertici): il fuoco al suo interno si spegne subito in tutte le simulazioni. La vegetazione non cambia: il terreno non bruciato può riaccendersi se il fuoco lo raggiunge di nuovo." },
     Tool { id: "evac", group: "Fuoco e interventi", icon: "🚌", label: "Evacua zona", tip: "Ordina l’evacuazione di tutti gli edifici occupati di una zona." },
     Tool { id: "evacborgo", group: "Fuoco e interventi", icon: "🏘", label: "Evacua borgo", tip: "Ordina l’evacuazione di tutte le case di un borgo, case sparse comprese: partenze scaglionate verso l’area di raccolta del borgo. Clicca una casa del borgo." },
@@ -482,6 +482,13 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
     } else if tool == "extarea" && !points.is_empty() {
         // Every vertex, closed into a shaded polygon from the third on.
         Some(json!({"points": points.iter().map(|v| json!([v["x"], v["y"]])).collect::<Vec<_>>(), "closed": true}))
+    } else if matches!(tool, "extcircle" | "ignite") {
+        // The point with its disc, so the preview shows the area acted on.
+        points.last().map(|v| {
+            let mut v = v.clone();
+            v["radius_m"] = json!(params.radius_m);
+            v
+        })
     } else {
         points.last().cloned()
     };

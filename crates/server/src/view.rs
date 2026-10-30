@@ -289,7 +289,7 @@ impl ViewSource for ExerciseSource {
 
 /// Where an order acts, and how big an area it covers.
 fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f32)> {
-    use sim::{Area, Command as C};
+    use sim::Command as C;
     let zone = |z: &str| {
         w.zone_code(z)
             .and_then(|c| w.scn.zone_centre(&c))
@@ -325,10 +325,10 @@ fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f
             .and_then(|id| w.scn.road(&id))
             .and_then(|r| r.points.get(r.points.len() / 2).copied())
             .map(|p| (p, 350.0)),
-        C::Extinguish { area } => match area {
-            Area::Named(n) => zone(n).or_else(|| w.scn.resolve_place(n).map(|p| (p, 250.0))),
-            Area::Circle { at, radius_m } => w.resolve_loc(at).ok().map(|p| (p, *radius_m)),
-        },
+        C::Extinguish { area } => w
+            .extinguish_footprint(area)
+            .ok()
+            .map(|f| (f.centre(), f.reach_m())),
         C::ExtinguishArea { polygon } => w.resolve_polygon(polygon).ok().map(|poly| {
             let c = sim::polygon_centroid(&poly);
             let r = poly

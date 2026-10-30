@@ -378,3 +378,67 @@ fn unmatched_names_get_suggestions() {
     let Verdict::Rejected { reason } = v else { panic!() };
     assert!(reason.contains("is a zone"), "{reason}");
 }
+
+/// Burning cells of the "actual" fire among `cells`.
+fn burning_in(w: &World, cells: &[scenario::Cell]) -> usize {
+    cells.iter().filter(|c| w.fire.cell_state(**c) == fire::CellFire::Burning).count()
+}
+
+#[test]
+fn extinguish_zone_puts_out_the_whole_zone_and_keeps_fuel() {
+    // Playtest: "extinguish zone" acted like a single cell and wiped the
+    // vegetation. A zone puts out every burning cell inside it, like a drawn area.
+    let mut w = world();
+    w.advance(25 * 60).unwrap();
+    let zone = w.scn.zone_of(scenario::synthetic::IGNITION).unwrap();
+    let b = w.scn.zone_bounds(&zone).unwrap();
+    let cells = w.fire.cells_in_rect(b);
+    let inside = burning_in(&w, &cells);
+    assert!(inside > 1, "need a fire spread over the zone, got {inside} burning cells");
+    let veg = w.fire.vegetation().to_vec();
+    let cmd = Command::Extinguish { area: Area::Named(zone.to_lowercase()) };
+    assert_eq!(w.command_geometry(&cmd)["bounds_m"], serde_json::json!(b));
+    let notes = w.apply(&cmd, &Actor::Master).unwrap();
+    assert!(notes.iter().any(|n| n.contains(&format!("{inside} burning cells put out")) && n.contains("fuel unchanged")), "{notes:?}");
+    assert_eq!(burning_in(&w, &cells), 0);
+    assert_eq!(w.fire.vegetation(), &veg[..], "Extinguish must not change the vegetation");
+    w.advance(10 * 60).unwrap();
+    assert_eq!(w.fire.vegetation(), &veg[..], "no deferred fuel change either");
+}
+
+#[test]
+fn extinguish_named_place_covers_its_footprint_and_keeps_fuel() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    let at = scenario::synthetic::IGNITION;
+    scn.places.push(scenario::Place { name: "Burn Scar".into(), pos: at, radius_m: Some(600.0), ..Default::default() });
+    let mut w = World::new(Arc::new(scn), 1).unwrap();
+    let (x, y) = (at[0], at[1]);
+    w.apply(&Command::Ignite { at: Loc::Point { x, y }, radius_m: Some(scenario::synthetic::IGNITION_RADIUS_M) }, &Actor::Master).unwrap();
+    w.advance(60 * 60).unwrap();
+    let disc = w.fire.cells_in_radius(at, 600.0);
+    let near = w.fire.cells_in_radius(at, sim::PLACE_EXTINGUISH_RADIUS_M);
+    // The place's own radius matters: fire burns beyond the default 250 m.
+    assert!(burning_in(&w, &disc) > burning_in(&w, &near), "fire should reach past 250 m");
+    let veg = w.fire.vegetation().to_vec();
+    let cmd = Command::Extinguish { area: Area::Named("burn scar".into()) };
+    assert_eq!(w.command_geometry(&cmd)["radius_m"], serde_json::json!(600.0));
+    w.apply(&cmd, &Actor::Master).unwrap();
+    assert_eq!(burning_in(&w, &disc), 0);
+    assert_eq!(w.fire.vegetation(), &veg[..]);
+    // A gazetteer place without a radius keeps the 250 m default.
+    let pine = w.command_geometry(&Command::Extinguish { area: Area::Named("Pine Hill".into()) });
+    assert_eq!(pine["radius_m"], serde_json::json!(sim::PLACE_EXTINGUISH_RADIUS_M));
+    assert!(!w.validate(&Command::Extinguish { area: Area::Named("Nowhere at all".into()) }, &Actor::Master).is_ok());
+}
+
+#[test]
+fn extinguish_circle_keeps_fuel() {
+    let mut w = world();
+    w.advance(20 * 60).unwrap();
+    let veg = w.fire.vegetation().to_vec();
+    let [x, y] = scenario::synthetic::IGNITION;
+    w.apply(&Command::Extinguish { area: Area::Circle { at: Loc::Point { x, y }, radius_m: 2000.0 } }, &Actor::Master).unwrap();
+    assert_eq!(w.stats().burning_cells, 0);
+    w.advance(10 * 60).unwrap();
+    assert_eq!(w.fire.vegetation(), &veg[..]);
+}

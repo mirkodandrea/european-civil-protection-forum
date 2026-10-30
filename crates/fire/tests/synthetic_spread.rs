@@ -124,7 +124,9 @@ fn extinguish_stops_the_fire() {
     let scn = scenario();
     let mut f = started(&scn, 1);
     f.advance(20 * 60).unwrap();
-    f.extinguish(IGN, 900.0);
+    let veg = f.vegetation().to_vec();
+    f.extinguish(IGN, 900.0).unwrap();
+    assert_eq!(f.vegetation(), &veg[..], "extinguishing must not change the fuel");
     assert_eq!(f.burning_cells(), 0);
     let area = f.burned_area_ha();
     f.advance(60 * 60).unwrap();
@@ -180,13 +182,20 @@ fn extinguish_a_whole_zone() {
     let zone = scn.zone_of(IGN).unwrap();
     let b = scn.zone_bounds(&zone).unwrap();
     let before = f.burning_cells();
-    let out = f.extinguish_rect(b);
+    let veg = f.vegetation().to_vec();
+    let out = f.extinguish_rect(b).unwrap();
     assert!(out > 0 && f.burning_cells() < before);
+    // Every burning cell of the zone, not one cell, and no fuel change.
+    for c in f.cells_in_rect(b) {
+        assert_ne!(f.cell_state(c), CellFire::Burning);
+    }
+    assert_eq!(f.vegetation(), &veg[..]);
     // Nothing inside the zone burns afterwards.
     f.advance(30 * 60).unwrap();
     for c in f.cells_in_rect(b) {
         assert_ne!(f.cell_state(c), CellFire::Burning);
     }
+    assert_eq!(f.vegetation(), &veg[..]);
 }
 
 fn started_with(scn: &Scenario, seed: u64, options: fire::FireOptions) -> FireSim {
