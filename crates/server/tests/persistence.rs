@@ -344,3 +344,43 @@ async fn attached_pdf_survives_a_restart() {
     assert_eq!(doc.name, "plan.pdf");
     assert_eq!(ex.file_for(None, doc.id).unwrap().bytes.len(), bytes.len());
 }
+
+/// The exercise timers come back from the journal: the start instant is the
+/// one recorded when the EXCON first started, not the time of the restart.
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_keeps_the_exercise_start_instant() {
+    let _gate = gate();
+    let d = dir("timers");
+    let p = storage(&d);
+    let (c, s) = boot(&p).await;
+    assert_eq!(post(&c, &s, "/api/master/start", json!({})).await.0, Status::Ok);
+    let started = s.lock().started_wall_ms.expect("start recorded");
+    let r = c
+        .get("/api/state")
+        .header(Header::new("Authorization", format!("Bearer {}", s.access.master)))
+        .dispatch()
+        .await;
+    let state: Value = r.into_json().await.unwrap();
+    let progress = &state["progress"];
+    assert_eq!(progress["turn"], 1);
+    assert_eq!(progress["counting"], true);
+    assert_eq!(progress["turn_len_s"], 30 * 60);
+    assert!(progress["planned_turns"].as_u64().unwrap() >= 1);
+    assert_eq!(progress["started_wall_ms"].as_u64(), Some(started as u64));
+    p.autosave(&s, true);
+
+    let p2 = storage(&d);
+    let mut session = p2.load_session().expect("saved session");
+    let recorded = session.journal[0].wall_ms.expect("journal keeps the wall clock");
+    assert!(recorded as u128 <= started && started - (recorded as u128) < 5_000);
+    // Pretend the start happened an hour ago.
+    let hour_ago = recorded - 3_600_000;
+    session.journal[0].wall_ms = Some(hour_ago);
+    let (_c2, s2) = boot(&p2).await;
+    persist::restore(&s2, server::replay_rocket(&s2), session).await.unwrap();
+    let ex = s2.lock();
+    assert_eq!(ex.started_wall_ms, Some(hour_ago as u128));
+    assert_eq!(ex.turn_wall_ms, Some(hour_ago as u128));
+    assert_eq!(ex.replay_wall_ms, None, "the replay clock is released");
+    assert!(ex.progress().elapsed_ms >= 3_600_000);
+}

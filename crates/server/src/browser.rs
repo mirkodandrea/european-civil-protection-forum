@@ -33,6 +33,9 @@ pub struct JournalEntry {
     pub body: Value,
     /// Simulated seconds when the request was made.
     pub t_s: i64,
+    /// Wall-clock instant (ms) of the request; replays restore the exercise timers from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_ms: Option<u64>,
     #[serde(skip)]
     seq: u64,
     /// Still running when false; such a request is not part of the saved session.
@@ -99,6 +102,7 @@ pub async fn replay(s: AppState, entries: Vec<JournalEntry>, end_t_s: i64) -> Re
     flow::REPLAYING.store(true, Relaxed);
     let outcome = async {
         for (i, e) in entries.iter().enumerate() {
+            s.lock().replay_wall_ms = e.wall_ms.map(u128::from);
             flow::advance_to(&s, e.t_s).await;
             dispatch(s.clone(), &e.role, &e.url, Some(e.body.clone()))
                 .await
@@ -111,6 +115,7 @@ pub async fn replay(s: AppState, entries: Vec<JournalEntry>, end_t_s: i64) -> Re
     .await;
     {
         let mut ex = s.lock();
+        ex.replay_wall_ms = None;
         if ex.clock_control.running {
             let ratio = ex.clock_control.ratio;
             let _ = ex.configure_clock(false, ratio, "Session restored; clock paused");
@@ -213,6 +218,7 @@ pub async fn request(
                 url: url.into(),
                 body,
                 t_s,
+                wall_ms: Some(now_wall_ms()),
                 seq,
                 done: false,
             });

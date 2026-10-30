@@ -48,6 +48,8 @@ pub mod actions;
 pub mod queue;
 pub mod situation;
 pub mod suggestions;
+pub mod progress;
+pub use progress::Progress;
 
 /// Minutes an evacuation takes (see `sim::EVAC_MIN`); the lead time of warnings.
 pub const EVAC_LEAD_MIN: i64 = sim::EVAC_MIN;
@@ -605,6 +607,16 @@ pub struct Exercise {
     pub turn_start_s: i64,
     /// Intermediate advances made inside the open turn.
     pub substeps: Vec<SubStep>,
+    /// Wall-clock instant (ms) of the first start; kept across rollbacks (see [`progress`]).
+    pub started_wall_ms: Option<u128>,
+    /// Wall-clock instant the exercise ended.
+    pub ended_wall_ms: Option<u128>,
+    /// Wall-clock instant the open turn began.
+    pub turn_wall_ms: Option<u128>,
+    /// While a saved session is replayed: the instant the request being
+    /// replayed was originally made, used instead of the wall clock for the
+    /// instants above.
+    pub replay_wall_ms: Option<u128>,
     pub players: BTreeMap<String, Player>,
     pub messages: Vec<Message>,
     pub proposals: Vec<Proposal>,
@@ -688,6 +700,10 @@ impl Exercise {
             turn_minutes,
             turn_start_s: 0,
             substeps: Vec::new(),
+            started_wall_ms: None,
+            ended_wall_ms: None,
+            turn_wall_ms: None,
+            replay_wall_ms: None,
             players,
             messages: Vec::new(),
             proposals: Vec::new(),
@@ -898,6 +914,9 @@ impl Exercise {
         self.turn = 1;
         self.phase = Phase::Orders;
         self.turn_start_s = self.world.time_s();
+        let now = self.now_wall_ms();
+        self.started_wall_ms.get_or_insert(now);
+        self.turn_wall_ms = Some(now);
         self.substeps.clear();
         self.world.new_turn();
         self.snapshots.push((1, self.world.snapshot()));
@@ -1068,6 +1087,7 @@ impl Exercise {
         self.turn += 1;
         self.phase = Phase::Orders;
         self.turn_start_s = self.world.time_s();
+        self.turn_wall_ms = Some(self.now_wall_ms());
         self.substeps.clear();
         self.world.new_turn();
         self.snapshots.push((self.turn, self.world.snapshot()));
@@ -1117,6 +1137,7 @@ impl Exercise {
         self.turn = turn;
         self.phase = Phase::Orders;
         self.turn_start_s = self.world.time_s();
+        self.turn_wall_ms = Some(self.now_wall_ms());
         self.substeps.clear();
         self.last_turn = None;
         self.record("rollback", MASTER, json!({"to_turn": turn}));
@@ -1136,6 +1157,7 @@ impl Exercise {
         }
         self.stop_clock("Exercise ended");
         self.phase = Phase::Debrief;
+        self.ended_wall_ms.get_or_insert(self.now_wall_ms());
         self.record(
             "exercise_ended",
             MASTER,

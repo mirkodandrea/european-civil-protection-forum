@@ -27,6 +27,9 @@ pub struct JournalEntry {
     pub uri: String,
     pub body: String,
     pub t_s: i64,
+    /// Wall-clock instant (ms) of the request; replays restore the exercise timers from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_ms: Option<u64>,
     #[serde(skip)]
     seq: u64,
     #[serde(skip)]
@@ -102,7 +105,7 @@ impl Persist {
         let mut inner = self.inner();
         inner.next += 1;
         let seq = inner.next;
-        inner.journal.push(JournalEntry { principal, uri, body, t_s, seq, done: false });
+        inner.journal.push(JournalEntry { principal, uri, body, t_s, wall_ms: Some(now_wall_ms()), seq, done: false });
         seq
     }
 
@@ -209,6 +212,7 @@ pub async fn restore(
     let outcome = async {
         let client = Client::untracked(rocket).await.map_err(|e| e.to_string())?;
         for (i, e) in session.journal.iter().enumerate() {
+            state.lock().replay_wall_ms = e.wall_ms.map(u128::from);
             flow::advance_to(state, e.t_s).await;
             let token = match &e.principal {
                 Principal::Master => Some(state.access.master.clone()),
@@ -236,6 +240,7 @@ pub async fn restore(
     .await;
     {
         let mut ex = state.lock();
+        ex.replay_wall_ms = None;
         if ex.clock_control.running {
             let ratio = ex.clock_control.ratio;
             let _ = ex.configure_clock(false, ratio, "Session restored; clock paused");
