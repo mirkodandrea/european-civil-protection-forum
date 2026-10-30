@@ -531,6 +531,7 @@ pub fn missing_params(kind: &str, params: &serde_json::Value) -> Vec<&'static st
         "MonitorArea" => &["zones"],
         "Reconnoitre" | "EvacuateZone" | "IssueWarning" => &["zone"],
         "EvacuateBuilding" | "OpenShelter" | "SetBuildingStatus" => &["building"],
+        "EvacuateDistrict" => &["district"],
         "CloseRoad" | "ReopenRoad" => &["road"],
         "RequestReinforcement" => &["resource", "qty"],
         "Extinguish" => &["area"],
@@ -634,6 +635,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 21);
+        assert_eq!(ALL_KINDS.len(), 22);
     }
 }
