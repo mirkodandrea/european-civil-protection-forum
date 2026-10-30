@@ -26,6 +26,7 @@ mod i18n_more;
 mod label_layout;
 mod i18n_review;
 mod i18n_reply;
+mod i18n_console;
 mod i18n_risposte;
 mod pdf_view;
 mod proposal_drafts;

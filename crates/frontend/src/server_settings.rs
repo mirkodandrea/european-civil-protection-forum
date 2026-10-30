@@ -46,7 +46,7 @@ pub fn server_settings(props: &Props) -> Html {
                         settings::Op::Delete(target) => (
                             "/api/master/storage/delete",
                             serde_json::json!({"target": target}),
-                            "Eliminato",
+                            crate::i18n::ex("Eliminato"),
                         ),
                     };
                     let result = api::request(&api::token(), path, Some(body)).await;
@@ -57,19 +57,19 @@ pub fn server_settings(props: &Props) -> Html {
         })
     };
     let Some(info) = &*info else {
-        return html! {<section class="card" id="server-settings"><h2>{"Impostazioni · archiviazione"}</h2><p>{"Caricamento…"}</p></section>};
+        return html! {<section class="card" id="server-settings"><h2>{crate::i18n::ex("Impostazioni · archiviazione")}</h2><p>{crate::i18n::ex("Caricamento…")}</p></section>};
     };
     if info["enabled"] != true {
-        return html! {<section class="card" id="server-settings"><h2>{"Impostazioni · archiviazione"}</h2><p>{"Archiviazione disattivata (server avviato con --no-state): la sessione non viene salvata."}</p></section>};
+        return html! {<section class="card" id="server-settings"><h2>{crate::i18n::ex("Impostazioni · archiviazione")}</h2><p>{crate::i18n::ex("Archiviazione disattivata (server avviato con --no-state): la sessione non viene salvata.")}</p></section>};
     }
     let session_text = match (info["session"]["steps"].as_u64(), info["session"]["bytes"].as_u64()) {
-        (Some(steps), Some(bytes)) => format!("Sessione salvata: {steps} passi · {} kB", bytes.div_ceil(1024)),
-        _ => "Nessuna sessione salvata".to_string(),
+        (Some(steps), Some(bytes)) => crate::exfmt!("Sessione salvata: {} passi · {} kB", "Saved session: {} steps · {} kB", steps, bytes.div_ceil(1024)),
+        _ => crate::i18n::ex("Nessuna sessione salvata").to_string(),
     };
-    html! {<section class="card standalone-settings" id="server-settings"><h2>{"Impostazioni · archiviazione"}</h2>
+    html! {<section class="card standalone-settings" id="server-settings"><h2>{crate::i18n::ex("Impostazioni · archiviazione")}</h2>
         <crate::settings::Settings {session_text}
             save_error={info["error"].as_str().map(str::to_string)}
-            reset_note="Elimina la sessione salvata sul server e riparte dallo scenario scelto. Vale per tutti i partecipanti."
+            reset_note={crate::i18n::ex("Elimina la sessione salvata sul server e riparte dallo scenario scelto. Vale per tutti i partecipanti.")}
             backend={(*backend).clone()} revision={props.revision}/>
     </section>}
 }

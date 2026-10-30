@@ -146,8 +146,8 @@ def generate(template, seed=33):
     fine_nodes=np.arange(601)*10
     fine=np.stack([np.interp(fine_nodes,axis,row) for row in z])
     fine=np.stack([np.interp(fine_nodes,axis,fine[:,i]) for i in range(601)],axis=1)
-    s.update(id=ID,name='Selvariva — conca delle Due Valli',
-        description='Territorio interamente sintetico di 6 × 6 km: conca boscata, colle di Montebruno, due abitati, area festival e tre uscite stradali. Nessuna geografia reale.',
+    s.update(id=ID,name='Selvariva — Due Valli basin',
+        description='Fully synthetic 6 × 6 km territory: wooded basin, Montebruno hill, two settlements, a festival area and three road exits. No real geography.',
         grid=dict(rows=300,cols=300,cellsize=CELL),dem=np.round(z,3).ravel().tolist(),fuel=fuel.ravel().tolist(),
         fuel_definitions=json.loads((Path(__file__).parent/'fuels_eu12.json').read_text()),
         render_terrain=dict(rows=601,cols=601,posting_m=10,world_size_m=[WORLD,WORLD],elev=np.round(fine,3).ravel().tolist()),
@@ -166,26 +166,60 @@ def generate(template, seed=33):
         dict(name='Roverechiare',pos=[2370,3500],aliases=['borgo']),
         dict(name='Pianalto',pos=[4900,2450],aliases=['accoglienza est'])]
     s['resource_types']=[dict(id=rid,name=name,description=desc,speed_mps=speed) for rid,name,desc,speed in [
-        ('ground_crews','Squadre boschive','Squadre per linee tagliafuoco, con viaggio e lavoro progressivo.',1.4),
-        ('air_tankers','Mezzi aerei','Lanci puntuali con viaggio e rientro per rifornimento.',55),
-        ('engines','Autobotti','Missioni stradali con acqua limitata e rifornimento alla base.',10),
-        ('buses','Autobus','50 posti; necessari per scuole e presidio sanitario. Il modello non riusa gli autobus con navette.',10),
-        ('police_patrols','Pattuglie','Chiusure al traffico civile. Non riparano le strade.',12),
-        ('drones','Droni di monitoraggio','Mantengono aggiornata la mappa di al massimo 4 zone ogni 5 minuti mentre sono in posizione (40 minuti), poi rientrano e si ricaricano per 15.',20)]]
+        ('ground_crews','Forest crews','Crews for fire lines, with travel and progressive work.',1.4),
+        ('air_tankers','Air tankers','Point drops, with travel and return for refilling.',55),
+        ('engines','Engines','Road missions with limited water and refilling at the base.',10),
+        ('buses','Buses','50 seats; needed for schools and the health post. The model does not reuse buses for shuttles.',10),
+        ('police_patrols','Patrols','Closures to civilian traffic. They do not repair roads.',12),
+        ('drones','Monitoring drones','Keep the map of up to 4 zones updated every 5 minutes while on station (40 minutes), then return and recharge for 15.',20)]]
     for r in s['resource_types']:
         if r['id']=='drones':r['drone']=dict(max_zones=4,endurance_s=2400,turnaround_s=900,update_interval_s=300)
-    s['roles']=[dict(id=rid,name=name,level=level,language='it',description=desc,allowed_actions=actions,resources=res) for rid,name,level,desc,actions,res in [
-        ('mayor','Coordinamento comunale','local','Avvisi, evacuazione e accoglienza nei due abitati. Concorda priorità e percorsi con il direttore antincendio.',
+    s['roles']=[dict(id=rid,name=name,level=level,language='en',description=desc,allowed_actions=actions,resources=res) for rid,name,level,desc,actions,res in [
+        ('mayor','Municipal coordination','local','Warnings, evacuation and reception in the two settlements. Agrees priorities and routes with the fire director.',
          ['IssueWarning','EvacuateZone','EvacuateBuilding','OpenShelter','CloseRoad','ReopenRoad'],{'buses':4,'police_patrols':3}),
-        ('fire_commander','Direzione antincendio','regional','Scegli dove impegnare squadre, autobotti, mezzo aereo e drone di monitoraggio; i trasferimenti e la sicurezza limitano le missioni.',
+        ('fire_commander','Fire command','regional','Choose where to commit crews, engines, aircraft and the monitoring drone; transfers and safety limit the missions.',
          ['CutFireLine','WaterDrop','DeployEngine','MonitorArea','Reconnoitre'],{'ground_crews':4,'air_tankers':1,'engines':2,'drones':1}),
-        ('regional_cp','Sala di coordinamento','national','Raccogli il quadro di situazione, richiedi rinforzi e coordina comunicazione pubblica e assistenza esterna.',
+        ('regional_cp','Coordination room','national','Gather the situation picture, request reinforcements and coordinate public communication and external assistance.',
          ['RequestReinforcement','IssueWarning','OpenShelter'],{}),
-        ('volunteer_coordinator','Coordinamento assistenza','local','Organizza assistenza alle famiglie, supporto psicologico e raccolta dei bisogni con iniziative narrative sottoposte a EXCON. Nessuna missione sanitaria o ricerca è simulata automaticamente.',[],{})]]
-    s['excon_roles']=['Centrale segnalazioni','Servizio meteo delle Due Valli','Osservatori sul territorio','Gestione festival','Rete di assistenza','Redazione del Corriere della Conca']
+        ('volunteer_coordinator','Assistance coordination','local','Organises assistance to families, psychological support and needs assessment through narrative initiatives submitted to EXCON. No medical or search mission is simulated automatically.',[],{})]]
+    s['excon_roles']=['Reporting centre','Due Valli weather service','Field observers','Festival management','Assistance network','Corriere della Conca newsroom']
     s['reinforcements']=[dict(resource=r,max_qty=q,delay_min=t,source=src,assigned_to=role) for r,q,t,src,role in [
-        ('buses',2,35,'Consorzio trasporti delle Due Valli','mayor'),('ground_crews',2,45,'Distaccamento di Roccaluce','fire_commander'),
-        ('engines',1,50,'Distaccamento di Roccaluce','fire_commander'),('air_tankers',1,75,'Centro aereo di Altavela','fire_commander')]]
+        ('buses',2,35,'Due Valli transport consortium','mayor'),('ground_crews',2,45,'Roccaluce fire station','fire_commander'),
+        ('engines',1,50,'Roccaluce fire station','fire_commander'),('air_tankers',1,75,'Altavela air base','fire_commander')]]
+    # Display texts are English; Italian readers get these (English source -> Italian).
+    s['translations']={'it':{
+        "Corriere della Conca newsroom": "Redazione del Corriere della Conca",
+        "Selvariva — Due Valli basin": "Selvariva — conca delle Due Valli",
+        "Fully synthetic 6 × 6 km territory: wooded basin, Montebruno hill, two settlements, a festival area and three road exits. No real geography.": "Territorio interamente sintetico di 6 × 6 km: conca boscata, colle di Montebruno, due abitati, area festival e tre uscite stradali. Nessuna geografia reale.",
+        "Forest crews": "Squadre boschive",
+        "Crews for fire lines, with travel and progressive work.": "Squadre per linee tagliafuoco, con viaggio e lavoro progressivo.",
+        "Air tankers": "Mezzi aerei",
+        "Point drops, with travel and return for refilling.": "Lanci puntuali con viaggio e rientro per rifornimento.",
+        "Engines": "Autobotti",
+        "Road missions with limited water and refilling at the base.": "Missioni stradali con acqua limitata e rifornimento alla base.",
+        "Buses": "Autobus",
+        "50 seats; needed for schools and the health post. The model does not reuse buses for shuttles.": "50 posti; necessari per scuole e presidio sanitario. Il modello non riusa gli autobus con navette.",
+        "Patrols": "Pattuglie",
+        "Closures to civilian traffic. They do not repair roads.": "Chiusure al traffico civile. Non riparano le strade.",
+        "Monitoring drones": "Droni di monitoraggio",
+        "Keep the map of up to 4 zones updated every 5 minutes while on station (40 minutes), then return and recharge for 15.": "Mantengono aggiornata la mappa di al massimo 4 zone ogni 5 minuti mentre sono in posizione (40 minuti), poi rientrano e si ricaricano per 15.",
+        "Municipal coordination": "Coordinamento comunale",
+        "Warnings, evacuation and reception in the two settlements. Agrees priorities and routes with the fire director.": "Avvisi, evacuazione e accoglienza nei due abitati. Concorda priorità e percorsi con il direttore antincendio.",
+        "Fire command": "Direzione antincendio",
+        "Choose where to commit crews, engines, aircraft and the monitoring drone; transfers and safety limit the missions.": "Scegli dove impegnare squadre, autobotti, mezzo aereo e drone di monitoraggio; i trasferimenti e la sicurezza limitano le missioni.",
+        "Coordination room": "Sala di coordinamento",
+        "Gather the situation picture, request reinforcements and coordinate public communication and external assistance.": "Raccogli il quadro di situazione, richiedi rinforzi e coordina comunicazione pubblica e assistenza esterna.",
+        "Assistance coordination": "Coordinamento assistenza",
+        "Organises assistance to families, psychological support and needs assessment through narrative initiatives submitted to EXCON. No medical or search mission is simulated automatically.": "Organizza assistenza alle famiglie, supporto psicologico e raccolta dei bisogni con iniziative narrative sottoposte a EXCON. Nessuna missione sanitaria o ricerca è simulata automaticamente.",
+        "Due Valli transport consortium": "Consorzio trasporti delle Due Valli",
+        "Roccaluce fire station": "Distaccamento di Roccaluce",
+        "Altavela air base": "Centro aereo di Altavela",
+        "Reporting centre": "Centrale segnalazioni",
+        "Due Valli weather service": "Servizio meteo delle Due Valli",
+        "Field observers": "Osservatori sul territorio",
+        "Festival management": "Gestione festival",
+        "Assistance network": "Rete di assistenza"
+}}
     def elevation(p):
         c,r=np.clip([p[0]/CELL-.5,(WORLD-p[1])/CELL-.5],0,299);i,j=int(r),int(c);v,u=r-i,c-j
         return ((1-v)*((1-u)*z[i,j]+u*z[i,min(j+1,299)])+v*((1-u)*z[min(i+1,299),j]+u*z[min(i+1,299),min(j+1,299)]))

@@ -4,7 +4,7 @@ Pack `selvariva_crisi_integrata`: **3 ruoli**, cinque turni da 30 minuti simulat
 
 ## Avvio
 
-Nella vista **Scenario**, filtra **Selvariva** e avvia **Selvariva — crisi coordinata in cinque turni**. Funziona nel server e nello standalone ricostruito; Valverde rimane disponibile. Da terminale:
+Nella vista **Scenario**, filtra **Selvariva** e avvia **Selvariva — coordinated crisis in five turns**. I testi del pack (ruoli, risorse, inject, note EXCON) sono in inglese, con l’originale italiano in `edits.translations.it`; i nomi dei luoghi sulla mappa restano quelli del territorio. Funziona nel server e nello standalone ricostruito; Valverde rimane disponibile. Da terminale:
 
 ```sh
 cargo run --release -p app -- --scenario data/scenarios/selvariva_crisi_integrata.pack.json

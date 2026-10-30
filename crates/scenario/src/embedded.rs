@@ -14,15 +14,15 @@ pub const DEFAULT_TERRITORY: &str = "valverde_factory";
 pub const TERRITORIES: &[Territory] = &[
     Territory {
         id: "valverde_factory",
-        name: "Valverde — valle dei Castagni",
-        description: "Valle sintetica di 4 × 4 km con Valverde e Pineta.",
+        name: "Valverde — Chestnut valley",
+        description: "Synthetic 4 × 4 km valley with Valverde and Pineta.",
         json: include_str!("../../../data/scenarios/valverde_factory.json"),
     },
     Territory {
         id: "selvariva_basin",
-        name: "Selvariva — conca delle Due Valli",
+        name: "Selvariva — Due Valli basin",
         description:
-            "Conca sintetica di 6 × 6 km con due abitati, area festival e tre uscite stradali.",
+            "Synthetic 6 × 6 km basin with two settlements, a festival area and three road exits.",
         json: include_str!("../../../data/scenarios/selvariva_basin.json"),
     },
 ];
@@ -35,7 +35,7 @@ pub fn territory(id: &str) -> Result<&'static Territory> {
     TERRITORIES
         .iter()
         .find(|t| t.id == id)
-        .with_context(|| format!("territorio «{id}» non incluso nell’app"))
+        .with_context(|| format!("territory «{id}» is not included in the app"))
 }
 
 pub fn load(id: &str) -> Result<Scenario> {
@@ -86,5 +86,31 @@ mod tests {
             assert_eq!(p.build(b).unwrap().id, id);
         }
         assert!(load("missing_map").is_err());
+    }
+
+    /// Shipped scenarios are authored in English (international audience);
+    /// Italian readers get the originals through the display map.
+    #[test]
+    fn shipped_texts_are_english_with_italian_display() {
+        let italian = [" della ", " delle ", " degli ", " nella ", " sulla ", " è ", " il ", " gli ", " che ", "’"];
+        for p in packs() {
+            let scn = p.build(load(&p.base).unwrap()).unwrap();
+            let it = scn.display_map("it");
+            let mut texts = vec![p.name.clone(), p.description.clone()];
+            texts.extend(scn.translatable_texts());
+            for m in &scn.msel {
+                texts.extend([m.text.clone(), m.objective.clone()]);
+                texts.extend(m.actions.iter().flat_map(|a| [a.title.clone(), a.note.clone()]));
+            }
+            for t in texts.iter().filter(|t| !t.trim().is_empty()) {
+                let padded = format!(" {t} ");
+                assert!(!italian.iter().any(|w| padded.contains(w)), "{}: Italian text {t:?}", p.id);
+            }
+            let roles = scn.roles.iter().flat_map(|r| [&r.name, &r.description]);
+            let resources = scn.resource_types.iter().flat_map(|r| [&r.name, &r.description]);
+            for t in roles.chain(resources) {
+                assert!(it.contains_key(t), "{}: no Italian display text for {t:?}", p.id);
+            }
+        }
     }
 }

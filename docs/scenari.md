@@ -42,9 +42,18 @@ degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
 
 1. `translations` dello scenario: `{"it": {"Buses": "Autobus", ...}}`, lingua → testo
    inglese di origine → traduzione. Vale per ogni punto in cui compare la stringa
-   intera (corrispondenza esatta, non parziale).
+   intera (corrispondenza esatta, non parziale). Un pack può aggiungerne in
+   `edits.translations` (stessa forma), unite sopra quelle del territorio: così fanno
+   `selvariva_crisi_integrata` e `valverde_night_wind`, scritti in inglese con il testo
+   italiano originale in `translations.it` (anche note, obiettivi e testi degli inject,
+   che la console EXCON italiana mostra senza LLM).
 2. Glossario incorporato (`crates/scenario/src/glossary.rs`): ruoli e risorse standard
-   in tutte le lingue dei giocatori; testi completi della Valverde in italiano.
+   in tutte le lingue dei giocatori; testi completi della Valverde in italiano (azioni
+   degli inject comprese).
+
+I nomi di luoghi, edifici e strade dei territori restano quelli della mappa (anche se
+italiani, es. «Area festival delle Fonti»): sono chiavi con cui comandi e pack salvati
+ritrovano i luoghi, quindi non si traducono.
 3. Traduzione LLM a runtime (solo giocatori), una volta per testo e lingua, in cache;
    include i titoli degli inject scritti dall'EXCON.
 4. Senza LLM e senza voce: resta il testo dello scenario.

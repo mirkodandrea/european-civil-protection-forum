@@ -40,7 +40,9 @@ pub fn ex(it: &'static str) -> &'static str {
     match LANG.with(|c| c.get()) {
         "it" => it,
         lang => {
-            let english = en(it).or_else(|| crate::i18n_reply::ex_en(it));
+            let english = en(it)
+                .or_else(|| crate::i18n_reply::ex_en(it))
+                .or_else(|| crate::i18n_console::en(it));
             match english {
                 Some(e) if lang != "en" => crate::i18n_more::lookup(lang, e).unwrap_or(e),
                 Some(e) => e,
@@ -68,7 +70,7 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Testo libero…" => "Free text…",
         "Nome del personaggio" => "Persona name",
         "Rimuovi" => "Remove",
-        "Applicate subito come interventi EXCON, con le stesse verifiche degli strumenti del Controllo. Facoltative." => "Applied at once as EXCON interventions, with the same checks as the Controllo tools. Optional.",
+        "Applicate subito come interventi EXCON, con le stesse verifiche degli strumenti del Controllo. Facoltative." => "Applied at once as EXCON interventions, with the same checks as the Control tools. Optional.",
         "Avanzate: comando in JSON (ad esempio CloseRoad)" => "Advanced: JSON command (for example CloseRoad)",
         "Serve un oggetto JSON con il campo type." => "A JSON object with a type field is required.",
         "Comando JSON" => "JSON command",
@@ -633,13 +635,13 @@ pub fn en(it: &str) -> Option<&'static str> {
         "Operazione in corso…" => "Working…",
         "è l’esercitazione che sta girando ora." => "is the exercise running right now.",
         "verrà usato al prossimo riavvio dell’applicazione." => "will be used the next time the application restarts.",
-        "fa parte dell’applicazione e non si sovrascrive: usa Personalizza per ottenerne una copia modificabile." => "is part of the application and cannot be overwritten: use Personalizza (Customise) to get an editable copy.",
+        "fa parte dell’applicazione e non si sovrascrive: usa Personalizza per ottenerne una copia modificabile." => "is part of the application and cannot be overwritten: use Customise to get an editable copy.",
         "Nome e descrizione dello scenario." => "Name and description of the scenario.",
         "La mappa su cui si svolge: terreno, edifici e strade. Non si modifica da qui." => "The map it takes place on: terrain, buildings and roads. It cannot be edited here.",
         "Azioni" => "Actions",
         "È l’esercitazione in corso in questo momento." => "This is the exercise running right now.",
         "Sarà caricato al prossimo riavvio dell’applicazione." => "Will be loaded the next time the application restarts.",
-        "Scenario incluso nell’applicazione: non si può sovrascrivere. Usa Personalizza per salvarne una copia tua." => "Scenario shipped with the application: it cannot be overwritten. Use Personalizza (Customise) to save your own copy.",
+        "Scenario incluso nell’applicazione: non si può sovrascrivere. Usa Personalizza per salvarne una copia tua." => "Scenario shipped with the application: it cannot be overwritten. Use Customise to save your own copy.",
         "Apre una copia modificabile: lo scenario incluso resta com’è." => "Opens an editable copy: the built-in scenario stays as it is.",
         "Apre lo scenario nell’editor. Salvare non tocca l’esercitazione in corso." => "Opens the scenario in the editor. Saving does not affect the running exercise.",
         "Apre una copia di questo scenario con un nuovo identificativo." => "Opens a copy of this scenario with a new identifier.",

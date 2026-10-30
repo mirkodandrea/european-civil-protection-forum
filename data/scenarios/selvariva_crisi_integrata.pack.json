@@ -1,11 +1,11 @@
 {
   "id": "selvariva_crisi_integrata",
-  "name": "Selvariva — crisi coordinata in cinque turni",
+  "name": "Selvariva — coordinated crisis in five turns",
   "base": "selvariva_basin",
-  "description": "TTX su Selvariva: 3 ruoli, 5 turni da 30 minuti (16:00–18:30) e 10 inject. Coordinamento civile, direzione dei soccorsi e sala operativa affrontano festival e scolaresca, accessi, risorse limitate, rinforzi e informazione pubblica. Ogni ruolo vede sulla mappa solo ciò che gli viene comunicato: stime dalle chiamate, rilievi sul campo, il drone della direzione dei soccorsi e ciò che gli altri ruoli condividono. Tempi, dotazioni e quantità sono ipotesi di esercitazione; gli esiti dipendono dalle decisioni e dal modello.",
+  "description": "TTX in Selvariva: 3 roles, 5 turns of 30 minutes (16:00–18:30) and 10 injects. Civil coordination, incident command and the operations room deal with a festival and a school group, access routes, limited resources, reinforcements and public information. Each role sees on its map only what it is told: estimates from calls, field surveys, the incident command's drone and whatever the other roles share. Timings, equipment and quantities are exercise assumptions; outcomes depend on the decisions and on the model.",
   "edits": {
-    "name": "Selvariva — crisi coordinata in cinque turni",
-    "description": "TTX su Selvariva: 3 ruoli, 5 turni da 30 minuti (16:00–18:30) e 10 inject. Coordinamento civile, direzione dei soccorsi e sala operativa affrontano festival e scolaresca, accessi, risorse limitate, rinforzi e informazione pubblica. Ogni ruolo vede sulla mappa solo ciò che gli viene comunicato: stime dalle chiamate, rilievi sul campo, il drone della direzione dei soccorsi e ciò che gli altri ruoli condividono. Tempi, dotazioni e quantità sono ipotesi di esercitazione; gli esiti dipendono dalle decisioni e dal modello.",
+    "name": "Selvariva — coordinated crisis in five turns",
+    "description": "TTX in Selvariva: 3 roles, 5 turns of 30 minutes (16:00–18:30) and 10 injects. Civil coordination, incident command and the operations room deal with a festival and a school group, access routes, limited resources, reinforcements and public information. Each role sees on its map only what it is told: estimates from calls, field surveys, the incident command's drone and whatever the other roles share. Timings, equipment and quantities are exercise assumptions; outcomes depend on the decisions and on the model.",
     "start_clock_s": 57600,
     "turn_minutes": 30,
     "weather": {
@@ -13,41 +13,41 @@
       "wind_speed_kmh": 24.0,
       "moisture_pct": 10.0
     },
-    "default_persona": "Direzione esercitazione — conca delle Due Valli",
+    "default_persona": "Exercise control — Due Valli basin",
     "excon_roles": [
-      "Servizio meteo regionale",
-      "Centrale 112",
-      "Referenti locali",
-      "Centro di mobilitazione regionale",
-      "Squadre sul campo",
-      "Referente sanitario e sportello famiglie",
-      "Ufficio di coordinamento nazionale",
-      "Redazione del Corriere della Conca",
-      "Sala operativa — personale subentrante"
+      "Regional weather service",
+      "112 Dispatch",
+      "Local contacts",
+      "Regional mobilisation centre",
+      "Field crews",
+      "Health contact and family desk",
+      "National coordination office",
+      "Corriere della Conca newsroom",
+      "Operations room — incoming shift"
     ],
     "resource_types": [
       {
         "id": "ground_crews",
-        "name": "Squadre AIB a terra",
-        "description": "Squadre per linee di controllo. Ogni unità opera entro il limite di lavoro del modello; l’effetto inizia dopo il trasferimento. Una squadra può anche fare una ricognizione (Reconnoitre) di una zona: all’arrivo riferisce una volta cosa vede e la mappa della direzione si aggiorna a quell’ora. Presidio e bonifica manuale restano iniziative narrative EXCON.",
+        "name": "Wildfire ground crews",
+        "description": "Crews for control lines. Each unit works within the model's work limit; the effect starts after the transfer. A crew can also reconnoitre a zone (Reconnoitre): on arrival it reports once what it sees and the incident command map is updated to that time. Standby and manual mop-up remain EXCON narrative initiatives.",
         "speed_mps": 2.0
       },
       {
         "id": "engines",
-        "name": "Autobotti VVF",
-        "description": "Unità operative del modello: 2.500 L, manichetta di 60 m, accesso stradale e rifornimento alla base. Non sono ambulanze né mezzi di pattugliamento.",
+        "name": "Fire service engines",
+        "description": "Operational units of the model: 2,500 L, 60 m hose, road access and refilling at the base. They are neither ambulances nor patrol vehicles.",
         "speed_mps": 8.0
       },
       {
         "id": "air_tankers",
-        "name": "Mezzo aereo antincendio",
-        "description": "Un’unità abilita WaterDrop secondo il modello; non simula sortite, visibilità, effemeridi o distanze dalle linee elettriche. EXCON verifica narrativamente la disponibilità prima di approvare.",
+        "name": "Firefighting aircraft",
+        "description": "One unit enables WaterDrop as per the model; sorties, visibility, daylight limits and distances from power lines are not simulated. EXCON checks availability narratively before approving.",
         "speed_mps": 70.0
       },
       {
         "id": "drones",
-        "name": "Drone di monitoraggio",
-        "description": "Tiene aggiornata la mappa della direzione dei soccorsi su al massimo 4 zone contigue (un rettangolo della griglia), con un rilievo ogni 5 minuti per 40 minuti in posizione; poi rientra a Pianalto e si ricarica per 15 minuti. Non vola con vento oltre 45 km/h. Gli altri ruoli vedono i rilievi solo se vengono condivisi.",
+        "name": "Monitoring drone",
+        "description": "Keeps the incident command map updated over at most 4 adjacent zones (a rectangle of the grid), with one survey every 5 minutes for 40 minutes on station; then returns to Pianalto and recharges for 15 minutes. Does not fly in winds above 45 km/h. Other roles see the surveys only if they are shared.",
         "speed_mps": 20.0,
         "drone": {
           "max_zones": 4,
@@ -59,24 +59,24 @@
       },
       {
         "id": "buses",
-        "name": "Autobus per evacuazione assistita",
-        "description": "50 posti per unità nel modello. Scuole e presidio sanitario richiedono mezzi; gli autobus non garantiscono trasporto sanitario o accessibilità e non effettuano navette automatiche. L’assistenza specifica è narrativa.",
+        "name": "Buses for assisted evacuation",
+        "description": "50 seats per unit in the model. Schools and the health post need vehicles; buses do not provide medical transport or accessibility and do not run automatic shuttles. Specific assistance is narrative.",
         "speed_mps": 6.0
       },
       {
         "id": "police_patrols",
-        "name": "Pattuglie per viabilità",
-        "description": "Ogni pattuglia può presidiare una chiusura stradale secondo le regole del modello. Riaperture motivate sulla situazione corrente; verifica sul posto e presidio pedonale sono narrativi.",
+        "name": "Traffic patrols",
+        "description": "Each patrol can man one road closure under the model rules. Reopenings are justified by the current situation; on-site checks and pedestrian control are narrative.",
         "speed_mps": 10.0
       }
     ],
     "roles": [
       {
         "id": "coordinamento_civile",
-        "name": "Coordinamento civile e assistenza",
+        "name": "Civil coordination and assistance",
         "level": "local",
-        "language": "it",
-        "description": "Accorpa Comune, polizia locale, assistenza e comunicazione pubblica. Decide priorità di allerta ed evacuazione, apre accoglienza e coordina i percorsi con la direzione dei soccorsi. Dispone di 4 autobus e 3 pattuglie. Rifugio (40), scuola (80), presidio sanitario (28) e festival (360) sono gruppi distinti; verifica destinazione, capienza, accesso e missioni già attive prima di proporre nuovi ordini. La tua mappa mostra solo ciò che ti viene comunicato, con l’ora del dato: chiedi alla direzione dei soccorsi i rilievi del drone prima di scegliere i percorsi. Trasporto sanitario/accessibilità, assistenza specifica, ricongiungimenti e comunicati sono iniziative narrative con esito EXCON, non capacità automatiche degli autobus. Non diffonde dati nominativi.",
+        "language": "en",
+        "description": "Combines the municipality, local police, assistance and public communication. Decides warning and evacuation priorities, opens reception centres and coordinates routes with incident command. Has 4 buses and 3 patrols. The mountain hut (40), school (80), health post (28) and festival (360) are separate groups; check destination, capacity, access and missions already under way before proposing new orders. Your map shows only what you are told, with the time of the data: ask incident command for the drone surveys before choosing routes. Medical transport/accessibility, specific assistance, family reunification and press releases are narrative initiatives whose outcome is decided by EXCON, not automatic capabilities of the buses. Does not release personal data.",
         "allowed_actions": [
           "IssueWarning",
           "OpenShelter",
@@ -92,10 +92,10 @@
       },
       {
         "id": "direzione_soccorso",
-        "name": "Direzione dei soccorsi AIB e VVF",
+        "name": "Wildfire and fire service incident command",
         "level": "local",
-        "language": "it",
-        "description": "Accorpa DOS, squadre AIB e VVF. Dispone di 4 squadre a terra, 2 autobotti e 1 drone di monitoraggio; nessun mezzo aereo all’inizio. Il drone (MonitorArea) aggiorna la tua mappa su fino a 4 zone contigue mentre è in posizione: scegli dove serve e quando, perché poi deve rientrare e ricaricarsi. Motiva priorità tra bosco e strutture, accesso, acqua, rifornimento e ritorno delle unità. Richiede rinforzi alla sala indicando capacità, luogo e ultimo orario utile. I VVF non svolgono pattugliamento. La ricognizione a terra (Reconnoitre) impegna una squadra AIB: raggiunge una zona e riferisce una volta cosa vede, poi resta impiegata finché l’EXCON non ne conferma il rientro. Gestori elettrico/idrico, bonifica e limiti reali del volo sono gestiti narrativamente da EXCON; la propagazione e le missioni fisiche si leggono dal modello.",
+        "language": "en",
+        "description": "Combines the fire operations director, the wildfire crews and the fire service. Has 4 ground crews, 2 engines and 1 monitoring drone; no aircraft at the start. The drone (MonitorArea) updates your map over up to 4 adjacent zones while on station: choose where and when it is needed, because it must then return and recharge. Justify priorities between forest and structures, access, water, refilling and the return of units. Requests reinforcements from the operations room, stating capability, place and latest useful time. The fire service does not patrol. Ground reconnaissance (Reconnoitre) commits one wildfire crew: it reaches a zone and reports once what it sees, then stays deployed until EXCON confirms its return. Power/water utilities, mop-up and real flight limits are handled narratively by EXCON; fire spread and physical missions are read from the model.",
         "allowed_actions": [
           "CutFireLine",
           "DeployEngine",
@@ -112,10 +112,10 @@
       },
       {
         "id": "sala_operativa",
-        "name": "Sala operativa e previsione",
+        "name": "Operations room and forecasting",
         "level": "regional",
-        "language": "it",
-        "description": "Accorpa coordinamento regionale, raccordo nazionale e cellula meteo. Condivide previsioni e limiti, consolida il quadro comune e propone RequestReinforcement sulla base dei bisogni degli altri due ruoli. Non ha osservatori propri: la tua mappa si aggiorna con le stime ricevute e con ciò che gli altri ruoli condividono, quindi indica sempre fonte e ora dei dati che riporti. Distingue richiesta, approvazione, arrivo e impiego. Prepara il SITREP e rappresenta il raccordo con ERCC simulato; aiuti internazionali e contatti esterni sono solo narrativi e non garantiscono unità. Non modifica meteo o fuoco e non inventa danni o persone evacuate.",
+        "language": "en",
+        "description": "Combines regional coordination, the national liaison and the weather cell. Shares forecasts and limits, consolidates the common operating picture and proposes RequestReinforcement based on the needs of the other two roles. Has no observers of its own: your map is updated with the estimates received and with what the other roles share, so always state the source and time of the data you report. Distinguishes request, approval, arrival and deployment. Prepares the SITREP and represents the liaison with a simulated ERCC; international aid and external contacts are narrative only and guarantee no units. Does not change weather or fire and does not invent damage or evacuated people.",
         "allowed_actions": [
           "RequestReinforcement"
         ],
@@ -127,21 +127,21 @@
         "resource": "ground_crews",
         "max_qty": 2,
         "delay_min": 35,
-        "source": "Colonna regionale AIB — attesa simulata",
+        "source": "Regional wildfire column — simulated wait",
         "assigned_to": "direzione_soccorso"
       },
       {
         "resource": "buses",
         "max_qty": 2,
         "delay_min": 30,
-        "source": "Trasporto regionale — attesa simulata",
+        "source": "Regional transport — simulated wait",
         "assigned_to": "coordinamento_civile"
       },
       {
         "resource": "air_tankers",
         "max_qty": 1,
         "delay_min": 45,
-        "source": "Sala aerea regionale — disponibilità di esercitazione da confermare",
+        "source": "Regional air operations room — exercise availability to be confirmed",
         "assigned_to": "direzione_soccorso"
       }
     ],
@@ -150,32 +150,32 @@
         "id": "SCS-01",
         "at_s": 0,
         "turn": 1,
-        "title": "Bollettino di pericolo incendi",
-        "sender": "Servizio meteo regionale",
+        "title": "Fire danger bulletin",
+        "sender": "Regional weather service",
         "recipients": [
           "all"
         ],
-        "text": "Bollettino delle 16:00. Dopo un periodo asciutto, il vento nella conca delle Due Valli proviene da nord-ovest a 24 km/h; l’umidità stimata del combustibile fine è del 10%. È possibile un rinforzo del vento nel corso del pomeriggio, ma intensità e orario restano incerti. Al momento non risultano segnalazioni confermate di incendio nella conca.",
-        "objective": "Valutare se il bollettino viene condiviso e tradotto in misure preventive motivate. Nota EXCON: osservare destinatari, presa in carico e tempi del primo aggiornamento senza suggerire le decisioni nel messaggio. Non c’è ancora fuoco: nessuna rivelazione di mappa.",
-        "event": "Preallerta e primo intervento",
+        "text": "16:00 bulletin. After a dry spell, the wind in the Due Valli basin is from the north-west at 24 km/h; estimated fine fuel moisture is 10%. The wind may strengthen during the afternoon, but strength and timing remain uncertain. There are currently no confirmed fire reports in the basin.",
+        "objective": "Assess whether the bulletin is shared and turned into justified preventive measures. EXCON note: observe recipients, acknowledgement and timing of the first update without suggesting decisions in the message. There is no fire yet: no map reveal.",
+        "event": "Pre-alert and initial attack",
         "actions": []
       },
       {
         "id": "SCS-02",
         "at_s": 900,
         "turn": 1,
-        "title": "Segnalazione di due focolai alle Fonti",
-        "sender": "Centrale 112",
+        "title": "Two fires reported at Le Fonti",
+        "sender": "112 Dispatch",
         "recipients": [
           "all"
         ],
-        "text": "Ore 16:15. Più chiamanti riferiscono un boato vicino all’Area festival delle Fonti e fumo nel bosco sovrastante. Gli osservatori confermano due focolai nel Bosco delle Fonti; la causa non è stata accertata e non sono pervenute notizie verificate di feriti. La posizione riportata sulla mappa è ricavata dalle chiamate ed è solo indicativa. Le prime squadre in avvicinamento chiedono il riferimento per il coordinamento sul posto.",
-        "objective": "Osservare come vengono concordati coordinamento, priorità e primi impieghi, e se la stima incerta viene verificata (drone, osservatori) prima di impegnare risorse. Nota EXCON: lasciare selezionati i due inneschi prima della stima, che li legge dal modello; se si disattivano gli inneschi disattivare anche la stima. Non suggerire una ripartizione obbligata dei compiti.",
-        "event": "Preallerta e primo intervento",
+        "text": "16:15. Several callers report a loud bang near the festival area (Area festival delle Fonti) and smoke in the woods above it. Observers confirm two fires in the Bosco delle Fonti; the cause has not been established and no verified reports of injuries have been received. The position shown on the map is derived from the calls and is only indicative. The first crews on their way ask who is coordinating on site.",
+        "objective": "Observe how coordination, priorities and first deployments are agreed, and whether the uncertain estimate is verified (drone, observers) before committing resources. EXCON note: keep the two ignitions selected before the estimate, which reads them from the model; if the ignitions are disabled, disable the estimate too. Do not suggest a mandatory division of tasks.",
+        "event": "Pre-alert and initial attack",
         "actions": [
           {
             "id": "SCS-A01",
-            "title": "Innesco principale delle Fonti",
+            "title": "Main ignition at Le Fonti",
             "command": {
               "type": "Ignite",
               "at": {
@@ -185,11 +185,11 @@
               "radius_m": 80
             },
             "offset_s": 0,
-            "note": "Focolaio fisico nel Bosco delle Fonti (zona C3). Selezionabile da EXCON all’invio."
+            "note": "Physical fire in the Bosco delle Fonti (zone C3). EXCON can select it when sending."
           },
           {
             "id": "SCS-A02",
-            "title": "Secondo focolaio sul versante",
+            "title": "Second fire on the slope",
             "command": {
               "type": "Ignite",
               "at": {
@@ -199,18 +199,18 @@
               "radius_m": 60
             },
             "offset_s": 0,
-            "note": "Secondo focolaio fisico; non rappresenta una simulazione di esplosione. Selezionabile da EXCON all’invio."
+            "note": "Second physical fire; it does not simulate an explosion. EXCON can select it when sending."
           },
           {
             "id": "SCS-R01",
-            "title": "Stima dalle chiamate al 112",
+            "title": "Estimate from 112 calls",
             "reveal": {
               "kind": "approximate",
               "position_error_m": 500.0,
               "area_error_frac": 0.4
             },
             "offset_s": 0,
-            "note": "Solo fumo visto da lontano: posizione ed estensione molto incerte, diverse per ruolo. Richiede gli inneschi già eseguiti."
+            "note": "Only smoke seen from afar: position and extent very uncertain, different for each role. Requires the ignitions to have been executed."
           }
         ]
       },
@@ -218,19 +218,19 @@
         "id": "SCS-03",
         "at_s": 2100,
         "turn": 2,
-        "title": "Aggiornamento da festival, rifugio e strutture",
-        "sender": "Referenti locali",
+        "title": "Update from the festival, the mountain hut and facilities",
+        "sender": "Local contacts",
         "recipients": [
           "coordinamento_civile",
           "direzione_soccorso"
         ],
-        "text": "L’insegnante del Rifugio della scolaresca è stata ricontattata dopo l’interruzione della chiamata: il registro del gruppo comprende 37 bambini e 3 accompagnatori. Gli organizzatori del festival, con 360 partecipanti registrati, chiedono indicazioni per i visitatori che vogliono recuperare le auto. La scuola di Roverechiare comunica 80 presenze nel proprio registro e il presidio sanitario 28. Le schede comunali indicano capienze nominali di 800 posti a Pianalto, 400 ai Prati e 120 nella piazza di Roverechiare. La polizia locale ha verificato strade ed edifici tra le Fonti e Roverechiare: il rilievo è sulla mappa con l’ora in cui è stato fatto.",
-        "objective": "Valutare priorità, scelta delle destinazioni e compatibilità tra trasporto, accessi e accoglienza. Nota EXCON: le consistenze si riferiscono a gruppi distinti e non attestano la posizione corrente delle persone. Il rilievo copre le zone C3, C4, D3, D4 (strade ed edifici, non il fuoco) e invecchia: osservare se i ruoli lo aggiornano prima di muovere autobus. I posti nominali non certificano sicurezza o accessibilità.",
-        "event": "Protezione delle persone e impiego risorse",
+        "text": "The teacher at the school group's mountain hut (Rifugio della scolaresca) has been reached again after the call dropped: the group register lists 37 children and 3 adults. The festival organisers, with 360 registered participants, ask for instructions for visitors who want to collect their cars. Roverechiare school reports 80 people on its register and the health post 28. Municipal records give nominal capacities of 800 places at Pianalto, 400 at Prati and 120 in Roverechiare square. Local police have checked roads and buildings between Le Fonti and Roverechiare: the survey is on the map with the time it was made.",
+        "objective": "Assess priorities, choice of destinations and consistency between transport, access and reception. EXCON note: the head counts refer to separate groups and do not confirm where people are now. The survey covers zones C3, C4, D3, D4 (roads and buildings, not the fire) and ages: observe whether the roles refresh it before moving buses. Nominal places do not certify safety or accessibility.",
+        "event": "Protecting people and deploying resources",
         "actions": [
           {
             "id": "SCS-R02",
-            "title": "Rilievo di strade ed edifici tra le Fonti e Roverechiare",
+            "title": "Survey of roads and buildings between Le Fonti and Roverechiare",
             "reveal": {
               "kind": "exact",
               "zones": [
@@ -243,10 +243,10 @@
                 "roads",
                 "buildings"
               ],
-              "source": "Polizia locale"
+              "source": "Local police"
             },
             "offset_s": 0,
-            "note": "Area festival, rifugio, Bosco delle Fonti e Roverechiare. Stato di strade ed edifici all’invio, senza fuoco."
+            "note": "Festival area, mountain hut, Bosco delle Fonti and Roverechiare. State of roads and buildings at sending time, without the fire."
           }
         ]
       },
@@ -254,32 +254,32 @@
         "id": "SCS-04",
         "at_s": 3000,
         "turn": 2,
-        "title": "Disponibilità di rinforzi regionali",
-        "sender": "Centro di mobilitazione regionale",
+        "title": "Regional reinforcements available",
+        "sender": "Regional mobilisation centre",
         "recipients": [
           "all"
         ],
-        "text": "Possiamo mettere a disposizione due squadre AIB, due autobus e un mezzo aereo antincendio. Dalla conferma della mobilitazione stimiamo rispettivamente 35, 30 e 45 minuti per l’arrivo. Per predisporre l’invio ci servono capacità e quantità richieste, destinazione, referente sul posto e orario entro cui il supporto risulta ancora utile. Le condizioni di impiego del mezzo aereo saranno aggiornate dalla sala aerea.",
-        "objective": "Valutare tempestività e motivazione delle richieste, distinguendo disponibilità, mobilitazione, arrivo e impiego. Nota EXCON: l’inject non concede risorse; RequestReinforcement resta una proposta della sala operativa. Squadre e mezzo aereo sono assegnati alla direzione dei soccorsi, autobus al coordinamento civile. Verificare separatamente l’impiegabilità aerea narrativa.",
-        "event": "Protezione delle persone e impiego risorse",
+        "text": "We can make available two wildfire crews, two buses and one firefighting aircraft. From confirmation of the mobilisation we estimate 35, 30 and 45 minutes respectively to arrival. To prepare the dispatch we need the capability and quantity requested, the destination, the on-site contact and the time by which the support is still useful. The air operations room will update the conditions for using the aircraft.",
+        "objective": "Assess timeliness and justification of the requests, distinguishing availability, mobilisation, arrival and deployment. EXCON note: the inject grants no resources; RequestReinforcement remains a proposal of the operations room. Crews and aircraft are assigned to incident command, buses to civil coordination. Check the narrative usability of the aircraft separately.",
+        "event": "Protecting people and deploying resources",
         "actions": []
       },
       {
         "id": "SCS-05",
         "at_s": 3900,
         "turn": 3,
-        "title": "Aggiornamento meteo delle 17:05",
-        "sender": "Servizio meteo regionale",
+        "title": "17:05 weather update",
+        "sender": "Regional weather service",
         "recipients": [
           "all"
         ],
-        "text": "Aggiornamento delle 17:05. Il vento proviene ora da ovest-nord-ovest a 38 km/h; l’umidità stimata del combustibile fine è scesa all’8%. Le nuove condizioni possono modificare la direzione e la rapidità di propagazione sui versanti. Non è ancora disponibile una stima aggiornata dell’evoluzione locale dell’incendio.",
-        "objective": "Osservare come viene aggiornato il piano e condiviso il cambiamento delle condizioni. Nota EXCON: il cambio meteo è l’azione associata all’inject; allineare il testo ai valori realmente applicati se l’azione viene modificata o disattivata. A 38 km/h il drone resta in volo (limite 45 km/h); oltre il limite viene richiamato e non decolla. Eventuali prodotti di previsione devono riportare ipotesi, ora di riferimento e limiti.",
-        "event": "Cambio delle condizioni e accessi",
+        "text": "17:05 update. The wind is now from the west-north-west at 38 km/h; estimated fine fuel moisture has dropped to 8%. The new conditions may change the direction and speed of spread on the slopes. An updated estimate of how the fire will develop locally is not yet available.",
+        "objective": "Observe how the plan is updated and the change in conditions is shared. EXCON note: the weather change is the action attached to the inject; align the text with the values actually applied if the action is edited or disabled. At 38 km/h the drone keeps flying (limit 45 km/h); above the limit it is recalled and cannot take off. Any forecast products must state assumptions, reference time and limits.",
+        "event": "Changing conditions and access",
         "actions": [
           {
             "id": "SCS-A03",
-            "title": "Vento da ONO più intenso",
+            "title": "Stronger WNW wind",
             "command": {
               "type": "SetWeather",
               "wind_dir_deg": 290,
@@ -287,7 +287,7 @@
               "moisture_pct": 8
             },
             "offset_s": 0,
-            "note": "Variazione fisica di esercitazione. EXCON seleziona all’invio."
+            "note": "Physical exercise change. EXCON selects it when sending."
           }
         ]
       },
@@ -295,18 +295,18 @@
         "id": "SCS-06",
         "at_s": 4800,
         "turn": 3,
-        "title": "Fumo lungo la Strada delle Fonti e richieste dai soccorritori",
-        "sender": "Squadre sul campo",
+        "title": "Smoke along the Strada delle Fonti and requests from responders",
+        "sender": "Field crews",
         "recipients": [
           "all"
         ],
-        "text": "Le squadre segnalano fumo presso la Strada delle Fonti e in prossimità del Deposito delle Fornaci, il cui registro iniziale riporta 16 addetti. Hanno trasmesso lo stato di strade e strutture nelle zone intorno al fuoco: il rilievo è sulla mappa con l’ora in cui è stato fatto e non sostituisce una verifica prima di ogni trasferimento. Un caposquadra chiede conferma dell’approvvigionamento idrico e dello stato di una linea elettrica nel settore di lavoro; le risposte dei gestori non sono ancora pervenute.",
-        "objective": "Valutare il raccordo tra viabilità, protezione delle strutture e richieste ai gestori. Nota EXCON: il rilievo copre le zone in fiamme e quelle vicine (strade ed edifici) e fallisce se nessuna zona è in fiamme. Reti elettriche/idriche e sostanze pericolose non hanno una fisica dedicata; trattare i riscontri dei gestori narrativamente senza inventare guasti o effetti automatici. Restano fisici acqua, gittata, viaggio e rifornimento delle autobotti.",
-        "event": "Cambio delle condizioni e accessi",
+        "text": "Crews report smoke by the Strada delle Fonti and near the Deposito delle Fornaci warehouse, whose initial register lists 16 workers. They have sent the state of roads and facilities in the zones around the fire: the survey is on the map with the time it was made and does not replace a check before each transfer. A crew leader asks for confirmation of the water supply and of the state of a power line in the work sector; the utilities have not yet replied.",
+        "objective": "Assess the link between traffic management, protection of facilities and requests to utilities. EXCON note: the survey covers the burning zones and those next to them (roads and buildings) and fails if no zone is burning. Power/water networks and hazardous substances have no dedicated physics; handle the utilities' replies narratively without inventing failures or automatic effects. Engine water, reach, travel and refilling remain physical.",
+        "event": "Changing conditions and access",
         "actions": [
           {
             "id": "SCS-R03",
-            "title": "Rilievo di accessi e strutture intorno al fuoco",
+            "title": "Survey of access routes and facilities around the fire",
             "reveal": {
               "kind": "exact",
               "zones": "burning_and_adjacent",
@@ -316,7 +316,7 @@
               ]
             },
             "offset_s": 0,
-            "note": "Strade ed edifici nelle zone in fiamme e adiacenti; il fronte non è incluso."
+            "note": "Roads and buildings in the burning and adjacent zones; the fire front is not included."
           }
         ]
       },
@@ -324,41 +324,41 @@
         "id": "SCS-07",
         "at_s": 5700,
         "turn": 4,
-        "title": "Bisogni di assistenza e richieste di contatto",
-        "sender": "Referente sanitario e sportello famiglie",
+        "title": "Assistance needs and contact requests",
+        "sender": "Health contact and family desk",
         "recipients": [
           "coordinamento_civile",
           "sala_operativa"
         ],
-        "text": "Il referente del presidio sanitario segnala che, tra le 28 persone del registro iniziale, cinque hanno ridotta mobilità e due sono in gravidanza. Chiede conferma delle soluzioni di accompagnamento e assistenza disponibili in caso di trasferimento. Lo sportello famiglie ha ricevuto tre richieste di contatto relative a persone registrate nei gruppi del festival e del rifugio; nessuna scomparsa è stata accertata.",
-        "objective": "Osservare come vengono consolidati bisogni e dati sulle persone. Nota EXCON: i bisogni specifici sono sottoinsiemi delle presenze iniziali; le richieste di contatto non aggiungono persone né confermano dispersi. Assistenza clinica, accessibilità, ricongiungimenti e supporto psicosociale sono esiti narrativi, distinti dagli effetti fisici dell’evacuazione.",
-        "event": "Assistenza e richiesta di supporto",
+        "text": "The health post contact reports that, of the 28 people on the initial register, five have reduced mobility and two are pregnant. They ask for confirmation of the escort and assistance arrangements available in case of transfer. The family desk has received three contact requests about people registered with the festival and mountain hut groups; no one has been confirmed missing.",
+        "objective": "Observe how needs and data about people are consolidated. EXCON note: the specific needs are subsets of the initial head counts; the contact requests add no people and confirm no missing persons. Clinical care, accessibility, reunification and psychosocial support are narrative outcomes, separate from the physical effects of evacuation.",
+        "event": "Assistance and requests for support",
         "actions": []
       },
       {
         "id": "SCS-08",
         "at_s": 6600,
         "turn": 4,
-        "title": "Richiesta di aggiornamento per il coordinamento nazionale",
-        "sender": "Ufficio di coordinamento nazionale",
+        "title": "Update request from national coordination",
+        "sender": "National coordination office",
         "recipients": [
           "all"
         ],
-        "text": "Per il punto di situazione delle 18:00 vi chiediamo un aggiornamento sintetico su persone e strutture esposte, missioni in corso, capacità disponibili e principali difficoltà di accesso. Riportate l’ora dei dati e gli eventuali fabbisogni aggiuntivi, con destinazione e orario utile. Vi trasmettiamo l’ultimo rilevamento termico da satellite: la posizione è indicativa e non distingue il fronte attivo dall’area già percorsa. ERCC ha segnalato la possibilità di esaminare richieste di assistenza; altre emergenze stanno impegnando le capacità regionali e nessuna disponibilità internazionale è stata ancora confermata.",
-        "objective": "Valutare coerenza del quadro comune e utilità delle richieste di supporto. Nota EXCON: la stima satellitare è approssimata; osservare se i ruoli la confrontano con i rilievi più recenti (drone, squadre) e ne dichiarano la fonte. Rappresentare il raccordo nazionale ed ERCC senza contatti esterni o concessioni automatiche di risorse. Non prescrivere ai partecipanti come raccogliere i riscontri degli altri ruoli.",
-        "event": "Assistenza e richiesta di supporto",
+        "text": "For the 18:00 situation briefing we ask for a short update on exposed people and facilities, ongoing missions, available capacities and the main access difficulties. State the time of the data and any additional needs, with destination and useful time. We are forwarding the latest satellite thermal detection: the position is indicative and does not distinguish the active front from the area already burnt. The ERCC has said it can consider requests for assistance; other emergencies are tying up regional capacities and no international availability has been confirmed yet.",
+        "objective": "Assess the consistency of the common operating picture and the usefulness of support requests. EXCON note: the satellite estimate is approximate; observe whether the roles compare it with the latest surveys (drone, crews) and state its source. Represent the national and ERCC liaison without external contacts or automatic grants of resources. Do not prescribe how participants collect feedback from the other roles.",
+        "event": "Assistance and requests for support",
         "actions": [
           {
             "id": "SCS-R04",
-            "title": "Rilevamento termico da satellite",
+            "title": "Satellite thermal detection",
             "reveal": {
               "kind": "approximate",
               "position_error_m": 300.0,
               "area_error_frac": 0.3,
-              "source": "Rilevamento satellitare"
+              "source": "Satellite detection"
             },
             "offset_s": 0,
-            "note": "Stima indipendente dell’incendio, utile soprattutto alla sala operativa che non ha osservatori propri."
+            "note": "Independent estimate of the fire, useful above all to the operations room, which has no observers of its own."
           }
         ]
       },
@@ -366,32 +366,32 @@
         "id": "SCS-09",
         "at_s": 7500,
         "turn": 5,
-        "title": "Domande della stampa e richieste di rientro",
-        "sender": "Redazione del Corriere della Conca",
+        "title": "Press questions and requests to return",
+        "sender": "Corriere della Conca newsroom",
         "recipients": [
           "all"
         ],
-        "text": "Sui social circolano affermazioni secondo cui il boato sarebbe stato causato da una bomba e alcuni soccorritori sarebbero rimasti inattivi. Abbiamo inoltre ricevuto domande di residenti e visitatori che vogliono rientrare o recuperare le auto. Quali informazioni potete confermare? Quali indicazioni deve seguire la popolazione e quando sarà disponibile il prossimo aggiornamento?",
-        "objective": "Osservare comunicazione dell’incertezza e motivazione delle condizioni di riapertura. Nota EXCON: le affermazioni riportate sono voci, non fatti acquisiti. Verificare la coerenza dei comunicati con gli esiti disponibili e con l’ora dei dati di mappa su cui si basano. Il rientro degli evacuati non è un comando fisico automatico; i comunicati restano nell’esercitazione.",
-        "event": "Quadro finale e consegne",
+        "text": "Claims are circulating on social media that the bang was caused by a bomb and that some responders stood idle. We have also received questions from residents and visitors who want to go back or collect their cars. What information can you confirm? What instructions should the public follow, and when will the next update be available?",
+        "objective": "Observe how uncertainty is communicated and how the conditions for reopening are justified. EXCON note: the reported claims are rumours, not established facts. Check that statements are consistent with the available outcomes and with the time of the map data they rely on. The return of evacuees is not an automatic physical command; statements stay within the exercise.",
+        "event": "Final picture and handover",
         "actions": []
       },
       {
         "id": "SCS-10",
         "at_s": 8400,
         "turn": 5,
-        "title": "Richiesta di consegne per il turno subentrante",
-        "sender": "Sala operativa — personale subentrante",
+        "title": "Handover request for the incoming shift",
+        "sender": "Operations room — incoming shift",
         "recipients": [
           "all"
         ],
-        "text": "Il personale che subentrerà alle 18:30 richiede le consegne aggiornate: situazione dei fronti, missioni in corso, risorse disponibili, accessi interdetti e persone ancora in attesa di trasferimento o assistenza. Indicate le richieste pendenti, i referenti da ricontattare e gli orari dei prossimi riscontri. Servono anche le informazioni già confermate da condividere con popolazione e autorità. Sulla mappa trovate il quadro consolidato delle zone interessate.",
-        "objective": "Valutare completezza delle consegne e tracciabilità delle decisioni. Nota EXCON: il quadro consolidato rende comune la mappa delle zone interessate; confrontarlo in debrief con ciò che ciascun ruolo credeva prima. La fine della traccia non equivale a incendio spento. Non presentare la griglia di valutazione come messaggio operativo.",
-        "event": "Quadro finale e consegne",
+        "text": "The staff taking over at 18:30 ask for an up-to-date handover: state of the fire fronts, ongoing missions, available resources, closed access routes and people still waiting for transfer or assistance. List pending requests, contacts to call back and the times of the next check-ins. They also need the information already confirmed for sharing with the public and the authorities. The consolidated picture of the affected zones is on the map.",
+        "objective": "Assess the completeness of the handover and the traceability of decisions. EXCON note: the consolidated picture makes the map of the affected zones common to all; compare it in the debrief with what each role believed before. The end of the script does not mean the fire is out. Do not present the evaluation grid as an operational message.",
+        "event": "Final picture and handover",
         "actions": [
           {
             "id": "SCS-R05",
-            "title": "Quadro consolidato per le consegne",
+            "title": "Consolidated picture for the handover",
             "reveal": {
               "kind": "exact",
               "zones": "burning_and_adjacent",
@@ -402,10 +402,10 @@
                 "lines",
                 "units"
               ],
-              "source": "Sala operativa"
+              "source": "Operations room"
             },
             "offset_s": 0,
-            "note": "Tutti i livelli sulle zone in fiamme e adiacenti, per tutti i ruoli."
+            "note": "All layers over the burning and adjacent zones, for all roles."
           }
         ]
       }
@@ -434,7 +434,98 @@
       "local_autonomy": true
     },
     "staging_base": "Centro operativo di Pianalto",
-    "operational_grants": []
+    "operational_grants": [],
+    "translations": {
+      "it": {
+        "Selvariva — coordinated crisis in five turns": "Selvariva — crisi coordinata in cinque turni",
+        "TTX in Selvariva: 3 roles, 5 turns of 30 minutes (16:00–18:30) and 10 injects. Civil coordination, incident command and the operations room deal with a festival and a school group, access routes, limited resources, reinforcements and public information. Each role sees on its map only what it is told: estimates from calls, field surveys, the incident command's drone and whatever the other roles share. Timings, equipment and quantities are exercise assumptions; outcomes depend on the decisions and on the model.": "TTX su Selvariva: 3 ruoli, 5 turni da 30 minuti (16:00–18:30) e 10 inject. Coordinamento civile, direzione dei soccorsi e sala operativa affrontano festival e scolaresca, accessi, risorse limitate, rinforzi e informazione pubblica. Ogni ruolo vede sulla mappa solo ciò che gli viene comunicato: stime dalle chiamate, rilievi sul campo, il drone della direzione dei soccorsi e ciò che gli altri ruoli condividono. Tempi, dotazioni e quantità sono ipotesi di esercitazione; gli esiti dipendono dalle decisioni e dal modello.",
+        "Exercise control — Due Valli basin": "Direzione esercitazione — conca delle Due Valli",
+        "Regional weather service": "Servizio meteo regionale",
+        "112 Dispatch": "Centrale 112",
+        "Local contacts": "Referenti locali",
+        "Regional mobilisation centre": "Centro di mobilitazione regionale",
+        "Field crews": "Squadre sul campo",
+        "Health contact and family desk": "Referente sanitario e sportello famiglie",
+        "National coordination office": "Ufficio di coordinamento nazionale",
+        "Corriere della Conca newsroom": "Redazione del Corriere della Conca",
+        "Operations room — incoming shift": "Sala operativa — personale subentrante",
+        "Wildfire ground crews": "Squadre AIB a terra",
+        "Crews for control lines. Each unit works within the model's work limit; the effect starts after the transfer. A crew can also reconnoitre a zone (Reconnoitre): on arrival it reports once what it sees and the incident command map is updated to that time. Standby and manual mop-up remain EXCON narrative initiatives.": "Squadre per linee di controllo. Ogni unità opera entro il limite di lavoro del modello; l’effetto inizia dopo il trasferimento. Una squadra può anche fare una ricognizione (Reconnoitre) di una zona: all’arrivo riferisce una volta cosa vede e la mappa della direzione si aggiorna a quell’ora. Presidio e bonifica manuale restano iniziative narrative EXCON.",
+        "Fire service engines": "Autobotti VVF",
+        "Operational units of the model: 2,500 L, 60 m hose, road access and refilling at the base. They are neither ambulances nor patrol vehicles.": "Unità operative del modello: 2.500 L, manichetta di 60 m, accesso stradale e rifornimento alla base. Non sono ambulanze né mezzi di pattugliamento.",
+        "Firefighting aircraft": "Mezzo aereo antincendio",
+        "One unit enables WaterDrop as per the model; sorties, visibility, daylight limits and distances from power lines are not simulated. EXCON checks availability narratively before approving.": "Un’unità abilita WaterDrop secondo il modello; non simula sortite, visibilità, effemeridi o distanze dalle linee elettriche. EXCON verifica narrativamente la disponibilità prima di approvare.",
+        "Monitoring drone": "Drone di monitoraggio",
+        "Keeps the incident command map updated over at most 4 adjacent zones (a rectangle of the grid), with one survey every 5 minutes for 40 minutes on station; then returns to Pianalto and recharges for 15 minutes. Does not fly in winds above 45 km/h. Other roles see the surveys only if they are shared.": "Tiene aggiornata la mappa della direzione dei soccorsi su al massimo 4 zone contigue (un rettangolo della griglia), con un rilievo ogni 5 minuti per 40 minuti in posizione; poi rientra a Pianalto e si ricarica per 15 minuti. Non vola con vento oltre 45 km/h. Gli altri ruoli vedono i rilievi solo se vengono condivisi.",
+        "Buses for assisted evacuation": "Autobus per evacuazione assistita",
+        "50 seats per unit in the model. Schools and the health post need vehicles; buses do not provide medical transport or accessibility and do not run automatic shuttles. Specific assistance is narrative.": "50 posti per unità nel modello. Scuole e presidio sanitario richiedono mezzi; gli autobus non garantiscono trasporto sanitario o accessibilità e non effettuano navette automatiche. L’assistenza specifica è narrativa.",
+        "Traffic patrols": "Pattuglie per viabilità",
+        "Each patrol can man one road closure under the model rules. Reopenings are justified by the current situation; on-site checks and pedestrian control are narrative.": "Ogni pattuglia può presidiare una chiusura stradale secondo le regole del modello. Riaperture motivate sulla situazione corrente; verifica sul posto e presidio pedonale sono narrativi.",
+        "Civil coordination and assistance": "Coordinamento civile e assistenza",
+        "Combines the municipality, local police, assistance and public communication. Decides warning and evacuation priorities, opens reception centres and coordinates routes with incident command. Has 4 buses and 3 patrols. The mountain hut (40), school (80), health post (28) and festival (360) are separate groups; check destination, capacity, access and missions already under way before proposing new orders. Your map shows only what you are told, with the time of the data: ask incident command for the drone surveys before choosing routes. Medical transport/accessibility, specific assistance, family reunification and press releases are narrative initiatives whose outcome is decided by EXCON, not automatic capabilities of the buses. Does not release personal data.": "Accorpa Comune, polizia locale, assistenza e comunicazione pubblica. Decide priorità di allerta ed evacuazione, apre accoglienza e coordina i percorsi con la direzione dei soccorsi. Dispone di 4 autobus e 3 pattuglie. Rifugio (40), scuola (80), presidio sanitario (28) e festival (360) sono gruppi distinti; verifica destinazione, capienza, accesso e missioni già attive prima di proporre nuovi ordini. La tua mappa mostra solo ciò che ti viene comunicato, con l’ora del dato: chiedi alla direzione dei soccorsi i rilievi del drone prima di scegliere i percorsi. Trasporto sanitario/accessibilità, assistenza specifica, ricongiungimenti e comunicati sono iniziative narrative con esito EXCON, non capacità automatiche degli autobus. Non diffonde dati nominativi.",
+        "Wildfire and fire service incident command": "Direzione dei soccorsi AIB e VVF",
+        "Combines the fire operations director, the wildfire crews and the fire service. Has 4 ground crews, 2 engines and 1 monitoring drone; no aircraft at the start. The drone (MonitorArea) updates your map over up to 4 adjacent zones while on station: choose where and when it is needed, because it must then return and recharge. Justify priorities between forest and structures, access, water, refilling and the return of units. Requests reinforcements from the operations room, stating capability, place and latest useful time. The fire service does not patrol. Ground reconnaissance (Reconnoitre) commits one wildfire crew: it reaches a zone and reports once what it sees, then stays deployed until EXCON confirms its return. Power/water utilities, mop-up and real flight limits are handled narratively by EXCON; fire spread and physical missions are read from the model.": "Accorpa DOS, squadre AIB e VVF. Dispone di 4 squadre a terra, 2 autobotti e 1 drone di monitoraggio; nessun mezzo aereo all’inizio. Il drone (MonitorArea) aggiorna la tua mappa su fino a 4 zone contigue mentre è in posizione: scegli dove serve e quando, perché poi deve rientrare e ricaricarsi. Motiva priorità tra bosco e strutture, accesso, acqua, rifornimento e ritorno delle unità. Richiede rinforzi alla sala indicando capacità, luogo e ultimo orario utile. I VVF non svolgono pattugliamento. La ricognizione a terra (Reconnoitre) impegna una squadra AIB: raggiunge una zona e riferisce una volta cosa vede, poi resta impiegata finché l’EXCON non ne conferma il rientro. Gestori elettrico/idrico, bonifica e limiti reali del volo sono gestiti narrativamente da EXCON; la propagazione e le missioni fisiche si leggono dal modello.",
+        "Operations room and forecasting": "Sala operativa e previsione",
+        "Combines regional coordination, the national liaison and the weather cell. Shares forecasts and limits, consolidates the common operating picture and proposes RequestReinforcement based on the needs of the other two roles. Has no observers of its own: your map is updated with the estimates received and with what the other roles share, so always state the source and time of the data you report. Distinguishes request, approval, arrival and deployment. Prepares the SITREP and represents the liaison with a simulated ERCC; international aid and external contacts are narrative only and guarantee no units. Does not change weather or fire and does not invent damage or evacuated people.": "Accorpa coordinamento regionale, raccordo nazionale e cellula meteo. Condivide previsioni e limiti, consolida il quadro comune e propone RequestReinforcement sulla base dei bisogni degli altri due ruoli. Non ha osservatori propri: la tua mappa si aggiorna con le stime ricevute e con ciò che gli altri ruoli condividono, quindi indica sempre fonte e ora dei dati che riporti. Distingue richiesta, approvazione, arrivo e impiego. Prepara il SITREP e rappresenta il raccordo con ERCC simulato; aiuti internazionali e contatti esterni sono solo narrativi e non garantiscono unità. Non modifica meteo o fuoco e non inventa danni o persone evacuate.",
+        "Regional wildfire column — simulated wait": "Colonna regionale AIB — attesa simulata",
+        "Regional transport — simulated wait": "Trasporto regionale — attesa simulata",
+        "Regional air operations room — exercise availability to be confirmed": "Sala aerea regionale — disponibilità di esercitazione da confermare",
+        "Fire danger bulletin": "Bollettino di pericolo incendi",
+        "16:00 bulletin. After a dry spell, the wind in the Due Valli basin is from the north-west at 24 km/h; estimated fine fuel moisture is 10%. The wind may strengthen during the afternoon, but strength and timing remain uncertain. There are currently no confirmed fire reports in the basin.": "Bollettino delle 16:00. Dopo un periodo asciutto, il vento nella conca delle Due Valli proviene da nord-ovest a 24 km/h; l’umidità stimata del combustibile fine è del 10%. È possibile un rinforzo del vento nel corso del pomeriggio, ma intensità e orario restano incerti. Al momento non risultano segnalazioni confermate di incendio nella conca.",
+        "Assess whether the bulletin is shared and turned into justified preventive measures. EXCON note: observe recipients, acknowledgement and timing of the first update without suggesting decisions in the message. There is no fire yet: no map reveal.": "Valutare se il bollettino viene condiviso e tradotto in misure preventive motivate. Nota EXCON: osservare destinatari, presa in carico e tempi del primo aggiornamento senza suggerire le decisioni nel messaggio. Non c’è ancora fuoco: nessuna rivelazione di mappa.",
+        "Pre-alert and initial attack": "Preallerta e primo intervento",
+        "Two fires reported at Le Fonti": "Segnalazione di due focolai alle Fonti",
+        "16:15. Several callers report a loud bang near the festival area (Area festival delle Fonti) and smoke in the woods above it. Observers confirm two fires in the Bosco delle Fonti; the cause has not been established and no verified reports of injuries have been received. The position shown on the map is derived from the calls and is only indicative. The first crews on their way ask who is coordinating on site.": "Ore 16:15. Più chiamanti riferiscono un boato vicino all’Area festival delle Fonti e fumo nel bosco sovrastante. Gli osservatori confermano due focolai nel Bosco delle Fonti; la causa non è stata accertata e non sono pervenute notizie verificate di feriti. La posizione riportata sulla mappa è ricavata dalle chiamate ed è solo indicativa. Le prime squadre in avvicinamento chiedono il riferimento per il coordinamento sul posto.",
+        "Observe how coordination, priorities and first deployments are agreed, and whether the uncertain estimate is verified (drone, observers) before committing resources. EXCON note: keep the two ignitions selected before the estimate, which reads them from the model; if the ignitions are disabled, disable the estimate too. Do not suggest a mandatory division of tasks.": "Osservare come vengono concordati coordinamento, priorità e primi impieghi, e se la stima incerta viene verificata (drone, osservatori) prima di impegnare risorse. Nota EXCON: lasciare selezionati i due inneschi prima della stima, che li legge dal modello; se si disattivano gli inneschi disattivare anche la stima. Non suggerire una ripartizione obbligata dei compiti.",
+        "Main ignition at Le Fonti": "Innesco principale delle Fonti",
+        "Physical fire in the Bosco delle Fonti (zone C3). EXCON can select it when sending.": "Focolaio fisico nel Bosco delle Fonti (zona C3). Selezionabile da EXCON all’invio.",
+        "Second fire on the slope": "Secondo focolaio sul versante",
+        "Second physical fire; it does not simulate an explosion. EXCON can select it when sending.": "Secondo focolaio fisico; non rappresenta una simulazione di esplosione. Selezionabile da EXCON all’invio.",
+        "Estimate from 112 calls": "Stima dalle chiamate al 112",
+        "Only smoke seen from afar: position and extent very uncertain, different for each role. Requires the ignitions to have been executed.": "Solo fumo visto da lontano: posizione ed estensione molto incerte, diverse per ruolo. Richiede gli inneschi già eseguiti.",
+        "Update from the festival, the mountain hut and facilities": "Aggiornamento da festival, rifugio e strutture",
+        "The teacher at the school group's mountain hut (Rifugio della scolaresca) has been reached again after the call dropped: the group register lists 37 children and 3 adults. The festival organisers, with 360 registered participants, ask for instructions for visitors who want to collect their cars. Roverechiare school reports 80 people on its register and the health post 28. Municipal records give nominal capacities of 800 places at Pianalto, 400 at Prati and 120 in Roverechiare square. Local police have checked roads and buildings between Le Fonti and Roverechiare: the survey is on the map with the time it was made.": "L’insegnante del Rifugio della scolaresca è stata ricontattata dopo l’interruzione della chiamata: il registro del gruppo comprende 37 bambini e 3 accompagnatori. Gli organizzatori del festival, con 360 partecipanti registrati, chiedono indicazioni per i visitatori che vogliono recuperare le auto. La scuola di Roverechiare comunica 80 presenze nel proprio registro e il presidio sanitario 28. Le schede comunali indicano capienze nominali di 800 posti a Pianalto, 400 ai Prati e 120 nella piazza di Roverechiare. La polizia locale ha verificato strade ed edifici tra le Fonti e Roverechiare: il rilievo è sulla mappa con l’ora in cui è stato fatto.",
+        "Assess priorities, choice of destinations and consistency between transport, access and reception. EXCON note: the head counts refer to separate groups and do not confirm where people are now. The survey covers zones C3, C4, D3, D4 (roads and buildings, not the fire) and ages: observe whether the roles refresh it before moving buses. Nominal places do not certify safety or accessibility.": "Valutare priorità, scelta delle destinazioni e compatibilità tra trasporto, accessi e accoglienza. Nota EXCON: le consistenze si riferiscono a gruppi distinti e non attestano la posizione corrente delle persone. Il rilievo copre le zone C3, C4, D3, D4 (strade ed edifici, non il fuoco) e invecchia: osservare se i ruoli lo aggiornano prima di muovere autobus. I posti nominali non certificano sicurezza o accessibilità.",
+        "Protecting people and deploying resources": "Protezione delle persone e impiego risorse",
+        "Survey of roads and buildings between Le Fonti and Roverechiare": "Rilievo di strade ed edifici tra le Fonti e Roverechiare",
+        "Local police": "Polizia locale",
+        "Festival area, mountain hut, Bosco delle Fonti and Roverechiare. State of roads and buildings at sending time, without the fire.": "Area festival, rifugio, Bosco delle Fonti e Roverechiare. Stato di strade ed edifici all’invio, senza fuoco.",
+        "Regional reinforcements available": "Disponibilità di rinforzi regionali",
+        "We can make available two wildfire crews, two buses and one firefighting aircraft. From confirmation of the mobilisation we estimate 35, 30 and 45 minutes respectively to arrival. To prepare the dispatch we need the capability and quantity requested, the destination, the on-site contact and the time by which the support is still useful. The air operations room will update the conditions for using the aircraft.": "Possiamo mettere a disposizione due squadre AIB, due autobus e un mezzo aereo antincendio. Dalla conferma della mobilitazione stimiamo rispettivamente 35, 30 e 45 minuti per l’arrivo. Per predisporre l’invio ci servono capacità e quantità richieste, destinazione, referente sul posto e orario entro cui il supporto risulta ancora utile. Le condizioni di impiego del mezzo aereo saranno aggiornate dalla sala aerea.",
+        "Assess timeliness and justification of the requests, distinguishing availability, mobilisation, arrival and deployment. EXCON note: the inject grants no resources; RequestReinforcement remains a proposal of the operations room. Crews and aircraft are assigned to incident command, buses to civil coordination. Check the narrative usability of the aircraft separately.": "Valutare tempestività e motivazione delle richieste, distinguendo disponibilità, mobilitazione, arrivo e impiego. Nota EXCON: l’inject non concede risorse; RequestReinforcement resta una proposta della sala operativa. Squadre e mezzo aereo sono assegnati alla direzione dei soccorsi, autobus al coordinamento civile. Verificare separatamente l’impiegabilità aerea narrativa.",
+        "17:05 weather update": "Aggiornamento meteo delle 17:05",
+        "17:05 update. The wind is now from the west-north-west at 38 km/h; estimated fine fuel moisture has dropped to 8%. The new conditions may change the direction and speed of spread on the slopes. An updated estimate of how the fire will develop locally is not yet available.": "Aggiornamento delle 17:05. Il vento proviene ora da ovest-nord-ovest a 38 km/h; l’umidità stimata del combustibile fine è scesa all’8%. Le nuove condizioni possono modificare la direzione e la rapidità di propagazione sui versanti. Non è ancora disponibile una stima aggiornata dell’evoluzione locale dell’incendio.",
+        "Observe how the plan is updated and the change in conditions is shared. EXCON note: the weather change is the action attached to the inject; align the text with the values actually applied if the action is edited or disabled. At 38 km/h the drone keeps flying (limit 45 km/h); above the limit it is recalled and cannot take off. Any forecast products must state assumptions, reference time and limits.": "Osservare come viene aggiornato il piano e condiviso il cambiamento delle condizioni. Nota EXCON: il cambio meteo è l’azione associata all’inject; allineare il testo ai valori realmente applicati se l’azione viene modificata o disattivata. A 38 km/h il drone resta in volo (limite 45 km/h); oltre il limite viene richiamato e non decolla. Eventuali prodotti di previsione devono riportare ipotesi, ora di riferimento e limiti.",
+        "Changing conditions and access": "Cambio delle condizioni e accessi",
+        "Stronger WNW wind": "Vento da ONO più intenso",
+        "Physical exercise change. EXCON selects it when sending.": "Variazione fisica di esercitazione. EXCON seleziona all’invio.",
+        "Smoke along the Strada delle Fonti and requests from responders": "Fumo lungo la Strada delle Fonti e richieste dai soccorritori",
+        "Crews report smoke by the Strada delle Fonti and near the Deposito delle Fornaci warehouse, whose initial register lists 16 workers. They have sent the state of roads and facilities in the zones around the fire: the survey is on the map with the time it was made and does not replace a check before each transfer. A crew leader asks for confirmation of the water supply and of the state of a power line in the work sector; the utilities have not yet replied.": "Le squadre segnalano fumo presso la Strada delle Fonti e in prossimità del Deposito delle Fornaci, il cui registro iniziale riporta 16 addetti. Hanno trasmesso lo stato di strade e strutture nelle zone intorno al fuoco: il rilievo è sulla mappa con l’ora in cui è stato fatto e non sostituisce una verifica prima di ogni trasferimento. Un caposquadra chiede conferma dell’approvvigionamento idrico e dello stato di una linea elettrica nel settore di lavoro; le risposte dei gestori non sono ancora pervenute.",
+        "Assess the link between traffic management, protection of facilities and requests to utilities. EXCON note: the survey covers the burning zones and those next to them (roads and buildings) and fails if no zone is burning. Power/water networks and hazardous substances have no dedicated physics; handle the utilities' replies narratively without inventing failures or automatic effects. Engine water, reach, travel and refilling remain physical.": "Valutare il raccordo tra viabilità, protezione delle strutture e richieste ai gestori. Nota EXCON: il rilievo copre le zone in fiamme e quelle vicine (strade ed edifici) e fallisce se nessuna zona è in fiamme. Reti elettriche/idriche e sostanze pericolose non hanno una fisica dedicata; trattare i riscontri dei gestori narrativamente senza inventare guasti o effetti automatici. Restano fisici acqua, gittata, viaggio e rifornimento delle autobotti.",
+        "Survey of access routes and facilities around the fire": "Rilievo di accessi e strutture intorno al fuoco",
+        "Roads and buildings in the burning and adjacent zones; the fire front is not included.": "Strade ed edifici nelle zone in fiamme e adiacenti; il fronte non è incluso.",
+        "Assistance needs and contact requests": "Bisogni di assistenza e richieste di contatto",
+        "The health post contact reports that, of the 28 people on the initial register, five have reduced mobility and two are pregnant. They ask for confirmation of the escort and assistance arrangements available in case of transfer. The family desk has received three contact requests about people registered with the festival and mountain hut groups; no one has been confirmed missing.": "Il referente del presidio sanitario segnala che, tra le 28 persone del registro iniziale, cinque hanno ridotta mobilità e due sono in gravidanza. Chiede conferma delle soluzioni di accompagnamento e assistenza disponibili in caso di trasferimento. Lo sportello famiglie ha ricevuto tre richieste di contatto relative a persone registrate nei gruppi del festival e del rifugio; nessuna scomparsa è stata accertata.",
+        "Observe how needs and data about people are consolidated. EXCON note: the specific needs are subsets of the initial head counts; the contact requests add no people and confirm no missing persons. Clinical care, accessibility, reunification and psychosocial support are narrative outcomes, separate from the physical effects of evacuation.": "Osservare come vengono consolidati bisogni e dati sulle persone. Nota EXCON: i bisogni specifici sono sottoinsiemi delle presenze iniziali; le richieste di contatto non aggiungono persone né confermano dispersi. Assistenza clinica, accessibilità, ricongiungimenti e supporto psicosociale sono esiti narrativi, distinti dagli effetti fisici dell’evacuazione.",
+        "Assistance and requests for support": "Assistenza e richiesta di supporto",
+        "Update request from national coordination": "Richiesta di aggiornamento per il coordinamento nazionale",
+        "For the 18:00 situation briefing we ask for a short update on exposed people and facilities, ongoing missions, available capacities and the main access difficulties. State the time of the data and any additional needs, with destination and useful time. We are forwarding the latest satellite thermal detection: the position is indicative and does not distinguish the active front from the area already burnt. The ERCC has said it can consider requests for assistance; other emergencies are tying up regional capacities and no international availability has been confirmed yet.": "Per il punto di situazione delle 18:00 vi chiediamo un aggiornamento sintetico su persone e strutture esposte, missioni in corso, capacità disponibili e principali difficoltà di accesso. Riportate l’ora dei dati e gli eventuali fabbisogni aggiuntivi, con destinazione e orario utile. Vi trasmettiamo l’ultimo rilevamento termico da satellite: la posizione è indicativa e non distingue il fronte attivo dall’area già percorsa. ERCC ha segnalato la possibilità di esaminare richieste di assistenza; altre emergenze stanno impegnando le capacità regionali e nessuna disponibilità internazionale è stata ancora confermata.",
+        "Assess the consistency of the common operating picture and the usefulness of support requests. EXCON note: the satellite estimate is approximate; observe whether the roles compare it with the latest surveys (drone, crews) and state its source. Represent the national and ERCC liaison without external contacts or automatic grants of resources. Do not prescribe how participants collect feedback from the other roles.": "Valutare coerenza del quadro comune e utilità delle richieste di supporto. Nota EXCON: la stima satellitare è approssimata; osservare se i ruoli la confrontano con i rilievi più recenti (drone, squadre) e ne dichiarano la fonte. Rappresentare il raccordo nazionale ed ERCC senza contatti esterni o concessioni automatiche di risorse. Non prescrivere ai partecipanti come raccogliere i riscontri degli altri ruoli.",
+        "Satellite thermal detection": "Rilevamento termico da satellite",
+        "Satellite detection": "Rilevamento satellitare",
+        "Independent estimate of the fire, useful above all to the operations room, which has no observers of its own.": "Stima indipendente dell’incendio, utile soprattutto alla sala operativa che non ha osservatori propri.",
+        "Press questions and requests to return": "Domande della stampa e richieste di rientro",
+        "Claims are circulating on social media that the bang was caused by a bomb and that some responders stood idle. We have also received questions from residents and visitors who want to go back or collect their cars. What information can you confirm? What instructions should the public follow, and when will the next update be available?": "Sui social circolano affermazioni secondo cui il boato sarebbe stato causato da una bomba e alcuni soccorritori sarebbero rimasti inattivi. Abbiamo inoltre ricevuto domande di residenti e visitatori che vogliono rientrare o recuperare le auto. Quali informazioni potete confermare? Quali indicazioni deve seguire la popolazione e quando sarà disponibile il prossimo aggiornamento?",
+        "Observe how uncertainty is communicated and how the conditions for reopening are justified. EXCON note: the reported claims are rumours, not established facts. Check that statements are consistent with the available outcomes and with the time of the map data they rely on. The return of evacuees is not an automatic physical command; statements stay within the exercise.": "Osservare comunicazione dell’incertezza e motivazione delle condizioni di riapertura. Nota EXCON: le affermazioni riportate sono voci, non fatti acquisiti. Verificare la coerenza dei comunicati con gli esiti disponibili e con l’ora dei dati di mappa su cui si basano. Il rientro degli evacuati non è un comando fisico automatico; i comunicati restano nell’esercitazione.",
+        "Final picture and handover": "Quadro finale e consegne",
+        "Handover request for the incoming shift": "Richiesta di consegne per il turno subentrante",
+        "The staff taking over at 18:30 ask for an up-to-date handover: state of the fire fronts, ongoing missions, available resources, closed access routes and people still waiting for transfer or assistance. List pending requests, contacts to call back and the times of the next check-ins. They also need the information already confirmed for sharing with the public and the authorities. The consolidated picture of the affected zones is on the map.": "Il personale che subentrerà alle 18:30 richiede le consegne aggiornate: situazione dei fronti, missioni in corso, risorse disponibili, accessi interdetti e persone ancora in attesa di trasferimento o assistenza. Indicate le richieste pendenti, i referenti da ricontattare e gli orari dei prossimi riscontri. Servono anche le informazioni già confermate da condividere con popolazione e autorità. Sulla mappa trovate il quadro consolidato delle zone interessate.",
+        "Assess the completeness of the handover and the traceability of decisions. EXCON note: the consolidated picture makes the map of the affected zones common to all; compare it in the debrief with what each role believed before. The end of the script does not mean the fire is out. Do not present the evaluation grid as an operational message.": "Valutare completezza delle consegne e tracciabilità delle decisioni. Nota EXCON: il quadro consolidato rende comune la mappa delle zone interessate; confrontarlo in debrief con ciò che ciascun ruolo credeva prima. La fine della traccia non equivale a incendio spento. Non presentare la griglia di valutazione come messaggio operativo.",
+        "Consolidated picture for the handover": "Quadro consolidato per le consegne",
+        "Operations room": "Sala operativa",
+        "All layers over the burning and adjacent zones, for all roles.": "Tutti i livelli sulle zone in fiamme e adiacenti, per tutti i ruoli."
+      }
+    }
   },
   "run": {
     "seed": 17,

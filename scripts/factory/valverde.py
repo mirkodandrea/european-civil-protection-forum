@@ -118,7 +118,7 @@ def generate(template, seed=11):
     nodes=np.arange(801)*5
     fine=np.stack([np.interp(nodes,source,row) for row in z])
     fine=np.stack([np.interp(nodes,source,fine[:,i]) for i in range(len(nodes))],axis=1)
-    scn.update(id='valverde_factory',name='Valverde — valle dei Castagni (synthetic)',
+    scn.update(id='valverde_factory',name='Valverde — Chestnut valley (synthetic)',
                description='Synthetic Factory landscape: asymmetric wooded valley, tributary ravines, ridge, agricultural terraces and connected roadside settlements. TTX exercise templates retained; fire timing requires facilitation review.',
                dem=z.ravel().tolist(),fuel=fuel.ravel().tolist(),
                render_terrain=dict(rows=801,cols=801,posting_m=5,world_size_m=[4000,4000],elev=fine.ravel().tolist()))

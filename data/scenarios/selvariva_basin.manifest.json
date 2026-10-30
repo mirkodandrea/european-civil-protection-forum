@@ -73,7 +73,7 @@
   ],
   "max_drivable_grade": 0.16424430925321223,
   "provenance": "Existing TTX Factory kernels, adapted from propagator_abm under EUPL-1.2; all geography and demographic counts synthetic.",
-  "scenario_sha256": "5dcb876766b084704b69b56b671d398f77bd1f96b0488154749c68db8aa1196d",
+  "scenario_sha256": "6f8f9f1e005d01c2bc4431064d0231a632f57a0765f0c262bd323d8dbc3c3b9a",
   "template_sha256": "b2acc39f6926eb9e122bd096b3495377ea580ac86195f49cdbac2882eb6f7156",
-  "pack_sha256": "92ff6d72899e538cd192c393274d2c8b3a546edd2569fe004addce80e01373f3"
+  "pack_sha256": "ca894cf81fec4f2a4b3f254732c0c45af29a6135442e8c22c71c1e9b230e2eff"
 }

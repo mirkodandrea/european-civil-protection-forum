@@ -59,6 +59,23 @@ const ITALIAN: &[(&str, &str)] = &[
     ("Regional weather service", "Servizio meteorologico regionale"),
     ("Municipal police", "Polizia municipale"),
     ("ERCC (EU Emergency Response Coordination Centre)", "ERCC (Centro di coordinamento della risposta alle emergenze dell'UE)"),
+    // Territory name and inject actions (read by the EXCON)
+    ("Valverde — Chestnut valley (synthetic)", "Valverde — valle dei Castagni (synthetic)"),
+    ("Pine Hill ignition", "Innesco Pine Hill"),
+    ("The fire starts on Pine Hill at 13:00, as reported by inject I-01. Keep this action selected when sending the inject to start the fire.", "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01. Approva «Esegui» per far partire l'incendio."),
+    ("The fire starts on Pine Hill at 13:00, as reported by inject I-01.", "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01."),
+    ("Fire estimate (112)", "Stima dell'incendio (112)"),
+    ("Roles see an unverified estimate of the position and extent on the map.", "I ruoli vedono sulla mappa una stima non verificata della posizione e dell'estensione."),
+    ("Fire map (operations room)", "Mappa del fuoco (sala operativa)"),
+    ("The commander sees the fire and the roads in the affected zones.", "Il comandante vede il fuoco e le strade nelle zone interessate."),
+    ("Roads seen by the police", "Strade viste dalla polizia"),
+    ("The mayor and the commander see the state of the roads around the fire.", "Sindaco e comandante vedono lo stato delle strade intorno al fuoco."),
+    ("Front towards the fuel station", "Fronte verso il distributore"),
+    ("The fire and the threatened buildings in the affected zones.", "Il fuoco e gli edifici minacciati nelle zone interessate."),
+    ("Satellite estimate (ERCC)", "Stima satellitare (ERCC)"),
+    ("The region sees an estimate from satellite products.", "La Regione vede una stima da prodotti satellitari."),
+    ("Operational picture", "Quadro operativo"),
+    ("Fire, lines and crews in the affected zones.", "Fuoco, linee e squadre nelle zone interessate."),
 ];
 
 /// Built-in translations into `lang` keyed by English source text.
