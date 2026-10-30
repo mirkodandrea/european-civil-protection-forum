@@ -18,6 +18,9 @@ pub fn event_label(kind: &str) -> String {
         "proposal_parse_failed" => crate::i18n::ex("Interpretazione non riuscita"),
         "proposal_status" => crate::i18n::ex("Stato proposta aggiornato"),
         "master_command" => crate::i18n::ex("Comando EXCON"),
+        "excon_action_queued" => crate::i18n::ex("Azione EXCON in coda"),
+        "excon_action_cancelled" => crate::i18n::ex("Azione EXCON annullata"),
+        "excon_action_edited" => crate::i18n::ex("Azione EXCON modificata"),
         "master_prompt" => crate::i18n::ex("Richiesta EXCON all’AI"),
         "inject_scheduled" => crate::i18n::ex("Inject programmato"),
         "inject_sent" => crate::i18n::ex("Inject inviato"),
@@ -295,6 +298,11 @@ pub fn summarize_command(c: &Value) -> Option<String> {
             exfmt!("Innesco in {}{}", "Ignite at {}{}", fmt_loc(&c["at"]), r)
         }
         "Extinguish" => exfmt!("Spegnimento in {}", "Extinguish {}", fmt_loc(&c["area"])),
+        "ExtinguishArea" => exfmt!(
+            "Spegnimento dell’area disegnata ({} vertici, vegetazione invariata)",
+            "Extinguish the drawn area ({} vertices, vegetation unchanged)",
+            c["polygon"].as_array().map_or(0, |a| a.len())
+        ),
         "SetWeather" => fmt_weather(c),
         "SetBuildingStatus" => {
             let mut p = vec![];

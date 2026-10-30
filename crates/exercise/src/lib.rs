@@ -27,6 +27,7 @@ pub mod timing;
 pub use timing::{ClockControl, ExercisePhase, PhaseEntry, ScheduleStatus, ScheduledInject};
 pub mod design;
 pub mod action_suggestions;
+pub mod alert_brief;
 pub mod files;
 pub use files::{FileRef, PdfUpload};
 pub mod evaluation;
@@ -37,12 +38,14 @@ pub mod conversations;
 pub mod narrative;
 pub mod persona;
 pub mod response;
+pub mod reply_review;
 pub use response::{Addressee, ResponseKind};
 pub mod summaries;
 pub mod threads;
 pub mod planned;
 pub mod agenda;
 pub mod actions;
+pub mod queue;
 pub mod situation;
 pub mod suggestions;
 
@@ -582,6 +585,8 @@ pub struct Exercise {
     pub disabled_actions: BTreeMap<String, i64>,
     /// Situation suggestions the EXCON dismissed, sent or planned (id -> mark).
     pub suggestion_marks: BTreeMap<String, suggestions::SuggestionMark>,
+    /// EXCON review of player replies: AI action suggestions and questions (see [`reply_review`]).
+    pub review: reply_review::Board,
     /// Bumped whenever the world is restored (the fire is reseeded), so a preview made before is not reused.
     pub(crate) restore_epoch: u32,
     pub world: World,
@@ -667,6 +672,7 @@ impl Exercise {
             skipped_injects: BTreeMap::new(),
             disabled_actions: BTreeMap::new(),
             suggestion_marks: BTreeMap::new(),
+            review: Default::default(),
             restore_epoch: 0,
             world,
             turn: 0,
@@ -924,6 +930,9 @@ impl Exercise {
         let to_s = to_s.min(from_s + 24 * 3600);
         let minutes = ((to_s - from_s + 59) / 60) as u32;
         self.stop_clock("Turn resolution uses its own duration and playback speed");
+        // EXCON actions queued during the pause (and inject actions due now)
+        // set the scene first; then the approved proposals.
+        self.run_approved_actions();
         let mut applied = Vec::new();
         let approved: Vec<u64> = self
             .proposals
@@ -1062,10 +1071,12 @@ impl Exercise {
         self.validate_restored_limits(snap.resource_pools())?;
         self.stop_clock("Explicit snapshot rollback");
         self.rollback_narrative_outcomes(turn);
+        self.rollback_reviews(turn);
         self.turn_summaries.retain(|s| s.turn < turn);
         self.world.restore(&snap)?;
         self.restore_epoch += 1;
         self.forget_actions_since_restore();
+        self.sync_review_queue();
         self.forget_monitoring_since_restore();
         self.snapshots.retain(|(t, _)| *t <= turn);
         let undone: Vec<u64> = self
@@ -1764,6 +1775,73 @@ impl Exercise {
             bail!("execution requires an open turn");
         }
         self.execute_proposal(pid)
+    }
+
+    /// `commands` as an order of `role`, approved and executed now: the same
+    /// path as a player reply that EXCON interprets, approves and executes
+    /// (visual fixtures, the simulator bench). Returns the proposal and its
+    /// per-action results.
+    pub fn order_as_role(
+        &mut self,
+        role: &str,
+        commands: Vec<Value>,
+        note: &str,
+    ) -> Result<(u64, Vec<AppliedAction>)> {
+        let message = self.send_inject(
+            None,
+            note,
+            "EXCON",
+            &[role.into()],
+            note,
+            &BTreeMap::new(),
+        )?[0];
+        let proposal = self.player_reply(
+            role,
+            note,
+            message,
+            DecisionEvidence::judgment(note),
+        )?;
+        self.attach_parse(
+            proposal,
+            ParsedInput {
+                resource_limit_draft: None,
+                communication_drafts: vec![],
+                language: "en".into(),
+                translation_en: note.into(),
+                actions: commands,
+                clarification: None,
+                summary: note.into(),
+                inject_drafts: vec![],
+            },
+        )?;
+        // An infeasible action would block the approval with a generic
+        // message: name the actions and their reasons instead.
+        let refused: Vec<String> = self
+            .proposal(proposal)
+            .map(|p| {
+                p.commands
+                    .iter()
+                    .zip(&p.verdicts)
+                    .filter_map(|(c, v)| match v {
+                        Verdict::Rejected { reason } => Some(format!("{}: {reason}", c.describe())),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !refused.is_empty() {
+            // Closed, so it holds no resources against later orders.
+            let _ = self.decide(proposal, Decision::default());
+            bail!("{}", refused.join("; "));
+        }
+        self.decide(
+            proposal,
+            Decision {
+                approve: true,
+                ..Default::default()
+            },
+        )?;
+        Ok((proposal, self.execute_approved(proposal)?))
     }
 
     fn execute_proposal(&mut self, pid: u64) -> Result<Vec<AppliedAction>> {
@@ -2514,7 +2592,9 @@ impl Exercise {
         })
     }
 
-    /// A command from the EXCON GUI or a script: validated as EXCON and applied now.
+    /// A command by code (scripts, fixtures, tests): validated as EXCON and
+    /// applied now. The EXCON console goes through
+    /// [`Self::apply_or_queue_excon`], which waits for play while orders are open.
     pub fn direct_command(&mut self, cmd: &Command) -> Result<Vec<String>> {
         self.direct_command_logged(cmd, json!({"origin": "direct_excon_intervention"}))
             .map(|(notes, _)| notes)

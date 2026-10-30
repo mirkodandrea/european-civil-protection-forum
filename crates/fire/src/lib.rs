@@ -21,7 +21,8 @@
 //! | Ignition | `ignitions` | lights a patch |
 //! | Fire line (fuel break) | `vegetation_changes` → non-vegetated | the front cannot cross cleared cells |
 //! | Water drop | `additional_moisture` | wets fuel ahead of the front; decays 1 %/min |
-//! | Extinguish (EXCON) | `vegetation_changes` → non-vegetated over the area | nothing in the area can burn again; burning cells there are shown as burnt |
+//! | Extinguish (EXCON, zone/circle) | `vegetation_changes` → non-vegetated over the area | nothing in the area can burn again; burning cells there are shown as burnt |
+//! | Extinguish area (EXCON, drawn polygon) | [`propagator_core::Propagator::extinguish`] on the pending front | burning cells stop and are shown as burnt; fuel untouched, so unburnt cells can burn again later |
 //! | Weather | `wind_dir`, `wind_speed`, `moisture` | from the next event on |
 //!
 //! Two things learnt the hard way in `propagator_abm` and kept here:
@@ -29,6 +30,21 @@
 //!   fuel. Always start from a NaN-filled grid.
 //! - Suppression only acts on unburnt fuel: the kernel never un-lights a cell.
 //!   Burn-out (burning → burnt) is this crate's own ageing layer.
+//!
+//! ## Extinguishing without touching the fuel
+//!
+//! In PROPAGATOR a cell spreads at the instant it ignites: it pushes its
+//! neighbours' ignition events, with their future times, onto the
+//! realization's front heap. "Burning" is therefore the set of pending front
+//! events. [`FireSim::extinguish_area`] cancels, in every realization, the
+//! pending events into the area and the contact-spread events out of it
+//! ([`propagator_core::Propagator::extinguish`]); the vegetation grid is not edited. Per cell it
+//! records the extinction time: realizations that reached the cell before it
+//! no longer count for the probability (the halo loses the cell) and a cell of
+//! the "actual" fire that ignited before it is shown burnt. Burnt fuel stays
+//! burnt; the cell's unburnt fuel can be reached again by fire that ignites
+//! after the extinction (a neighbouring front still alive outside the area),
+//! and is then counted afresh.
 
 use anyhow::{Context, Result};
 use propagator_core::{
@@ -105,6 +121,7 @@ pub struct FireSnapshot {
     intensity: Vec<f32>,
     cleared: Vec<bool>,
     extinguished: Vec<bool>,
+    extinguished_at: Vec<i32>,
     added_moisture: Vec<f32>,
 }
 
@@ -131,6 +148,10 @@ pub struct FireSim {
     cleared: Vec<bool>,
     /// Cells put out by the EXCON; drawn as burnt.
     extinguished: Vec<bool>,
+    /// Last time each cell was put out by [`FireSim::extinguish_area`]
+    /// (`i32::MIN` if never): realizations that reached the cell at or before
+    /// it no longer count.
+    extinguished_at: Vec<i32>,
     added_moisture: Vec<f32>,
     /// Pending boundary-condition edits, flushed at the start of `advance`.
     pending_veg: Option<Grid2<f64>>,
@@ -216,6 +237,7 @@ impl FireSim {
             last_refresh_s: -REFRESH_S,
             cleared: vec![false; n],
             extinguished: vec![false; n],
+            extinguished_at: vec![i32::MIN; n],
             added_moisture: vec![0.0; n],
             pending_veg: None,
             pending_moisture: None,
@@ -252,6 +274,11 @@ impl FireSim {
     }
     pub fn cleared(&self) -> &[bool] {
         &self.cleared
+    }
+    /// The fuel codes the core is burning on (row 0 north), interventions
+    /// included once applied.
+    pub fn vegetation(&self) -> &[i32] {
+        self.core.veg().as_slice()
     }
     pub fn added_moisture(&self) -> &[f32] {
         &self.added_moisture
@@ -430,6 +457,66 @@ impl FireSim {
         self.extinguish_cells(&cells)
     }
 
+    /// All cells whose centre lies inside the polygon (world metres, any
+    /// winding, even-odd rule). Fewer than three vertices give no cells.
+    pub fn cells_in_polygon(&self, poly: &[Pos]) -> Vec<Cell> {
+        if poly.len() < 3 {
+            return Vec::new();
+        }
+        let cs = self.grid.cellsize;
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in poly {
+            x0 = x0.min(p[0]);
+            y0 = y0.min(p[1]);
+            x1 = x1.max(p[0]);
+            y1 = y1.max(p[1]);
+        }
+        let col0 = ((x0 / cs).floor().max(0.0)) as usize;
+        let col1 = ((x1 / cs).ceil().max(0.0) as usize).min(self.grid.cols);
+        let s0 = ((y0 / cs).floor().max(0.0)) as usize;
+        let s1 = ((y1 / cs).ceil().max(0.0) as usize).min(self.grid.rows);
+        let mut out = Vec::new();
+        for from_south in s0..s1 {
+            for col in col0..col1 {
+                let c = Cell {
+                    row: self.grid.rows - 1 - from_south,
+                    col,
+                };
+                if point_in_polygon(self.centre(c), poly) {
+                    out.push(c);
+                }
+            }
+        }
+        out
+    }
+
+    /// Put the fire out over `cells` in every realization, at the current
+    /// time, without changing the fuel (see the module docs). Returns the
+    /// burning cells of the "actual" fire put out.
+    pub fn extinguish_area(&mut self, cells: &[Cell]) -> Result<usize> {
+        self.flush()?;
+        let mut mask = Grid2::filled(self.grid.rows, self.grid.cols, false);
+        for c in cells {
+            mask.as_mut_slice()[self.grid.index(*c)] = true;
+        }
+        self.core
+            .extinguish(&mask)
+            .context("extinguishing the front")?;
+        let now = self.time_s as i32;
+        let mut out = 0;
+        for c in cells {
+            let i = self.grid.index(*c);
+            self.extinguished_at[i] = now;
+            // Every realization that reached the cell did so by now.
+            self.probability[i] = 0.0;
+            if self.state[i] == CellFire::Burning {
+                self.state[i] = CellFire::Burnt;
+                out += 1;
+            }
+        }
+        Ok(out)
+    }
+
     fn extinguish_cells(&mut self, cells: &[Cell]) -> usize {
         let mut out = 0;
         for c in cells {
@@ -557,12 +644,12 @@ impl FireSim {
         let k = ((self.options.cutoff * r as f32).ceil() as usize).clamp(1, r);
         let now = self.time_s as i32;
         for i in 0..self.state.len() {
-            let reached = masks.iter().filter(|m| m[i] != 0).count();
+            // Realizations reaching the cell after its last extinction.
+            let put_out = self.extinguished_at[i];
+            let live = |j: usize| masks[j][i] != 0 && arrivals[j][i] > put_out;
+            let reached = (0..r).filter(|&j| live(j)).count();
             if reached > 0 {
-                let sum: f32 = (0..r)
-                    .filter(|&j| masks[j][i] != 0)
-                    .map(|j| flis[j][i])
-                    .sum();
+                let sum: f32 = (0..r).filter(|&j| live(j)).map(|j| flis[j][i]).sum();
                 self.intensity[i] = sum / reached as f32;
             }
             // A cleared cell has no fuel; the core may still light it from an
@@ -580,11 +667,14 @@ impl FireSim {
                 // that reached the cell (later ones cannot move it earlier).
                 self.scratch.clear();
                 self.scratch
-                    .extend((0..r).filter(|&j| masks[j][i] != 0).map(|j| arrivals[j][i]));
+                    .extend((0..r).filter(|&j| live(j)).map(|j| arrivals[j][i]));
                 let (_, kth, _) = self.scratch.select_nth_unstable(k - 1);
                 self.ignited_at[i] = (*kth).min(now);
             }
-            self.state[i] = if self.extinguished[i] || now - self.ignited_at[i] >= BURNOUT_S {
+            self.state[i] = if self.extinguished[i]
+                || self.ignited_at[i] <= put_out
+                || now - self.ignited_at[i] >= BURNOUT_S
+            {
                 CellFire::Burnt
             } else {
                 CellFire::Burning
@@ -606,6 +696,7 @@ impl FireSim {
             intensity: self.intensity.clone(),
             cleared: self.cleared.clone(),
             extinguished: self.extinguished.clone(),
+            extinguished_at: self.extinguished_at.clone(),
             added_moisture: self.added_moisture.clone(),
         }
     }
@@ -623,10 +714,27 @@ impl FireSim {
         self.intensity = s.intensity.clone();
         self.cleared = s.cleared.clone();
         self.extinguished = s.extinguished.clone();
+        self.extinguished_at = s.extinguished_at.clone();
         self.added_moisture = s.added_moisture.clone();
         self.pending_veg = s.pending_veg.clone();
         self.pending_moisture = s.pending_moisture.clone();
         self.last_refresh_s = s.time_s;
         Ok(())
     }
+}
+
+/// Even-odd point-in-polygon test (world metres).
+pub fn point_in_polygon(p: Pos, poly: &[Pos]) -> bool {
+    let mut inside = false;
+    let mut j = poly.len().wrapping_sub(1);
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[j]);
+        if (a[1] > p[1]) != (b[1] > p[1])
+            && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }

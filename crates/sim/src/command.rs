@@ -121,6 +121,12 @@ pub enum Command {
     Extinguish {
         area: Area,
     },
+    /// Put the fire out inside a polygon drawn by the EXCON (at least three
+    /// vertices). Only the fire is affected: fuel and vegetation stay as
+    /// they are, so unburnt ground there can burn again later.
+    ExtinguishArea {
+        polygon: Vec<Loc>,
+    },
     SetWeather {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wind_dir_deg: Option<f64>,
@@ -163,6 +169,7 @@ pub enum Command {
 pub const MASTER_ONLY: &[&str] = &[
     "Ignite",
     "Extinguish",
+    "ExtinguishArea",
     "SetWeather",
     "SetBuildingStatus",
     "AdjustResource",
@@ -186,6 +193,7 @@ pub const ALL_KINDS: &[&str] = &[
     "RequestReinforcement",
     "Ignite",
     "Extinguish",
+    "ExtinguishArea",
     "SetWeather",
     "SetBuildingStatus",
     "AdjustResource",
@@ -211,6 +219,7 @@ impl Command {
             Command::RequestReinforcement { .. } => "RequestReinforcement",
             Command::Ignite { .. } => "Ignite",
             Command::Extinguish { .. } => "Extinguish",
+            Command::ExtinguishArea { .. } => "ExtinguishArea",
             Command::SetWeather { .. } => "SetWeather",
             Command::SetBuildingStatus { .. } => "SetBuildingStatus",
             Command::AdjustResource { .. } => "AdjustResource",
@@ -279,6 +288,10 @@ impl Command {
                     format!("Extinguish {radius_m:.0} m around {}", loc(at))
                 }
             },
+            Command::ExtinguishArea { polygon } => format!(
+                "Extinguish the area {}",
+                polygon.iter().map(loc).collect::<Vec<_>>().join(" - ")
+            ),
             Command::SetWeather {
                 wind_dir_deg,
                 wind_speed_kmh,
@@ -374,6 +387,10 @@ pub fn catalogue(allowed: &[String]) -> String {
             r#"{"type":"Extinguish","area":"F2"}  or  {"type":"Extinguish","area":{"at":LOC,"radius_m":200}}  — put the fire out over a whole zone, a place or a circle."#,
         ),
         (
+            "ExtinguishArea",
+            r#"{"type":"ExtinguishArea","polygon":[LOC,LOC,LOC,...]}  — put the fire out inside a polygon (at least 3 vertices, in order). Fuel is not removed: unburnt ground inside can burn again if fire reaches it later."#,
+        ),
+        (
             "SetWeather",
             r#"{"type":"SetWeather","wind_dir_deg":45,"wind_speed_kmh":50,"moisture_pct":4}  — any subset; wind_dir = direction the wind blows FROM."#,
         ),
@@ -462,9 +479,64 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
     doc
 }
 
+/// Parameters an action of type `kind` needs before it can run, given the
+/// (possibly partial) JSON object `params` (without `"type"`). Empty when the
+/// action is complete; unknown kinds report `"type"`. A fire line needs either
+/// `along` or both `from` and `to`; optional fields are never reported.
+/// Used to show an AI suggestion as incomplete instead of guessing its values.
+pub fn missing_params(kind: &str, params: &serde_json::Value) -> Vec<&'static str> {
+    let present = |k: &str| {
+        params.get(k).is_some_and(|v| match v {
+            serde_json::Value::Null => false,
+            serde_json::Value::String(s) => !s.trim().is_empty(),
+            serde_json::Value::Array(a) => !a.is_empty(),
+            _ => true,
+        })
+    };
+    let required: &[&'static str] = match kind {
+        "CutFireLine" => {
+            if present("along") {
+                return Vec::new();
+            }
+            return ["from", "to"].into_iter().filter(|k| !present(k)).collect();
+        }
+        "WaterDrop" | "DeployEngine" | "Ignite" => &["at"],
+        "MonitorArea" => &["zones"],
+        "Reconnoitre" | "EvacuateZone" | "IssueWarning" => &["zone"],
+        "EvacuateBuilding" | "OpenShelter" | "SetBuildingStatus" => &["building"],
+        "CloseRoad" | "ReopenRoad" => &["road"],
+        "RequestReinforcement" => &["resource", "qty"],
+        "Extinguish" => &["area"],
+        "ExtinguishArea" => &["polygon"],
+        "SetWeather" => &[],
+        "ReturnResource" => &["allocation", "qty"],
+        "SetDeploymentTravel" => &["role", "resource", "at", "speed_mps"],
+        "AdjustResource" => &["role", "resource", "delta"],
+        "AdvanceTime" => &["minutes"],
+        _ => return vec!["type"],
+    };
+    required.iter().copied().filter(|k| !present(k)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_params_names_what_an_action_still_needs() {
+        use serde_json::json;
+        assert_eq!(missing_params("CutFireLine", &json!({})), vec!["from", "to"]);
+        assert_eq!(missing_params("CutFireLine", &json!({"from": "E3"})), vec!["to"]);
+        assert!(missing_params("CutFireLine", &json!({"from": "E3", "to": "F3"})).is_empty());
+        assert!(missing_params("CutFireLine", &json!({"along": "F4:N"})).is_empty());
+        assert_eq!(missing_params("DeployEngine", &json!({"at": ""})), vec!["at"]);
+        assert_eq!(missing_params("RequestReinforcement", &json!({"resource": "engines"})), vec!["qty"]);
+        assert_eq!(missing_params("Teleport", &json!({})), vec!["type"]);
+        // Every catalogue kind is known.
+        for kind in ALL_KINDS {
+            assert!(!missing_params(kind, &json!({})).contains(&"type"), "{kind}");
+        }
+    }
 
     #[test]
     fn json_round_trip_and_shapes() {
@@ -499,6 +571,23 @@ mod tests {
         ));
         let back: Command = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back, e);
+        let a: Command = serde_json::from_str(
+            r#"{"type":"ExtinguishArea","polygon":[{"x":10,"y":20},"F3",{"x":30,"y":5}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            a,
+            Command::ExtinguishArea {
+                polygon: vec![
+                    Loc::Point { x: 10.0, y: 20.0 },
+                    Loc::Named("F3".into()),
+                    Loc::Point { x: 30.0, y: 5.0 }
+                ]
+            }
+        );
+        assert!(a.is_master_only());
+        let back: Command = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        assert_eq!(back, a);
     }
 
     #[test]
@@ -518,6 +607,6 @@ mod tests {
         let doc = catalogue(&["WaterDrop".to_string()]);
         assert!(doc.contains("WaterDrop"));
         assert!(!doc.contains("Ignite"));
-        assert_eq!(ALL_KINDS.len(), 20);
+        assert_eq!(ALL_KINDS.len(), 21);
     }
 }

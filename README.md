@@ -10,9 +10,9 @@ The current capabilities are summarized in [docs/stato-attuale.md](docs/stato-at
 A turn-based wildfire TTX for the Civil Protection Forum 2026:
 
 - a **simulator** (Rust + Bevy): PROPAGATOR-core fire spread as a 32-run Monte Carlo ensemble (the fire is the set of cells reached by at least half of the runs), buildings with occupants, approved deployed teams travelling on the simulation clock, fire lines and water drops, a 3D big-screen view that shows each turn being simulated live, second by second;
-- an **EXCON** web console: injects (MSEL), turn control, approval of every player action, god-mode map tools, AI prompts, commands by code, rollback;
+- an **EXCON** web console: injects (MSEL), turn control, actions suggested from the players' replies (executed, edited or ignored by the EXCON; players never act), god-mode map tools, AI prompts, commands by code, rollback;
 - **player** web pages (tablets): role-specific inbox in the player's own language, free-text replies;
-- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash-1017`) that translates injects, turns replies into candidate commands, drafts clarification questions when orders are vague, and translates recorded feedback and situation updates.
+- an **LLM** (OpenRouter, `deepseek/deepseek-v4.1-flash-1017`) that translates injects, reads each reply thread into catalogue actions for the EXCON, drafts clarification questions (always reviewed by the EXCON before sending) when orders are vague, and translates recorded feedback and situation updates.
 
 > Humans decide. Rules constrain. The model simulates. AI mediates. The EXCON approves.
 
@@ -69,6 +69,9 @@ local build private. Changes in `crates/frontend/` are picked up automatically.
 `./scripts/dev_bench.sh` serves the dev-only workflow test bench (EXCON and
 player screens side by side on a simulated server, no AI) at
 `http://127.0.0.1:8080/?bench=1`; see [docs/banco-di-prova.md](docs/banco-di-prova.md).
+The standalone build also serves a simulator bench (3D left, EXCON Controllo
+right, clock play/pause, tools applied at any time) at
+`http://127.0.0.1:8080/?simbench=1`; see [docs/banco-simulatore.md](docs/banco-simulatore.md).
 
 Then open:
 
@@ -159,7 +162,7 @@ prepares a batch of real exercise states, saves PNGs and an HTML review report;
 1. **EXCON**: wait until every participant has confirmed a language (the console lists who is missing; *Avvia comunque* overrides), then start the exercise. Players see a waiting screen until then. Every new or restarted exercise asks each participant again (the scenario's language is proposed); in the standalone app each role tab asks.
    Open a player conversation and choose **Scrivi come → Inject** in the chat composer. Write a custom message or load an MSEL template; select the conversation recipient or explicitly use the template audience. Each player receives a translated chat message and replies in the same conversation.
 2. **Players** write in the conversation, in their language. With **Prepara decisione con l’AI**, interpretation happens privately: the assistant asks the player specific questions when details are missing. The player reviews the final message/actions and explicitly confirms delivery. EXCON receives only that confirmed message and proposal. Ordinary information can be sent directly by disabling decision preparation.
-3. **EXCON** approves, edits (JSON) or rejects each proposal (*Risposte* tab), or approves only some of its actions (each left-out action can carry a reason for the player); a reply with nothing to execute is acknowledged. Lists show the verdict (approved / partially approved / rejected / acknowledged / clarification requested). Players get feedback in their language, action by action. The EXCON can also act directly: map tools (ignite, fire line, drop, extinguish zone, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
+3. **EXCON** approves, edits (JSON) or rejects each proposal (*Risposte* tab), or approves only some of its actions (each left-out action can carry a reason for the player); a reply with nothing to execute is acknowledged. Lists show the verdict (approved / partially approved / rejected / acknowledged / clarification requested). Players get feedback in their language, action by action. The EXCON can also act directly: map tools (ignite, fire line, drop, extinguish zone or drawn area, evacuate/warn zone, building status), *AI prompt* ("the fuel station explodes; tell the mayor"), or *Commands* (JSON).
 4. **Close turn ▶▶** in the Timeline's turn panel (runs to the end of the turn, default 30 min; the panel also offers intermediate advances): approved actions are executed, then the turn is **simulated live, one simulated second at a time**. The 3D view redraws continuously, the browsers refresh up to 4 times a second, and when the turn ends every player receives a situation update. **speed** is simulated seconds per real second: 0 = maximum speed (a 30-minute turn in about 0.45 s), 60× = one simulated minute per second (30 s per turn), 120× = 15 s per turn.
 5. Repeat. Use *Rollback* to return to the start of an earlier turn and *End* to finish. *Debrief JSON* gives the full timeline.
 

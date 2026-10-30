@@ -142,7 +142,9 @@ fn outcome_with_actions_applies_interventions_links_them_and_rolls_back() {
             },
         )
         .unwrap();
-    assert_ne!(ex.world.view(), before, "the intervention changed the world");
+    // Orders are open: the intervention waits for play.
+    assert_eq!(ex.world.view(), before, "nothing changes under the players' hands");
+    assert_eq!(ex.excon_queue().len(), 1);
     let o = ex.proposal(p).unwrap().narrative_outcomes[0].clone();
     assert_eq!(o.persona.as_deref(), Some("Protezione Civile"));
     assert_eq!(o.interventions.len(), 1);
@@ -151,13 +153,21 @@ fn outcome_with_actions_applies_interventions_links_them_and_rolls_back() {
         .iter()
         .find(|l| l.seq == o.interventions[0].log_seq)
         .unwrap();
-    assert_eq!(entry.kind, "master_command");
-    assert_eq!(entry.data["origin"], "narrative_outcome");
-    assert_eq!(entry.data["proposal"], p);
+    assert_eq!(entry.kind, "excon_action_queued");
+    assert_eq!(entry.data["origin"]["origin"], "narrative_outcome");
+    assert_eq!(entry.data["origin"]["proposal"], p);
     let msg = ex.messages.iter().find(|m| m.id == mid).unwrap();
     assert_eq!(msg.persona.as_deref(), Some("Protezione Civile"));
-    // Rollback to the turn start removes the outcome, its message and its effect.
+    // Play applies it.
+    ex.begin_resolution(Some(1)).unwrap();
+    assert_ne!(ex.world.view(), before, "the intervention changed the world");
+    let applied = ex.log.iter().find(|l| l.kind == "master_command").unwrap();
+    assert_eq!(applied.data["queued_origin"]["origin"], "narrative_outcome");
+    while !ex.step_resolution(60).unwrap() {}
+    ex.finish_resolution().unwrap();
+    // Rollback to the turn start removes the outcome, its message, its effect and its queue entry.
     ex.rollback(1).unwrap();
+    assert!(ex.excon_queue().is_empty());
     assert!(ex.proposal(p).unwrap().narrative_outcomes.is_empty());
     assert!(!ex.messages.iter().any(|m| m.id == mid));
     assert_eq!(ex.world.view(), before);

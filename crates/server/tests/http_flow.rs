@@ -973,6 +973,15 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
         Some(json!({"minutes":1})),
     )
     .await;
+    // The end-of-turn "Turn status" messages are posted by a spawned task after
+    // resolve returns; wait for all of them so later snapshots are stable.
+    eventually(&app, "/api/master", |v| {
+        v["messages"]
+            .as_array()
+            .map(|m| m.iter().filter(|x| x["title"] == "Turn status").count() >= 3)
+            .unwrap_or(false)
+    })
+    .await;
     let (_, unchanged) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert_eq!(unchanged["map"], mayor["map"]);
     let update = json!({"role":"mayor","source":"Field team observation","observation":{"cells":[{"row":3,"col":4,"state":2},{"row":3,"col":5,"state":1}]}});
@@ -1731,7 +1740,8 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         Status::Ok
     );
     call(&app, "POST", "/api/master/start", None).await;
-    call(&app, "POST", "/api/master/command", Some(json!({"type":"Ignite","at":{"x":3150,"y":2720},"radius_m":120}))).await;
+    // Exercise control by code: applied at once rather than queued for play.
+    call(&app, "POST", "/api/master/command", Some(json!({"commands":[{"type":"Ignite","at":{"x":3150,"y":2720},"radius_m":120}],"when":"now"}))).await;
     assert_eq!(
         call(&app, "POST", "/api/master/design", Some(design.clone()))
             .await
@@ -1793,7 +1803,7 @@ async fn decision_paths_observe_actual_outcomes_and_preserve_containment_on_adap
         &app,
         "POST",
         "/api/master/command",
-        Some(json!({"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}})),
+        Some(json!({"commands":[{"type":"Extinguish","area":{"at":{"x":2000,"y":2000},"radius_m":6000}}],"when":"now"})),
     )
     .await;
     assert_eq!(call(&app,"POST","/api/master/path",Some(json!({"point":"fire","path":"contained","reason":"Observed all cells extinguished"}))).await.0,Status::Ok);
@@ -3451,4 +3461,42 @@ async fn approved_drone_order_keeps_the_commanders_map_updated() {
     let (_, mayor) = call_key(&app, "GET", "/api/player/mayor", None, Some("test-mayor")).await;
     assert!(mayor["map"]["cells"].as_array().unwrap().is_empty());
     assert!(mayor["map"]["drones"].as_array().unwrap().is_empty());
+}
+
+/// EXCON commands during orders wait for play; the queue is listed, can be
+/// rescheduled and cancelled over HTTP, and applies at the next advance.
+#[tokio::test]
+async fn excon_commands_queue_until_play() {
+    let app = app().await;
+    call(&app, "POST", "/api/master/start", None).await;
+    let warn = |zone: &str| json!({"type":"IssueWarning","zone":zone});
+    let (s, r) = call(&app, "POST", "/api/master/command", Some(warn("F4"))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    let queued = r["results"][0]["queued"].as_u64().expect("queued, not applied");
+    let (s, r) = call(&app, "POST", "/api/master/command", Some(json!({"commands":[warn("G4")],"at_clock":"23:59"}))).await;
+    assert_eq!(s, Status::Ok, "{r}");
+    let later = r["results"][0]["queued"].as_u64().unwrap();
+    // An explicit "now" acts at once.
+    let (_, r) = call(&app, "POST", "/api/master/command", Some(json!({"commands":[warn("E4")],"when":"now"}))).await;
+    assert_eq!(r["results"][0]["ok"], true, "{r}");
+    assert!(r["results"][0]["queued"].is_null(), "{r}");
+    let (_, m) = call(&app, "GET", "/api/master", None).await;
+    let rows = m["excon_queue"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r["status"] == "approved"));
+    assert!(m["inject_actions"].as_array().unwrap().is_empty(), "queued actions are not inject actions");
+    // Reschedule the late one to play, then cancel it; a bad clock is refused.
+    let edit = format!("/api/master/excon-actions/{later}/edit");
+    let cancel = format!("/api/master/excon-actions/{later}/cancel");
+    assert_eq!(call(&app, "POST", &edit, Some(json!({"at_clock":"25:00"}))).await.0, Status::BadRequest);
+    assert_eq!(call(&app, "POST", &edit, Some(json!({"when":"play"}))).await.0, Status::Ok);
+    assert_eq!(call(&app, "POST", &cancel, Some(json!({"reason":"no"}))).await.0, Status::Ok);
+    assert_eq!(call(&app, "POST", &cancel, Some(json!({"reason":"no"}))).await.0, Status::BadRequest);
+    let (s, rep) = call(&app, "POST", "/api/master/resolve", Some(json!({"minutes": 1}))).await;
+    assert_eq!(s, Status::Ok, "{rep}");
+    let status = |m: &Value, id: u64| m["excon_queue"].as_array().unwrap().iter().find(|r| r["id"] == id).unwrap()["status"].clone();
+    let m = eventually(&app, "/api/master", |v| status(v, queued) == "done").await;
+    let status = |id: u64| status(&m, id);
+    assert_eq!(status(queued), "done");
+    assert_eq!(status(later), "cancelled");
 }

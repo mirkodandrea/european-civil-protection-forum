@@ -1107,6 +1107,18 @@ impl Scenario {
         self.fuel[self.grid.index(c)]
     }
 
+    /// Display name of a fuel class: the scenario table when present, the
+    /// legacy names otherwise.
+    pub fn fuel_name(&self, id: i32) -> String {
+        if self.fuel_definitions.is_empty() {
+            return fuel::name(id).into();
+        }
+        self.fuel_definitions
+            .iter()
+            .find(|f| f.id == id)
+            .map_or_else(|| "unknown".into(), |f| f.name.clone())
+    }
+
     pub fn elevation_at(&self, c: Cell) -> f32 {
         self.dem[self.grid.index(c)]
     }
@@ -1146,6 +1158,15 @@ impl Scenario {
         if let Some(p) = self.zone_centre(name) {
             return Some(p);
         }
+        // A zone edge ("F4:N") as a place: inside the zone, a fifth of the way
+        // from the middle of that edge towards the centre.
+        if let (Some((a, b)), Some(c)) = (
+            self.zone_edge(name.trim()),
+            name.split_once(':').and_then(|(z, _)| self.zone_centre(z)),
+        ) {
+            let mid = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+            return Some([mid[0] + (c[0] - mid[0]) * 0.2, mid[1] + (c[1] - mid[1]) * 0.2]);
+        }
         for r in &self.roads {
             if normalise(&r.id) == key || normalise(&r.name) == key {
                 return r.points.get(r.points.len() / 2).copied();
@@ -1173,6 +1194,26 @@ pub fn format_clock(clock_s: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fuel_names_come_from_the_scenario_table_when_present() {
+        let mut s = synthetic::generate(synthetic::DEFAULT_SEED);
+        assert_eq!(s.fuel_name(fuel::CONIFERS), "conifers");
+        s.fuel_definitions = serde_json::from_str(include_str!("../data/fuels_eu12.json")).unwrap();
+        assert_eq!(s.fuel_name(12), "conifers - high susceptibility");
+        assert_eq!(s.fuel_name(99), "unknown");
+    }
+
+    #[test]
+    fn a_zone_edge_is_a_place_inside_its_zone() {
+        let s = synthetic::generate(synthetic::DEFAULT_SEED);
+        let b = s.zone_bounds("F4").unwrap();
+        let p = s.resolve_place("F4:N").unwrap();
+        assert!(p[0] > b[0] && p[0] < b[2] && p[1] > b[1] && p[1] < b[3], "{p:?} in {b:?}");
+        let c = s.zone_centre("F4").unwrap();
+        assert!(p[1] > c[1], "the north side is north of the centre");
+        assert!(s.resolve_place("F4:X").is_none());
+    }
+
     #[test]
     fn retired_communication_keys_are_ignored_by_old_scenarios() {
         let s = synthetic::generate(synthetic::DEFAULT_SEED);

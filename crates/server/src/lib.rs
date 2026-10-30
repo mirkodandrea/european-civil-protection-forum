@@ -51,8 +51,10 @@ pub mod persist;
 #[cfg(not(target_arch = "wasm32"))]
 mod body;
 mod action_suggestions;
+mod review;
 pub mod flow;
 mod forecast;
+mod excon_queue;
 mod situation;
 pub mod library;
 pub mod view;
@@ -292,6 +294,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 situation::post_mark,
                 situation::post_plan,
                 situation::post_rewrite,
+                situation::post_draft,
+                situation::post_brief,
                 post_references,
                 post_resource_limits,
                 post_clock,
@@ -310,6 +314,7 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_presence,
                 action_suggestions::player,
                 action_suggestions::excon,
+                review::post,
                 post_player_chat,
                 post_master_chat,
                 post_reply,
@@ -330,6 +335,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 post_close_clarification,
                 post_revalidate,
                 post_command,
+                excon_queue::cancel,
+                excon_queue::edit,
                 post_preview,
                 post_preview_apply,
                 post_correction,
@@ -737,10 +744,12 @@ async fn get_master(principal: Principal, s: AppState) -> ApiResult {
         "proposals": ex.proposals,
         "planned_injects": ex.planned_injects(),
         "inject_actions": ex.inject_action_runs(),
+        "excon_queue": ex.excon_queue(),
         "agenda": ex.turn_agenda(),
         "inject_responses": ex.inject_responses(),
         "linked_conversations": ex.master_linked_conversations(),
         "clarification_threads": ex.clarification_threads(),
+        "reply_review": ex.review_view(),
         "sent_injects": ex.sent_injects,
         "messages": messages,
         "log": log,
@@ -841,7 +850,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
-        "clarification_threads": ex.player_clarification_threads(&role),
+        "clarification_threads": ex.player_clarification_threads(&role).into_iter().chain(ex.player_review_threads(&role)).collect::<Vec<_>>(),
         "linked_conversations": ex.player_linked_conversations(&role),
     });
     scenario::glossary::localize_value(&mut view, &map);
@@ -1140,6 +1149,37 @@ async fn post_reply(
     b: Json<ReplyBody>,
 ) -> ApiResult {
     let Json(b) = b;
+    // An answer to a reviewed question: linked to it, and the AI reads the thread again.
+    let reviewed = {
+        let ex = s.lock();
+        ex.review_question_for(&role, b.reply_to)
+            .map(|_| (ex.language_of(&role), ex.turn, ex.clock_control.revision))
+    };
+    if let Some((language, turn, revision)) = reviewed {
+        let mut failed = false;
+        let text_en = if language == "en" || b.text.trim().is_empty() {
+            b.text.clone()
+        } else {
+            match s.llm.translate_to_english(&b.text, &language).await {
+                Ok(text) => text,
+                Err(_) => {
+                    failed = true;
+                    b.text.clone()
+                }
+            }
+        };
+        let (message, proposal) = {
+            let mut ex = s.lock();
+            if ex.turn != turn || ex.clock_control.revision != revision {
+                return Err(bad("exercise changed during translation; send again"));
+            }
+            ex.answer_review_question(&role, &b.text, b.reply_to, &text_en, failed)?
+        };
+        tokio::spawn(review::read(s.clone(), proposal));
+        return Ok(Json(
+            json!({"message": message, "proposal": proposal, "answered": true, "translation_failed": failed}),
+        ));
+    }
     // An answer to an EXCON question is a message to the EXCON: translated, never interpreted.
     let answering = {
         let ex = s.lock();
@@ -1280,22 +1320,7 @@ async fn post_schedule(_principal: Principal, s: AppState, b: Json<ScheduleBody>
     let mut ex = s.lock();
     let due = match (b.at_s, b.at_clock) {
         (Some(s), None) => s,
-        (None, Some(clock)) => {
-            let parts = clock
-                .split(':')
-                .map(str::parse::<i64>)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| bad("at_clock must be HH:MM or HH:MM:SS on Day 1"))?;
-            if !(2..=3).contains(&parts.len())
-                || !(0..=23).contains(&parts[0])
-                || !(0..=59).contains(&parts[1])
-                || parts.get(2).is_some_and(|s| !(0..=59).contains(s))
-            {
-                return Err(bad("at_clock must be HH:MM or HH:MM:SS on Day 1"));
-            }
-            parts[0] * 3600 + parts[1] * 60 + parts.get(2).copied().unwrap_or(0)
-                - ex.world.scn.start_clock_s
-        }
+        (None, Some(clock)) => excon_queue::clock_s(&clock, ex.world.scn.start_clock_s)?,
         _ => return Err(bad("provide exactly one of at_s or at_clock")),
     };
     let id = ex.schedule_inject(&b.msel_id, due)?;
@@ -1736,11 +1761,14 @@ async fn post_preview_apply(
     }
     let mut results = Vec::new();
     for cmd in b.commands {
-        let r = ex.direct_command(&cmd);
-        results.push(match r {
-            Ok(n) => json!({"command":cmd.describe(),"ok":true,"notes":n}),
-            Err(e) => json!({"command":cmd.describe(),"ok":false,"error":e.to_string()}),
-        });
+        // The reviewed, correctable "apply now" of exercise control (needs a
+        // paused clock, see above): the explicit escape hatch of the queue.
+        let r = ex.apply_or_queue_excon(
+            &cmd,
+            exercise::queue::ExconWhen::Now,
+            json!({"origin": "reviewed_preview", "reason": b.reason}),
+        );
+        results.push(excon_queue::result_row(&cmd, r));
     }
     // Rationale becomes part of the same correctable intervention generation.
     ex.record(
@@ -1752,26 +1780,41 @@ async fn post_preview_apply(
     Ok(Json(json!({"results":results})))
 }
 
-/// One command or a list, applied immediately as the EXCON.
+/// EXCON commands: one command, a list, or `{"commands": [...], "when":
+/// "play"|"now", "at_clock": "13:00", "at_s": N}`. While a turn is open for
+/// orders they are queued and applied when time next moves (or at the chosen
+/// instant); see [`exercise::queue`] for what applies at once.
 #[cfg_attr(
     not(target_arch = "wasm32"),
     rocket::post("/api/master/command", data = "<body>")
 )]
 async fn post_command(_principal: Principal, s: AppState, body: Json<Value>) -> ApiResult {
     let Json(body) = body;
-    let list = match body {
-        Value::Array(a) => a,
-        v => vec![v],
+    let start = s.lock().world.scn.start_clock_s;
+    let (list, when) = match body {
+        Value::Array(a) => (a, None),
+        Value::Object(o) if o.contains_key("commands") || o.contains_key("command") => {
+            let wrapper = Value::Object(o);
+            let when = excon_queue::when_of(&wrapper, start)?;
+            let list = match (&wrapper["commands"], &wrapper["command"]) {
+                (Value::Array(a), _) => a.clone(),
+                (_, c) if c.is_object() => vec![c.clone()],
+                _ => return Err(bad("commands must be a list")),
+            };
+            (list, when)
+        }
+        v => (vec![v], None),
     };
     let mut results = Vec::new();
     for v in list {
         let cmd: Command = serde_json::from_value(v.clone())
             .map_err(|e| bad(format!("invalid command {v}: {e}")))?;
-        let r = s.lock().direct_command(&cmd);
-        results.push(match r {
-            Ok(notes) => json!({"command": cmd.describe(), "ok": true, "notes": notes}),
-            Err(e) => json!({"command": cmd.describe(), "ok": false, "error": e.to_string()}),
-        });
+        let r = s.lock().apply_or_queue_excon(
+            &cmd,
+            when.unwrap_or_default(),
+            json!({"origin": "excon_console"}),
+        );
+        results.push(excon_queue::result_row(&cmd, r));
     }
     Ok(Json(json!({"results": results})))
 }

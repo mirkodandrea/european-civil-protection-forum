@@ -604,6 +604,33 @@ fn onpointerup_cancel(drag: &Rc<RefCell<Drag>>) -> Callback<PointerEvent> {
         drag.borrow_mut().pts.retain(|p| p.0 != e.pointer_id());
     })
 }
+/// Localized fuel class of a raster byte, from the scenario's `fuel_names`
+/// ("conifers", "shrubs - high susceptibility"); unknown names pass through.
+fn fuel_label(lang: &str, stat: &Value, code: u8) -> String {
+    use crate::i18n::pair;
+    let Some(name) = stat["fuel_names"][code.to_string()].as_str() else {
+        return code.to_string();
+    };
+    let (class, level) = name.split_once(" - ").unwrap_or((name, ""));
+    let class = match class.trim() {
+        "grassland" => pair(lang, "Prateria", "Grassland"),
+        "broadleaves" => pair(lang, "Latifoglie", "Broadleaves"),
+        "shrubs" => pair(lang, "Arbusteti", "Shrubs"),
+        "conifers" => pair(lang, "Conifere", "Conifers"),
+        "non-vegetated" | "not vegetated" => pair(lang, "Non vegetato", "Non-vegetated"),
+        "agro-forestry" => pair(lang, "Agroforestale", "Agro-forestry"),
+        "non-fire-prone forest" => pair(lang, "Bosco poco infiammabile", "Non-fire-prone forest"),
+        _ => return name.to_string(),
+    };
+    let level = match level.trim() {
+        "" => return class.to_string(),
+        "low susceptibility" => pair(lang, "suscettività bassa", "low susceptibility"),
+        "medium susceptibility" => pair(lang, "suscettività media", "medium susceptibility"),
+        "high susceptibility" => pair(lang, "suscettività alta", "high susceptibility"),
+        other => other,
+    };
+    format!("{class}, {level}")
+}
 fn zone_name(stat: &Value, x: f64, y: f64, h: f64) -> String {
     let size = n(&stat["zones"]["size_m"]);
     if size <= 0. {
@@ -791,7 +818,7 @@ fn probe_lines(
         };
         out.push(format!(
             "{} · {}",
-            tf(lang, "insp_fuel", &[&fuel.to_string()]),
+            tf(lang, "insp_fuel", &[&fuel_label(lang, stat, fuel)]),
             t(lang, name)
         ));
     }
@@ -1843,16 +1870,25 @@ fn draw(
             }
         }
     }
-    // Points picked by an action form (one point, or the two ends of a line).
-    if let Some(points) = pending.and_then(|p| p["points"].as_array()) {
-        let pts: Vec<(f64, f64)> = points
+    // Points picked by an action form (one point, the two ends of a line, or
+    // the vertices of a drawn area when `closed`).
+    if let Some(p) = pending.filter(|p| p["points"].is_array()) {
+        let pts: Vec<(f64, f64)> = list(&p["points"])
             .iter()
             .filter_map(|q| Some((q[0].as_f64()? * k, (h - q[1].as_f64()?) * k)))
             .collect();
+        let closed = p["closed"] == true && pts.len() >= 3;
         if pts.len() >= 2 {
             ctx.begin_path();
             ctx.move_to(pts[0].0, pts[0].1);
-            ctx.line_to(pts[1].0, pts[1].1);
+            for q in &pts[1..] {
+                ctx.line_to(q.0, q.1);
+            }
+            if closed {
+                ctx.close_path();
+                ctx.set_fill_style_str("rgba(40,120,220,.22)");
+                ctx.fill();
+            }
             ctx.set_stroke_style_str("#122b2c");
             ctx.set_line_width(7. * s);
             ctx.stroke();
@@ -1868,7 +1904,7 @@ fn draw(
             ctx.set_stroke_style_str("#122b2c");
             ctx.set_line_width(2. * s);
             ctx.stroke();
-            label(if i == 0 { "1" } else { "2" }, *x, *y, 0);
+            label(&(i + 1).to_string(), *x, *y, 0);
         }
     }
     // A zone edge (`F4:N`) picked for a fire line.

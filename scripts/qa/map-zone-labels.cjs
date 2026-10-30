@@ -120,7 +120,7 @@ const base = process.env.TTX_QA_URL || 'http://127.0.0.1:8080';
     await choose('mayor');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('#player-timeline').getByText('Zone label review').waitFor();
-    await mayor.locator('[data-reply-inject]').click();
+    await mayor.locator('[data-reply-direct]').click();
     const modal = page.locator('.work-modal');
     const canvas = modal.locator('#work-map');
     await canvas.waitFor();

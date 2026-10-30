@@ -1,6 +1,7 @@
 //! "Controllo": the EXCON control surface. The map is the main state view; every possible action
 //! is an entry of a searchable, grouped list. Selecting an entry opens its own modal (with a map
 //! to pick locations when the tool needs one, otherwise a short form).
+use crate::excon_queue::{command_body, ExconQueue, When, WhenPicker};
 use crate::{
     advanced::Forecast,
     api::{self, list, text},
@@ -36,6 +37,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "drop", group: "Fuoco e interventi", icon: "💧", label: "Lancio d’acqua", tip: "Un lancio aereo di acqua nel punto scelto." },
     Tool { id: "extzone", group: "Fuoco e interventi", icon: "🧯", label: "Spegni zona", tip: "Spegne il fuoco in un’intera zona della griglia." },
     Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto." },
+    Tool { id: "extarea", group: "Fuoco e interventi", icon: "⬠", label: "Spegni area disegnata", tip: "Disegna sulla mappa un’area (almeno 3 vertici): il fuoco al suo interno si spegne subito in tutte le simulazioni. La vegetazione non cambia: il terreno non bruciato può riaccendersi se il fuoco lo raggiunge di nuovo." },
     Tool { id: "evac", group: "Fuoco e interventi", icon: "🚌", label: "Evacua zona", tip: "Ordina l’evacuazione di tutti gli edifici occupati di una zona." },
     Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: dimezza il tempo di evacuazione." },
     Tool { id: "drone", group: "Risorse e squadre", icon: "🛰", label: "Drone di monitoraggio", tip: "Invia il drone del comandante antincendio sulla zona scelta: finché è in posizione tiene aggiornata la sua mappa. Per più zone usa il comando JSON (es. \"F3-G4\")." },
@@ -90,7 +92,23 @@ impl Default for CmdParams {
 }
 /// Number of map clicks a tool needs.
 pub fn points_needed(tool: &str) -> usize {
-    if tool == "line" { 2 } else { 1 }
+    match tool {
+        "line" => 2,
+        // Polygon: every click adds a vertex (see [`MAX_AREA_VERTICES`]).
+        "extarea" => MAX_AREA_VERTICES,
+        _ => 1,
+    }
+}
+/// Most vertices of a drawn area (`sim::MAX_POLYGON_VERTICES`).
+pub const MAX_AREA_VERTICES: usize = 200;
+/// Area of a drawn polygon in hectares (`points` are map picks `{x, y}`).
+pub fn polygon_ha(points: &[Value]) -> f64 {
+    let n = points.len();
+    if n < 3 {
+        return 0.;
+    }
+    let p = |i: usize| (points[i % n]["x"].as_f64().unwrap_or(0.), points[i % n]["y"].as_f64().unwrap_or(0.));
+    (0..n).map(|i| p(i).0 * p(i + 1).1 - p(i + 1).0 * p(i).1).sum::<f64>().abs() / 2. / 10_000.
 }
 /// Builds the `Command` JSON of a map tool from the picked map points (payloads of the map
 /// `onclick`: `{x, y, zone, building_id?}`). `None` while the selection is incomplete.
@@ -112,6 +130,12 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
         "evac" => json!({"type":"EvacuateZone","zone":zone()?}),
         "drone" => json!({"type":"MonitorArea","zones":[zone()?]}),
         "line" => json!({"type":"CutFireLine","from":pt(0)?,"to":pt(1)?}),
+        "extarea" => {
+            if points.len() < 3 || polygon_ha(points) <= 0. {
+                return None;
+            }
+            json!({"type":"ExtinguishArea","polygon":(0..points.len()).map(pt).collect::<Option<Vec<_>>>()?})
+        }
         "bstatus" => {
             let v = points.first()?;
             let building = if let Some(id) = v["building_id"].as_u64() {
@@ -139,10 +163,74 @@ pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
         ("line", 0) => "Clicca sulla mappa il primo punto della linea.",
         ("line", 1) => "Clicca il secondo punto della linea.",
         ("line", _) => "Linea pronta. Un nuovo clic ricomincia dal primo punto.",
+        ("extarea", 0) => "Clicca sulla mappa i vertici dell’area, in ordine.",
+        ("extarea", 1 | 2) => "Aggiungi altri vertici: servono almeno 3.",
+        ("extarea", _) => "Area pronta. Ogni clic aggiunge un vertice; l’area si chiude da sola.",
         ("extzone" | "evac" | "warn" | "drone", _) => "Clicca una zona della mappa.",
         ("bstatus", _) => "Clicca un edificio sulla mappa.",
         _ => "Clicca sulla mappa il punto dell’intervento.",
     }
+}
+
+/// The map tool that edits a command, when one does (`SetWeather` uses the weather form).
+pub fn tool_for(cmd: &Value) -> Option<&'static str> {
+    Some(match text(&cmd["type"]) {
+        "Ignite" => "ignite",
+        "WaterDrop" => "drop",
+        "Extinguish" if cmd["area"].is_object() => "extcircle",
+        "Extinguish" => "extzone",
+        "ExtinguishArea" => "extarea",
+        "IssueWarning" => "warn",
+        "EvacuateZone" => "evac",
+        "MonitorArea" if list(&cmd["zones"]).len() <= 1 => "drone",
+        "CutFireLine" if cmd["along"].is_null() => "line",
+        "SetBuildingStatus" => "bstatus",
+        "SetWeather" => "weather",
+        _ => return None,
+    })
+}
+
+/// The map picks that rebuild `cmd` with its tool (see [`build_command`]):
+/// points `{x, y, zone}`, zones `{zone}`, buildings `{x, y, building_id}`.
+/// Named locations (a place name instead of a point) give no pick.
+pub fn initial_points(cmd: &Value, stat: &Value) -> Vec<Value> {
+    let point = |v: &Value| -> Option<Value> {
+        let (x, y) = (v["x"].as_f64()?, v["y"].as_f64()?);
+        Some(json!({"x": x, "y": y, "zone": crate::place_pick::zone_at(stat, x, y).unwrap_or_default()}))
+    };
+    let zone = |v: &Value| v.as_str().filter(|z| !z.is_empty()).map(|z| json!({"zone": z}));
+    let picks = match text(&cmd["type"]) {
+        "Ignite" | "WaterDrop" => vec![point(&cmd["at"])],
+        "Extinguish" if cmd["area"].is_object() => vec![point(&cmd["area"]["at"])],
+        "Extinguish" => vec![zone(&cmd["area"])],
+        "ExtinguishArea" => list(&cmd["polygon"]).iter().map(point).collect(),
+        "IssueWarning" | "EvacuateZone" => vec![zone(&cmd["zone"])],
+        "MonitorArea" => vec![zone(&cmd["zones"][0])],
+        "CutFireLine" => vec![point(&cmd["from"]), point(&cmd["to"])],
+        "SetBuildingStatus" => {
+            let id = text(&cmd["building"]).trim_start_matches('#');
+            vec![list(&stat["buildings"]).iter().find(|b| b["id"].to_string() == id).and_then(|b| {
+                Some(json!({"x": b["pos"][0].as_f64()?, "y": b["pos"][1].as_f64()?, "building_id": b["id"]}))
+            })]
+        }
+        _ => vec![],
+    };
+    // Partial picks would mix an old point with a new one: all or nothing.
+    picks.iter().all(Option::is_some).then(|| picks.into_iter().flatten().collect()).unwrap_or_default()
+}
+
+/// `edited` (built by a tool) with the fields of `original` the tool does not
+/// set, such as an evacuation destination or a fire-line width.
+pub fn keep_extra_fields(original: &Value, edited: &Value) -> Value {
+    let mut out = edited.clone();
+    if let (Some(o), Some(e)) = (original.as_object(), out.as_object_mut()) {
+        for (k, v) in o {
+            if !e.contains_key(k) {
+                e.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    out
 }
 
 #[derive(Clone, PartialEq)]
@@ -249,6 +337,8 @@ pub fn modal(p: &ModalProps) -> Html {
         Callback::from(move |e: KeyboardEvent| {
             if e.key() == "Escape" && !busy {
                 e.prevent_default();
+                // A tool opened from another dialog (e.g. Risposte) closes alone.
+                e.stop_propagation();
                 onclose.emit(());
             }
         })
@@ -316,6 +406,9 @@ pub struct MapToolProps {
     /// Replaces the situation map: gets the map-click callback and the pending point.
     #[prop_or_default]
     pub map_for: Option<MapFactory>,
+    /// Command being edited: the form starts from its picks and parameters.
+    #[prop_or_default]
+    pub initial: Option<Value>,
 }
 
 /// Builds a point-picking map for [`MapToolModal`] when no live situation exists.
@@ -330,9 +423,14 @@ impl PartialEq for MapFactory {
 pub fn map_tool_modal(p: &MapToolProps) -> Html {
     let c = &p.common;
     let tool = p.tool.as_str();
-    let points = use_state(Vec::<Value>::new);
-    let radius = use_state(|| if tool == "extcircle" { "150".to_string() } else { "80".to_string() });
-    let damage = use_state(|| "destroyed".to_string());
+    let initial = p.initial.clone().unwrap_or_default();
+    let points = use_state(|| initial_points(&initial, &c.stat));
+    let radius = use_state(|| {
+        let r = if tool == "extcircle" { initial["area"]["radius_m"].as_f64() } else { initial["radius_m"].as_f64() };
+        r.map(|r| format!("{r:.0}")).unwrap_or_else(|| if tool == "extcircle" { "150".to_string() } else { "80".to_string() })
+    });
+    let damage = use_state(|| initial["damage"].as_str().unwrap_or("destroyed").to_string());
+    let when = use_state(|| When::Play);
     let params = CmdParams { radius_m: radius.trim().parse().unwrap_or(0.), damage: (*damage).clone() };
     let cmd = build_command(tool, &points, &params, &c.stat);
     let radius_bad = matches!(tool, "ignite" | "extcircle") && !(if tool == "ignite" { 40.0..=2000.0 } else { 10.0..=5000.0 }).contains(&params.radius_m);
@@ -348,6 +446,12 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
     let zone_tool = matches!(tool, "extzone" | "evac" | "warn" | "drone");
     let pending = if zone_tool {
         points.first().map(|v| json!({"zone": v["zone"]}))
+    } else if tool == "line" && !points.is_empty() {
+        // Both ends, joined once the second is picked.
+        Some(json!({"points": points.iter().map(|v| json!([v["x"], v["y"]])).collect::<Vec<_>>()}))
+    } else if tool == "extarea" && !points.is_empty() {
+        // Every vertex, closed into a shaded polygon from the third on.
+        Some(json!({"points": points.iter().map(|v| json!([v["x"], v["y"]])).collect::<Vec<_>>(), "closed": true}))
     } else {
         points.last().cloned()
     };
@@ -359,20 +463,30 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
                 Some(cmd) => crate::exfmt!("Edificio selezionato: {}", "Selected building: {}", text(&cmd["building"])),
                 None => ex("Nessun edificio vicino al punto: riprova.").to_string(),
             }
+        } else if tool == "extarea" {
+            crate::exfmt!("Area di {} vertici · {:.1} ha", "Area of {} vertices · {:.1} ha", points.len(), polygon_ha(&points))
         } else if tool == "line" && points.len() == 2 {
             let d = ((points[1]["x"].as_f64().unwrap_or(0.) - points[0]["x"].as_f64().unwrap_or(0.)).powi(2)
                 + (points[1]["y"].as_f64().unwrap_or(0.) - points[0]["y"].as_f64().unwrap_or(0.)).powi(2))
             .sqrt();
             crate::exfmt!("Linea di {:.0} m", "Line of {:.0} m", d)
         } else {
-            crate::exfmt!("Punto selezionato: x {:.0} m · y {:.0} m", "Selected point: x {:.0} m · y {:.0} m", first["x"].as_f64().unwrap_or(0.), first["y"].as_f64().unwrap_or(0.))
+            crate::exfmt!("Punto selezionato: {}", "Selected point: {}", crate::place_pick::point_label(&c.stat, first["x"].as_f64().unwrap_or(0.), first["y"].as_f64().unwrap_or(0.)))
         }
     } else {
         ex(map_hint(tool, 0)).to_string()
     };
     let hint = if points.len() < need && !points.is_empty() { ex(map_hint(tool, points.len())).to_string() } else { String::new() };
+    let undo_vertex = {
+        let points = points.clone();
+        Callback::from(move |_| {
+            let mut next = (*points).clone();
+            next.pop();
+            points.set(next);
+        })
+    };
     let onapply = {
-        let (cb, cmd, oncommand, onclose) = (c.action.clone(), cmd.clone(), p.oncommand.clone(), c.onclose.clone());
+        let (cb, cmd, oncommand, onclose, when) = (c.action.clone(), cmd.clone(), p.oncommand.clone(), c.onclose.clone(), (*when).clone());
         Callback::from(move |_| {
             if let Some(cmd) = &cmd {
                 match &oncommand {
@@ -380,7 +494,7 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
                         f.emit(cmd.clone());
                         onclose.emit(());
                     }
-                    None => cb.emit(Action::post("/api/master/command", cmd.clone())),
+                    None => cb.emit(Action::post("/api/master/command", command_body(cmd.clone(), &when))),
                 }
             }
         })
@@ -389,22 +503,48 @@ pub fn map_tool_modal(p: &MapToolProps) -> Html {
         Some(f) => (f.0)(onmap, pending),
         None => pick_map(&c.stat, &c.state, onmap, pending, Vec::new(), Vec::new()),
     };
-    let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
+    let apply_label = apply_label(p.oncommand.is_some(), &c.state, &when);
+    let when_bad = p.oncommand.is_none() && matches!(&*when, When::At(t) if !crate::excon_queue::valid_clock(t));
     let reset = {
         let points = points.clone();
         Callback::from(move |_| points.set(Vec::new()))
     };
-    html! {<Modal title={tool_label(tool)} onclose={c.onclose.clone()} {onapply} apply_disabled={cmd.is_none() || radius_bad} busy={c.busy} done={c.done} error={c.error.clone()} {apply_label}
+    html! {<Modal title={tool_label(tool)} onclose={c.onclose.clone()} {onapply} apply_disabled={cmd.is_none() || radius_bad || when_bad} busy={c.busy} done={c.done} error={c.error.clone()} {apply_label}
         {map}
-        extra_actions={html!{<button type="button" disabled={points.is_empty() || c.busy} onclick={reset}>{ex("Azzera selezione")}</button>}}>
+        extra_actions={html!{<>
+            if tool == "extarea" {<button type="button" disabled={points.is_empty() || c.busy} onclick={undo_vertex}>{ex("Togli ultimo vertice")}</button>}
+            <button type="button" disabled={points.is_empty() || c.busy} onclick={reset}>{ex("Azzera selezione")}</button>
+        </>}}>
         <p class="muted">{ex(TOOLS.iter().find(|t| t.id == tool).map(|t| t.tip).unwrap_or(""))}</p>
         <p class="ctl-pick" aria-live="polite">{summary}</p>
         if !hint.is_empty() {<p class="muted">{hint}</p>}
         if matches!(tool, "ignite" | "extcircle") {<label>{ex("Raggio")}<span class="ctl-unit"><input type="number" min="10" step="10" value={(*radius).clone()} oninput={{let radius=radius.clone();Callback::from(move|e|radius.set(api::input(e)))}}/>{" m"}</span></label>}
         if radius_bad {<p class="error">{if tool == "ignite" {ex("Il raggio dell’innesco deve essere tra 40 e 2000 m.")} else {ex("Il raggio deve essere tra 10 e 5000 m.")}}</p>}
         if tool == "bstatus" {<label>{ex("Stato")}<select aria-label={ex("Stato edificio")} onchange={{let damage=damage.clone();Callback::from(move|e|damage.set(api::select(e)))}}><option value="destroyed" selected={*damage=="destroyed"}>{ex("Distrutto")}</option><option value="damaged" selected={*damage=="damaged"}>{ex("Danneggiato")}</option><option value="intact" selected={*damage=="intact"}>{ex("Integro")}</option></select></label>}
-        if c.state["clock_control"]["running"] == true {<p class="muted">{ex("Il clock è in marcia: l’intervento agisce subito sullo stato corrente.")}</p>}
+        if p.oncommand.is_none() {{when_picker(&c.state, &when)}}
     </Modal>}
+}
+
+/// "Use this command" in the scenario editor; otherwise "Queue" while the
+/// action will wait for play, "Apply" when it acts at once.
+fn apply_label(editor: bool, state: &Value, when: &When) -> &'static str {
+    if editor {
+        ex("Usa questo comando")
+    } else if *when == When::Now || !started(state) && *when == When::Play {
+        ex("Applica")
+    } else {
+        ex("Metti in coda")
+    }
+}
+fn started(state: &Value) -> bool {
+    matches!(text(&state["phase"]), "orders" | "resolving")
+}
+fn when_picker(state: &Value, when: &UseStateHandle<When>) -> Html {
+    let onchange = {
+        let when = when.clone();
+        Callback::from(move |w| when.set(w))
+    };
+    html! {<WhenPicker value={(**when).clone()} {onchange} now_clock={text(&state["world"]["stats"]["clock"]).to_string()} started={started(state)}/>}
 }
 
 // ------------------------------------------------------------------ generic short-form modal
@@ -509,6 +649,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
     let state = use_state(|| (p.dir.rem_euclid(360.).round(), p.speed.clamp(0., WIND_MAX_KMH).round()));
     let (dir, speed) = *state;
     let moisture = use_state(|| (p.moisture * 10.).round() / 10.);
+    let when = use_state(|| When::Play);
     let to = (dir + 180.).to_radians();
     let len = speed / WIND_MAX_KMH * WIND_R;
     let (tx, ty) = (len * to.sin(), -len * to.cos());
@@ -547,7 +688,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         })
     };
     let onapply = {
-        let (cb, moisture, oncommand, onclose) = (p.common.action.clone(), moisture.clone(), p.oncommand.clone(), p.common.onclose.clone());
+        let (cb, moisture, oncommand, onclose, when) = (p.common.action.clone(), moisture.clone(), p.oncommand.clone(), p.common.onclose.clone(), (*when).clone());
         Callback::from(move |_| {
             let cmd = json!({"type":"SetWeather","wind_dir_deg":dir,"wind_speed_kmh":speed,"moisture_pct":*moisture});
             match &oncommand {
@@ -555,7 +696,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
                     f.emit(cmd);
                     onclose.emit(());
                 }
-                None => cb.emit(Action::post("/api/master/command", cmd)),
+                None => cb.emit(Action::post("/api/master/command", command_body(cmd, &when))),
             }
         })
     };
@@ -585,8 +726,9 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         })
     };
     let rings = [25., 50., 75., 100.];
-    let apply_label = if p.oncommand.is_some() { ex("Usa questo comando") } else { ex("Applica") };
-    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} {apply_label} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
+    let apply_label = apply_label(p.oncommand.is_some(), &p.common.state, &when);
+    let when_bad = p.oncommand.is_none() && matches!(&*when, When::At(t) if !crate::excon_queue::valid_clock(t));
+    html! {<Modal title={p.title.clone()} onclose={p.common.onclose.clone()} {onapply} {apply_label} apply_disabled={when_bad} busy={p.common.busy} done={p.common.done} error={p.common.error.clone()}>
         <p class="muted">{ex("Trascina la punta della freccia: indica dove soffia il vento, la lunghezza è la velocità.")}</p>
         <svg class="wind-dial" ref={dial} viewBox="-100 -100 200 200" onpointerdown={ondown} onpointermove={onmove}>
             {for rings.iter().map(|&v| html!{<circle r={format!("{}", v / WIND_MAX_KMH * WIND_R)} class="wd-ring"/>})}
@@ -604,6 +746,7 @@ pub fn wind_modal(p: &WeatherProps) -> Html {
         </div>
         <label>{ex("Umidità del combustibile")}<span class="ctl-unit"><input type="number" step="any" min="0" max="100" value={moisture.to_string()} oninput={on_moisture}/>{" %"}</span></label>
         <p class="muted">{ex("Umidità del combustibile in percentuale (0–100).")}</p>
+        if p.oncommand.is_none() {{when_picker(&p.common.state, &when)}}
     </Modal>}
 }
 
@@ -785,7 +928,7 @@ pub fn controllo(p: &ControlloProps) -> Html {
     };
     let modal = match open.as_deref() {
         None => html! {},
-        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "evac" | "warn" | "drone" | "bstatus")) => {
+        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "extarea" | "evac" | "warn" | "drone" | "bstatus")) => {
             html! {<MapToolModal key={id.to_string()} tool={id.to_string()} common={common.clone()}/>}
         }
         Some("knowledge") => html! {<KnowledgeModal tool="knowledge" common={common.clone()}/>},
@@ -851,6 +994,7 @@ pub fn controllo(p: &ControlloProps) -> Html {
             {widgets::stats(&p.state["world"]["stats"])}
         </section>
         <aside class="card ctl-tools" aria-label={ex("Azioni disponibili")}>
+            <ExconQueue master={p.master.clone()} state={p.state.clone()} busy={p.busy} action={p.action.clone()}/>
             <input type="search" id="tool-search" class="ctl-search" placeholder={ex("Cerca un’azione…")} aria-label={ex("Cerca un’azione")} value={(*query).clone()}
                 oninput={{let query=query.clone();Callback::from(move|e|query.set(api::input(e)))}} onkeydown={on_enter}/>
             if visible.is_empty() {<p class="muted">{ex("Nessuna azione corrisponde alla ricerca.")}</p>}
@@ -875,6 +1019,20 @@ mod tests {
         assert_eq!(cmd, json!({"type":"CutFireLine","from":{"x":100.0,"y":100.0},"to":{"x":400.0,"y":100.0}}));
     }
     #[test]
+    fn drawn_area_needs_three_vertices_and_a_surface() {
+        let stat = json!({});
+        let p = CmdParams::default();
+        let a = click(0., 0., "A1");
+        let b = click(1000., 0., "A1");
+        let c = click(0., 1000., "A1");
+        assert_eq!(build_command("extarea", &[a.clone(), b.clone()], &p, &stat), None);
+        assert_eq!(build_command("extarea", &[a.clone(), b.clone(), click(500., 0., "A1")], &p, &stat), None);
+        let cmd = build_command("extarea", &[a.clone(), b.clone(), c.clone()], &p, &stat).unwrap();
+        assert_eq!(cmd, json!({"type":"ExtinguishArea","polygon":[{"x":0.0,"y":0.0},{"x":1000.0,"y":0.0},{"x":0.0,"y":1000.0}]}));
+        assert!((polygon_ha(&[a, b, c]) - 50.).abs() < 1e-9);
+        assert!(points_needed("extarea") > 3);
+    }
+    #[test]
     fn map_tools_payloads() {
         let stat = json!({"buildings":[{"id":7,"pos":[500.0,500.0]}]});
         let p = CmdParams::default();
@@ -889,6 +1047,33 @@ mod tests {
         let mut with_id = c;
         with_id["building_id"] = json!(3);
         assert_eq!(build_command("bstatus", &[with_id], &p, &stat).unwrap()["building"], json!("#3"));
+    }
+    #[test]
+    fn edited_commands_start_from_their_own_picks() {
+        let stat = json!({"zones":{"cols":8,"rows":8,"size_m":750.0},"buildings":[{"id":7,"pos":[500.0,500.0]}]});
+        for cmd in [
+            json!({"type":"CutFireLine","from":{"x":100.0,"y":100.0},"to":{"x":400.0,"y":100.0}}),
+            json!({"type":"WaterDrop","at":{"x":510.0,"y":495.0}}),
+            json!({"type":"Ignite","at":{"x":510.0,"y":495.0},"radius_m":120.0}),
+            json!({"type":"Extinguish","area":{"at":{"x":510.0,"y":495.0},"radius_m":150.0}}),
+            json!({"type":"Extinguish","area":"B2"}),
+            json!({"type":"ExtinguishArea","polygon":[{"x":100.0,"y":100.0},{"x":900.0,"y":100.0},{"x":500.0,"y":800.0}]}),
+            json!({"type":"EvacuateZone","zone":"F4"}),
+            json!({"type":"IssueWarning","zone":"F4"}),
+            json!({"type":"MonitorArea","zones":["F4"]}),
+            json!({"type":"SetBuildingStatus","building":"#7","damage":"destroyed"}),
+        ] {
+            let tool = tool_for(&cmd).unwrap();
+            let radius = cmd["radius_m"].as_f64().or(cmd["area"]["radius_m"].as_f64()).unwrap_or(80.);
+            let p = CmdParams { radius_m: radius, damage: "destroyed".into() };
+            assert_eq!(build_command(tool, &initial_points(&cmd, &stat), &p, &stat).as_ref(), Some(&cmd), "{cmd}");
+        }
+        // Named places and zone edges keep the parameter fields.
+        assert_eq!(tool_for(&json!({"type":"CutFireLine","along":"F4:N"})), None);
+        assert!(initial_points(&json!({"type":"WaterDrop","at":"Pineta"}), &stat).is_empty());
+        assert_eq!(tool_for(&json!({"type":"DeployEngine","at":{"x":1.0,"y":2.0}})), None);
+        let kept = keep_extra_fields(&json!({"type":"EvacuateZone","zone":"F4","destination":"Palestra"}), &json!({"type":"EvacuateZone","zone":"G4"}));
+        assert_eq!(kept, json!({"type":"EvacuateZone","zone":"G4","destination":"Palestra"}));
     }
     #[test]
     fn fields_body_types_and_arrays() {

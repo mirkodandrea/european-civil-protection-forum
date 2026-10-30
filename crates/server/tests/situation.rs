@@ -77,6 +77,8 @@ async fn situation_endpoints_are_excon_only() {
         ("POST", "/api/master/situation/mark", Some(json!({"id":"x","status":"dismissed"}))),
         ("POST", "/api/master/situation/plan", Some(json!({"title":"t","recipients":["mayor"],"text":"t","at_s":900}))),
         ("POST", "/api/master/situation/rewrite", Some(json!({"title":"t","text":"t","voice":"a citizen"}))),
+        ("POST", "/api/master/situation/draft", Some(json!({"id":"x"}))),
+        ("POST", "/api/master/situation/brief", Some(json!({}))),
     ] {
         assert_eq!(call(&app, Some("sit-mayor"), method, path, body.clone()).await.0, Status::Forbidden, "{path}");
         assert_eq!(call(&app, Some("sit-eval"), method, path, body.clone()).await.0, Status::Forbidden, "{path}");
@@ -186,4 +188,71 @@ async fn rewrite_degrades_gracefully_and_uses_the_model_when_there() {
     let (st, v) = call(&app, Some(MASTER), "POST", "/api/master/situation/rewrite", Some(draft)).await;
     assert_eq!(st, Status::Ok);
     assert_eq!(v["llm"], false);
+}
+
+/// The open school alert, once the preview is ready.
+async fn school_alert(app: &TestApp) -> Value {
+    ready_preview(app).await;
+    let (_, sg) = call(app, Some(MASTER), "GET", "/api/master/situation/suggestions", None).await;
+    sg["suggestions"].as_array().unwrap().iter().find(|s| s["rule"] == "building_reached").cloned().unwrap_or_else(|| panic!("{sg}"))
+}
+
+#[tokio::test]
+async fn ai_draft_falls_back_to_the_rule_draft_and_uses_the_model_when_there() {
+    let (app, state) = app_with(llm::Llm::off()).await;
+    let school = school_alert(&app).await;
+    let id = school["id"].clone();
+    let (st, v) = call(&app, Some(MASTER), "POST", "/api/master/situation/draft", Some(json!({"id": id, "language": "en"}))).await;
+    assert_eq!(st, Status::Ok, "{v}");
+    assert_eq!(v["llm"], false);
+    assert_eq!(v["text"], school["text"]["en"]);
+    let (st, _) = call(&app, Some(MASTER), "POST", "/api/master/situation/draft", Some(json!({"id": "building_reached:nope"}))).await;
+    assert_eq!(st, Status::BadRequest);
+
+    let mock = llm::Llm::mock(|task, system, user| {
+        assert_eq!(task, "draft_inject");
+        assert!(system.contains("Do not tell the players what to do"));
+        let ctx: Value = serde_json::from_str(user).unwrap();
+        assert_eq!(ctx["rule"], "building_reached");
+        assert!(ctx["minutes_until_impact"].is_number());
+        Ok(r#"{"sender":"Head teacher","title":"Smoke near the school","text":"Smoke is drifting over the playground; 120 pupils are still in class."}"#.into())
+    });
+    let (app, state2) = app_with(mock).await;
+    let id = school_alert(&app).await["id"].clone();
+    let (_, v) = call(&app, Some(MASTER), "POST", "/api/master/situation/draft", Some(json!({"id": id}))).await;
+    assert_eq!(v["llm"], true, "{v}");
+    assert_eq!(v["sender"], "Head teacher");
+    assert_eq!(v["title"], "Smoke near the school");
+    // A draft is never sent.
+    for st in [&state, &state2] {
+        assert!(st.lock().messages.iter().all(|m| m.kind != exercise::MsgKind::Inject));
+    }
+}
+
+#[tokio::test]
+async fn ai_brief_crosses_alerts_with_what_the_players_did() {
+    let (app, _) = app_with(llm::Llm::off()).await;
+    school_alert(&app).await;
+    let (st, v) = call(&app, Some(MASTER), "POST", "/api/master/situation/brief", Some(json!({"language":"it"}))).await;
+    assert_eq!(st, Status::Ok);
+    assert_eq!(v["llm"], false);
+    assert!(v["reason"].as_str().unwrap().contains("not configured"));
+
+    let mock = llm::Llm::mock(|task, system, user| {
+        assert_eq!(task, "situation_brief");
+        assert!(system.contains("Italian"));
+        let ctx: Value = serde_json::from_str(user).unwrap();
+        let alert = ctx["alerts"].as_array().unwrap().iter().find(|a| a["rule"] == "building_reached").unwrap();
+        assert!(ctx["roles"].as_array().unwrap().iter().any(|r| r["activity"]["responses"].is_array()));
+        Ok(json!({"summary": "Nessuno sta gestendo la scuola.",
+            "items": [{"id": alert["id"], "note": "Nessuno ha nominato la scuola."}, {"id": "invented:1", "note": "x"}]}).to_string())
+    });
+    let (app, _) = app_with(mock).await;
+    let id = school_alert(&app).await["id"].as_str().unwrap().to_string();
+    let (_, v) = call(&app, Some(MASTER), "POST", "/api/master/situation/brief", Some(json!({"language":"it"}))).await;
+    assert_eq!(v["llm"], true, "{v}");
+    assert_eq!(v["items"][&id], "Nessuno ha nominato la scuola.");
+    // Notes for alerts that do not exist are dropped.
+    assert!(v["items"].get("invented:1").is_none());
+    assert_eq!(v["summary"], "Nessuno sta gestendo la scuola.");
 }

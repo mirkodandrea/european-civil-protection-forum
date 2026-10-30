@@ -23,7 +23,8 @@ quello corrente evidenziato.
      suggerimenti, li aggiunge, approva; il Sindaco vede l’esito.
   4. *Chiarimento*: EXCON chiede, il Sindaco risponde nel thread, EXCON chiude.
   5. *Conversazione tra player*: Sindaco e Polizia discutono l’inject, la
-     risposta nasce dalla conversazione, EXCON legge la trascrizione e decide.
+     risposta nasce dalla conversazione, EXCON la ispeziona nel visore delle
+     conversazioni e decide.
   6. *Decisione sulle azioni*: EXCON approva, approva in parte, modifica o
      rifiuta due azioni; la Polizia vede l’esito per azione.
 - Lo stato dei passi è calcolato dal finto server e dai campi del player, mai
@@ -37,8 +38,9 @@ quello corrente evidenziato.
 
 ## Avvio
 
-Feature cargo `bench`, disattivata per default: le build normali non la
-contengono.
+Feature cargo `bench`, disattivata per default nelle build server; la build
+standalone (`scripts/build_standalone.sh`, anche su Pages) la include, quindi
+`?bench=1` funziona anche nelle versioni pubblicate.
 
 ```bash
 ./scripts/dev_bench.sh                 # Trunk + live reload, standalone+bench

@@ -135,6 +135,36 @@ fn extinguish_zone_and_rollback() {
 }
 
 #[test]
+fn extinguish_drawn_area_keeps_fuel_and_rolls_back() {
+    let mut w = world();
+    w.advance(20 * 60).unwrap();
+    let snap = w.snapshot();
+    let veg = w.fire.vegetation().to_vec();
+    let [x, y] = scenario::synthetic::IGNITION;
+    let pt = |dx: f32, dy: f32| Loc::Point { x: x + dx, y: y + dy };
+    // A box around the fire that stays on the 4 × 4 km map.
+    let area = Command::ExtinguishArea { polygon: vec![pt(-1500., -1500.), pt(800., -1500.), pt(800., 1200.), pt(-1500., 1200.)] };
+    // EXCON only, and a polygon needs a surface.
+    assert!(!w.validate(&area, &role("fire_commander")).is_ok());
+    assert!(w.validate(&area, &Actor::Master).is_ok(), "{:?}", w.validate(&area, &Actor::Master));
+    let flat = Command::ExtinguishArea { polygon: vec![pt(0., 0.), pt(100., 0.), pt(200., 0.)] };
+    assert!(!w.validate(&flat, &Actor::Master).is_ok());
+    assert!(!w.validate(&Command::ExtinguishArea { polygon: vec![pt(0., 0.), pt(100., 0.)] }, &Actor::Master).is_ok());
+    assert!(w.command_geometry(&area)["nominal_area_ha"].as_f64().unwrap() > 600.0);
+
+    let notes = w.apply(&area, &Actor::Master).unwrap();
+    assert!(notes.iter().any(|n| n.contains("fuel unchanged")), "{notes:?}");
+    assert_eq!(w.stats().burning_cells, 0);
+    w.advance(30 * 60).unwrap();
+    assert_eq!(w.stats().burning_cells, 0);
+    assert_eq!(w.fire.vegetation(), &veg[..]);
+    assert!(w.fire.cleared().iter().all(|c| !c));
+    w.restore(&snap).unwrap();
+    assert!(w.stats().burning_cells > 0);
+    assert_eq!(w.time_s(), 20 * 60);
+}
+
+#[test]
 fn reinforcements_arrive_after_delay_and_turns_preserve_deployments() {
     let mut w = world();
     let req = Command::RequestReinforcement { resource: "ground_crews".into(), qty: 2 };

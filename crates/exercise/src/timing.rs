@@ -77,7 +77,16 @@ impl Exercise {
         if self.phase != Phase::Orders || !self.clock_control.running { bail!("within-turn clock is paused"); }
         if !(1..=60).contains(&seconds) { bail!("clock step must be 1–60 seconds"); }
         let resource_event_count=self.world.d.resource_events.len();
-        let events=self.world.advance(seconds)?;
+        // Queued EXCON actions and inject actions run at their instants, as in a resolution.
+        let mut events=Vec::new();
+        let mut left=seconds;
+        loop {
+            self.run_approved_actions();
+            if left<=0 { break; }
+            let dt=self.next_action_in().map_or(left,|n|n.min(left));
+            events.extend(self.world.advance(dt)?);
+            left-=dt;
+        }
         self.record_resource_events(resource_event_count,MASTER);
         self.absorb_monitoring();
         if !events.is_empty() { self.record("clock_physical_events",MASTER,json!({"events":events})); } else { self.touch(); }

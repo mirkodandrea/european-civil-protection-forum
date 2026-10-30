@@ -30,7 +30,7 @@ pub mod travel;
 pub use drone::{MonitorSample, MonitorState, SampleKind};
 pub use travel::{DeploymentTask, TaskStatus, TravelSetting};
 
-pub use command::{catalogue, catalogue_for, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
+pub use command::{catalogue, catalogue_for, missing_params, Area, Command, Damage, Loc, ALL_KINDS, MASTER_ONLY};
 pub use fire::FireOptions;
 
 /// Sub-step of [`World::advance`], seconds. Buildings, evacuations, roads and
@@ -54,6 +54,27 @@ pub const DESTROY_EXPOSURE_S: f32 = 900.0;
 pub const THREAT_RADIUS_M: f32 = 300.0;
 /// Radius used by an `Extinguish` on a named place (not a zone).
 pub const PLACE_EXTINGUISH_RADIUS_M: f32 = 250.0;
+/// Most vertices an `ExtinguishArea` polygon may have.
+pub const MAX_POLYGON_VERTICES: usize = 200;
+
+/// Area of a simple polygon (shoelace), square metres.
+pub fn polygon_area_m2(poly: &[Pos]) -> f64 {
+    let n = poly.len();
+    let twice: f64 = (0..n)
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % n]);
+            a[0] as f64 * b[1] as f64 - b[0] as f64 * a[1] as f64
+        })
+        .sum();
+    twice.abs() / 2.0
+}
+
+/// Mean of a polygon's vertices (a label point, not the area centroid).
+pub fn polygon_centroid(poly: &[Pos]) -> Pos {
+    let n = poly.len().max(1) as f32;
+    let (x, y) = poly.iter().fold((0.0, 0.0), |(x, y), p| (x + p[0], y + p[1]));
+    [x / n, y / n]
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Actor {
@@ -460,6 +481,12 @@ impl World {
                     json!({"centre_m":self.resolve_loc(at).ok(),"radius_m":radius_m,"nominal_area_ha":std::f64::consts::PI*(*radius_m as f64).powi(2)/10000.0})
                 }
             },
+            Command::ExtinguishArea { polygon } => match self.resolve_polygon(polygon) {
+                Ok(poly) => {
+                    json!({"polygon_m":poly,"nominal_area_ha":polygon_area_m2(&poly)/10000.0,"effect":"puts out the fire inside; fuel and vegetation unchanged, unburnt ground can burn again later"})
+                }
+                Err(_) => serde_json::Value::Null,
+            },
             Command::CutFireLine {
                 from,
                 to,
@@ -480,6 +507,25 @@ impl World {
             }
             _ => serde_json::Value::Null,
         }
+    }
+
+    /// The vertices of an `ExtinguishArea` polygon in world metres: at least
+    /// three, on the map, enclosing a non-zero area.
+    pub fn resolve_polygon(&self, polygon: &[Loc]) -> Result<Vec<Pos>, String> {
+        if polygon.len() < 3 {
+            return Err("an area needs at least 3 vertices".into());
+        }
+        if polygon.len() > MAX_POLYGON_VERTICES {
+            return Err(format!("an area has at most {MAX_POLYGON_VERTICES} vertices"));
+        }
+        let poly = polygon
+            .iter()
+            .map(|l| self.resolve_loc(l))
+            .collect::<Result<Vec<_>, _>>()?;
+        if polygon_area_m2(&poly) < 1.0 {
+            return Err("the area's vertices enclose no surface".into());
+        }
+        Ok(poly)
     }
 
     pub fn resolve_loc(&self, loc: &Loc) -> Result<Pos, String> {
@@ -1140,6 +1186,9 @@ impl World {
                     }
                 }
             },
+            Command::ExtinguishArea { polygon } => {
+                self.resolve_polygon(polygon)?;
+            }
             Command::SetWeather {
                 wind_speed_kmh,
                 moisture_pct,
@@ -1589,6 +1638,24 @@ impl World {
                     "extinguished",
                     format!("Fire put out: {}", cmd.describe()),
                     None,
+                );
+            }
+            Command::ExtinguishArea { polygon } => {
+                let poly = self.resolve_polygon(polygon)?;
+                let cells = self.fire.cells_in_polygon(&poly);
+                let n = self
+                    .fire
+                    .extinguish_area(&cells)
+                    .map_err(|e| e.to_string())?;
+                out.push(format!("{n} burning cells put out; fuel unchanged"));
+                let centre = polygon_centroid(&poly);
+                self.event(
+                    "extinguished",
+                    format!(
+                        "Fire put out over {:.1} ha drawn by {by} ({n} burning cells)",
+                        polygon_area_m2(&poly) / 10_000.0
+                    ),
+                    self.scn.zone_of(centre),
                 );
             }
             Command::SetWeather {

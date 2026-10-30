@@ -127,8 +127,8 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         let shown = crate::i18n_risposte::response_state(p);
         let to = &p["addressed_to"];
         let recipient = if list(&to["players"]).is_empty() { text(&to["persona"]).to_string() } else { list(&to["players"]).iter().map(|r| name(text(r))).collect::<Vec<_>>().join(", ") };
-        let meta = format!("{}{}", i18n::t(l, if p["communication"] == true { "kind_tag_comm" } else { "kind_tag_dec" }),
-            if recipient.is_empty() { String::new() } else { format!(" · {}", i18n::tf(l, "resp_to_label", &[&recipient])) });
+        // Replies are words only: the tag says to whom, not what kind.
+        let meta = if recipient.is_empty() { i18n::t(l, "kind_tag_reply").to_string() } else { i18n::tf(l, "resp_to_label", &[&recipient]) };
         out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, meta, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
         let note = text(&p["decision"]["note"]);
         if !note.is_empty() {
@@ -158,7 +158,14 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
             }
         }
     }
-    for _ in it.threads.iter().filter(|t| has_status(t, "closed")) {
+    // Questions of the exercise control about the replies (EXCON-reviewed), with the answers.
+    for t in it.threads.iter().filter(|t| t["review"] == true) {
+        for e in list(&t["entries"]) {
+            let (kind, who) = if e["author"] == "excon" { (Kind::Question, persona(e)) } else { (Kind::Answer, i18n::t(l, "thread_you").into()) };
+            out.push(ev(kind, who, text(&e["clock"]).into(), text(&e["text"])));
+        }
+    }
+    for _ in it.threads.iter().filter(|t| has_status(t, "closed") && t["review"] != true) {
         out.push(ev(Kind::Closed, String::new(), String::new(), i18n::t(l, "thread_closed")));
     }
     out
@@ -359,15 +366,35 @@ impl crate::player_view::PlayerView {
             let open = self.cb(Msg::OpenWork);
             let open_via = self.cb(|(parent, conv): (String, String)| Msg::OpenWorkConv(parent, conv));
             let id = m["id"].to_string();
-            // A guest answers through a conversation; the most recent one carries the response.
+            let guest = it.guest;
             let via = if it.guest { it.convs.last().map(|c| (c["delivery"].to_string(), c["id"].to_string())) } else { None };
-            let start = self.cb(|_| Msg::Field("inj:newconv".into(), "true".into()));
-            html! {<footer class="inj-composer row">
-                if incoming{<small class="muted" role="status">{i18n::t(l,"thread_incoming")}</small>}
-                else if it.threads.iter().any(|t| has_status(t,"awaiting_excon")){<small class="muted" role="status">{i18n::t(l,"thread_wait")}</small>}
-                <div class="grow"/>
-                if !it.guest {<button data-new-conversation="" onclick={start}>{i18n::t(l,"conv_new")}</button>}
-                <button class={classes!("reply-inject","primary")} disabled={!can_act||(it.guest&&via.is_none())} data-reply-inject={id.clone()} onclick={Callback::from(move |_|match &via{Some((p,c))=>open_via.emit((p.clone(),c.clone())),None=>open.emit(Some(id.clone()))})}>{i18n::t(l,label)}</button></footer>}
+            let direct = {
+                let (open, id) = (open.clone(), id.clone());
+                Callback::from(move |_| open.emit(Some(id.clone())))
+            };
+            let to_conversation = self.cb(|_| Msg::Field("inj:newconv".into(), "true".into()));
+            let status = if incoming {
+                html! {<small class="muted" role="status">{i18n::t(l,"thread_incoming")}</small>}
+            } else if it.threads.iter().any(|t| has_status(t,"awaiting_excon")) {
+                html! {<small class="muted" role="status">{i18n::t(l,"thread_wait")}</small>}
+            } else {
+                html! {}
+            };
+            if guest {
+                // A guest answers through a conversation directly: the most recent one carries the response.
+                let on_reply = Callback::from(move |_| if let Some((p, c)) = &via { open_via.emit((p.clone(), c.clone())) });
+                html! {<footer class="inj-composer row">{status}<div class="grow"/>
+                    <button class={classes!("reply-inject","primary")} disabled={!can_act||it.convs.is_empty()} data-reply-inject={id.clone()} onclick={on_reply}>{i18n::t(l,label)}</button></footer>}
+            } else {
+                // Everyone else picks where the reply goes straight away.
+                html! {<footer class="inj-composer reply-step" data-reply-step="choose">
+                    {status}
+                    <b>{i18n::t(l,"reply_step_title")}</b>
+                    <div class="reply-step-options">
+                        <button class="reply-step-option" data-reply-direct={id.clone()} disabled={!can_act} onclick={direct}><b>{i18n::t(l,"reply_step_direct")}</b><small>{i18n::t(l,"reply_step_direct_hint")}</small></button>
+                        <button class="reply-step-option" data-reply-conversation="" onclick={to_conversation}><b>{i18n::t(l,"reply_step_conv")}</b><small>{i18n::t(l,"reply_step_conv_hint")}</small></button>
+                    </div></footer>}
+            }
         } else {
             html! {}
         };
@@ -436,7 +463,7 @@ impl crate::player_view::PlayerView {
     /// The inject as a quoted card (conversation context).
     fn quoted_inject(&self, l: &str, m: Option<&Value>) -> Html {
         let Some(m) = m else { return html! {} };
-        html! {<blockquote class="conv-quote" data-conv-quote={m["id"].to_string()}><small><b>{i18n::t(l,"inject")}</b>{format!(" · {} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&self.name(text(&m["from"]))]))}</small><b>{text(&m["title"])}</b><p>{text(&m["text"])}</p></blockquote>}
+        quote_card(&m["id"], i18n::t(l, "inject"), &format!(" · {} · {}", text(&m["clock"]), i18n::tf(l, "from", &[&self.name(text(&m["from"]))])), text(&m["title"]), text(&m["text"]))
     }
 
     fn view_conversation(&self, can_act: bool, it: &Item, c: &Value) -> Html {
@@ -479,12 +506,10 @@ impl crate::player_view::PlayerView {
                     let id=m["id"].as_u64().unwrap_or(0);
                     let quote=m["reply_to"].as_u64().and_then(cited);
                     let body=if mine&&m["original"].is_string(){text(&m["original"])}else{text(&m["text"])};
-                    html!{<li class={classes!("inj-msg",if mine{"mine"}else{"theirs"})} data-conv-message={id.to_string()}>
-                        <small><b>{if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))}}</b>{format!(" · {}",text(&m["clock"]))}</small>
-                        if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
-                        <p>{body}</p>
+                    let who=if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))};
+                    conv_bubble(mine,m,&who,quote,body,html!{<>
                         if let Some(pid)=m["proposal"].as_u64(){{self.conv_response_tag(l,pid)}}
-                        <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></li>}
+                        <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></>})
                 })}
                 {for list(&c["responses"]).iter().map(|r|{
                     let by=if r["by"]==own{i18n::t(l,"thread_you").to_string()}else{self.name(text(&r["by"]))};
@@ -502,7 +527,23 @@ impl crate::player_view::PlayerView {
     }
 }
 
-fn excerpt(message: &str) -> String {
+/// The inject a linked conversation is about, as a quoted card. Shared by the
+/// player's conversation and the EXCON conversation viewer.
+pub fn quote_card(id: &Value, label: &str, meta: &str, title: &str, body: &str) -> Html {
+    html! {<blockquote class="conv-quote" data-conv-quote={id.to_string()}><small><b>{label.to_string()}</b>{meta.to_string()}</small><b>{title.to_string()}</b><p>{body.to_string()}</p></blockquote>}
+}
+
+/// One message of a linked conversation: author and time, the cited message,
+/// the text and any `extra` (response tag, cite button).
+pub fn conv_bubble(mine: bool, m: &Value, who: &str, quote: Option<(String, String)>, body: &str, extra: Html) -> Html {
+    html! {<li key={m["id"].to_string()} class={classes!("inj-msg",if mine{"mine"}else{"theirs"})} data-conv-message={m["id"].to_string()}>
+        <small><b>{who.to_string()}</b>{format!(" · {}",text(&m["clock"]))}</small>
+        if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
+        <p>{body.to_string()}</p>
+        {extra}</li>}
+}
+
+pub fn excerpt(message: &str) -> String {
     let mut chars = message.chars();
     let head = chars.by_ref().take(120).collect::<String>();
     if chars.next().is_some() {

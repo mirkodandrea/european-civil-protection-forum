@@ -194,6 +194,14 @@ impl World {
     /// Static scenario data for the web UIs (fuel raster included, no DEM).
     pub fn static_view(&self) -> Value {
         let fuel: Vec<u8> = self.scn.fuel.iter().map(|&f| f as u8).collect();
+        // Keyed like the raster bytes, so the UIs can name every class they see.
+        let mut ids: Vec<i32> = self.scn.fuel.clone();
+        ids.sort_unstable();
+        ids.dedup();
+        let fuel_names: serde_json::Map<String, Value> = ids
+            .into_iter()
+            .map(|id| ((id as u8).to_string(), json!(self.scn.fuel_name(id))))
+            .collect();
         json!({
             "id": self.scn.id,
             "name": self.scn.name,
@@ -201,6 +209,7 @@ impl World {
             "grid": self.scn.grid,
             "zones": self.scn.zones,
             "fuel": base64::engine::general_purpose::STANDARD.encode(fuel),
+            "fuel_names": fuel_names,
             "buildings": self.scn.buildings,
             "roads": self.scn.roads,
             "road_segments": self.network.segments(),

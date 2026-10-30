@@ -2,8 +2,9 @@
 //!
 //! The preview forks the exercise (a copy of the world plus the decisions that
 //! shape the next advance), then does exactly what a real resolution to the
-//! planned end of the turn does: applies the approved proposals, runs the
-//! planned inject actions at their instants, and steps the world one second
+//! planned end of the turn does: runs the queued EXCON actions
+//! ([`crate::queue`]), applies the approved proposals, runs the planned inject
+//! and EXCON actions at their instants, and steps the world one second
 //! at a time. Because the world copy carries the random streams of the fire
 //! ensemble, the result is what the real resolution will produce if nobody
 //! does anything else. It never changes the exercise, never sends an inject
@@ -184,7 +185,11 @@ impl PreviewJob {
             .filter(|(k, r)| r.executed_s.is_some() && !already.get(*k).copied().unwrap_or(false))
             .map(|(_, r)| PreviewAction {
                 at_s: r.executed_s.unwrap_or(from_s),
-                text: format!("{}: {}", r.title, Exercise::describe_run(&r.command, r.reveal.as_ref())),
+                text: if r.queued.is_some() {
+                    format!("EXCON: {}", r.title)
+                } else {
+                    format!("{}: {}", r.title, Exercise::describe_run(&r.command, r.reveal.as_ref()))
+                },
                 inject: r.inject.clone(),
                 ok: r.status == ActionStatus::Done,
             })
@@ -239,7 +244,7 @@ impl Exercise {
             (p.id, serde_json::to_string(&p.commands).unwrap_or_default()).hash(&mut h);
         }
         for (k, r) in &self.action_runs {
-            (k, r.status as u8, r.run_at_s, r.executed_s).hash(&mut h);
+            (k, r.status as u8, r.run_at_s, r.executed_s, r.command.to_string()).hash(&mut h);
         }
         for (k, v) in self
             .disabled_actions

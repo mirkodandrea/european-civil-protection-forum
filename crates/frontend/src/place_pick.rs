@@ -27,7 +27,7 @@ pub fn pick_for(action: &str) -> &'static str {
 }
 
 /// EXCON-only command kinds (`sim::MASTER_ONLY`; the server build has no `sim`).
-const MASTER_ONLY: [&str; 8] = ["Ignite", "Extinguish", "SetWeather", "SetBuildingStatus", "AdjustResource", "ReturnResource", "SetDeploymentTravel", "AdvanceTime"];
+const MASTER_ONLY: [&str; 9] = ["Ignite", "Extinguish", "ExtinguishArea", "SetWeather", "SetBuildingStatus", "AdjustResource", "ReturnResource", "SetDeploymentTravel", "AdvanceTime"];
 
 /// Action kinds a player may choose: the role's `allowed_actions`, in order,
 /// without duplicates and without EXCON-only kinds.
@@ -82,7 +82,7 @@ pub fn rectangle(stat: &Value, a: &str, b: &str) -> Vec<String> {
 }
 
 /// The zone holding a point in world metres (`y` northwards).
-fn zone_at(stat: &Value, x: f64, y: f64) -> Option<String> {
+pub fn zone_at(stat: &Value, x: f64, y: f64) -> Option<String> {
     let (cols, rows, size) = grid(stat);
     if size <= 0. {
         return None;
@@ -90,6 +90,40 @@ fn zone_at(stat: &Value, x: f64, y: f64) -> Option<String> {
     let h = rows as f64 * size;
     let (c, r) = ((x / size).floor(), ((h - y) / size).floor());
     (c >= 0. && r >= 0. && (c as u64) < cols && (r as u64) < rows).then(|| zone_code(c as u64, r as u64 + 1))
+}
+
+/// A map point in words: its zone and, when it lies within a named place
+/// (its `radius_m`, else 300 m), that place: `"E5 (Selvariva)"`.
+pub fn point_label(stat: &Value, x: f64, y: f64) -> String {
+    let near = list(&stat["places"])
+        .iter()
+        .filter(|p| {
+            let name = text(&p["name"]);
+            !name.is_empty() && !name.contains(" edge") && !name.contains("junction")
+        })
+        .filter_map(|p| {
+            let d = (p["pos"][0].as_f64()? - x).hypot(p["pos"][1].as_f64()? - y);
+            (d <= p["radius_m"].as_f64().unwrap_or(300.).max(300.)).then_some((d, text(&p["name"])))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, name)| name);
+    let zone = zone_at(stat, x, y).unwrap_or_else(|| format!("{x:.0}, {y:.0} m"));
+    match near {
+        Some(name) => format!("{zone} ({name})"),
+        None => zone,
+    }
+}
+
+/// A building reference (`#id` or a name) by its name when it has one.
+pub fn building_label(stat: &Value, s: &str) -> String {
+    let Some(id) = s.strip_prefix('#') else { return s.to_string() };
+    list(&stat["buildings"])
+        .iter()
+        .find(|b| b["id"].to_string() == id || text(&b["id"]) == id)
+        .map(|b| text(&b["name"]))
+        .filter(|n| !n.is_empty())
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| s.to_string())
 }
 
 fn norm(s: &str) -> String {
@@ -294,6 +328,16 @@ mod tests {
             "places":[{"name":"Selvariva","pos":[3500.0,2280.0],"radius_m":500.0},
                       {"name":"Pianalto","aliases":["Alto"],"pos":[4900.0,2400.0],"buildings":[7]},
                       {"name":"Bivio","pos":[100.0,100.0]}]})
+    }
+
+    #[test]
+    fn points_and_buildings_in_words() {
+        let s = stat();
+        assert_eq!(point_label(&s, 3550.0, 2300.0), "E5 (Selvariva)");
+        assert_eq!(point_label(&s, 5800.0, 300.0), "H8");
+        assert_eq!(building_label(&s, "#7"), "Scuola");
+        assert_eq!(building_label(&s, "#99"), "#99");
+        assert_eq!(building_label(&s, "Municipio"), "Municipio");
     }
 
     #[test]

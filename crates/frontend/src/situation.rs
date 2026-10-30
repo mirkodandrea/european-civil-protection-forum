@@ -1,6 +1,7 @@
 //! EXCON "Situazione" tab: impact now, deterministic preview of the end of the
-//! turn, and inject suggestions to open, edit, send or plan by hand. Nothing
-//! here sends or schedules by itself.
+//! turn, and alerts on what happens if nobody acts (situational awareness).
+//! From an alert the EXCON may write an inject by hand; nothing here sends or
+//! schedules by itself.
 use crate::{
     api::{self, list, text},
     i18n::{ex, is_en},
@@ -106,6 +107,9 @@ pub fn situation(props: &SituationProps) -> Html {
     let selected = use_state(|| None::<String>);
     let focus = use_state(|| None::<(f64, f64, u32)>);
     let opened = use_state(|| None::<String>);
+    // AI brief: what the players did about each alert (on request only).
+    let brief = use_state(|| Value::Null);
+    let briefing = use_state(|| false);
     let held: Rc<RefCell<(Value, Value, Value)>> =
         use_mut_ref(|| (Value::Null, Value::Null, Value::Null));
     let inflight = use_mut_ref(|| Rc::new(Cell::new(false)));
@@ -390,6 +394,34 @@ pub fn situation(props: &SituationProps) -> Html {
             refresh.emit(());
         })
     };
+    let ask_brief = {
+        let (brief, briefing, error) = (brief.clone(), briefing.clone(), error.clone());
+        Callback::from(move |_: MouseEvent| {
+            let (brief, briefing, error) = (brief.clone(), briefing.clone(), error.clone());
+            briefing.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let body = json!({"language": if is_en() {"en"} else {"it"}});
+                match call("/api/master/situation/brief", Some(body)).await {
+                    Ok(v) => brief.set(v),
+                    Err(e) => error.set(e),
+                }
+                briefing.set(false);
+            });
+        })
+    };
+    let ignore = |id: String| {
+        let (on_done, error) = (on_done.clone(), error.clone());
+        Callback::from(move |_: MouseEvent| {
+            let (on_done, error, id) = (on_done.clone(), error.clone(), id.clone());
+            wasm_bindgen_futures::spawn_local(async move {
+                let p = json!({"id": id, "status": "dismissed"});
+                match call("/api/master/situation/mark", Some(p)).await {
+                    Ok(_) => on_done.emit(()),
+                    Err(e) => error.set(e),
+                }
+            });
+        })
+    };
 
     html! {<main class="page sit-page" id="situation">
         <section class="card sit-head">
@@ -427,24 +459,35 @@ pub fn situation(props: &SituationProps) -> Html {
                     {for road_rows.iter().map(|r|row_html(r))}}
                 </tbody></table></div>
                 <small class="muted">{ex("Variazioni tra parentesi: rispetto all’inizio del turno. Le abitazioni semplici compaiono solo quando il fuoco le raggiunge.")}</small></section>
-            <section class="card sit-sugg"><div class="row"><h3>{ex("Suggerimenti di inject")}</h3><span class="pill" id="sit-count">{items.len()}</span><div class="grow"/></div>
-                <small class="muted">{ex("Bozze basate sulla situazione e sulla previsione. Apri una bozza, modificala e poi inviala o pianificala tu.")}</small>
-                if sugg["preview_current"]==false&&!sugg.is_null(){<p><small class="muted">{ex("Basati su una previsione non aggiornata.")}</small></p>}
+            <section class="card sit-sugg"><div class="row"><h3>{ex("Allerte per l’EXCON")}</h3><span class="pill" id="sit-count">{items.len()}</span><div class="grow"/>
+                    <button class="small" id="sit-brief" disabled={*briefing||items.is_empty()} onclick={ask_brief} title={ex("L’AI legge risposte, messaggi e conversazioni dei ruoli coinvolti e dice, per ogni allerta, cosa hanno fatto o detto")}>
+                        {if *briefing{html!{<><span class="loader" aria-hidden="true"></span>{ex("Quadro in preparazione…")}</>}}else{html!{ex("Cosa stanno facendo i giocatori?")}}}</button></div>
+                <small class="muted">{ex("Cosa succede se nessuno interviene, secondo la situazione e la previsione. Sono per te, non per i giocatori: decidi tu se e come creare un inject.")}</small>
+                if brief["llm"]==true{<div class="sit-brief" id="sit-brief-summary"><small class="muted">{crate::exfmt!("Quadro AI delle {} · da risposte, messaggi e conversazioni","AI brief of {} · from responses, messages and conversations",text(&brief["clock"]).rsplit(' ').next().unwrap_or_default())}</small>
+                    if !text(&brief["summary"]).is_empty(){<p>{text(&brief["summary"])}</p>}</div>}
+                else if brief["llm"]==false{<p><small class="muted">{crate::exfmt!("Quadro AI non disponibile: {}","AI brief unavailable: {}",text(&brief["reason"]))}</small></p>}
+                if sugg["preview_current"]==false&&!sugg.is_null(){<p><small class="muted">{ex("Basate su una previsione non aggiornata.")}</small></p>}
                 if items.is_empty(){<p class="muted sit-none">{ex("Nessuna situazione critica da segnalare.")}</p>}
                 {for items.iter().map(|s|{
                     let id=text(&s["id"]).to_string();
                     let is_open=opened.as_deref()==Some(id.as_str());
                     let toggle={let (opened,id)=(opened.clone(),id.clone());Callback::from(move |_|opened.set(if is_open{None}else{Some(id.clone())}))};
-                    let when=if s["now"]==true{ex("da inviare ora").to_string()}else{crate::exfmt!("entro le {}","by {}",hhmm(origin,s["at_s"].as_i64().unwrap_or(0)))};
+                    let when=match s["reach_s"].as_i64(){
+                        Some(t) if t>now_s=>crate::exfmt!("alle {}","at {}",hhmm(origin,t)),
+                        _=>ex("già in corso").to_string(),
+                    };
+                    let act_by=(s["now"]!=true).then(||crate::exfmt!("per reagire in tempo: entro le {}","to react in time: by {}",hhmm(origin,s["at_s"].as_i64().unwrap_or(0))));
                     let locate={let pos=s["object"]["pos"].clone();let oid=text(&s["object"]["id"]).to_string();let (selected,focus)=(selected.clone(),focus.clone());
                         Callback::from(move |_|{ selected.set(Some(oid.clone())); if let (Some(x),Some(y))=(pos[0].as_f64(),pos[1].as_f64()){let k=focus.map(|f|f.2+1).unwrap_or(1);focus.set(Some((x,y,k)));} })};
                     html!{<article key={id.clone()} class={classes!("sit-card",text(&s["severity"]).to_string(),is_open.then_some("open"))} data-suggestion={id.clone()}>
                         <div class="row"><span class={classes!("pill","sev",text(&s["severity"]).to_string())}>{severity_label(text(&s["severity"]))}</span><span class="pill">{when}</span><div class="grow"/>
                             <button class="small" onclick={locate} title={ex("Centra la mappa")}>{"⌖"}</button></div>
-                        <b class="sit-title">{lt(&s["title"])}</b>
-                        <p class="sit-evidence">{lt(&s["evidence"])}</p>
-                        <div class="row">{for list(&s["recipients"]).iter().map(|r|html!{<span class="pill rcpt">{crate::timeline::role_name(&roles,text(r))}</span>})}<div class="grow"/>
-                            <button class={classes!("small",(!is_open).then_some("primary"))} onclick={toggle}>{if is_open{ex("Chiudi")}else{ex("Apri bozza")}}</button></div>
+                        <b class="sit-title">{lt(&s["alert"])}</b>
+                        if let Some(by)=act_by{<p class="sit-evidence">{by}</p>}
+                        if let Some(note)=brief["items"][id.as_str()].as_str(){<p class="sit-note" data-brief-note={id.clone()}>{note.to_string()}</p>}
+                        <div class="row"><small class="muted">{ex("Chi può intervenire:")}</small>{for list(&s["recipients"]).iter().map(|r|html!{<span class="pill rcpt">{crate::timeline::role_name(&roles,text(r))}</span>})}<div class="grow"/>
+                            if !is_open{<button class="small" onclick={ignore(id.clone())} title={ex("Non segnalare più questa situazione")}>{ex("Ignora")}</button>}
+                            <button class="small" onclick={toggle} title={ex("Scrivi un inject a partire da questa situazione: parte da una bozza che puoi cambiare del tutto")}>{if is_open{ex("Chiudi")}else{ex("Crea inject")}}</button></div>
                         if is_open{<SuggestionEditor key={id.clone()} suggestion={s.clone()} roles={roles.clone()} now_s={now_s} origin={origin} ondone={on_done.clone()}/>}
                     </article>}
                 })}
@@ -506,6 +549,46 @@ fn suggestion_editor(props: &EditorProps) -> Html {
     let error = use_state(String::new);
     let note = use_state(String::new);
     let id = text(&s["id"]).to_string();
+    // The AI writes the draft as an in-world report; typing first keeps your text.
+    let drafting = use_state(|| true);
+    let touched = use_mut_ref(|| false);
+    {
+        let (title, body, sender, note, drafting, touched, id) = (
+            title.clone(),
+            body.clone(),
+            sender.clone(),
+            note.clone(),
+            drafting.clone(),
+            touched.clone(),
+            id.clone(),
+        );
+        use_effect_with((), move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let req = json!({"id": id, "language": if is_en() {"en"} else {"it"}});
+                match call("/api/master/situation/draft", Some(req)).await {
+                    Ok(v) if v["llm"] == true => {
+                        if !*touched.borrow() {
+                            title.set(text(&v["title"]).to_string());
+                            body.set(text(&v["text"]).to_string());
+                            sender.set(text(&v["sender"]).to_string());
+                        }
+                        note.set(
+                            ex("Bozza scritta dall’AI a partire dall’allerta: controllala prima di inviare.")
+                                .to_string(),
+                        );
+                    }
+                    Ok(v) => note.set(crate::exfmt!(
+                        "AI non disponibile: bozza standard ({}).",
+                        "AI unavailable: standard draft ({}).",
+                        text(&v["reason"])
+                    )),
+                    Err(e) => note.set(e),
+                }
+                drafting.set(false);
+            });
+            || ()
+        });
+    }
     let all_ids: Vec<String> = props
         .roles
         .iter()
@@ -632,12 +715,23 @@ fn suggestion_editor(props: &EditorProps) -> Html {
             recipients.set(r);
         })
     };
-    let ready =
-        !title.trim().is_empty() && !body.trim().is_empty() && !recipients.is_empty() && !*busy;
+    let ready = !title.trim().is_empty()
+        && !body.trim().is_empty()
+        && !recipients.is_empty()
+        && !*busy
+        && !*drafting;
+    let typed = |state: UseStateHandle<String>| {
+        let touched = touched.clone();
+        Callback::from(move |e: InputEvent| {
+            *touched.borrow_mut() = true;
+            state.set(api::input(e));
+        })
+    };
     html! {<div class="sit-editor">
-        <label>{ex("Titolo")}<input type="text" value={(*title).clone()} oninput={{let t=title.clone();Callback::from(move |e|t.set(api::input(e)))}}/></label>
-        <label>{ex("Testo")}<textarea rows="5" value={(*body).clone()} oninput={{let b=body.clone();Callback::from(move |e|b.set(api::input(e)))}}/></label>
-        <label>{ex("Mittente")}<input type="text" value={(*sender).clone()} oninput={{let t=sender.clone();Callback::from(move |e|t.set(api::input(e)))}}/></label>
+        if *drafting{<p class="sit-drafting"><span class="loader" aria-hidden="true"></span><small class="muted">{ex("L’AI sta scrivendo la bozza dell’inject…")}</small></p>}
+        <label>{ex("Titolo")}<input type="text" value={(*title).clone()} oninput={typed(title.clone())}/></label>
+        <label>{ex("Testo")}<textarea rows="5" value={(*body).clone()} oninput={typed(body.clone())}/></label>
+        <label>{ex("Mittente")}<input type="text" value={(*sender).clone()} oninput={typed(sender.clone())}/></label>
         <fieldset class="sit-rcpt"><legend>{ex("Destinatari")}</legend>
             {for props.roles.iter().map(|r|{let rid=text(&r["id"]).to_string();html!{<label class="inline-check" key={rid.clone()}><input type="checkbox" checked={recipients.contains(&rid)||recipients.contains("all")} onchange={toggle(rid.clone())}/>{text(&r["name"])}</label>}})}</fieldset>
         <div class="row sit-voice"><label>{ex("Riscrivi con la voce di")}<select onchange={{let (v,s)=(voice.clone(),sender.clone());Callback::from(move |e|{let k=api::select(e);if let Some((_,label,v_en))=VOICES.iter().find(|(it,..)|*it==k){v.set(v_en.to_string());s.set(label.to_string());}})}}>
@@ -654,7 +748,7 @@ fn suggestion_editor(props: &EditorProps) -> Html {
     </div>}
 }
 
-/// "N suggerimenti" chip for the Timeline, linking to the Situation tab.
+/// "N allerte" chip for the Timeline, linking to the Situation tab.
 #[derive(Properties, PartialEq)]
 pub struct BadgeProps {
     pub onopen: Callback<()>,
@@ -665,15 +759,38 @@ pub struct BadgeProps {
 #[function_component(SuggestionBadge)]
 pub fn suggestion_badge(props: &BadgeProps) -> Html {
     let count = use_state(|| 0usize);
-    {
+    let inflight = use_mut_ref(|| false);
+    let refresh = {
         let count = count.clone();
-        use_effect_with(props.generation, move |_| {
+        let inflight = inflight.clone();
+        Callback::from(move |_: ()| {
+            if *inflight.borrow() {
+                return;
+            }
+            *inflight.borrow_mut() = true;
             let c = count.clone();
+            let inflight = inflight.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(v) = call("/api/master/situation/suggestions", None).await {
                     c.set(v["count"].as_u64().unwrap_or(0) as usize);
                 }
+                *inflight.borrow_mut() = false;
             });
+        })
+    };
+    {
+        // The alerts depend on the background turn preview and on EXCON marks,
+        // which settle after the generation changes: poll while mounted too.
+        let refresh = refresh.clone();
+        use_effect_with((), move |_| {
+            let tick = Interval::new(4000, move || refresh.emit(()));
+            move || drop(tick)
+        });
+    }
+    {
+        let refresh = refresh.clone();
+        use_effect_with(props.generation, move |_| {
+            refresh.emit(());
             || ()
         });
     }
@@ -681,6 +798,6 @@ pub fn suggestion_badge(props: &BadgeProps) -> Html {
         return Html::default();
     }
     let onopen = props.onopen.clone();
-    html! {<button class="tp-suggest" id="tp-suggest" title={ex("Apri la scheda Situazione: bozze di inject per le situazioni critiche")} onclick={Callback::from(move |_|onopen.emit(()))}>
-    <b>{*count}</b>{" "}{if *count==1{ex("suggerimento")}else{ex("suggerimenti")}}</button>}
+    html! {<button class="tp-suggest" id="tp-suggest" title={ex("Apri la scheda Situazione: cosa succede se nessuno interviene")} onclick={Callback::from(move |_|onopen.emit(()))}>
+    <b>{*count}</b>{" "}{if *count==1{ex("allerta")}else{ex("allerte")}}</button>}
 }

@@ -4,10 +4,46 @@ Il progetto è in fase di definizione: questi punti non hanno priorità né
 scadenze. Per le capacità già presenti, vedere la [specifica di alto livello](stato-attuale.md).
 
 - Discutere quali ulteriori azioni operative il simulatore dovrebbe modellare.
-- Aggiungere hint testuali ai partecipanti sulle azioni possibili nel loro ruolo
-  e su come chiedere supporto.
+- ~~Aggiungere hint testuali ai partecipanti~~: la guida alla risposta accanto al
+  testo (cosa, dove, con quali mezzi, entro quando, chi si informa) e competenze e
+  risorse del ruolo (2026-10-29).
+- Solo l’EXCON agisce (2026-10-29), aperti: piani, leggi e procedure per ruolo
+  non esistono ancora nello scenario (la guida mostra competenze e risorse);
+  provare `review_reply` con `TTX_LIVE_LLM=1` sul caso del DOS/Sindaco; il banco
+  (`?bench=1`) e alcuni script QA descrivono ancora il vecchio flusso con azioni
+  del player; l’EXCON non riceve ancora un avviso «riletta» quando l’AI finisce;
+  domande aperte non entrano ancora nella finestra di revisione prima
+  dell’avanzamento (solo nel chip del pannello del turno).
 - Modellare più viaggi per autobus nella stessa evacuazione, con riuso dei mezzi
   e tempi di completamento.
+
+## Spegnimento senza togliere vegetazione (decisioni aperte)
+
+`ExtinguishArea` (area disegnata dall'EXCON) spegne il fuoco senza toccare la
+vegetazione. Restano da decidere:
+
+- **Velocità di spegnimento** (domanda di Sabrina): ora è istantaneo
+  all'applicazione. Una velocità impostata dall'EXCON (es. ettari/ora, o un
+  fronte che avanza nel poligono) richiede un compito progressivo in `sim`
+  integrato sul tempo simulato.
+- Gli altri percorsi che cambiano ancora la vegetazione (combustibile →
+  non vegetato): `Extinguish` su zona/cerchio (`FireSim::extinguish_cells`,
+  anche sulle celle in fiamme), `CutFireLine` istantanea e progressiva
+  (`FireSim::fire_line`). Da decidere se `Extinguish` debba usare la nuova
+  regola; la linea tagliafuoco per definizione toglie combustibile.
+- Aggiungere lo strumento anche ai comandi allegati alle narrazioni e alle
+  azioni degli inject (`staged_commands.rs`, `action_form.rs`), oggi esclusi.
+
+## Azioni EXCON in coda (2026-10-29): da decidere
+
+- «Esegui ora ordine approvato» (`POST /api/master/proposals/<id>/execute`) applica
+  ancora subito una proposta approvata a turno aperto: tenerlo come eccezione o
+  toglierlo dall'interfaccia (le proposte approvate si applicano già all'avanzamento).
+- Le azioni a offset 0 degli inject restano immediate all'invio; negli scenari, gli
+  inneschi andrebbero spostati in azioni EXCON programmate (o azioni anticipate)
+  separate dall'inject di segnalazione.
+- Una modifica a un'azione in coda di un turno precedente non è permessa (si annulla
+  e si rimette): valutare se serve davvero modificarla.
 
 ## Problemi emersi dal playthrough del 2026-10-23
 

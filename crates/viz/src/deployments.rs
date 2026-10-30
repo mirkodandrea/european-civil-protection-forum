@@ -367,9 +367,14 @@ fn drawn(scn: &Scn, task: &view::Deployment, t: i64, real_s: f32) -> (Pos, Pos, 
 }
 
 fn set(scn: &Scn, task: &view::Deployment, t: i64, real_s: f32, transform: &mut Transform) {
-    let (_, scale, _) = model_for(scn, task);
+    let (name, scale, _) = model_for(scn, task);
     let (here, next, lift) = drawn(scn, task, t, real_s);
     transform.translation = to_bevy(&scn.0, here, lift);
+    // A tanker clears the ridges along its heading instead of riding the slope.
+    let heading = Vec2::new(next[0] - here[0], next[1] - here[1]);
+    if name == "tanker" && heading.length_squared() > 0.01 {
+        transform.translation.y = crate::frame::flight_floor(&scn.0, here, heading.normalize()) + lift;
+    }
     transform.scale = Vec3::splat(scale);
     let direction = to_bevy(&scn.0, next, lift) - to_bevy(&scn.0, here, lift);
     if direction.length_squared() > 0.01 {

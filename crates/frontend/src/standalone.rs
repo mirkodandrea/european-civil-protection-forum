@@ -50,6 +50,10 @@ pub fn runtime() -> Result<server::AppState, String> {
         .with(|r| r.borrow().clone())
         .ok_or_else(|| "Esercitazione non inizializzata".into())
 }
+/// Make `state` the exercise every view of this page talks to (the simulator bench).
+pub fn install(state: server::AppState) {
+    RUNTIME.with(|r| *r.borrow_mut() = Some(state));
+}
 fn initialize() -> Result<server::AppState, String> {
     let scenarios = crate::store::scenarios();
     // A saved session continues with the scenario it started from; a new one
@@ -84,6 +88,11 @@ fn initialize() -> Result<server::AppState, String> {
     }
     crate::store::set_pending(session);
     Ok(state)
+}
+
+/// Commit, CI build number and build date stamped by `build.rs`.
+fn build_label() -> String {
+    format!("{} · build {} · {}", env!("TTX_BUILD_COMMIT"), env!("TTX_BUILD_NUMBER"), env!("TTX_BUILD_DATE"))
 }
 
 /// Opening screen: pick the scenario (or resume the saved session) and set
@@ -186,7 +195,7 @@ fn launcher(props: &LauncherProps) -> Html {
     };
     html! {
       <div class="standalone launcher">
-        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{"Scegli lo scenario e le opzioni, poi avvia."}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span></header>
+        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{"Scegli lo scenario e le opzioni, poi avvia."}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span><span class="pill build-version" id="build-version" title="Commit · build · data di build">{build_label()}</span></header>
         if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
         if !error.is_empty() {<p class="error" role="alert">{&*error}</p>}
         <main class="page launcher-page">
@@ -398,7 +407,7 @@ fn session() -> Html {
     html! {
       <ContextProvider<crate::scenario_editor::SettingsSlot> context={crate::scenario_editor::SettingsSlot(settings_html)}>
       <div class="standalone">
-        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{format!("{clock} · {phase} · 32 realizzazioni")}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span>
+        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{format!("{clock} · {phase} · 32 realizzazioni")}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span><span class="pill build-version" id="build-version" title="Commit · build · data di build">{build_label()}</span>
           <label><input type="checkbox" checked={*show_map} onchange={{let show=show_map.clone();Callback::from(move |_|show.set(!*show))}}/>{" Simulazione"}</label>
           <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{" Tutti i player"}</label>
           <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>

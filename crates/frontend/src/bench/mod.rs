@@ -16,7 +16,7 @@ use crate::{
     Action, ActionKind, Msg,
 };
 use fake::Fake;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use workflows::{Column, Status, World, BENCHES};
@@ -91,7 +91,6 @@ pub enum BMsg {
     Player(String, Msg),
     Excon(Action),
     Changed,
-    Suggest(String),
     OpenSend(Option<String>),
 }
 
@@ -152,21 +151,10 @@ impl Bench {
             }
         }
     }
-    fn player_msg(&mut self, ctx: &Context<Self>, role: String, msg: Msg) {
+    fn player_msg(&mut self, role: String, msg: Msg) {
         match msg {
             Msg::Action(a) => self.request(&role, a),
             Msg::Field(key, value) => {
-                if key == "work:narrative" && self.fields_of(&role).get(&key) != Some(&value) {
-                    // As in `App`: suggestions follow a pause in typing.
-                    let link = ctx.link().clone();
-                    let r = role.clone();
-                    self.timers.insert(
-                        role.clone(),
-                        gloo_timers::callback::Timeout::new(700, move || {
-                            link.send_message(BMsg::Suggest(r))
-                        }),
-                    );
-                }
                 self.fields_of(&role).insert(key, value);
             }
             Msg::OpenWork(parent) => {
@@ -191,36 +179,9 @@ impl Bench {
             Msg::OpenInjectDetail(key) => {
                 player_view::open_inject_detail(self.fields_of(&role), key)
             }
-            Msg::StageActions(commands) => player_view::stage(self.fields_of(&role), commands),
-            Msg::Unstage(index) => player_view::unstage(self.fields_of(&role), index),
             _ => {}
         }
     }
-    /// The automatic suggestions of `App`'s `Msg::Suggest`, from the fake.
-    fn suggest(&mut self, role: &str) {
-        self.timers.remove(role);
-        let fields = self.fields_of(role).clone();
-        let narrative = fields.get("work:narrative").cloned().unwrap_or_default();
-        if fields.get("work:open").map(String::as_str) != Some("true")
-            || narrative.trim().chars().count() < 20
-            || fields.get("work:sugg_for") == Some(&narrative)
-        {
-            return;
-        }
-        let body = json!({"narrative": narrative, "reply_to": fields.get("work:reply_to").and_then(|v| v.parse::<u64>().ok())});
-        let value = with_fake(|f| {
-            f.handle(
-                role,
-                &format!("/api/player/{role}/suggest-actions"),
-                Some(body),
-            )
-        })
-        .unwrap_or_else(|e| json!({"status": "ai_unavailable", "actions": [], "failure": e}));
-        let fields = self.fields_of(role);
-        fields.insert("work:sugg".into(), value.to_string());
-        fields.insert("work:sugg_for".into(), narrative);
-    }
-
     fn view_excon(&self, ctx: &Context<Self>, stat: &Value, master: &Value, state: &Value) -> Html {
         let action = ctx.link().callback(BMsg::Excon);
         let roles = list(&stat["roles"]).to_vec();
@@ -289,7 +250,7 @@ impl Component for Bench {
         bench.reset();
         bench
     }
-    fn update(&mut self, ctx: &Context<Self>, msg: BMsg) -> bool {
+    fn update(&mut self, _ctx: &Context<Self>, msg: BMsg) -> bool {
         match msg {
             BMsg::Tab(tab) => {
                 self.tab = tab;
@@ -301,10 +262,9 @@ impl Component for Bench {
                 with_fake(|f| f.lang = lang.clone());
                 save_lang(&lang);
             }
-            BMsg::Player(role, msg) => self.player_msg(ctx, role, msg),
+            BMsg::Player(role, msg) => self.player_msg(role, msg),
             BMsg::Excon(action) => self.request(fake::MASTER, action),
             BMsg::Changed => {}
-            BMsg::Suggest(role) => self.suggest(&role),
             BMsg::OpenSend(id) => self.send = id,
         }
         true

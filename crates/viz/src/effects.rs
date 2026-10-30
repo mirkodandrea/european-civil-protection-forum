@@ -332,7 +332,8 @@ pub fn water_drops(
         }
         let along = -PASS_HALF_M + 2.0 * PASS_HALF_M * (t / PASS_S);
         let p = [a.at[0] + a.dir.x * along, a.at[1] + a.dir.y * along];
-        let ground = height_at(s, a.at) * EXAGGERATION;
+        // Clear the terrain along the whole pass, not just at the target.
+        let ground = crate::frame::flight_floor(s, p, a.dir);
         let plane = to_bevy(s, p, 0.0).with_y(ground + a.alt);
         if let Some(Ok(mut tf)) = a.ghost.map(|g| ghosts.get_mut(g)) {
             tf.translation = plane;

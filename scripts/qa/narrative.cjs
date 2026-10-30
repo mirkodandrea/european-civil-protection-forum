@@ -43,7 +43,7 @@ const url = process.env.TTX_QA_URL || ('file://' + path.join(root, process.env.T
     await choose('mayor'); await lang(mayor, 'en');
     await mayor.locator('[data-view="map"]').click();
     await mayor.locator('[data-inject-row]').filter({ hasText: 'Support for evacuated families' }).click();
-    await mayor.locator('[data-reply-inject]').click();
+    await mayor.locator('[data-reply-direct]').click();
     const work = mayor.locator('.work-modal');
     await work.locator('#response-narrative').fill('Activate psychological support for families at the shelter.');
     // A narrated decision: explicit kind and its basis are required.

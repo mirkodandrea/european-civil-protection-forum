@@ -43,12 +43,6 @@ impl PlayerView {
             .cloned()
             .unwrap_or_else(|| default.into())
     }
-    pub fn staged(&self) -> Vec<Value> {
-        self.fields
-            .get("work:staged")
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or_default()
-    }
     pub fn messages(&self) -> &[Value] {
         list(&self.state["inbox"])
     }
@@ -79,14 +73,6 @@ impl PlayerView {
         let link = self.link.clone();
         Callback::from(move |i| link.emit(f(i)))
     }
-    /// A callback that sends any number of messages.
-    pub fn batch<I: 'static, M: IntoIterator<Item = Msg>>(
-        &self,
-        f: impl Fn(I) -> M + 'static,
-    ) -> Callback<I> {
-        let link = self.link.clone();
-        Callback::from(move |i| f(i).into_iter().for_each(|m| link.emit(m)))
-    }
 }
 
 /// Composer fields cleared once a response has been sent.
@@ -112,39 +98,6 @@ const SENT_KEYS: &[&str] = &[
     "work:to_players",
 ];
 
-pub fn set_staged(fields: &mut BTreeMap<String, String>, staged: Vec<Value>) {
-    if staged.is_empty() {
-        fields.remove("work:staged");
-    } else {
-        fields.insert("work:staged".into(), Value::Array(staged).to_string());
-    }
-}
-fn staged_of(fields: &BTreeMap<String, String>) -> Vec<Value> {
-    fields
-        .get("work:staged")
-        .and_then(|v| serde_json::from_str(v).ok())
-        .unwrap_or_default()
-}
-/// Set the response's simulation action (`Msg::StageActions`). A response
-/// carries at most one: a new one replaces the previous. An action makes the
-/// response a decision.
-pub fn stage(fields: &mut BTreeMap<String, String>, commands: Vec<Value>) {
-    let Some(last) = commands.into_iter().last() else { return };
-    set_staged(fields, vec![last]);
-    fields.insert("work:kind".into(), "decision".into());
-    // The form (or an AI suggestion) has been turned into a staged action.
-    for key in ["work:location", "work:destination"] {
-        fields.remove(key);
-    }
-}
-/// `Msg::Unstage`.
-pub fn unstage(fields: &mut BTreeMap<String, String>, index: usize) {
-    let mut staged = staged_of(fields);
-    if index < staged.len() {
-        staged.remove(index);
-    }
-    set_staged(fields, staged);
-}
 /// Open the response composer on message `parent` (`Msg::OpenWork`, parent resolved).
 /// Returns true when the draft was reset (another message than before).
 pub fn open_work(fields: &mut BTreeMap<String, String>, parent: String) -> bool {
@@ -244,24 +197,12 @@ mod tests {
     fn composer_fields_follow_the_workflow() {
         let mut f = BTreeMap::new();
         assert!(open_work(&mut f, "7".into()));
-        stage(
-            &mut f,
-            vec![
-                json!({"type":"IssueWarning","zone":"F4"}),
-                json!({"type":"CloseRoad","road":"r1"}),
-            ],
-        );
-        // One action per response: the last one wins, and it makes a decision.
-        assert_eq!(staged_of(&f), vec![json!({"type":"CloseRoad","road":"r1"})]);
-        assert_eq!(f.get("work:kind").map(String::as_str), Some("decision"));
+        f.insert("work:narrative".into(), "Evacuiamo F4".into());
         // Reopening the same message keeps the draft; another one resets it.
         assert!(!open_work(&mut f, "7".into()));
-        assert_eq!(staged_of(&f).len(), 1);
-        unstage(&mut f, 0);
-        assert!(staged_of(&f).is_empty());
-        stage(&mut f, vec![json!({"type":"IssueWarning","zone":"F4"})]);
+        assert_eq!(f.get("work:narrative").map(String::as_str), Some("Evacuiamo F4"));
         assert!(open_work(&mut f, "8".into()));
-        assert!(staged_of(&f).is_empty());
+        assert!(!f.contains_key("work:narrative"));
         response_sent(&mut f);
         assert_eq!(f.get("work:open").map(String::as_str), Some("false"));
         assert!(!f.contains_key("work:reply_to"));

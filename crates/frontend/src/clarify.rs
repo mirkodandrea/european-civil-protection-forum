@@ -46,6 +46,7 @@ impl crate::player_view::PlayerView {
         };
         let ready = !self.busy && can_act && !draft.trim().is_empty();
         html! {<div class="clarify-reply" data-clarification-thread={id.clone()}>
+            {self.reply_guidance(l, true)}
             <textarea aria-label={i18n::t(l,"thread_answer")} placeholder={i18n::t(l,"thread_answer")} value={draft.clone()} oninput={{let key=key.clone();self.cb(move |e|Msg::Field(key.clone(),api::input(e)))}}
                 onkeydown={{let send=send.clone();Callback::from(move |e:KeyboardEvent|{if ready&&e.key()=="Enter"&&(e.ctrl_key()||e.meta_key()){e.prevent_default();send.emit(());}})}}/>
             <div class="clarify-actions"><span class="clarify-links">{extra}<small class="muted">{i18n::t(l,"thread_hint")}</small></span>

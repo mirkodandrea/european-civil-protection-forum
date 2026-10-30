@@ -36,7 +36,7 @@ const benches={
     await excon.locator('[data-bench-send="I1"]').click();
     await excon.locator('[data-send]').click();await done(page,1);
     await openInject(page,'mayor');await done(page,2);
-    await mayor.locator('[data-reply-inject]').click();
+    await mayor.locator('[data-reply-direct]').click();
     await mayor.locator('#response-narrative').fill('Apriamo il centro operativo comunale e informiamo la popolazione.');
     await mayor.locator('#kind-decision').check();await mayor.locator('#basis-operational_judgment').check();
     await mayor.locator('[data-respond]').click();await done(page,3);
@@ -44,7 +44,7 @@ const benches={
   },
   async suggest(page){
     const police=col(page,'police');
-    await openInject(page,'police');await police.locator('[data-reply-inject]').click();await done(page,1);
+    await openInject(page,'police');await police.locator('[data-reply-direct]').click();await done(page,1);
     await police.locator('#response-narrative').fill('Chiudiamo la SP12 ai curiosi e avvisiamo la zona E3.');
     await police.locator('[data-add-suggestion="0"]').click();await done(page,2);
     await police.locator('#basis-operational_judgment').check();
@@ -75,7 +75,7 @@ const benches={
   },
   async conversation(page){
     const mayor=col(page,'mayor'),police=col(page,'police'),excon=col(page,'excon');
-    await openInject(page,'mayor');await mayor.locator('[data-new-conversation]').click();
+    await openInject(page,'mayor');await mayor.locator('[data-reply-conversation]').click();
     await mayor.locator('[data-conv-person="police"]').check();
     await mayor.locator('#conv-first').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
     await mayor.locator('[data-create-conversation]').click();await done(page,1);
@@ -89,6 +89,10 @@ const benches={
     await mayor.locator('[data-respond]').click();await done(page,3);
     await openResponse(page,'mayor');
     await excon.locator('[data-linked-conversation]').first().waitFor();
+    // The response opens the conversation it came from in the viewer.
+    await excon.locator('.response-dialog [data-inspect-conversation]').first().click();
+    await excon.locator('.conv-viewer [data-conv-message]').first().waitFor();
+    await excon.locator('[data-close-conv-viewer]').click();
     await excon.locator('[data-approve]').click();
   },
   async decide(page){
