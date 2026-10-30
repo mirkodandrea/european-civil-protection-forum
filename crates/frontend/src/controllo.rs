@@ -336,6 +336,9 @@ pub struct ModalProps {
     pub map: Option<Html>,
     #[prop_or_default]
     pub extra_actions: Html,
+    /// Stay open after a successful apply (the dialog shows its own result).
+    #[prop_or_default]
+    pub keep_open: bool,
     #[prop_or_default]
     pub children: Html,
 }
@@ -353,10 +356,10 @@ pub fn modal(p: &ModalProps) -> Html {
         });
     }
     {
-        let (submitted, onclose, error) = (submitted.clone(), p.onclose.clone(), p.error.clone());
+        let (submitted, onclose, error, keep_open) = (submitted.clone(), p.onclose.clone(), p.error.clone(), p.keep_open);
         use_effect_with(p.done, move |done| {
             if let Some(at) = *submitted {
-                if *done > at && error.is_empty() {
+                if *done > at && error.is_empty() && !keep_open {
                     onclose.emit(());
                 }
             }
@@ -812,10 +815,37 @@ fn with_neighbours(stat: &Value, names: &[String]) -> BTreeSet<String> {
     }
     out
 }
+/// Zones a reveal of `selected` would add to what the role already knows;
+/// the others only refresh their snapshot.
+pub(crate) fn new_zones(selected: &BTreeSet<String>, known: &[String]) -> Vec<String> {
+    selected.iter().filter(|z| !known.contains(z)).cloned().collect()
+}
+
+async fn master_get(path: &str) -> Result<Value, String> {
+    #[cfg(feature = "standalone")]
+    let token = "master".to_string();
+    #[cfg(not(feature = "standalone"))]
+    let token = api::token();
+    api::request(&token, path, None).await
+}
+
+/// "View as role": the role's territory and map as its player receives them.
+#[derive(Clone, PartialEq, Default)]
+struct RoleView {
+    role: String,
+    stat: Value,
+    view: Value,
+    language: String,
+    clock: String,
+    error: String,
+}
+
 #[function_component(KnowledgeModal)]
 pub fn knowledge_modal(p: &MapToolProps) -> Html {
     let c = &p.common;
     let role = use_state(String::new);
+    let view_as = use_state(|| false);
+    let role_view = use_state(RoleView::default);
     let source = use_state(|| ex("Rapporto EXCON").to_string());
     let layers = use_state(|| LAYERS.iter().map(|l| l.0.to_string()).collect::<BTreeSet<_>>());
     let zones = use_state(BTreeSet::<String>::new);
@@ -838,17 +868,88 @@ pub fn knowledge_modal(p: &MapToolProps) -> Html {
         let zones = zones.clone();
         html! {<button type="button" onclick={Callback::from(move |_| zones.set(set.clone()))}>{ex(label)}</button>}
     };
+    // The role's own map, fetched while "view as" is open and again whenever
+    // its knowledge changes (a reveal), an action completes or a minute passes.
+    {
+        let role_view = role_view.clone();
+        let stamp = c.master["role_knowledge"][role_id.as_str()].to_string();
+        let minute = c.state["turn_window"]["now_s"].as_i64().unwrap_or(0) / 60;
+        use_effect_with((role_id.clone(), *view_as, c.done, stamp, minute), move |(role, open, ..)| {
+            if *open && !role.is_empty() {
+                let (role, role_view) = (role.clone(), role_view.clone());
+                wasm_bindgen_futures::spawn_local(async move {
+                    let current = (*role_view).clone();
+                    let stat = if current.role == role && !current.stat.is_null() {
+                        Ok(current.stat.clone())
+                    } else {
+                        master_get(&format!("/api/master/player-static/{}", api::encode(&role))).await
+                    };
+                    let map = master_get(&format!("/api/master/player-map/{}", api::encode(&role))).await;
+                    role_view.set(match (stat, map) {
+                        (Ok(stat), Ok(m)) => RoleView {
+                            role,
+                            stat,
+                            view: crate::map::player_view(&m["map"], &m["deployments"]),
+                            language: text(&m["language"]).to_string(),
+                            clock: text(&m["clock"]).to_string(),
+                            error: String::new(),
+                        },
+                        (Err(e), _) | (_, Err(e)) => RoleView { role, error: e, ..Default::default() },
+                    });
+                });
+            }
+        });
+    }
+    // In "view as" the dialog stays open after a reveal: the selection is
+    // cleared and the role's map shows what it now knows.
+    {
+        let (zones, submitted_at) = (zones.clone(), c.done);
+        let (view_as_open, error_empty) = (*view_as, c.error.is_empty());
+        use_effect_with(submitted_at, move |_| {
+            if view_as_open && error_empty {
+                zones.set(BTreeSet::new());
+            }
+        });
+    }
     let ok = !zones.is_empty() && !layers.is_empty() && !source.trim().is_empty() && !role_id.is_empty();
     let onapply = {
         let (cb, role_id, source, zones, layers) = (c.action.clone(), role_id.clone(), source.clone(), zones.clone(), layers.clone());
         Callback::from(move |_| cb.emit(Action::post("/api/master/knowledge", json!({"role":role_id,"source":source.trim(),"zones":*zones,"layers":*layers}))))
+    };
+    let role_name = roles.iter().find(|r| text(&r["id"]) == role_id).map(|r| text(&r["name"]).to_string()).unwrap_or_else(|| role_id.clone());
+    let selected: Vec<String> = zones.iter().cloned().collect();
+    let adds = new_zones(&zones, &known);
+    let tabs = {
+        let tab = |on: bool, id: &'static str, label: String| {
+            let view_as = view_as.clone();
+            html! {<button type="button" id={id} aria-pressed={(*view_as == on).to_string()} onclick={Callback::from(move |_| view_as.set(on))}>{label}</button>}
+        };
+        html! {<div class="endpoint-picker view-as-tabs" role="group">
+            {tab(false, "view-excon", ex("Selezione EXCON").to_string())}
+            {tab(true, "view-as", format!("{} {}", ex("Vedi come"), role_name))}
+        </div>}
+    };
+    let map = if *view_as {
+        let rv = &*role_view;
+        let body = if !rv.error.is_empty() {
+            html! {<p class="error" role="alert">{rv.error.clone()}</p>}
+        } else if rv.role != role_id || rv.stat.is_null() {
+            html! {<p class="muted">{ex("Caricamento della mappa del ruolo…")}</p>}
+        } else {
+            html! {<SituationMap key={rv.role.clone()} id="view-as-map" stat={rv.stat.clone()} view={rv.view.clone()} simple=true onclick={onmap.clone()} selected_zones={selected.clone()} lang={rv.language.clone()}/>}
+        };
+        html! {<>{tabs}
+            <p id="view-as-caption" class="muted">{crate::exfmt!("La mappa di {} com’è ora sul suo schermo ({}). Velato: ciò che il ruolo non conosce. Riquadri verdi bordati di bianco: zone selezionate, anteprima di ciò che la rivelazione aggiungerebbe.", "{}'s map as it is now on their screen ({}). Veiled: what the role does not know. Green boxes outlined in white: selected zones, a preview of what the reveal would add.", role_name, rv.clock)}</p>{body}
+        </>}
+    } else {
+        html! {<>{tabs}{pick_map(&c.stat, &c.state, onmap, None, selected.clone(), known.clone())}</>}
     };
     let all = {
         let (cb, role_id, source) = (c.action.clone(), role_id.clone(), source.clone());
         Callback::from(move |_| cb.emit(Action::post("/api/master/knowledge", json!({"role":role_id,"source":source.trim(),"current_perimeter":true}))))
     };
     html! {<Modal title={tool_label("knowledge")} onclose={c.onclose.clone()} {onapply} apply_label={ex("Rivela le zone selezionate")} apply_disabled={!ok} busy={c.busy} done={c.done} error={c.error.clone()}
-        map={pick_map(&c.stat, &c.state, onmap, None, zones.iter().cloned().collect(), known.clone())}
+        keep_open={*view_as} {map}
         extra_actions={html!{<button type="button" disabled={c.busy || source.trim().is_empty() || role_id.is_empty()} onclick={all}>{ex("Pubblica l’intero perimetro")}</button>}}>
         <p class="muted">{ex("Clicca le zone da rivelare: il clic le aggiunge o le toglie. Il ruolo conosce solo ciò che pubblichi, come fotografia al momento della consegna.")}</p>
         <label>{ex("Ruolo")}<select id="report-role" onchange={{let role=role.clone();Callback::from(move|e|role.set(api::select(e)))}}>{for roles.iter().map(|r|html!{<option value={text(&r["id"]).to_string()} selected={text(&r["id"])==role_id}>{text(&r["name"])}</option>})}</select></label>
@@ -856,6 +957,7 @@ pub fn knowledge_modal(p: &MapToolProps) -> Html {
         <fieldset><legend>{ex("Livelli da rivelare")}</legend>{for LAYERS.iter().map(|(id,label)|{let id=id.to_string();let layers=layers.clone();let checked=layers.contains(&id);html!{<label class="mt-check"><input type="checkbox" {checked} onchange={Callback::from(move |_|{let mut next=(*layers).clone();if !next.remove(&id){next.insert(id.clone());}layers.set(next);})}/>{ex(label)}</label>}})}</fieldset>
         <div class="row">{preset("Nessuna", BTreeSet::new())}{preset("Zone in fiamme", burning.iter().cloned().collect())}{preset("In fiamme + adiacenti", with_neighbours(&c.stat,&burning))}{preset("Tutta la mappa", zone_names(&c.stat).into_iter().collect())}</div>
         <p>{if zones.is_empty(){ex("Nessuna zona selezionata. Clicca la mappa.").to_string()}else{format!("{} {}: {}", zones.len(), ex("zone selezionate"), zones.iter().cloned().collect::<Vec<_>>().join(", "))}}</p>
+        if !zones.is_empty() {<p id="reveal-adds" class="muted">{if adds.is_empty() {ex("Tutte già note al ruolo: la rivelazione ne aggiorna solo la fotografia.").to_string()} else {crate::exfmt!("Nuove per il ruolo: {} ({}).", "New to the role: {} ({}).", adds.len(), adds.join(", "))}}</p>}
         <label>{ex("Fonte del rapporto")}<input id="report-source" value={(*source).clone()} oninput={{let source=source.clone();Callback::from(move|e|source.set(api::input(e)))}}/></label>
     </Modal>}
 }
@@ -1046,6 +1148,13 @@ mod tests {
     use super::*;
     fn click(x: f64, y: f64, zone: &str) -> Value {
         json!({"x": x, "y": y, "zone": zone})
+    }
+    #[test]
+    fn reveal_preview_lists_only_zones_new_to_the_role() {
+        let selected: BTreeSet<String> = ["F4", "G5", "H6"].iter().map(|z| z.to_string()).collect();
+        assert_eq!(new_zones(&selected, &["G5".to_string()]), vec!["F4", "H6"]);
+        assert!(new_zones(&selected, &["F4".into(), "G5".into(), "H6".into()]).is_empty());
+        assert!(new_zones(&BTreeSet::new(), &[]).is_empty());
     }
     #[test]
     fn fire_line_needs_two_points_and_has_api_shape() {

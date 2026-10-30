@@ -133,6 +133,17 @@ pub struct MapProps {
     #[prop_or_default]
     pub focus: Option<(f64, f64, u32)>,
 }
+/// What a player's situation map draws: the role's `map` from the server
+/// (fog of war, reports, estimates) with its own missions. The player page and
+/// EXCON's "view as role" build it the same way.
+pub fn player_view(map: &Value, deployments: &Value) -> Value {
+    let mut view = map.clone();
+    if view.is_object() {
+        view["deployments"] = deployments.clone();
+    }
+    view
+}
+
 #[function_component(SituationMap)]
 pub fn situation_map(props: &MapProps) -> Html {
     let canvas = use_node_ref();
@@ -1496,6 +1507,12 @@ fn draw(
                 let (x, y) = (col as f64 * zsize, row as f64 * zsize);
                 ctx.set_fill_style_str(fill);
                 ctx.fill_rect(x, y, zsize, zsize);
+                if !dash {
+                    // Light halo: the selection stays readable over a fogged (dark) player map.
+                    ctx.set_stroke_style_str("rgba(255,255,255,.85)");
+                    ctx.set_line_width(7. * s);
+                    ctx.stroke_rect(x + 2. * s, y + 2. * s, zsize - 4. * s, zsize - 4. * s);
+                }
                 ctx.set_stroke_style_str("#126752");
                 ctx.set_line_width(3. * s);
                 if dash {
@@ -2057,6 +2074,18 @@ fn scale_bar(
 #[cfg(test)]
 mod label_tests {
     use super::*;
+
+    #[test]
+    fn player_view_is_the_role_map_with_its_missions() {
+        let map = json!({"known_zones":["G5"],"cells":[{"row":1,"col":2,"state":1}]});
+        let deployments = json!([{"task":{"id":3}}]);
+        let v = player_view(&map, &deployments);
+        assert_eq!(v["known_zones"], json!(["G5"]));
+        assert_eq!(v["deployments"], deployments);
+        // Still fogged: a player view is never an authoritative one.
+        assert!(fog_zones(&json!({"zones":{"cols":8,"rows":8}}), &v).is_some());
+        assert_eq!(player_view(&Value::Null, &deployments), Value::Null);
+    }
 
     #[test]
     fn labels_are_compact_at_overview_and_complete_when_zoomed() {

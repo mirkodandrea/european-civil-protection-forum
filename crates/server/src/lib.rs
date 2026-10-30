@@ -295,6 +295,8 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
                 get_access_links,
                 post_knowledge,
                 post_knowledge_refresh,
+                get_master_player_map,
+                get_master_player_static,
                 forecast::compute,
                 forecast::publish,
                 situation::get_impact,
@@ -791,8 +793,9 @@ async fn get_attachment(principal: Principal, s: AppState, id: u64) -> ApiResult
     })))
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
-async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
+/// The display texts a player of `role` reads (their language, plus the titles
+/// and senders of the injects they received). Empty for an unknown role.
+async fn player_display_map(s: &AppState, role: &str) -> std::collections::BTreeMap<String, String> {
     let (language, extra) = {
         let ex = s.lock();
         let extra = ex
@@ -801,12 +804,63 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
             .filter(|m| m.kind == exercise::MsgKind::Inject)
             .flat_map(|m| [m.title.clone().unwrap_or_default(), m.from.clone()])
             .collect::<Vec<_>>();
-        (ex.players.get(&role).map(|p| p.language.clone()), extra)
+        (ex.players.get(role).map(|p| p.language.clone()), extra)
     };
-    let map = match language {
-        Some(language) => display_map(&s, &language, extra, true).await,
+    match language {
+        Some(language) => display_map(s, &language, extra, true).await,
         None => Default::default(),
-    };
+    }
+}
+
+/// The role's own missions as its map draws them.
+fn player_deployments(ex: &Exercise, role: &str) -> Vec<Value> {
+    ex.world.d.tasks.iter().filter(|t| t.role == role).map(|t| json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect()
+}
+
+/// "View as role" for EXCON: the map exactly as the player of `role` receives
+/// it in `GET /api/player/<role>` (fog of war, own missions, player language).
+/// Read-only, master only.
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/player-map/<role>"))]
+async fn get_master_player_map(principal: Principal, s: AppState, role: String) -> ApiResult {
+    if !matches!(principal, Principal::Master) {
+        return Err(bad("EXCON only"));
+    }
+    let map = player_display_map(&s, &role).await;
+    let ex = s.lock();
+    let player = ex
+        .players
+        .get(&role)
+        .cloned()
+        .ok_or_else(|| bad(format!("unknown role {role}")))?;
+    let mut view = json!({
+        "role": role,
+        "language": player.language,
+        "time_s": ex.world.time_s(),
+        "clock": ex.world.clock(),
+        "map": ex.player_map(&role)?,
+        "deployments": player_deployments(&ex, &role),
+    });
+    scenario::glossary::localize_value(&mut view, &map);
+    scrub_excon(&ex, &mut view, &player.language, &role);
+    Ok(Json(view))
+}
+
+/// The static territory the player of `role` receives from `GET /api/static`
+/// (their place names and language). Master only, for "view as role".
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/player-static/<role>"))]
+async fn get_master_player_static(principal: Principal, s: AppState, role: String) -> ApiResult {
+    if !matches!(principal, Principal::Master) {
+        return Err(bad("EXCON only"));
+    }
+    if !s.lock().players.contains_key(&role) {
+        return Err(bad(format!("unknown role {role}")));
+    }
+    get_static(s, Principal::Player { role }).await
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/player/<role>"))]
+async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResult {
+    let map = player_display_map(&s, &role).await;
     let ex = s.lock();
     let player = ex
         .players
@@ -857,7 +911,7 @@ async fn get_player(_principal: Principal, s: AppState, role: String) -> ApiResu
         "turn_summaries": ex.player_turn_summaries(&role),
         "resources": ex.world.d.pools.get(&role),
         "resource_accounting": ex.resource_accounting(Some(&role))[&role],
-        "deployments":ex.world.d.tasks.iter().filter(|t|t.role==role).map(|t|json!({"task":t,"position_m":t.position(ex.world.time_s()),"active_qty":ex.world.task_active_qty(t)})).collect::<Vec<_>>(),
+        "deployments":player_deployments(&ex, &role),
         "allocations": ex.world.d.allocations.iter().filter(|a| a.role == role).collect::<Vec<_>>(),
         "proposals": proposals,
         "clarification_threads": ex.player_clarification_threads(&role).into_iter().chain(ex.player_review_threads(&role)).collect::<Vec<_>>(),
