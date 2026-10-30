@@ -2582,6 +2582,8 @@ impl Exercise {
             facts.push(format!("Note from {who}: {n}"));
         }
         self.proposal_mut(pid)?.master_note = note;
+        // Decided directly: its AI review (if any) is over too.
+        self.close_review_after_decision(pid);
         let facts_en = facts.join("\n");
         self.record("proposal_decided", MASTER, json!({"proposal": pid, "inject_id": p.inject_id, "review": review, "decision": self.proposal(pid).unwrap().decision, "facts": facts_en}));
         Ok(DecisionOutcome {
