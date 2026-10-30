@@ -129,6 +129,10 @@ const DOS = 'Mandiamo due squadre AIB sul lato nord di F4. ' + WARN;
     await work.locator('[data-to="players"]').check();
     await work.locator('[data-conv-person="fire_commander"]').check();
     await work.locator('#response-narrative').fill('Serve evacuare F4 adesso?');
+    // Starting a conversation needs its reason (basis + rationale).
+    await work.locator('#basis-operational_judgment').click();
+    await work.locator('[data-rationale]').fill('Prima di decidere sull’evacuazione serve il parere del DOS.');
+    await work.locator('[data-send-conversation]:not([disabled])').waitFor();
     await work.locator('[data-send-conversation]').click();
     await openInject(fire, 'fire_commander');
     await fire.locator('[data-conv-row]').first().click();
