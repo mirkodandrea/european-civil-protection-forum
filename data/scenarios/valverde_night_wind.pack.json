@@ -1,40 +1,52 @@
 {
   "id": "valverde_night_wind",
-  "name": "Valverde — notte con vento forte",
-  "description": "Stesso territorio di Valverde, ma l'incendio parte di notte dal bordo ovest del bosco, con vento forte da ovest e vegetazione molto secca. Meno ore di luce, allerta più tardiva.",
+  "name": "Valverde — night with strong wind",
+  "description": "Same Valverde territory, but the fire starts at night on the west edge of the forest, with a strong westerly wind and very dry vegetation. Fewer daylight hours, later alert.",
   "base": "valverde_factory",
   "edits": {
     "start_clock_s": 9000,
-    "weather": { "wind_dir_deg": 270.0, "wind_speed_kmh": 55.0, "moisture_pct": 3.0 },
-    
+    "weather": {
+      "wind_dir_deg": 270.0,
+      "wind_speed_kmh": 55.0,
+      "moisture_pct": 3.0
+    },
     "msel": [
       {
         "id": "N-01",
         "turn": 1,
         "title": "Night call: flames on the west edge of the forest",
         "sender": "112 Dispatch",
-        "recipients": ["all"],
+        "recipients": [
+          "all"
+        ],
         "text": "02:30 – A night driver reports flames on the west edge of the North Forest, about 700 m west of Pineta. Strong wind from the west at 55 km/h, very dry vegetation. Visibility is poor and the glow is visible from the village.",
         "objective": "Initial situational awareness at night; limited information",
         "event": "Night fire",
         "actions": [
           {
             "id": "N-A1",
-            "title": "Innesco sul bordo ovest del bosco",
+            "title": "Ignition on the west edge of the forest",
             "offset_s": 0,
-            "command": { "type": "Ignite", "at": { "x": 2200.0, "y": 2500.0 }, "radius_m": 100.0 },
-            "note": "Il fuoco parte alle 02:30, come segnalato dall'inject N-01. Lascia spuntata «Esegui» per far partire l'incendio."
+            "command": {
+              "type": "Ignite",
+              "at": {
+                "x": 2200.0,
+                "y": 2500.0
+              },
+              "radius_m": 100.0
+            },
+            "note": "The fire starts at 02:30, as reported by inject N-01. Keep this action selected when sending the inject to start the fire."
           },
           {
             "id": "N-R1",
-            "title": "Stima notturna (112)",
+            "title": "Night-time estimate (112)",
             "reveal": {
               "kind": "approximate",
               "position_error_m": 600.0,
               "area_error_frac": 0.5
             },
             "offset_s": 0,
-            "note": "Di notte le chiamate danno solo una posizione e un'estensione molto incerte."
+            "note": "At night, calls give only a very uncertain position and extent."
           }
         ]
       },
@@ -43,7 +55,9 @@
         "turn": 1,
         "title": "Residents asleep",
         "sender": "Pineta Primary School",
-        "recipients": ["mayor"],
+        "recipients": [
+          "mayor"
+        ],
         "text": "The caretaker of the Pineta Primary School sees the glow from his flat. The school is empty, but several families nearby are asleep and no one has been warned.",
         "objective": "Warning a sleeping population; choosing between warning and evacuation",
         "event": "Night fire"
@@ -53,12 +67,28 @@
         "turn": 2,
         "title": "Wind stronger than forecast",
         "sender": "Weather service",
-        "recipients": ["fire_commander", "regional_cp"],
+        "recipients": [
+          "fire_commander",
+          "regional_cp"
+        ],
         "text": "The wind is now gusting to 70 km/h from the west. Embers are expected to carry well ahead of the front.",
         "objective": "Re-planning when the weather worsens",
         "event": "Night fire"
       }
-    ]
+    ],
+    "translations": {
+      "it": {
+        "Valverde — night with strong wind": "Valverde — notte con vento forte",
+        "Same Valverde territory, but the fire starts at night on the west edge of the forest, with a strong westerly wind and very dry vegetation. Fewer daylight hours, later alert.": "Stesso territorio di Valverde, ma l'incendio parte di notte dal bordo ovest del bosco, con vento forte da ovest e vegetazione molto secca. Meno ore di luce, allerta più tardiva.",
+        "Ignition on the west edge of the forest": "Innesco sul bordo ovest del bosco",
+        "The fire starts at 02:30, as reported by inject N-01. Keep this action selected when sending the inject to start the fire.": "Il fuoco parte alle 02:30, come segnalato dall'inject N-01. Lascia spuntata «Esegui» per far partire l'incendio.",
+        "Night-time estimate (112)": "Stima notturna (112)",
+        "At night, calls give only a very uncertain position and extent.": "Di notte le chiamate danno solo una posizione e un'estensione molto incerte."
+      }
+    }
   },
-  "run": { "realizations": 32, "cutoff": 0.5 }
+  "run": {
+    "realizations": 32,
+    "cutoff": 0.5
+  }
 }

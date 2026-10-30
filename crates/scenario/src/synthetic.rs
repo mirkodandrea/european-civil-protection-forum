@@ -657,25 +657,25 @@ fn msel() -> Vec<InjectTemplate> {
     ];
     msel[0].actions.push(InjectAction {
         id: "A-01".into(),
-        title: "Innesco Pine Hill".into(),
+        title: "Pine Hill ignition".into(),
         command: serde_json::json!({"type": "Ignite", "at": {"x": IGNITION[0], "y": IGNITION[1]}, "radius_m": IGNITION_RADIUS_M}),
         reveal: None,
         offset_s: 0,
-        note: "Il fuoco parte a Pine Hill alle 13:00, come segnalato dall'inject I-01.".into(),
+        note: "The fire starts on Pine Hill at 13:00, as reported by inject I-01.".into(),
     });
     // Fog of war: the 112 call gives an unverified estimate; the fire
     // operations room reports the zones in and around the fire.
     msel[0].actions.push(InjectAction {
         id: "A-02".into(),
-        title: "Stima dell'incendio (112)".into(),
+        title: "Fire estimate (112)".into(),
         command: serde_json::Value::Null,
         reveal: Some(RevealSpec::Approximate { position_error_m: 400.0, area_error_frac: 0.3, source: None }),
         offset_s: 0,
-        note: "I ruoli vedono sulla mappa una stima non verificata della posizione e dell'estensione.".into(),
+        note: "Roles see an unverified estimate of the position and extent on the map.".into(),
     });
     msel[2].actions.push(InjectAction {
         id: "A-03".into(),
-        title: "Mappa del fuoco (sala operativa)".into(),
+        title: "Fire map (operations room)".into(),
         command: serde_json::Value::Null,
         reveal: Some(RevealSpec::Exact {
             zones: RevealZones::Rule(ZoneRule::BurningAndAdjacent),
@@ -683,7 +683,7 @@ fn msel() -> Vec<InjectTemplate> {
             source: None,
         }),
         offset_s: 0,
-        note: "Il comandante vede il fuoco e le strade nelle zone interessate.".into(),
+        note: "The commander sees the fire and the roads in the affected zones.".into(),
     });
     let exact = |id: &str, title: &str, layers: &[&str], note: &str| InjectAction {
         id: id.into(),
@@ -697,21 +697,21 @@ fn msel() -> Vec<InjectTemplate> {
         offset_s: 0,
         note: note.into(),
     };
-    msel[4].actions.push(exact("A-05", "Strade viste dalla polizia", &["roads"],
-        "Sindaco e comandante vedono lo stato delle strade intorno al fuoco."));
-    msel[5].actions.push(exact("A-06", "Fronte verso il distributore", &["fire", "buildings"],
-        "Il fuoco e gli edifici minacciati nelle zone interessate."));
+    msel[4].actions.push(exact("A-05", "Roads seen by the police", &["roads"],
+        "The mayor and the commander see the state of the roads around the fire."));
+    msel[5].actions.push(exact("A-06", "Front towards the fuel station", &["fire", "buildings"],
+        "The fire and the threatened buildings in the affected zones."));
     // The ERCC sees the fire from satellite products: position and size only.
     msel[6].actions.push(InjectAction {
         id: "A-07".into(),
-        title: "Stima satellitare (ERCC)".into(),
+        title: "Satellite estimate (ERCC)".into(),
         command: serde_json::Value::Null,
         reveal: Some(RevealSpec::Approximate { position_error_m: 200.0, area_error_frac: 0.15, source: None }),
         offset_s: 0,
-        note: "La Regione vede una stima da prodotti satellitari.".into(),
+        note: "The region sees an estimate from satellite products.".into(),
     });
-    msel[7].actions.push(exact("A-08", "Quadro operativo", &["fire", "lines", "units"],
-        "Fuoco, linee e squadre nelle zone interessate."));
+    msel[7].actions.push(exact("A-08", "Operational picture", &["fire", "lines", "units"],
+        "Fire, lines and crews in the affected zones."));
     msel
 }
 

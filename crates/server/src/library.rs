@@ -85,15 +85,15 @@ fn scenarios(s: &AppState) -> Result<Arc<Scenarios>, ApiError> {
 pub fn problems(sc: &Scenarios, pack: &ScenarioPack) -> Vec<String> {
     let mut out = Vec::new();
     if !scenario::pack::valid_id(&pack.id) {
-        out.push("Identificativo scenario non valido (a-z, 0-9, _ -, max 64)".to_string());
+        out.push("Invalid scenario identifier (a-z, 0-9, _ -, max 64)".to_string());
     }
     if pack.name.trim().is_empty() {
-        out.push("Il nome dello scenario è obbligatorio".into());
+        out.push("The scenario name is required".into());
     }
     let base = match (sc.base)(&pack.base) {
         Ok(b) => b,
         Err(e) => {
-            out.push(format!("Territorio «{}» non disponibile: {e}", pack.base));
+            out.push(format!("Territory «{}» not available: {e}", pack.base));
             return out;
         }
     };
@@ -182,7 +182,7 @@ pub(crate) async fn post_save(_principal: Principal, s: AppState, b: Json<PackBo
     let sc = scenarios(&s)?;
     let pack = b.pack;
     if sc.library.list().iter().any(|p| p.id == pack.id && p.builtin) {
-        return Err(bad("questo scenario è incluso nell’app e non si sovrascrive: duplicalo con un altro identificativo"));
+        return Err(bad("this scenario is built into the app and cannot be overwritten: duplicate it with another identifier"));
     }
     let found = problems(&sc, &pack);
     if !found.is_empty() {
@@ -250,10 +250,10 @@ pub(crate) async fn post_delete_scenario(_principal: Principal, s: AppState, b: 
     let Json(b) = b;
     let sc = scenarios(&s)?;
     if sc.library.list().iter().any(|p| p.id == b.id && p.builtin) {
-        return Err(bad("uno scenario incluso nell’app non si elimina"));
+        return Err(bad("a scenario built into the app cannot be deleted"));
     }
     if sc.running_pack().is_some_and(|p| p.id == b.id) {
-        return Err(bad("lo scenario è in uso: avviane un altro prima di eliminarlo"));
+        return Err(bad("the scenario is in use: start another one before deleting it"));
     }
     sc.library.delete(&b.id).map_err(bad)?;
     Ok(Json(json!({"deleted": b.id, "packs": sc.library.list()})))
@@ -380,10 +380,10 @@ impl ScenarioLibrary for FileLibrary {
 
     fn save(&self, pack: &ScenarioPack) -> Result<(), String> {
         if !scenario::pack::valid_id(&pack.id) {
-            return Err("identificativo non valido".into());
+            return Err("invalid identifier".into());
         }
         if self.bases().contains(&pack.id) {
-            return Err(format!("«{}» è il nome di un territorio: scegli un altro identificativo", pack.id));
+            return Err(format!("«{}» is the name of a territory: choose another identifier", pack.id));
         }
         let text = serde_json::to_string_pretty(pack).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
@@ -395,7 +395,7 @@ impl ScenarioLibrary for FileLibrary {
 
     fn delete(&self, id: &str) -> Result<(), String> {
         if !scenario::pack::valid_id(id) {
-            return Err("identificativo non valido".into());
+            return Err("invalid identifier".into());
         }
         std::fs::remove_file(self.pack_path(id)).map_err(|e| e.to_string())?;
         let mut chosen = self.chosen.lock().unwrap_or_else(|p| p.into_inner());
@@ -497,7 +497,7 @@ impl ScenarioLibrary for MemoryLibrary {
     }
     fn save(&self, pack: &ScenarioPack) -> Result<(), String> {
         if self.bases.contains(&pack.id) {
-            return Err(format!("«{}» è il nome di un territorio", pack.id));
+            return Err(format!("«{}» is the name of a territory", pack.id));
         }
         self.packs
             .lock()

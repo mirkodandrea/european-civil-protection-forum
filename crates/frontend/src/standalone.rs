@@ -1,4 +1,5 @@
 //! One document, one in-memory Exercise, multiple authorized views.
+use crate::i18n::ex;
 use crate::{api, App};
 use gloo_timers::callback::Interval;
 use std::cell::RefCell;
@@ -48,7 +49,7 @@ fn parse_providers(list: &str) -> Vec<String> {
 pub fn runtime() -> Result<server::AppState, String> {
     RUNTIME
         .with(|r| r.borrow().clone())
-        .ok_or_else(|| "Esercitazione non inizializzata".into())
+        .ok_or_else(|| ex("Esercitazione non inizializzata").into())
 }
 /// Make `state` the exercise every view of this page talks to (the simulator bench).
 pub fn install(state: server::AppState) {
@@ -150,6 +151,8 @@ fn launcher(props: &LauncherProps) -> Html {
             .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
             .unwrap_or_else(|| "it".into())
     });
+    // The launcher reads in the EXCON language chosen here.
+    crate::i18n_excon::set_ui_lang(&excon_lang);
     let key = use_state(String::new);
     let key_notice = use_state(|| {
         if saved_key().is_some() {
@@ -159,7 +162,6 @@ fn launcher(props: &LauncherProps) -> Html {
         } else {
             "Nessuna chiave · AI disattivata, flusso manuale EXCON"
         }
-        .to_string()
     });
     let notice = use_state(crate::store::take_notice);
     let error = use_state(String::new);
@@ -189,8 +191,7 @@ fn launcher(props: &LauncherProps) -> Html {
                     (Err(()), _) => "Archiviazione browser non disponibile",
                     (Ok(()), true) => "Chiave rimossa · AI disattivata",
                     (Ok(()), false) => "Chiave salvata nel browser",
-                }
-                .into(),
+                },
             );
             key.set(String::new());
         })
@@ -200,45 +201,45 @@ fn launcher(props: &LauncherProps) -> Html {
         Callback::from(move |_| {
             let _ = persist_key("");
             key.set(String::new());
-            notice.set("Chiave rimossa · AI disattivata".into());
+            notice.set("Chiave rimossa · AI disattivata");
         })
     };
     html! {
       <div class="standalone launcher">
-        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{"Scegli lo scenario e le opzioni, poi avvia."}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span><span class="pill build-version" id="build-version" title="Commit · build · data di build">{build_label()}</span></header>
-        if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
+        <header class="standalone-header"><div><div class="eyebrow">{ex("PPRD East 4 · laboratorio locale")}</div><h1>{ex("Esercitazione nel browser")}</h1><p>{ex("Scegli lo scenario e le opzioni, poi avvia.")}</p></div><span class="pill">{ex("WebAssembly · nessun backend")}</span><span class="pill build-version" id="build-version" title={ex("Commit · build · data di build")}>{build_label()}</span></header>
+        if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{ex("Chiudi")}</button></p>}
         if !error.is_empty() {<p class="error" role="alert">{&*error}</p>}
         <main class="page launcher-page">
           if let Some((name, steps)) = &*saved {
-            <section class="card" id="launch-resume"><h2>{"Sessione salvata"}</h2>
-              <p>{format!("{name} · {steps} passi registrati")}</p>
-              <button id="resume-session" class="primary" onclick={resume}>{"Riprendi sessione"}</button>
+            <section class="card" id="launch-resume"><h2>{ex("Sessione salvata")}</h2>
+              <p>{crate::exfmt!("{} · {} passi registrati", "{} · {} steps recorded", name, steps)}</p>
+              <button id="resume-session" class="primary" onclick={resume}>{ex("Riprendi sessione")}</button>
             </section>
           }
-          <section class="card" id="launch-scenario"><h2>{"Nuova esercitazione"}</h2>
+          <section class="card" id="launch-scenario"><h2>{ex("Nuova esercitazione")}</h2>
             <div class="launcher-scenarios" role="radiogroup" aria-label="Scenario">{for packs.iter().map(|p| {
               let id = p.id.clone();
               html!{<label class={classes!("launcher-scenario",(*selected==p.id).then_some("active"))}><input type="radio" name="launch-scenario" value={p.id.clone()} checked={*selected==p.id} onchange={{let selected=selected.clone();Callback::from(move |_|selected.set(id.clone()))}}/><span><strong>{&p.name}</strong>if !p.description.is_empty(){<br/><span class="muted">{&p.description}</span>}</span></label>}
             })}</div>
-            <p class="muted">{"Ogni partecipante sceglie la propria lingua nella scheda del ruolo; quella dello scenario è proposta."}if saved.is_some(){{" La sessione salvata verrà eliminata."}}</p>
-            <button id="start-session" class={classes!(saved.is_none().then_some("primary"))} onclick={start}>{"Avvia nuova esercitazione"}</button>
+            <p class="muted">{ex("Ogni partecipante sceglie la propria lingua nella scheda del ruolo; quella dello scenario è proposta.")}if saved.is_some(){{ex(" La sessione salvata verrà eliminata.")}}</p>
+            <button id="start-session" class={classes!(saved.is_none().then_some("primary"))} onclick={start}>{ex("Avvia nuova esercitazione")}</button>
           </section>
-          <section class="card" id="launch-territories"><h2>{"Territori"}</h2>
-            <p class="muted">{"Modifica la mappa di un territorio (terreno, vegetazione, edifici, strade, luoghi) nell’editor 3D. I territori inclusi si aprono come copia; il risultato compare tra gli scenari."}</p>
+          <section class="card" id="launch-territories"><h2>{ex("Territori")}</h2>
+            <p class="muted">{ex("Modifica la mappa di un territorio (terreno, vegetazione, edifici, strade, luoghi) nell’editor 3D. I territori inclusi si aprono come copia; il risultato compare tra gli scenari.")}</p>
             <ul class="launcher-territories">{for territories.iter().map(|(id, name, own)| html!{
-              <li><span><strong>{name}</strong>if *own {{" · creato qui"}}</span><a class="button" id={format!("edit-territory-{id}")} href={format!("?editor=1&territory={id}")}>{if *own {"Modifica"} else {"Modifica copia"}}</a></li>
+              <li><span><strong>{name}</strong>if *own {{ex(" · creato qui")}}</span><a class="button" id={format!("edit-territory-{id}")} href={format!("?editor=1&territory={id}")}>{if *own {ex("Modifica")} else {ex("Modifica copia")}}</a></li>
             })}</ul>
-            <a class="button" id="new-territory" href="?editor=1">{"Nuovo territorio vuoto"}</a>
+            <a class="button" id="new-territory" href="?editor=1">{ex("Nuovo territorio vuoto")}</a>
           </section>
-          <section class="card" id="launch-options"><h2>{"Opzioni"}</h2>
-            <h3>{"Lingua della console EXCON"}</h3>
+          <section class="card" id="launch-options"><h2>{ex("Opzioni")}</h2>
+            <h3>{ex("Lingua della console EXCON")}</h3>
             <div class="row" id="launch-excon-lang">{for api::EXCON_LANGUAGES.iter().map(|(id,name)| html!{<button data-lang={*id} class={classes!((*excon_lang==*id).then_some("primary"))} onclick={pick_lang(id)}>{*name}</button>})}</div>
             <h3>{"AI (OpenRouter)"}</h3>
-            <p class="muted">{&*key_notice}</p>
-            <div class="settings-fields"><label>{"Chiave API"}<input id="launch-openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
-              <button id="launch-save-key" onclick={save_key}>{"Salva chiave"}</button><button id="launch-clear-key" onclick={clear_key}>{"Rimuovi chiave"}</button></div>
-            <p class="muted">{"Modelli e provider si regolano in Impostazioni dopo l’avvio."}</p>
-            <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={None::<String>} reset_note="Elimina sessione, scenari salvati e chiave API di questo browser." backend={crate::store::backend()} revision={0}/>
+            <p class="muted">{ex(*key_notice)}</p>
+            <div class="settings-fields"><label>{ex("Chiave API")}<input id="launch-openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
+              <button id="launch-save-key" onclick={save_key}>{ex("Salva chiave")}</button><button id="launch-clear-key" onclick={clear_key}>{ex("Rimuovi chiave")}</button></div>
+            <p class="muted">{ex("Modelli e provider si regolano in Impostazioni dopo l’avvio.")}</p>
+            <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>crate::exfmt!("Sessione salvata: {} passi · {} kB", "Saved session: {} steps · {} kB", steps, kb),None=>ex("Nessuna sessione salvata").to_string()}} save_error={None::<String>} reset_note={ex("Elimina sessione, scenari salvati e chiave API di questo browser.")} backend={crate::store::backend()} revision={0}/>
           </section>
         </main>
       </div>
@@ -263,12 +264,12 @@ fn session() -> Html {
             .is_ok_and(|state| state.llm.is_available())
         {
             if saved_key().is_some() {
-                "AI configurata · chiave salvata nel browser".to_string()
+                ex("AI configurata · chiave salvata nel browser").to_string()
             } else {
-                "AI configurata da .env · OpenRouter".to_string()
+                ex("AI configurata da .env · OpenRouter").to_string()
             }
         } else {
-            "AI disattivata · modalità manuale".to_string()
+            ex("AI disattivata · modalità manuale").to_string()
         }
     });
     let revision = use_state_eq(|| 0u64);
@@ -292,7 +293,7 @@ fn session() -> Html {
                             crate::store::freeze();
                             crate::store::remove(crate::store::SESSION_KEY);
                             crate::store::set_notice(&format!(
-                                "La sessione salvata non è più riproducibile ed è stata scartata ({e})."
+                                "{}", crate::exfmt!("La sessione salvata non è più riproducibile ed è stata scartata ({}).", "The saved session can no longer be replayed and was discarded ({}).", e)
                             ));
                             let _ = api::window().location().reload();
                         }
@@ -322,7 +323,7 @@ fn session() -> Html {
     let state = match &*initialized {
         Ok(s) => s,
         Err(e) => {
-            return html! {<main class="page"><h1>{"Impossibile inizializzare l’esercitazione"}</h1><p role="alert">{e}</p></main>}
+            return html! {<main class="page"><h1>{ex("Impossibile inizializzare l’esercitazione")}</h1><p role="alert">{e}</p></main>}
         }
     };
     #[cfg(target_arch = "wasm32")]
@@ -362,7 +363,7 @@ fn session() -> Html {
         let notice = ai_notice.clone();
         Callback::from(move |_| {
             if model.trim().is_empty() || translator.trim().is_empty() {
-                notice.set("Inserisci entrambi i modelli".into());
+                notice.set(ex("Inserisci entrambi i modelli").into());
                 return;
             }
             if let Ok(mut state) = runtime() {
@@ -370,11 +371,11 @@ fn session() -> Html {
                 let saved = persist_key(&key).is_ok();
                 notice.set(
                     if !saved {
-                        "Archiviazione browser non disponibile · modifica valida solo per questa pagina"
+                        ex("Archiviazione browser non disponibile · modifica valida solo per questa pagina")
                     } else if key.trim().is_empty() {
-                        "AI disattivata · chiave rimossa"
+                        ex("AI disattivata · chiave rimossa")
                     } else {
-                        "AI configurata · chiave salvata nel browser"
+                        ex("AI configurata · chiave salvata nel browser")
                     }
                     .into(),
                 );
@@ -398,9 +399,9 @@ fn session() -> Html {
             key.set(String::new());
             notice.set(
                 if persist_key("").is_ok() {
-                    "AI disattivata · chiave rimossa"
+                    ex("AI disattivata · chiave rimossa")
                 } else {
-                    "AI disattivata · impossibile rimuovere la chiave dal browser"
+                    ex("AI disattivata · impossibile rimuovere la chiave dal browser")
                 }
                 .into(),
             );
@@ -410,30 +411,33 @@ fn session() -> Html {
     for role in &roles {
         panels.push((role.id.clone(), role.name.clone(), "chat"));
     }
+    // Header and settings read in the EXCON language, whatever panel is visible.
+    let excon_lang = crate::store::get(EXCON_LANG_KEY).unwrap_or_else(|| "it".into());
+    crate::i18n::with_ui_lang(&excon_lang, || {
     let settings_html = html! {<>
         <p class="muted">{"AI · "}{&*ai_notice}</p>
-          <p>{"La chiave viene salvata nel browser su questo dispositivo e riutilizzata alle prossime aperture. “Rimuovi chiave” elimina la chiave salvata. La sessione viene salvata nel browser e ripresa al ricaricamento della pagina. Il debrief è esportabile dagli strumenti EXCON."}</p>
-          <div class="settings-fields"><label>{"Chiave API"}<input id="openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
-          <label>{"Modello interpretazione"}<input id="openrouter-model" value={(*model).clone()} oninput={{let model=model.clone();Callback::from(move |e|model.set(api::input(e)))}}/></label>
-          <label>{"Modello traduzione"}<input id="openrouter-translator" value={(*translator).clone()} oninput={{let translator=translator.clone();Callback::from(move |e|translator.set(api::input(e)))}}/></label>
-          <label>{"Provider OpenRouter (separati da virgola, vuoto = scelta automatica)"}<input id="openrouter-providers" value={(*providers).clone()} oninput={{let providers=providers.clone();Callback::from(move |e|providers.set(api::input(e)))}}/></label>
-          <button id="configure-ai" onclick={onconfigure}>{"Applica"}</button><button id="clear-ai" onclick={onclear}>{"Rimuovi chiave"}</button></div>
-          <p>{"L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente."}</p>
-          <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>format!("Sessione salvata: {steps} passi · {kb} kB"),None=>"Nessuna sessione salvata".to_string()}} save_error={crate::store::save_error()} reset_note="Elimina sessione, scenari salvati e chiave API di questo browser." backend={(*backend).clone()} revision={*revision}/>
+          <p>{ex("La chiave viene salvata nel browser su questo dispositivo e riutilizzata alle prossime aperture. “Rimuovi chiave” elimina la chiave salvata. La sessione viene salvata nel browser e ripresa al ricaricamento della pagina. Il debrief è esportabile dagli strumenti EXCON.")}</p>
+          <div class="settings-fields"><label>{ex("Chiave API")}<input id="openrouter-key" type="password" autocomplete="off" value={(*key).clone()} oninput={{let key=key.clone();Callback::from(move |e|key.set(api::input(e)))}}/></label>
+          <label>{ex("Modello interpretazione")}<input id="openrouter-model" value={(*model).clone()} oninput={{let model=model.clone();Callback::from(move |e|model.set(api::input(e)))}}/></label>
+          <label>{ex("Modello traduzione")}<input id="openrouter-translator" value={(*translator).clone()} oninput={{let translator=translator.clone();Callback::from(move |e|translator.set(api::input(e)))}}/></label>
+          <label>{ex("Provider OpenRouter (separati da virgola, vuoto = scelta automatica)")}<input id="openrouter-providers" value={(*providers).clone()} oninput={{let providers=providers.clone();Callback::from(move |e|providers.set(api::input(e)))}}/></label>
+          <button id="configure-ai" onclick={onconfigure}>{ex("Applica")}</button><button id="clear-ai" onclick={onclear}>{ex("Rimuovi chiave")}</button></div>
+          <p>{ex("L’AI richiede Internet e contatta direttamente OpenRouter. Tutte le regole, la simulazione e le approvazioni sono eseguite localmente.")}</p>
+          <crate::settings::Settings session_text={match crate::store::session_summary(){Some((kb,steps))=>crate::exfmt!("Sessione salvata: {} passi · {} kB", "Saved session: {} steps · {} kB", steps, kb),None=>ex("Nessuna sessione salvata").to_string()}} save_error={crate::store::save_error()} reset_note={ex("Elimina sessione, scenari salvati e chiave API di questo browser.")} backend={(*backend).clone()} revision={*revision}/>
     </>};
     html! {
       <ContextProvider<crate::scenario_editor::SettingsSlot> context={crate::scenario_editor::SettingsSlot(settings_html)}>
       <div class="standalone">
-        <header class="standalone-header"><div><div class="eyebrow">{"PPRD East 4 · laboratorio locale"}</div><h1>{"Esercitazione nel browser"}</h1><p>{format!("{clock} · {phase} · 32 realizzazioni")}</p></div><span class="pill">{"WebAssembly · nessun backend"}</span><span class="pill build-version" id="build-version" title="Commit · build · data di build">{build_label()}</span>
-          <label><input type="checkbox" checked={*show_map} onchange={{let show=show_map.clone();Callback::from(move |_|show.set(!*show))}}/>{" Simulazione"}</label>
-          <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{" Tutti i player"}</label>
-          <label class="split-control">{"Spazio simulazione"}<input aria-label="Spazio simulazione" type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
+        <header class="standalone-header"><div><div class="eyebrow">{ex("PPRD East 4 · laboratorio locale")}</div><h1>{ex("Esercitazione nel browser")}</h1><p>{crate::exfmt!("{} · {} · 32 realizzazioni", "{} · {} · 32 realisations", clock, phase)}</p></div><span class="pill">{ex("WebAssembly · nessun backend")}</span><span class="pill build-version" id="build-version" title={ex("Commit · build · data di build")}>{build_label()}</span>
+          <label><input type="checkbox" checked={*show_map} onchange={{let show=show_map.clone();Callback::from(move |_|show.set(!*show))}}/>{ex(" Simulazione")}</label>
+          <label><input type="checkbox" checked={*all_roles} onchange={{let all=all_roles.clone();Callback::from(move |_|all.set(!*all))}}/>{ex(" Tutti i player")}</label>
+          <label class="split-control">{ex("Spazio simulazione")}<input aria-label={ex("Spazio simulazione")} type="range" min="20" max="70" value={(*split).clone()} oninput={{let split=split.clone();Callback::from(move |e|split.set(api::input(e)))}}/></label>
         </header>
-        if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{"Chiudi"}</button></p>}
-        if *restoring {<p class="standalone-notice" role="status" id="restoring">{"Ripristino della sessione salvata…"}</p>} else {
+        if let Some(text) = &*notice {<p class="standalone-notice" role="status">{text}<button onclick={{let notice=notice.clone();Callback::from(move |_|notice.set(None))}}>{ex("Chiudi")}</button></p>}
+        if *restoring {<p class="standalone-notice" role="status" id="restoring">{ex("Ripristino della sessione salvata…")}</p>} else {
         <div class={classes!("standalone-content",(!*show_map).then_some("without-sim"))} style={format!("--sim-width:{}%",*split)}>
-          <aside class="standalone-simulation" hidden={!*show_map}><div class="simulation-heading"><h2>{"Situazione simulata"}</h2><p>{"Vista 3D completa EXCON · le mappe dei player mostrano solo le informazioni ricevute"}</p></div><div class="standalone-3d-frame"><canvas id="standalone-3d" aria-label="Visualizzatore 3D della situazione simulata"/></div></aside>
-          <section class="standalone-views"><nav class="role-tabs" aria-label="Ruoli dell’esercitazione">{for panels.iter().map(|(id,name,_)|{
+          <aside class="standalone-simulation" hidden={!*show_map}><div class="simulation-heading"><h2>{ex("Situazione simulata")}</h2><p>{ex("Vista 3D completa EXCON · le mappe dei player mostrano solo le informazioni ricevute")}</p></div><div class="standalone-3d-frame"><canvas id="standalone-3d" aria-label={ex("Visualizzatore 3D della situazione simulata")}/></div></aside>
+          <section class="standalone-views"><nav class="role-tabs" aria-label={ex("Ruoli dell’esercitazione")}>{for panels.iter().map(|(id,name,_)|{
             let id=id.clone();html!{<button data-role={id.clone()} class={classes!((*selected==id).then_some("active"))} onclick={{let selected=selected.clone();let all=all_roles.clone();Callback::from(move |_|{selected.set(id.clone());all.set(false);})}}>{name}</button>}
           })}</nav>
           <div class={classes!("role-panels",(*all_roles).then_some("all-roles"))}>{for panels.iter().map(|(id,_,page)|{
@@ -445,4 +449,5 @@ fn session() -> Html {
       </div>
       </ContextProvider<crate::scenario_editor::SettingsSlot>>
     }
+    })
 }

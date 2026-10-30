@@ -67,12 +67,12 @@ pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Val
             .send()
             .await
     };
-    let response = req.map_err(|e| format!("Connessione non disponibile: {e}"))?;
+    let response = req.map_err(|e| crate::exfmt!("Connessione non disponibile: {}", "Connection not available: {}", e))?;
     let status = response.status();
     let value: Value = response
         .json()
         .await
-        .map_err(|_| format!("Risposta non valida ({status})"))?;
+        .map_err(|_| crate::exfmt!("Risposta non valida ({})", "Invalid response ({})", status))?;
     if response.ok() {
         Ok(value)
     } else {
@@ -124,9 +124,9 @@ pub fn download_as(value: &Value, filename: &str) -> Result<(), String> {
     let options = web_sys::BlobPropertyBag::new();
     options.set_type("application/json");
     let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options)
-        .map_err(|_| "Export non disponibile")?;
+        .map_err(|_| crate::i18n::ex("Export non disponibile"))?;
     let url =
-        web_sys::Url::create_object_url_with_blob(&blob).map_err(|_| "Export non disponibile")?;
+        web_sys::Url::create_object_url_with_blob(&blob).map_err(|_| crate::i18n::ex("Export non disponibile"))?;
     let anchor = window()
         .document()
         .unwrap()
@@ -157,7 +157,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("pt", "Português"),
 ];
 pub fn status(s: &str) -> &str {
-    crate::i18n::status("it", s)
+    crate::i18n::status(if crate::i18n_excon::is_en() { "en" } else { "it" }, s)
 }
 /// Console label of a proposal, including partial approval and acknowledgement.
 pub fn proposal_status(p: &Value) -> &str {

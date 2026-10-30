@@ -61,24 +61,24 @@ pub fn settings(props: &Props) -> Html {
     let delete = |what: &'static str, label: &'static str, id: &'static str, run: Callback<()>| {
         if *confirm == Some(what) {
             html! {<span class="confirm-delete">
-                <button id={format!("{id}-confirm")} class="danger" onclick={Callback::from(move |_| run.emit(()))}>{format!("Conferma: {label}")}</button>
-                <button onclick={cancel.clone()}>{"Annulla"}</button>
+                <button id={format!("{id}-confirm")} class="danger" onclick={Callback::from(move |_| run.emit(()))}>{crate::exfmt!("Conferma: {}", "Confirm: {}", crate::i18n::ex(label))}</button>
+                <button onclick={cancel.clone()}>{crate::i18n::ex("Annulla")}</button>
             </span>}
         } else {
-            html! {<button id={id} class="danger" onclick={ask(what)}>{label}</button>}
+            html! {<button id={id} class="danger" onclick={ask(what)}>{crate::i18n::ex(label)}</button>}
         }
     };
 
     html! {
       <div class="settings-panel">
         <section class="settings-section" id="settings-session">
-          <h3>{"Sessione"}</h3>
-          <p>{&props.session_text}{" · salvata automaticamente e ripresa alla riapertura."}</p>
-          if let Some(error) = &props.save_error {<p role="alert">{format!("Salvataggio non riuscito: {error}")}</p>}
+          <h3>{crate::i18n::ex("Sessione")}</h3>
+          <p>{&props.session_text}{crate::i18n::ex(" · salvata automaticamente e ripresa alla riapertura.")}</p>
+          if let Some(error) = &props.save_error {<p role="alert">{crate::exfmt!("Salvataggio non riuscito: {}", "Saving failed: {}", error)}</p>}
           {delete("session","Elimina sessione salvata","delete-session",{let run=run.clone();Callback::from(move |_|run(Op::Delete("session")))})}
         </section>
         <section class="settings-section" id="settings-reset">
-          <h3>{"Ripartire da zero"}</h3>
+          <h3>{crate::i18n::ex("Ripartire da zero")}</h3>
           <p>{&props.reset_note}</p>
           {delete("all","Elimina tutto e riparti da zero","delete-all",{let run=run.clone();Callback::from(move |_|run(Op::Delete("all")))})}
           if !message.is_empty() {<p id="settings-message" role="status">{(*message).clone()}</p>}

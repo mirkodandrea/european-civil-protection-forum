@@ -305,7 +305,7 @@ fn roles_parts(o: &Open, open: &UseStateHandle<Option<Open>>, selected: &Sel) ->
                 let l = p.edits.roles.get_or_insert_with(Vec::new);
                 let n = l.len() + 1;
                 l.push(Role {
-                    id: format!("role_{n}"), name: format!("Ruolo {n}"), level: "local".into(), language: "en".into(),
+                    id: format!("role_{n}"), name: crate::exfmt!("Ruolo {}", "Role {}", n), level: "local".into(), language: "en".into(),
                     description: String::new(), allowed_actions: vec![], resources: Default::default(),
                 });
             }));
@@ -909,7 +909,7 @@ fn injects_view(props: &InjectsProps) -> Html {
                     let (json, message) = (json.clone(), message.clone());
                     upd(open, move |p, _: MouseEvent| match serde_json::from_str::<Vec<InjectTemplate>>(&json) {
                         Ok(v) => { p.edits.msel = Some(v); message.set(ex("Inject importati nell’editor · salva per conservarli").to_string()); }
-                        Err(e) => message.set(format!("JSON non valido: {e}")),
+                        Err(e) => message.set(crate::exfmt!("JSON non valido: {}", "Invalid JSON: {}", e)),
                     })
                 }}>{ex("Importa JSON")}</button>
             </div>
@@ -1242,7 +1242,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                             tab.set("general".into());
                             open.set(Some(Open { pack, reference: v["reference"].clone(), saved_id, dirty: as_copy }));
                         }
-                        Err(e) => message.set(format!("Scenario non leggibile: {e}")),
+                        Err(e) => message.set(crate::exfmt!("Scenario non leggibile: {}", "Scenario not readable: {}", e)),
                     },
                     Err(e) => message.set(e),
                 }
@@ -1435,7 +1435,7 @@ pub fn scenario_editor(props: &Props) -> Html {
         </section>
         <section class="card settings-scenarios">
             <h2>{ex("Scenari")}</h2>
-            if cfg!(feature="standalone") {<a class="button" href="?editor=1">{"Apri editor scenario 3D"}</a>}
+            if cfg!(feature="standalone") {<a class="button" href="?editor=1">{ex("Apri editor scenario 3D")}</a>}
             <p class="muted">{ex("Uno scenario è un territorio (mappa, edifici, strade) più ciò che lo rende un’esercitazione: ruoli, risorse, meteo e inject con le loro azioni. «Avvia» inizia una nuova esercitazione e scarta la sessione in corso.")}</p>
             <ul class="scenario-legend muted">
                 <li><span class="pill">{ex("in corso")}</span> {ex("è l’esercitazione che sta girando ora.")}</li>
@@ -1466,7 +1466,7 @@ pub fn scenario_editor(props: &Props) -> Html {
                                             tab.set("general".into());
                                             open.set(Some(Open { pack, reference: v["reference"].clone(), saved_id: None, dirty: true }));
                                         }
-                                        Err(e) => message.set(format!("Territorio «{}» non disponibile: {e}", pack.base)),
+                                        Err(e) => message.set(crate::exfmt!("Territorio «{}» non disponibile: {}", "Territory «{}» not available: {}", pack.base, e)),
                                     },
                                     Err(e) => message.set(e),
                                 }
@@ -1623,7 +1623,7 @@ async fn read_pack(file: web_sys::File) -> Result<ScenarioPack, String> {
         .map_err(|_| ex("File non leggibile").to_string())?
         .as_string()
         .unwrap_or_default();
-    serde_json::from_str(&text).map_err(|e| format!("JSON non valido: {e}"))
+    serde_json::from_str(&text).map_err(|e| crate::exfmt!("JSON non valido: {}", "Invalid JSON: {}", e))
 }
 
 /// Begin a new exercise from `id`. In the browser the page reloads into it.
