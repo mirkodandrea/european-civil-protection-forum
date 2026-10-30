@@ -1,13 +1,15 @@
 {
-  "title": "Valverde valley · current playtest",
-  "status": "Playtest",
-  "description": "The version the team is testing now: a wildfire in the synthetic Valverde valley, run turn by turn by the EXCON while players answer in free text.",
-  "scenario": "Valverde valley (synthetic territory) and its scenario packs",
+  "title": "Roccavento island · borghi, evacuation and the 30/10 playtest fixes",
+  "status": "In development",
+  "description": "The next version: everything on main plus the Roccavento island, where settlements are managed borgo by borgo, and the fixes from the 30 October playtest.",
+  "scenario": "Roccavento island (borghi and districts), Valverde and Selvariva with their borghi",
   "highlights": [
-    "Players are narrative-only: the AI reads each reply and suggests catalogue actions that the EXCON executes, edits or ignores",
-    "Queued and scheduled EXCON actions, including ExtinguishArea on a drawn polygon",
-    "Every participant chooses a language when a new exercise starts",
-    "Session, scenario packs and OpenRouter key are kept in this browser"
+    "EvacuateDistrict: evacuate a borgo with paced departures; Borghi tab in the scenario editor",
+    "Players reply in one box: «Reply to the inject», mandatory basis (plan, law or operational judgement) and rationale",
+    "EXCON replies close once handled; «View as <role>» shows a player's map in «Information to roles»",
+    "Buildings are damaged only when the confirmed fire reaches them; Extinguish keeps the vegetation",
+    "Warned zones stay marked with their time, behind the fog of war for players",
+    "Scenario texts in English, map labels in every player language"
   ],
   "modes": [
     {
