@@ -51,7 +51,7 @@ pub mod suggestions;
 
 /// Minutes an evacuation takes (see `sim::EVAC_MIN`); the lead time of warnings.
 pub const EVAC_LEAD_MIN: i64 = sim::EVAC_MIN;
-pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation};
+pub use knowledge::{BuildingObs, FireCell, KnowledgeEvent, KnowledgeSource, MapObservation, WarningObs};
 
 use std::collections::BTreeMap;
 use std::io::Write;
