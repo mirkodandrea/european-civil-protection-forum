@@ -57,6 +57,9 @@ pub struct PlayerResponse {
     pub conversation: Option<u64>,
     /// What the response rests on (plans, laws or operational judgement).
     pub basis: Option<BasisKind>,
+    /// Which plan, procedure or law applies, or the player's operational
+    /// rationale, in the player's own words (needs `basis`).
+    pub basis_note: Option<String>,
     /// PDF of the plan or law the response cites; needs a plan/law basis.
     pub document: Option<PdfUpload>,
     /// Communication or decision (required by the API; a decision needs `basis`).
@@ -96,6 +99,14 @@ impl Exercise {
                 bail!("a PDF can be attached only when the response rests on plans or laws");
             }
             self.validate_document(role, document)?;
+        }
+        if let Some(note) = r.basis_note.as_deref().filter(|n| !n.trim().is_empty()) {
+            if r.basis.is_none() {
+                bail!("say what the reference or rationale is: plan or procedure, law or operational judgement");
+            }
+            if note.chars().count() > 2000 {
+                bail!("the reference or rationale is limited to 2000 characters");
+            }
         }
         let narrative = r.narrative_text();
         if narrative.is_none() && r.commands.is_empty() {
@@ -229,13 +240,23 @@ impl Exercise {
             ),
             None => (None, Vec::new()),
         };
+        let basis_note = r.basis_note.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
         let evidence = match r.basis {
             Some(kind) => Some(DecisionEvidence {
                 basis: DecisionBasis {
                     kind,
-                    reference: match &r.document {
-                        Some(d) => format!("Declared by the player: {}; document {}", basis_label(kind), d.name),
-                        None => format!("Declared by the player: {}", basis_label(kind)),
+                    // The player's own reference or rationale when given
+                    // (what `DecisionBasis::reference` documents), else the
+                    // declared kind alone.
+                    reference: {
+                        let mut reference = match &basis_note {
+                            Some(n) => n.clone(),
+                            None => format!("{DECLARED}{}", basis_label(kind)),
+                        };
+                        if let Some(d) = &r.document {
+                            reference.push_str(&format!("; document {}", d.name));
+                        }
+                        reference
                     },
                 },
                 attachments: Vec::new(),
@@ -344,6 +365,9 @@ impl Exercise {
             // The AI context keeps what the player said the decision rests on.
             if let Some(kind) = r.basis {
                 note.push_str(&format!("\n[basis] {}", basis_label(kind)));
+                if let Some(n) = &basis_note {
+                    note.push_str(&format!(": {n}"));
+                }
                 if let Some(d) = &document {
                     note.push_str(&format!("; attached PDF: {}", d.name));
                 }
@@ -427,6 +451,9 @@ impl Exercise {
         Ok(cid)
     }
 }
+
+/// Prefix of a basis reference the player did not write (kind only).
+pub const DECLARED: &str = "Declared by the player: ";
 
 /// English wording of a basis for logs and the AI context.
 pub fn basis_label(kind: BasisKind) -> &'static str {

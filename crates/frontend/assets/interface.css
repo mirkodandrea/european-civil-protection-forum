@@ -973,7 +973,6 @@ main.page.sit-page{display:flex;flex-direction:column;overflow:hidden;min-height
 .zone-chips{display:flex;flex-wrap:wrap;gap:4px}
 .zone-chips .chip{padding:2px 8px;font-size:12px;border-radius:12px;background:#dcebe2;border-color:#b8d1c3}
 .bench-col .page{padding:8px}.bench-col .tactical-view{height:auto}.bench-col .tactical-grid{grid-template-columns:minmax(0,1fr)}.bench-col .tactical-map,.bench-col .work-modal-map,.bench-col .tactical-resources{display:none}.bench-col .modal-backdrop,.bench-col .modal-backdrop.work-backdrop{position:fixed;inset:31px 0 0 0;padding:8px;align-items:flex-start}.bench-col .work-modal,.bench-col .inject-modal{width:100%;max-width:none;height:auto;max-height:calc(100% - 4px);overflow:auto}.bench-col .work-modal-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto}.bench-col .response-cols{grid-template-columns:minmax(0,1fr)}
-.reply-step{display:flex;flex-direction:column;gap:10px}.reply-step-options{display:grid;grid-template-columns:1fr 1fr;gap:10px}.reply-step-option{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:10px 12px}.reply-step-option small{color:var(--muted)}
 /* EXCON Risposte: badge of the player conversations on an inject and their viewer (selector on the left). */
 .response-item{position:relative}.response-item.has-convs .response-row{padding-bottom:38px}
 .conv-badge{position:absolute;right:14px;bottom:10px;min-height:0;height:auto;line-height:1.3;border-radius:999px;padding:3px 10px;font-size:12px;border:1px solid #3b7dd8;background:#eef6ff;color:#1f4f99;cursor:pointer}.conv-badge:hover{background:#dcebff}
@@ -1053,3 +1052,26 @@ body:has(.simbench){height:100dvh;overflow:hidden}
 .launcher-territories{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:6px}.launcher-territories li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}
 .translations-coverage ul{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}.translations-coverage button.active{font-weight:600;text-decoration:underline}.translations-coverage>button{grid-column:1/-1;justify-self:start}
 .translations-table{width:100%;border-collapse:collapse;margin-top:12px}.translations-table th{text-align:left;font-size:12px;color:var(--muted);padding:4px 8px}.translations-table td{padding:4px 8px;border-top:1px solid var(--line)}.translations-table td:first-child{width:45%}.translations-table input{width:100%}
+/* One reply composer (reply_composer.rs): recipient, text, basis, one Send. */
+.reply-composer{display:flex;flex-direction:column;gap:8px}
+.reply-composer textarea{min-height:76px;margin:0}
+.reply-to{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0;padding:0;border:0}
+.reply-to legend{float:left;margin-right:4px;font-weight:700;font-size:13px}
+.reply-to-option{display:inline-flex;align-items:center;gap:6px;margin:0;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;cursor:pointer;font-size:13px}
+.reply-to-option.is-selected{border-color:var(--accent);background:#e7f3ee;font-weight:600}
+.reply-to-option input[type=radio]{margin:0;width:16px;height:16px;min-height:16px}
+.reply-people{display:flex;flex-wrap:wrap;gap:4px 12px;width:100%;padding-left:2px}
+.reply-composer .chat-reply-composer{margin:0}
+.reply-basis-pick{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.reply-basis-title{font-size:13px;font-weight:700}
+.reply-basis-pick .basis-options{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+.reply-composer .basis-chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:13px;min-height:0}
+.reply-composer .basis-chip.is-selected{border-color:var(--accent);background:#e7f3ee;color:var(--accent);font-weight:600}
+.reply-basis-pick input.reply-basis-note{flex:1 1 100%;margin:0}
+.reply-guide-more>summary{cursor:pointer;font-size:13px;color:#2f5a4c}
+.reply-guide-more[open]>summary{margin-bottom:6px}
+.reply-send-bar{flex-wrap:nowrap;align-items:center;gap:10px}
+.reply-send-bar .work-hint{flex:1 1 auto}.reply-send-bar button{white-space:nowrap;flex:none}
+span.reply-basis-note{font-size:12px;color:var(--muted);margin-left:6px}
+.rb-basis{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inj-thread-status{display:block;padding:6px 16px 0}

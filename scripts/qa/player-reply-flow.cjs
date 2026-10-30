@@ -1,0 +1,70 @@
+// Player reply flow (30/10 playtest): one composer, one Send, recipient always
+// visible, plans / procedures / operational judgement asked in the box.
+// Drives the workflow bench (standalone+bench build, simulated server) and
+// takes one screenshot per state:
+//   PORT=8085 ./scripts/dev_bench.sh
+//   TTX_BENCH_URL=http://127.0.0.1:8085/ node scripts/qa/player-reply-flow.cjs
+// TTX_QA_OUT: screenshot directory (default runs/player-reply-flow/<time>).
+const {chromium}=require(process.env.TTX_PLAYWRIGHT||'playwright');
+const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+
+const base=(process.env.TTX_BENCH_URL||'http://127.0.0.1:8080/').replace(/\?.*$/,'');
+const out=process.env.TTX_QA_OUT||path.join('runs/player-reply-flow',new Date().toISOString().replace(/[:.]/g,'-'));
+const col=(page,id)=>page.locator(`[data-bench-col="${id}"]`);
+
+(async()=>{
+  fs.mkdirSync(out,{recursive:true});
+  const browser=await chromium.launch({headless:true,...(process.env.TTX_BROWSER_EXECUTABLE?{executablePath:process.env.TTX_BROWSER_EXECUTABLE}:{channel:process.env.TTX_BROWSER_CHANNEL||'chrome'})});
+  const page=await browser.newPage({viewport:{width:1680,height:1100}}),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  const shot=async name=>{await page.screenshot({path:path.join(out,`${name}.png`)});console.log(`  ${name}.png`);};
+  try{
+    await page.goto(`${base}?bench=1&b=conversation`);
+    await page.locator('[data-bench="conversation"]').waitFor({timeout:60000});
+    const mayor=col(page,'mayor'),police=col(page,'police'),excon=col(page,'excon');
+    await mayor.locator('[data-inject-row]').first().click();
+    const box=mayor.locator('[data-reply-composer]');
+    // One box, the sender preselected and named, one Send naming the recipient.
+    await box.locator('[data-to="sender"]:checked').waitFor();
+    assert.equal(await mayor.locator('[data-reply-send]').count(),1,'one Send');
+    for(const gone of ['[data-reply-direct]','[data-reply-conversation]','[data-respond-from-conversation]','[data-create-conversation]','.work-modal'])
+      assert.equal(await page.locator(gone).count(),0,`no ${gone}`);
+    await mayor.locator('#response-narrative').fill('Apriamo la palestra comunale come area di attesa per i residenti di F4.');
+    await mayor.locator('#basis-plan').click();
+    await mayor.locator('[data-basis-note]').fill('Piano comunale di protezione civile, scheda 4 (aree di attesa)');
+    assert.match(await mayor.locator('[data-reply-send]').innerText(),/Invia a|Send to/);
+    await shot('1-inject-reply-to-sender');
+    // Same box, recipient = other players: the basis row goes, the people appear.
+    await box.locator('[data-to="players"]').check();
+    await mayor.locator('[data-conv-person="police"]').check();
+    await mayor.locator('#response-narrative').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
+    assert.equal(await mayor.locator('[data-basis]').count(),0,'no basis for a coordination message');
+    await shot('2-inject-to-players');
+    await mayor.locator('[data-send-conversation]').click();
+    await mayor.locator('[data-conversation]').waitFor();
+    // Inside the conversation: participants preselected.
+    await police.locator('[data-inject-row]').first().click();await police.locator('[data-conv-row]').click();
+    await police.locator('[data-reply-composer][data-reply-to="players"]').waitFor();
+    await police.locator('#response-narrative').fill('Sì, pattuglia in posizione tra 10 minuti.');
+    await police.locator('[data-send-conversation]').click();
+    await mayor.locator('[data-conversation] [data-conv-message]').nth(1).waitFor();
+    await shot('3-conversation-to-players');
+    // From the conversation, the reply to the inject: switch the recipient, one Send.
+    await mayor.locator('[data-reply-composer] [data-to="sender"]').check();
+    await mayor.locator('#response-narrative').fill('D’accordo con la Polizia: SP12 chiusa, poi evacuiamo F4 verso la palestra.');
+    await mayor.locator('#basis-operational_judgment').click();
+    await mayor.locator('[data-basis-note]').fill('Il fronte arriva in F4 entro un’ora: prima liberiamo la strada');
+    await shot('4-conversation-to-sender');
+    await mayor.locator('[data-respond]').click();
+    await mayor.locator('[data-conv-response]').first().waitFor();
+    // EXCON sees the basis and the player's rationale.
+    await excon.locator('[data-response$=":mayor"] .response-row').first().click();
+    await excon.locator('[data-reply-basis-note]').first().waitFor();
+    await shot('5-excon-sees-basis');
+    assert.deepEqual(errors,[],'no page errors');
+    console.log(`player reply flow ok · screenshots in ${out}`);
+  }catch(e){
+    await page.screenshot({path:path.join(out,'failure.png')}).catch(()=>{});
+    console.error(e);process.exitCode=1;
+  }finally{await browser.close();}
+})();

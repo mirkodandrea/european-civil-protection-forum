@@ -22,8 +22,10 @@ quello corrente evidenziato.
   3. *EXCON: suggerisci azioni*: su una narrativa senza azioni EXCON chiede i
      suggerimenti, li aggiunge, approva; il Sindaco vede l’esito.
   4. *Chiarimento*: EXCON chiede, il Sindaco risponde nel thread, EXCON chiude.
-  5. *Conversazione tra player*: Sindaco e Polizia discutono l’inject, la
-     risposta nasce dalla conversazione, EXCON la ispeziona nel visore delle
+  5. *Conversazione tra player*: il Sindaco avvia la conversazione dal box di
+     risposta sotto l’inject (A chi → Altri player), Sindaco e Polizia
+     discutono, il Sindaco risponde all’inject dallo stesso box nella
+     conversazione (A chi → mittente), EXCON la ispeziona nel visore delle
      conversazioni e decide.
   6. *Decisione sulle azioni*: EXCON approva, approva in parte, modifica o
      rifiuta due azioni; la Polizia vede l’esito per azione.

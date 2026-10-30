@@ -91,3 +91,22 @@ async fn a_response_to_a_player_reaches_them_through_a_conversation() {
     assert_eq!(conv["messages"][0]["proposal"], body["proposal"]);
     assert_eq!(conv["quote"]["title"], "Smoke", "the inject reference travels with it");
 }
+
+/// 30/10 playtest: the reply composer asks what a reply rests on (plan,
+/// procedure, law or operational judgement) and the player's reference or
+/// rationale; EXCON reads both next to the reply.
+#[tokio::test]
+async fn a_reply_carries_its_basis_and_rationale_to_excon() {
+    let (c, _, parent) = fixture().await;
+    let path = "/api/player/mayor/actions";
+    let (status, _) = call(&c, "mayor", path,
+        Some(json!({"reply_to":parent,"kind":"communication","narrative":"Apriamo la palestra","basis_note":"Piano comunale"}))).await;
+    assert_eq!(status, Status::BadRequest, "a rationale says which kind of basis it is");
+    let (status, body) = call(&c, "mayor", path,
+        Some(json!({"reply_to":parent,"kind":"communication","narrative":"Apriamo la palestra","basis":"plan","basis_note":"Piano comunale, scheda 4"}))).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let (_, master) = call(&c, "master", "/api/master", None).await;
+    let row = master["inject_responses"].as_array().unwrap().iter().find(|r| r["inject_message_id"] == parent).unwrap().clone();
+    let reply = &row["replies"][0];
+    assert_eq!((reply["basis"].as_str(), reply["basis_note"].as_str()), (Some("plan"), Some("Piano comunale, scheda 4")));
+}

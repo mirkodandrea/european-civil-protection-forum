@@ -27,13 +27,34 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
 `Command` applicato da `sim::World::apply`.
 
 - **Pagina del player**: mappa della situazione; inject e messaggi con risposta
-  libera (`POST /api/player/<role>/actions` con `kind: "communication"`, stato
-  «Inviata»); accanto al testo la **guida alla risposta** (cosa, dove — zona come
-  F4, lato di zona F4:N, luogo o coordinate —, con quali mezzi, entro quando, chi
-  si informa, con un esempio) e il materiale di decisione del ruolo (competenze e
+  libera in **un solo box** (`frontend::reply_composer`, playtest 30/10) sotto
+  l’inject e sotto ogni conversazione collegata: **A chi** sempre visibile (il
+  mittente dell’inject, cioè la sala operativa, oppure altri player), il testo,
+  **Su cosa si basa** (facoltativo: Piano o procedura / Legge o norma / Giudizio
+  operativo, con una riga per *quale* piano o procedura o per il *perché*) e **un
+  solo** pulsante «Invia a <destinatario>» (Ctrl/Cmd+Invio). Niente scelta
+  preliminare «Risposta diretta / Inizia una conversazione», niente modale, niente
+  secondo pulsante «Rispondi» nella conversazione. Al mittente: `POST
+  /api/player/<role>/actions` con `kind: "communication"`, `basis`, `basis_note`
+  (stato «Inviata»); ad altri player sotto l’inject: nuova conversazione collegata
+  (`POST …/conversations`, che poi si apre); dentro una conversazione: messaggio ai
+  suoi partecipanti (`POST …/conversations/<id>/messages`) oppure, scegliendo il
+  mittente, risposta all’inject con `conversation` = id. Le bozze sono tenute per
+  inject e per conversazione. Sotto il box la **guida alla risposta** (cosa, dove —
+  zona come F4, lato di zona F4:N, luogo o coordinate —, con quali mezzi, entro
+  quando, chi si informa, **su quale piano, procedura, norma o giudizio operativo
+  ci si basa**, con un esempio) e il materiale di decisione del ruolo (competenze e
   risorse disponibili ora; descrizione e missioni nella scheda Funzione). Un clic
-  sulla mappa scrive nella risposta la zona o l’edificio. La stessa guida, in una
+  sulla mappa scrive nel box aperto la zona o l’edificio. La stessa guida, in una
   riga, sta sopra la risposta a una domanda della sala operativa.
+- **Fondamento verso l’AI e l’EXCON**: `basis` + `basis_note` diventano
+  `Proposal.evidence.basis` (`reference` = parole del player, altrimenti «Declared
+  by the player: …»); il contesto AI del player riceve `[basis] plans: <nota>`
+  (letto da `parse_reply` e `suggest_actions`), il thread letto da `review_reply`
+  porta `basis {kind, reference}` sulla risposta (il prompt lo usa come contesto
+  per le note, mai come azione), e la console EXCON mostra il fondamento con la
+  nota (`basis_note`) in «Azioni dalle risposte» e in Risposte. Una nota senza
+  tipo di fondamento è rifiutata.
 - **Lettura AI per l’EXCON** (`llm::tasks::review_reply`, `exercise::reply_review`,
   `server::review`): ogni risposta di un player a un inject è letta per intero
   (inject, risposta, domande inviate, risposte) fuori dal mutex. L’AI propone
@@ -195,19 +216,11 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    mappa tattica sta a sinistra e l’elenco degli inject a destra. Un click su un
    inject apre al posto dell’elenco il dettaglio (indietro all’elenco, come nelle
    Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
-   conversazioni nate dall’inject (sotto le risposte) e in fondo, senza pulsanti né modali, la scelta di come rispondere («Risposta diretta
-   al messaggio» oppure «Inizia una conversazione»). La risposta diretta apre il modulo
-   qui sotto; la conversazione prosegue in linea nella chat (scelta dei player e primo
-   messaggio). Chi ha solo letto l’inject via conversazione ha invece il pulsante **Rispondi**, che apre direttamente il modulo. È l’unico percorso: niente «+ Nuova azione», niente
-   «Proponi azione» dalle chat, niente selettore «Rispondi a…» (vedi «Risposte per
-   inject» sotto). La risposta diretta apre un modale quasi a schermo intero con mappa e
-   modulo: destinatario (il mittente fittizio dell’inject; solo dalla risposta in una conversazione, i suoi partecipanti),
-   tipo (**comunicazione** o **decisione/azione**), il testo «Descrivi la tua
-   risposta o decisione», e per una decisione il **fondamento** obbligatorio e al
-   più **una** azione di simulazione associata (dal modulo o dai **suggerimenti
-   AI**: quando il player smette di scrivere, pausa di 2,5 s, almeno 20 caratteri,
-   l’AI propone azioni del suo ruolo; associarne una sostituisce la precedente).
-   Ogni inject può ricevere più risposte.
+   conversazioni nate dall’inject (sotto le risposte) e in fondo il **box di
+   risposta unico** (vedi «Solo l’EXCON agisce» sopra): destinatario visibile,
+   testo, fondamento facoltativo, un solo Invia. Chi ha solo letto l’inject via
+   conversazione apre la conversazione e risponde da lì. Ogni inject può ricevere
+   più risposte.
 3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
    destinatario, badge delle approvazioni), ne controlla la fattibilità e decide:
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta con i suoi comandi; la
@@ -374,8 +387,8 @@ sull’inglese). La console EXCON continua a dire EXCON.
 ### Conversazioni collegate a un inject
 
 Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
-(**Inizia una conversazione** nel dettaglio dell’inject: scelta dei player e primo
-messaggio); poi prosegue come thread autonomo con l’inject citato in testa
+(nel box di risposta sotto l’inject: **A chi → Altri player**, scelta dei player e
+primo messaggio, Invia); poi prosegue come thread autonomo con l’inject citato in testa
 (riferimento fissato all’apertura) (`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
 testo originale e inglese, citazioni; `message_count`), nel visore delle conversazioni
@@ -388,7 +401,8 @@ ha una, altrimenti la copia di chi ha creato la conversazione se la lingua coinc
 altrimenti la versione inglese di lavoro (nessuna traduzione aggiuntiva). Non
 vede altri inject né altre conversazioni.
 
-Dalla conversazione si può rispondere all’inject (stesso modale). Un partecipante che
+Dalla conversazione si può rispondere all’inject con lo stesso box, scegliendo
+come destinatario il mittente dell’inject. Un partecipante che
 non ha ricevuto l’inject può rispondere con `reply_to` = consegna a cui la conversazione
 è collegata e `conversation` = id: il server verifica che sia partecipante e che la
 conversazione sia collegata a quell’inject; la proposta registra `via_conversation`.
@@ -398,11 +412,11 @@ riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell
 
 ### Base della risposta e allegato PDF
 
-- Il modale di risposta del player (`tactical.rs`) è in blocchi: **base della risposta**
-  (Piani / Leggi / Giudizi operativi, `basis` = `plan|law|operational_judgment`,
-  predefinito giudizio operativo), eventuale **PDF**, **narrazione** guidata dal formato
-  chi/cosa/come/dove/quando (testo di aiuto e placeholder localizzati in `i18n_reply.rs`,
-  tutte le 12 lingue), **azioni**. La base diventa `Proposal.evidence.basis.kind`
+- Il box di risposta del player (`reply_composer.rs`) chiede, verso il mittente, il
+  **fondamento** facoltativo (Piano o procedura / Legge o norma / Giudizio operativo,
+  `basis` = `plan|law|operational_judgment`) e la nota `basis_note` (quale piano o
+  procedura, o il perché). Il PDF resta supportato dall’API ma il box non lo offre più
+  (era nel vecchio modale con tipo comunicazione/decisione e azioni). La base diventa `Proposal.evidence.basis.kind`
   (`BasisKind::Law` è nuovo) e compare in `inject_responses[].replies[]`, in
   `pending_proposals[]` e nei messaggi `reply` del `thread` come `basis` e `document`;
   il contesto AI del player riceve la riga `[basis] plans|laws|operational judgement`

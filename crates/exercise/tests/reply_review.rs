@@ -593,3 +593,48 @@ fn a_reviewed_action_waits_for_play_and_runs_as_its_role() {
     assert!(item.execution.as_ref().unwrap().ok);
     assert!(ex.world.d.tasks.iter().any(|t| t.role == "fire_commander"));
 }
+
+/// The player's stated basis (plan, procedure, law or operational judgement)
+/// and its reference or rationale travel with the reply: into the evidence,
+/// the player's AI conversation and the thread the AI reads for the EXCON.
+#[test]
+fn the_reply_basis_reaches_the_ai_reading() {
+    let mut ex = exercise();
+    let parent = inject(&mut ex, &["mayor"], INJECT)[0];
+    let pid = ex
+        .player_response(
+            "mayor",
+            PlayerResponse {
+                narrative: Some("Apriamo la palestra come area di attesa".into()),
+                narrative_en: "We open the gym as a waiting area".into(),
+                reply_to: Some(parent),
+                kind: ResponseKind::Communication,
+                basis: Some(BasisKind::Plan),
+                basis_note: Some("Piano comunale di protezione civile, scheda 4".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let basis = &ex.proposal(pid).unwrap().evidence.as_ref().unwrap().basis;
+    assert_eq!(basis.kind, BasisKind::Plan);
+    assert!(basis.reference.contains("scheda 4"), "{}", basis.reference);
+    assert!(
+        ex.conversations["mayor"].iter().any(|t| t.content.contains("[basis] plans: Piano comunale")),
+        "the player's AI conversation keeps the basis"
+    );
+    ex.begin_review(pid).unwrap();
+    let context = ex.review_context(pid).unwrap();
+    let reply = context.thread.as_array().unwrap().iter().find(|e| e["kind"] == "reply").unwrap();
+    assert_eq!(reply["basis"]["kind"], "plan");
+    assert!(reply["basis"]["reference"].as_str().unwrap().contains("scheda 4"));
+    // A rationale has to say what kind of basis it is.
+    let orphan = PlayerResponse {
+        narrative: Some("Evacuiamo".into()),
+        narrative_en: "We evacuate".into(),
+        reply_to: Some(parent),
+        kind: ResponseKind::Communication,
+        basis_note: Some("Esperienza".into()),
+        ..Default::default()
+    };
+    assert!(ex.validate_player_response("mayor", &orphan).is_err());
+}

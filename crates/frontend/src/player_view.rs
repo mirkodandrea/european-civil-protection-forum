@@ -1,4 +1,4 @@
-//! The player's working screen (inject panel, response composer, clarification
+//! The player's working screen (inject panel, reply composer, clarification
 //! answers) as plain data plus one message callback. `App` builds it from its
 //! own state; the workflow bench (`bench`) builds it from a fake server, so
 //! both drive the same rendering code.
@@ -16,7 +16,8 @@ pub struct PlayerView {
     /// `/api/static` payload.
     pub stat: Value,
     pub own: String,
-    /// UI fields of the player's composer (`work:*`, `inj:*`, `clar:*`).
+    /// UI fields of the player's page (`work:*`, `inj:*`, `clar:*`, and the
+    /// per-context reply drafts of `reply_composer`).
     pub fields: BTreeMap<String, String>,
     pub busy: bool,
     pub error: String,
@@ -75,145 +76,25 @@ impl PlayerView {
     }
 }
 
-/// Composer fields cleared once a response has been sent.
-const SENT_KEYS: &[&str] = &[
-    "work:location",
-    "work:destination",
-    "work:qty",
-    "work:reply_to",
-    "work:clarify",
-    "work:narrative",
-    "work:staged",
-    "work:conversation",
-    "work:basis",
-    "work:file_data",
-    "work:file_name",
-    "work:file_size",
-    "work:file_error",
-    "work:sugg",
-    "work:sugg_for",
-    "work:sugg_busy",
-    "work:kind",
-    "work:to",
-    "work:to_players",
-];
-
-/// Open the response composer on message `parent` (`Msg::OpenWork`, parent resolved).
-/// Returns true when the draft was reset (another message than before).
-pub fn open_work(fields: &mut BTreeMap<String, String>, parent: String) -> bool {
-    fields.remove("work:clarify");
-    fields.remove("work:conversation");
-    let reset = fields
-        .get("work:reply_to")
-        .map(String::as_str)
-        .unwrap_or("")
-        != parent;
-    if reset {
-        for key in [
-            "work:staged",
-            "work:narrative",
-            "work:basis",
-            "work:file_data",
-            "work:file_name",
-            "work:file_size",
-            "work:file_error",
-            "work:sugg",
-            "work:sugg_for",
-            "work:location",
-            "work:destination",
-            "work:kind",
-            "work:to",
-            "work:to_players",
-        ] {
-            fields.remove(key);
-        }
-    }
-    fields.insert("work:reply_to".into(), parent);
-    fields.insert("work:open".into(), "true".into());
-    reset
-}
-/// `Msg::OpenWorkConv`: answer the inject quoted by conversation `conv`
-/// (its delivery `parent`) from inside it. The recipients default to the
-/// other participants, whom the conversation is with.
-pub fn open_work_conv(fields: &mut BTreeMap<String, String>, state: &Value, own: &str, parent: String, conv: String) -> bool {
-    let reset = open_work(fields, parent);
-    let others: Vec<String> = list(&state["linked_conversations"])
-        .iter()
-        .find(|c| c["id"].to_string() == conv)
-        .map(|c| list(&c["participants"]).iter().map(text).filter(|p| *p != own).map(String::from).collect())
-        .unwrap_or_default();
-    if reset || !fields.contains_key("work:to") {
-        fields.insert("work:to".into(), "players".into());
-        fields.insert("work:to_players".into(), others.join(","));
-    }
-    fields.insert("work:conversation".into(), conv);
-    reset
-}
 /// `Msg::OpenInjectDetail`: a row of the inject list (empty: back to the list).
 pub fn open_inject_detail(fields: &mut BTreeMap<String, String>, key: String) {
-    for k in [
-        "inj:conv",
-        "inj:newconv",
-        "inj:conv_text",
-        "inj:conv_reply",
-        "inj:conv_people",
-    ] {
+    for k in ["inj:conv", "inj:conv_reply"] {
         fields.remove(k);
     }
     fields.insert("inj:open".into(), key);
 }
-/// The response was sent (`ActionKind::WorkSubmit`).
-pub fn response_sent(fields: &mut BTreeMap<String, String>) {
-    fields.insert("work:open".into(), "false".into());
-    for key in SENT_KEYS {
-        fields.remove(*key);
-    }
-}
-/// A linked conversation was created (`ActionKind::ConvStart`), with its id when known.
-pub fn conversation_started(fields: &mut BTreeMap<String, String>, id: Option<u64>) {
-    for key in [
-        "inj:newconv",
-        "inj:conv_text",
-        "inj:conv_people",
-        "inj:conv_reply",
-    ] {
-        fields.remove(key);
-    }
-    if let Some(id) = id {
-        fields.insert("inj:conv".into(), id.to_string());
-    }
-}
-/// A conversation message was sent (`ActionKind::ConvSend`).
-pub fn conversation_sent(fields: &mut BTreeMap<String, String>) {
-    fields.remove("inj:conv_text");
-    fields.remove("inj:conv_reply");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     #[test]
-    fn composer_fields_follow_the_workflow() {
+    fn opening_an_inject_leaves_any_conversation() {
         let mut f = BTreeMap::new();
-        assert!(open_work(&mut f, "7".into()));
-        f.insert("work:narrative".into(), "Evacuiamo F4".into());
-        // Reopening the same message keeps the draft; another one resets it.
-        assert!(!open_work(&mut f, "7".into()));
-        assert_eq!(f.get("work:narrative").map(String::as_str), Some("Evacuiamo F4"));
-        assert!(open_work(&mut f, "8".into()));
-        assert!(!f.contains_key("work:narrative"));
-        response_sent(&mut f);
-        assert_eq!(f.get("work:open").map(String::as_str), Some("false"));
-        assert!(!f.contains_key("work:reply_to"));
+        f.insert("inj:conv".to_string(), "2".to_string());
+        f.insert("draft:inj:3".to_string(), "Evacuiamo F4".to_string());
         open_inject_detail(&mut f, "3".into());
-        conversation_started(&mut f, Some(2));
-        assert_eq!(f.get("inj:conv").map(String::as_str), Some("2"));
-        // From a conversation the response goes to the other participants.
-        let state = json!({"linked_conversations":[{"id":2,"participants":["regional_cp","fire_commander","mayor"]}]});
-        open_work_conv(&mut f, &state, "fire_commander", "9".into(), "2".into());
-        assert_eq!(f.get("work:to").map(String::as_str), Some("players"));
-        assert_eq!(f.get("work:to_players").map(String::as_str), Some("regional_cp,mayor"));
-        assert_eq!(f.get("work:conversation").map(String::as_str), Some("2"));
+        assert_eq!(f.get("inj:open").map(String::as_str), Some("3"));
+        assert!(!f.contains_key("inj:conv"));
+        // Drafts are kept per inject or conversation, never thrown away by navigation.
+        assert_eq!(f.get("draft:inj:3").map(String::as_str), Some("Evacuiamo F4"));
     }
 }

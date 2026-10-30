@@ -97,6 +97,9 @@ pub struct Proposal {
     pub clarification_request: Option<String>,
     pub outcomes: Vec<Value>,
     pub t_s: i64,
+    /// What the player said the reply rests on, and their reference or rationale.
+    pub basis: Option<String>,
+    pub basis_note: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -290,6 +293,8 @@ impl Fake {
             clarification_request: None,
             outcomes: Vec::new(),
             t_s: t,
+            basis: None,
+            basis_note: None,
         });
         let mid = self.id();
         self.messages.push(Message {
@@ -365,9 +370,12 @@ impl Fake {
                     b["reply_to"].as_u64(),
                     b["conversation"].as_u64(),
                 )?;
+                let p = self.proposal_mut(pid)?;
                 if communication {
-                    self.proposal_mut(pid)?.status = "informational";
+                    p.status = "informational";
                 }
+                p.basis = b["basis"].as_str().map(String::from);
+                p.basis_note = b["basis_note"].as_str().filter(|n| !n.trim().is_empty()).map(String::from);
                 Ok(json!({"proposal": pid, "translation_failed": false}))
             }
             (true, ["api", "player", role, "reply"]) if who == *role => {
@@ -708,9 +716,12 @@ impl Fake {
             .iter()
             .find(|t| t.entries.iter().any(|e| e.2 == m.id))
             .map(|t| t.id);
+        // What a reply rests on, as the server's thread projection says.
+        let basis = (m.kind == "reply").then(|| m.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid))).flatten();
         json!({"id": m.id, "kind": m.kind, "from": m.from, "to": m.to, "turn": 1, "t_s": m.t_s, "clock": clock(m.t_s),
             "title": m.title, "text": m.text, "inject_id": m.delivery, "reply_to": m.reply_to,
-            "clarification_thread": clarification})
+            "clarification_thread": clarification,
+            "basis": basis.as_ref().map(|p| p.basis.clone()), "basis_note": basis.and_then(|p| p.basis_note.clone())})
     }
     fn thread_json(&self, t: &Thread) -> Value {
         json!({"id": t.id, "role": t.role, "inject_id": t.delivery, "status": t.status, "current_proposal": t.proposal,
@@ -766,7 +777,9 @@ impl Fake {
         let responses: Vec<Value> = self.messages.iter().filter(|m| m.kind == "inject").map(|m| {
             let mine = |p: &&Proposal| p.delivery == m.delivery && (p.role == m.to || self.conversations.iter().any(|c| Some(c.id) == p.via_conversation && c.participants.contains(&m.to) && c.quote == m.id));
             let replies: Vec<Value> = self.messages.iter().filter(|r| r.kind == "reply" && r.from == m.to && r.delivery == m.delivery)
-                .map(|r| json!({"id": r.id, "proposal": r.proposal, "text": r.text, "original": r.text, "clock": clock(r.t_s), "reply_to": r.reply_to, "basis": "operational_judgment"})).collect();
+                .map(|r| json!({"id": r.id, "proposal": r.proposal, "text": r.text, "original": r.text, "clock": clock(r.t_s), "reply_to": r.reply_to,
+                    "basis": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).map(|p| p.basis.clone().unwrap_or_else(|| "operational_judgment".into())),
+                    "basis_note": r.proposal.and_then(|pid| self.proposals.iter().find(|p| p.id == pid)).and_then(|p| p.basis_note.clone())})).collect();
             let pending: Vec<Value> = self.proposals.iter().filter(mine).filter(|p| ["pending", "needs_clarification"].contains(&p.status))
                 .map(|p| json!({"id": p.id, "status": p.status, "summary": p.original, "original": p.original, "role": p.role,
                     "narrative": p.narrative, "carries_actions": p.carries_actions,

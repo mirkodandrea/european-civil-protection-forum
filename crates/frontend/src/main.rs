@@ -39,6 +39,7 @@ mod maptest;
 mod notifications;
 mod render;
 mod risposte;
+mod reply_composer;
 mod review_board;
 mod situation;
 mod staged_commands;
@@ -67,11 +68,9 @@ use yew::prelude::*;
 #[derive(Clone, PartialEq)]
 pub enum ActionKind {
     Ordinary,
-    WorkSubmit,
-    /// A new linked conversation: open it once the server created it.
-    ConvStart,
-    /// A message in a linked conversation: clear the composer.
-    ConvSend,
+    /// A reply from the composer of this context (`reply_composer`): clear
+    /// its draft; open the conversation it started, if any.
+    ReplySent(String),
     Store(String),
     Send(String, String),
     Download,
@@ -236,9 +235,6 @@ pub enum Msg {
     OpenInject(String),
     /// Open the drill-down of a response row (empty: back to the list).
     OpenInjectDetail(String),
-    OpenWork(Option<String>),
-    /// Answer the inject delivery `.0` from the linked conversation `.1`.
-    OpenWorkConv(String, String),
     CloseInject,
     View(String),
     Field(String, String),
@@ -765,17 +761,9 @@ impl Component for App {
                                     self.error = e
                                 }
                             }
-                            ActionKind::WorkSubmit => {
-                                player_view::response_sent(&mut self.fields);
-                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Risposta inviata")}.into();
-                            }
-                            ActionKind::ConvStart => {
-                                player_view::conversation_started(&mut self.fields, value["conversation"].as_u64());
-                                self.notice = crate::i18n::ex("Inviato").into();
-                            }
-                            ActionKind::ConvSend => {
-                                player_view::conversation_sent(&mut self.fields);
-                                self.notice = crate::i18n::ex("Inviato").into();
+                            ActionKind::ReplySent(ctx) => {
+                                crate::reply_composer::reply_sent(&mut self.fields, &ctx, &value);
+                                self.notice = if value["translation_failed"]==true {crate::i18n::ex("Inviato · traduzione non disponibile")}else{crate::i18n::ex("Inviato")}.into();
                             }
                             ActionKind::ClearField(key) => {
                                 self.fields.remove(&key);
@@ -785,19 +773,6 @@ impl Component for App {
                     }
                 }
                 self.request_refresh(ctx);
-            }
-            Msg::OpenWorkConv(parent, conversation) => {
-                player_view::open_work_conv(&mut self.fields, &self.state, &self.own, parent, conversation);
-                self.error.clear();
-                focus_when_rendered("#response-narrative", 10);
-            }
-            Msg::OpenWork(parent) => {
-                let parent = parent
-                    .or_else(|| self.latest_inject().map(|m| m["id"].to_string()))
-                    .unwrap_or_default();
-                player_view::open_work(&mut self.fields, parent);
-                self.error.clear();
-                focus_when_rendered("#response-narrative", 10);
             }
             Msg::OpenInjectDetail(key) => player_view::open_inject_detail(&mut self.fields, key),
             Msg::OpenInject(id) => {
