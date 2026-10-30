@@ -223,6 +223,28 @@ pub struct DropRec {
     pub t_s: i64,
 }
 
+/// The ground an EXCON `Extinguish`/`ExtinguishArea` covered, in world metres.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum ExtinguishShape {
+    /// `[x0, y0, x1, y1]`: a zone of the map grid, or a sector.
+    Rect { bounds: [f32; 4] },
+    Disc { centre: Pos, radius_m: f32 },
+    /// Vertices in order, as drawn.
+    Polygon { vertices: Vec<Pos> },
+}
+
+/// A record of an EXCON intervention that put fire out, kept (like
+/// [`DropRec`]) so viewers can depict it; rolled back with the rest of [`Dyn`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtinguishRec {
+    pub shape: ExtinguishShape,
+    /// Burning cells put out.
+    pub cells_out: usize,
+    pub by: String,
+    pub t_s: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Arrival {
     pub role: String,
@@ -265,6 +287,8 @@ pub struct Dyn {
     pub roads: BTreeMap<String, RoadState>,
     pub lines: Vec<LineRec>,
     pub drops: Vec<DropRec>,
+    /// EXCON extinguish interventions, oldest first.
+    pub extinguished: Vec<ExtinguishRec>,
     /// Open shelters: building id -> people sheltered.
     pub shelters: BTreeMap<u32, u32>,
     /// Warned zones: zone code -> simulated second the warning was issued.
@@ -405,6 +429,7 @@ impl World {
                 roads,
                 lines: Vec::new(),
                 drops: Vec::new(),
+                extinguished: Vec::new(),
                 shelters: BTreeMap::new(),
                 warned: BTreeMap::new(),
                 pools,
@@ -1824,6 +1849,17 @@ impl World {
                 }
                 .map_err(|e| e.to_string())?;
                 out.push(format!("{n} burning cells put out; fuel unchanged"));
+                self.d.extinguished.push(ExtinguishRec {
+                    shape: match foot {
+                        Footprint::Rect(bounds) => ExtinguishShape::Rect { bounds },
+                        Footprint::Disc(centre, radius_m) => {
+                            ExtinguishShape::Disc { centre, radius_m }
+                        }
+                    },
+                    cells_out: n,
+                    by: by.clone(),
+                    t_s: t,
+                });
                 self.event(
                     "extinguished",
                     format!(
@@ -1843,6 +1879,12 @@ impl World {
                     .map_err(|e| e.to_string())?;
                 out.push(format!("{n} burning cells put out; fuel unchanged"));
                 let centre = polygon_centroid(&poly);
+                self.d.extinguished.push(ExtinguishRec {
+                    shape: ExtinguishShape::Polygon { vertices: poly.clone() },
+                    cells_out: n,
+                    by: by.clone(),
+                    t_s: t,
+                });
                 self.event(
                     "extinguished",
                     format!(

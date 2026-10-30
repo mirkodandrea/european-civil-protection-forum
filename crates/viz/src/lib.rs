@@ -30,6 +30,7 @@ mod bench;
 mod camera;
 mod deployments;
 mod effects;
+mod extinguish;
 mod fire_field;
 mod fire_shader;
 mod fire_textures;
@@ -89,6 +90,8 @@ pub struct Snapshot {
     pub road_segments: Vec<RoadSegment>,
     pub lines: Vec<FireLine>,
     pub drops: Vec<view::Drop>,
+    /// EXCON extinguish interventions, oldest first.
+    pub extinguished: Vec<view::Extinguished>,
     pub warned: Vec<String>,
     pub warnings: Vec<view::Warning>,
     pub last_turn: Option<TurnWindow>,
@@ -217,6 +220,7 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 effects::ground_work,
                 effects::wet_ground,
                 effects::evacuation,
+                extinguish::update,
                 effects::puffs,
             )
                 .after(sync),
@@ -377,6 +381,7 @@ fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
     snap.road_segments = v.road_segments;
     snap.lines = v.lines;
     snap.drops = v.drops;
+    snap.extinguished = v.extinguished;
     snap.traffic = v.traffic;
     snap.deployments = v.deployments;
     snap.traffic_model = v.traffic_model;

@@ -697,6 +697,32 @@ protocollo `view` porta a questo scopo `Deployment::action/zones`,
 Fixture: `scripts/visual-fixtures/suppression.json` (autobotte a 8 min, lancio a
 26 min, drone; modello operativo) e `evacuation.json` (modello storico).
 
+**Spegnimenti EXCON visibili** (`crates/viz/src/extinguish.rs`, idee dal
+livello di soppressione di `propagator_abm`). `Extinguish` e `ExtinguishArea`
+spengono il fuoco all'istante e senza mezzi; perché non sparisca e basta, il
+modello registra ogni intervento in `sim::Dyn::extinguished` (`ExtinguishRec`:
+impronta rettangolo/cerchio/poligono, istante simulato, celle in fiamme spente,
+autore; segue il rollback con il resto di `Dyn`, nessun effetto sul mondo) e
+`server::view::extract` lo porta in `ViewState::extinguished`
+(`view::Extinguished`, gli ultimi 16; viaggia anche nei frame differenziali).
+Per circa 20 s **reali** dopo ciascuno (2,5 s arrivo, 14 s lavoro, 4 s
+ritiro; come per i lanci, a qualunque velocità della simulazione; non si
+riproducono interventi più vecchi di 15 min simulati quando la vista li vede
+per la prima volta) la vista 3D mette in scena all'impronta: autobotti che
+arrivano lungo la strada più vicina (entro 350 m, altrimenti fuori strada al
+bordo) e parcheggiano con i lampeggianti, vigili del fuoco distribuiti lungo il
+bordo dell'area bruciata dentro l'impronta (dove stava il fronte; senza area
+bruciata lungo il contorno), 30 m fuori dal bordo, con manichetta stesa fino
+alla propria autobotte e getto ad arco che spazza il bordo, vapore dove l'acqua
+cade e dal terreno appena spento, terreno bagnato e scurito (bordo sfumato)
+sull'impronta; poi le squadre rientrano, le autobotti ripartono e non resta
+nulla. Un'autobotte ogni ~450 m di bordo con 3 vigili ciascuna, al massimo
+2×2 (`low`), 4×3 (`projector`), 6×3 (`high`); anche la quantità di vapore
+segue il livello grafico. Il regista della camera inquadra già l'intervento
+(cue `master_command` con l'impronta). Fixture: `extinguish-zone.json`
+(zona G3 dopo 40 min) con `extinguish-zone-before.json` per il confronto, e
+`extinguish-area.json`; per «durante» `settle=10`, per «dopo» `settle=26`.
+
 ## Confini del modello
 
 - Le persone sono conteggiate per edificio e non simulate individualmente.
