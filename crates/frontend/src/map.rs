@@ -829,7 +829,11 @@ fn probe_lines(
         };
         out.push(format!(
             "{} · {}",
-            tf(lang, "insp_fuel", &[&fuel_label(lang, stat, fuel)]),
+            tf(lang, "insp_fuel", &[&if crate::fuel_palette::water_mask(stat, cols * rows).get(i) == Some(&true) {
+                crate::map_legend::lg(lang, "sea").to_string()
+            } else {
+                fuel_label(lang, stat, fuel)
+            }]),
             t(lang, name)
         ));
     }
@@ -1344,21 +1348,21 @@ fn draw(
         .dyn_into::<CanvasRenderingContext2d>()?;
     let fuel = bytes(&stat["fuel"]);
     let fire = bytes(&v["fire"]);
+    // Base colours from the scenario's fuel classes (EU12 and legacy ids overlap),
+    // sea and lakes from the static water mask.
+    let palette = crate::fuel_palette::Palette::new(stat);
+    let water = crate::fuel_palette::water_mask(stat, cols * rows);
     let mut rgba = vec![0u8; cols * rows * 4];
     for i in 0..cols * rows {
         let bg = if !on(ml::BASE) {
-            ml::PLAIN_BG
-        } else {
-            match fuel.get(i).copied().unwrap_or(0) {
-            1 => [107, 142, 78],
-            2 => [154, 165, 90],
-            3 => [214, 208, 196],
-            4 => [217, 210, 138],
-            5 => [63, 107, 58],
-            6 => [194, 183, 110],
-            7 => [127, 163, 122],
-            _ => [200, 200, 190],
+            // Base off: plain ground, but the coast keeps its shape.
+            if water.get(i).copied().unwrap_or(false) {
+                crate::fuel_palette::PLAIN_WATER
+            } else {
+                ml::PLAIN_BG
             }
+        } else {
+            crate::fuel_palette::base(&palette, &fuel, &water, cols, rows, i)
         };
         let code = fire.get(i).copied().unwrap_or(0);
         let fg = if ml::fire_code_shown(code, hidden) {

@@ -228,6 +228,24 @@ impl World {
         })
     }
 
+    /// Sea and lakes (ground below `scenario::editor::SEA_LEVEL_M`) as a
+    /// base64 bitset over the raster cells, bit `i % 8` of byte `i / 8`
+    /// (LSB first); `null` on a territory without water. The UIs get no DEM,
+    /// so this is how the 2D map tells the sea from bare ground.
+    pub fn water_mask_b64(&self) -> Value {
+        let sea = scenario::editor::SEA_LEVEL_M;
+        if !self.scn.dem.iter().any(|&z| z < sea) {
+            return Value::Null;
+        }
+        let mut bits = vec![0u8; self.scn.dem.len().div_ceil(8)];
+        for (i, &z) in self.scn.dem.iter().enumerate() {
+            if z < sea {
+                bits[i / 8] |= 1 << (i % 8);
+            }
+        }
+        json!(base64::engine::general_purpose::STANDARD.encode(bits))
+    }
+
     /// Static scenario data for the web UIs (fuel raster included, no DEM).
     pub fn static_view(&self) -> Value {
         let fuel: Vec<u8> = self.scn.fuel.iter().map(|&f| f as u8).collect();
@@ -243,6 +261,7 @@ impl World {
             "id": self.scn.id,
             "name": self.scn.name,
             "description": self.scn.description,
+            "water": self.water_mask_b64(),
             "grid": self.scn.grid,
             "zones": self.scn.zones,
             "fuel": base64::engine::general_purpose::STANDARD.encode(fuel),

@@ -477,3 +477,24 @@ fn extinguish_circle_keeps_fuel() {
     w.advance(10 * 60).unwrap();
     assert_eq!(w.fire.vegetation(), &veg[..]);
 }
+
+#[test]
+fn static_view_marks_ground_below_sea_level_as_water() {
+    use base64::Engine;
+    let dry = World::new(Arc::new(scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED)), 1).unwrap();
+    assert!(dry.static_view()["water"].is_null(), "no sea, no mask");
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    let cols = scn.grid.cols;
+    // The whole first row and one cell of the second row below sea level.
+    for i in (0..cols).chain([cols + 9]) {
+        scn.dem[i] = -2.0;
+    }
+    let w = World::new(Arc::new(scn), 1).unwrap();
+    let bits = base64::engine::general_purpose::STANDARD
+        .decode(w.static_view()["water"].as_str().unwrap())
+        .unwrap();
+    let wet = |i: usize| bits[i / 8] >> (i % 8) & 1 == 1;
+    assert_eq!(bits.len(), (cols * w.scn.grid.rows).div_ceil(8));
+    assert!((0..cols).all(wet) && wet(cols + 9));
+    assert!(!wet(cols) && !wet(cols + 8) && !wet(cols + 10));
+}

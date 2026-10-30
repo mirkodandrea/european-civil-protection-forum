@@ -712,6 +712,22 @@ Fixture: `scripts/visual-fixtures/suppression.json` (autobotte a 8 min, lancio a
   assi di un grafico); quando una zona supera 150 px sullo schermo ogni zona
   mostra il proprio codice nell'angolo visibile. Testo di 10 px semitrasparente
   con alone sottile, senza riquadro; linee della griglia tenui.
+- Fondo della mappa 2D (livello «Base»): i colori della vegetazione vengono
+  dalle **definizioni di combustibile dello scenario** (`fuel_names` di
+  `/api/static`, per nome di classe), non dagli id: gli id EU12 (1–3 prateria,
+  4–6 latifoglie, 7–9 arbusteti, 10–12 conifere, -1/0 non vegetato) e quelli
+  della tabella legacy a 7 classi (Valverde) si sovrappongono. Una tavolozza per
+  famiglia — prateria verde-giallo chiaro, latifoglie verde medio, arbusteti
+  verde oliva/bruno, conifere verde-blu scuro; agroforestale e bosco poco
+  infiammabile a parte — con suscettività più alta più satura e scura; non
+  vegetato neutro, classi sconosciute grigie (`crates/frontend/src/fuel_palette.rs`).
+  **Mare e laghi**: `/api/static` (EXCON e player) porta `water`, bitset base64
+  delle celle sotto il livello del mare (`World::water_mask_b64`, nullo se il
+  territorio non ha acqua; il browser non riceve il DEM); la mappa li dipinge
+  azzurro tenue con una linea di costa più scura, sotto fuoco e lavori e
+  distinti dal blu tratteggiato di acqua/ritardante; con la base spenta resta
+  una velatura leggera per la forma della costa. L'ispettore dice «Mare / lago»
+  e la legenda mostra le famiglie (bassa → alta suscettività) e il mare.
 
 - Drone di monitoraggio: risorsa `drones` (1, `fire_commander`, tutti i territori) e comando `MonitorArea {zones}`. Dopo approvazione EXCON parte dalla base, vola in linea d'aria e, in posizione, ogni `update_interval_s` (300 s simulati) aggiunge alla mappa del possessore un'osservazione fresca delle zone coperte (fonte «Drone», senza messaggi; due soli messaggi, arrivo e rientro). Autonomia 2400 s, ricarica 900 s, massimo 4 zone, limite di vento facoltativo; poi il drone torna disponibile da solo. Mappa del giocatore: zone in diretta tratteggiate, drone e banner «drone in diretta»; vista 3D: quadricottero che orbita sulle zone con cono di scansione. Parametri e dettagli in `docs/scenari.md`. Non coperto: copertura circolare (punto + raggio), più droni in coda.
 - Etichette e legenda della mappa 2D (`crates/frontend/src/map.rs`, `label_layout.rs`, `map_legend.rs`): nomi di edifici, luoghi, chiusure, risorse e codici di zona sono posizionati in pixel dello schermo dopo il disegno del mondo, con font compatto di 12–14,5 px CSS (cresce lentamente con lo zoom della mappa) su fondo bianco traslucido; solo i nomi critici hanno un bordo sottile. I codici di zona sono descritti sopra (assi o angolo della zona, senza riquadro). In vista d'insieme i nomi lunghi sono abbreviati («Presidio sanitari…», completi da zoom 3) e i luoghi descrittivi di più di due parole compaiono solo da zoom 1,4. Le etichette continuano a evitare il fronte attivo. Il posizionamento (`label_layout::place`, puro e con test) segue la priorità: 0 edifici critici (scuola, ospedale, distributore, municipio) e colpiti da minaccia/danno/evacuazione, incendio segnalato; 1 altri edifici con nome, chiusure, risorse; 2 luoghi; 3 codici di zona. Ogni etichetta prova una corona di posizioni attorno al punto; se si sposta di oltre 10 px è unita al punto da una linea guida; se non c'è spazio le etichette a bassa priorità spariscono, i codici di zona non entrano nel posizionamento ma ne sono ostacoli. Nome di luogo ed edificio uguali e vicini valgono un’etichetta. I segnaposto (edifici con stato, ancore) non vengono coperti. La legenda (`map_legend.rs`, stringhe it/en proprie, altre lingue in inglese) non si affida al solo colore: fronte attivo = puntini, bruciato = tratteggio diagonale, acqua/ritardante = righe orizzontali, linee tratteggiate/continue per previsione, linea di contenimento, strada tagliata e chiusura polizia, simboli per stato degli edifici (▲ minacciato, ◆ danneggiato, ✕ distrutto, ➜ in evacuazione, ○ evacuato) disegnati sulla mappa con lo stesso glifo. `GET` della statica per ruolo include ora `kind` degli edifici.

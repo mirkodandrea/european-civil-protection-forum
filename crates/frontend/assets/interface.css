@@ -893,6 +893,8 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 .lg-cut{height:0;border:0;border-top:5px solid #b72e26;background:none}
 .lg-closure{height:0;border:0;border-top:5px dashed #b87512;background:none}
 .lg-warned{background:repeating-linear-gradient(135deg,rgba(232,160,0,.75) 0 2px,rgba(255,214,90,.25) 2px 6px);border:2px solid #d08a00}
+.map-legend-cover{margin-top:6px}
+.map-legend-cover .lg-note{opacity:.75;font-style:italic}
 .lg-unit{width:16px;height:11px;background:#ad6912;border-color:#112632}
 .lg-gl{display:inline-block;min-width:22px;text-align:center;font-weight:700;font-size:15px;line-height:1}
 .g-threat{color:#8a5200}.g-dmg{color:#b34700}.g-dest{color:#000}.g-evac{color:#00668f}.g-done{color:#1a45c8}.g-target{color:#ad6912}.g-rep{color:#e33}

@@ -192,7 +192,9 @@
   "work_need_place": "Entrez une zone ou un lieu (cliquez sur la carte ou saisissez-le).",
   "work_need_response": "Rédigez un narratif ou ajoutez au moins une action.",
   "work_need_second": "Entrez également le second point de la ligne.",
-  "a_EvacuateDistrict": "Évacuation du village"
+  "a_EvacuateDistrict": "Évacuation du village",
+  "Sea / lake": "Mer / lac",
+  "darker = more susceptible": "plus foncé = plus sensible"
  },
  "de": {
   "Active fire front": "Aktive Feuerfront",
@@ -387,7 +389,9 @@
   "work_need_place": "Geben Sie eine Zone oder einen Ort ein (Karte anklicken oder eingeben).",
   "work_need_response": "Schreiben Sie ein Narrativ oder fügen Sie mindestens eine Aktion hinzu.",
   "work_need_second": "Geben Sie auch den zweiten Punkt der Linie ein.",
-  "a_EvacuateDistrict": "Evakuierung des Dorfes"
+  "a_EvacuateDistrict": "Evakuierung des Dorfes",
+  "Sea / lake": "Meer / See",
+  "darker = more susceptible": "dunkler = anfälliger"
  },
  "es": {
   "Active fire front": "Frente de fuego activo",
@@ -582,7 +586,9 @@
   "work_need_place": "Ingrese una zona o un lugar (haga clic en el mapa o escríbalo).",
   "work_need_response": "Escriba una narrativa o añada al menos una acción.",
   "work_need_second": "Ingrese también el segundo punto de la línea.",
-  "a_EvacuateDistrict": "Evacuación del pueblo"
+  "a_EvacuateDistrict": "Evacuación del pueblo",
+  "Sea / lake": "Mar / lago",
+  "darker = more susceptible": "más oscuro = más susceptible"
  },
  "pt": {
   "Active fire front": "Frente de fogo ativa",
@@ -777,7 +783,9 @@
   "work_need_place": "Introduza uma zona ou local (clique no mapa ou escreva).",
   "work_need_response": "Escreva uma narrativa ou adicione pelo menos uma ação.",
   "work_need_second": "Introduza também o segundo ponto da linha.",
-  "a_EvacuateDistrict": "Evacuação da aldeia"
+  "a_EvacuateDistrict": "Evacuação da aldeia",
+  "Sea / lake": "Mar / lago",
+  "darker = more susceptible": "mais escuro = mais suscetível"
  },
  "ro": {
   "Active fire front": "Front activ de incendiu",
@@ -972,7 +980,9 @@
   "work_need_place": "Introduceți o zonă sau un loc (faceți clic pe hartă sau tastați-l).",
   "work_need_response": "Scrieți o narațiune sau adăugați cel puțin o acțiune.",
   "work_need_second": "Introduceți și al doilea punct al liniei.",
-  "a_EvacuateDistrict": "Evacuarea satului"
+  "a_EvacuateDistrict": "Evacuarea satului",
+  "Sea / lake": "Mare / lac",
+  "darker = more susceptible": "mai închis = mai susceptibil"
  },
  "el": {
   "Active fire front": "Ενεργό μέτωπο φωτιάς",
@@ -1167,7 +1177,9 @@
   "work_need_place": "Εισαγάγετε μια ζώνη ή μια τοποθεσία (κάντε κλικ στον χάρτη ή πληκτρολογήστε την).",
   "work_need_response": "Γράψτε μια αφήγηση ή προσθέστε τουλάχιστον μία ενέργεια.",
   "work_need_second": "Εισαγάγετε επίσης το δεύτερο σημείο της γραμμής.",
-  "a_EvacuateDistrict": "Εκκένωση χωριού"
+  "a_EvacuateDistrict": "Εκκένωση χωριού",
+  "Sea / lake": "Θάλασσα / λίμνη",
+  "darker = more susceptible": "πιο σκούρο = πιο ευπαθές"
  },
  "uk": {
   "Active fire front": "Активний фронт пожежі",
@@ -1362,7 +1374,9 @@
   "work_need_place": "Введіть зону або місце (натисніть на карту або введіть текст).",
   "work_need_response": "Напишіть розповідь або додайте принаймні одну дію.",
   "work_need_second": "Також введіть другу точку лінії.",
-  "a_EvacuateDistrict": "Евакуація села"
+  "a_EvacuateDistrict": "Евакуація села",
+  "Sea / lake": "Море / озеро",
+  "darker = more susceptible": "темніше = вразливіше"
  },
  "hy": {
   "Active fire front": "Հրդեհի ակտիվ ճակատ",
@@ -1557,7 +1571,9 @@
   "work_need_place": "Մուտքագրեք գոտի կամ վայր (սեղմեք քարտեզի վրա կամ մուտքագրեք):",
   "work_need_response": "Գրեք պատմողական կամ ավելացրեք առնվազն մեկ գործողություն:",
   "work_need_second": "Մուտքագրեք նաև գծի երկրորդ կետը:",
-  "a_EvacuateDistrict": "Գյուղի տարհանում"
+  "a_EvacuateDistrict": "Գյուղի տարհանում",
+  "Sea / lake": "Ծով / լիճ",
+  "darker = more susceptible": "ավելի մուգ = ավելի զգայուն"
  },
  "ka": {
   "Active fire front": "ხანძრის აქტიური ფრონტი",
@@ -1752,7 +1768,9 @@
   "work_need_place": "შეიყვანეთ ზონა ან ადგილი (დააწკაპუნეთ რუკაზე ან აკრიფეთ).",
   "work_need_response": "დაწერეთ ნარატივი ან დაამატეთ მინიმუმ ერთი მოქმედება.",
   "work_need_second": "ასევე შეიყვანეთ ხაზის მეორე წერტილი.",
-  "a_EvacuateDistrict": "სოფლის ევაკუაცია"
+  "a_EvacuateDistrict": "სოფლის ევაკუაცია",
+  "Sea / lake": "ზღვა / ტბა",
+  "darker = more susceptible": "უფრო მუქი = უფრო მგრძნობიარე"
  },
  "az": {
   "Active fire front": "Aktiv yanğın cəbhəsi",
@@ -1947,6 +1965,8 @@
   "work_need_place": "Zona və ya yer daxil edin (xəritəyə klikləyin və ya yazın).",
   "work_need_response": "Nəqli yazın və ya ən azı bir hərəkət əlavə edin.",
   "work_need_second": "Xəttin ikinci nöqtəsini də daxil edin.",
-  "a_EvacuateDistrict": "Kəndin təxliyəsi"
+  "a_EvacuateDistrict": "Kəndin təxliyəsi",
+  "Sea / lake": "Dəniz / göl",
+  "darker = more susceptible": "tünd = daha həssas"
  }
 }
