@@ -74,7 +74,13 @@ jobs:
           tar -xzf /tmp/trunk.tar.gz -C /tmp
           install /tmp/trunk ~/.cargo/bin/trunk
       - name: Build standalone WebAssembly
-        run: ./scripts/build_standalone.sh
+        env:
+          TTX_BUILD_COMMIT: ${{ github.event_name == 'pull_request' && matrix.branch == github.base_ref && github.event.pull_request.head.sha || '' }}
+          TTX_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          export TTX_BUILD_COMMIT="${TTX_BUILD_COMMIT:-$(cat /tmp/source-revision)}"
+          export TTX_BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          ./scripts/build_standalone.sh
       - uses: actions/setup-node@v7
         if: github.event_name == 'workflow_dispatch' && inputs.verify_standalone
         with:
