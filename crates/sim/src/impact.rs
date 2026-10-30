@@ -121,18 +121,6 @@ fn state_of(d: Damage, threatened: bool) -> ElementState {
     }
 }
 
-fn kind_name(k: BuildingKind) -> &'static str {
-    match k {
-        BuildingKind::House => "house",
-        BuildingKind::School => "school",
-        BuildingKind::Hospital => "hospital",
-        BuildingKind::FuelStation => "fuel_station",
-        BuildingKind::SportsCentre => "sports_centre",
-        BuildingKind::TownHall => "town_hall",
-        BuildingKind::Industrial => "industrial",
-    }
-}
-
 /// Build the report from a scenario and its dynamic state.
 pub fn report(scn: &Scenario, d: &Dyn, t_s: i64) -> ImpactReport {
     let mut rows = Vec::new();
@@ -171,7 +159,7 @@ pub fn report(scn: &Scenario, d: &Dyn, t_s: i64) -> ImpactReport {
                 id: format!("b{}", b.id),
                 kind: ElementKind::Building,
                 name: b.name.clone().unwrap_or_else(|| format!("#{}", b.id)),
-                category: kind_name(b.kind).to_string(),
+                category: b.category().to_string(),
                 sector: b.sector.clone(),
                 pos: b.pos,
                 state,

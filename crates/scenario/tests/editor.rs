@@ -71,7 +71,7 @@ fn buildings_have_variants_rotation_and_places_reference_them() {
         .add_building(
             [100., 100.],
             BuildingSpec {
-                kind: BuildingKind::School,
+                kind: BuildingKind::Sensitive,
                 visual_kind: Some("church".into()),
                 size: [30., 12.],
                 rotation_deg: -45.,
@@ -83,7 +83,7 @@ fn buildings_have_variants_rotation_and_places_reference_them() {
         panic!("building expected")
     };
     let b = d.scene.buildings[i].clone();
-    assert_eq!((b.kind, b.visual_kind.as_deref(), b.rotation_deg), (BuildingKind::School, Some("church"), 315.));
+    assert_eq!((b.kind, b.visual_kind.as_deref(), b.rotation_deg), (BuildingKind::Sensitive, Some("church"), 315.));
     let json = d.export().unwrap();
     let mut again = Document::new(d.scene.as_ref().clone()).unwrap();
     again.import(&json).unwrap();

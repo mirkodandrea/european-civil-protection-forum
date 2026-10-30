@@ -153,7 +153,7 @@ pub fn generate(seed: u64) -> Scenario {
     let mut buildings = Vec::new();
     fn add(
         v: &mut Vec<Building>,
-        kind: BuildingKind,
+        (kind, visual): (BuildingKind, Option<&str>),
         name: Option<&str>,
         pos: Pos,
         size: [f32; 2],
@@ -163,7 +163,7 @@ pub fn generate(seed: u64) -> Scenario {
         let id = v.len() as u32 + 1;
         v.push(Building {
             id,
-            visual_kind: None,
+            visual_kind: visual.map(str::to_string),
             kind,
             name: name.map(str::to_string),
             pos,
@@ -178,7 +178,7 @@ pub fn generate(seed: u64) -> Scenario {
     // Named facilities first, so their ids are stable across seeds.
     add(
         &mut buildings,
-        BuildingKind::School,
+        (BuildingKind::Sensitive, Some("school")),
         Some("Pineta Primary School"),
         [2760.0, 2210.0],
         [40.0, 24.0],
@@ -187,7 +187,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::FuelStation,
+        (BuildingKind::Facility, Some("fuel_station")),
         Some("Pineta Fuel Station"),
         [2470.0, 2020.0],
         [24.0, 16.0],
@@ -196,7 +196,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::TownHall,
+        (BuildingKind::Facility, Some("town_hall")),
         Some("Valverde Town Hall"),
         [1600.0, 1330.0],
         [30.0, 24.0],
@@ -205,7 +205,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::Hospital,
+        (BuildingKind::Sensitive, Some("hospital")),
         Some("Valverde Hospital"),
         [1440.0, 1160.0],
         [50.0, 30.0],
@@ -214,7 +214,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::SportsCentre,
+        (BuildingKind::Facility, Some("sports_centre")),
         Some("Valverde Sports Centre"),
         [1830.0, 1150.0],
         [50.0, 36.0],
@@ -223,7 +223,7 @@ pub fn generate(seed: u64) -> Scenario {
     );
     add(
         &mut buildings,
-        BuildingKind::Industrial,
+        (BuildingKind::Facility, Some("industrial")),
         Some("Valverde Timber Mill"),
         [2150.0, 1650.0],
         [60.0, 30.0],
@@ -278,7 +278,7 @@ pub fn generate(seed: u64) -> Scenario {
         let occ = rng.gen_range(1..=5);
         add(
             &mut buildings,
-            BuildingKind::House,
+            (BuildingKind::House, None),
             None,
             p,
             [14.0, 12.0],
@@ -736,7 +736,7 @@ mod tests {
         assert!(s
             .buildings
             .iter()
-            .any(|b| b.kind == BuildingKind::School && b.sector == "pineta"));
+            .any(|b| b.category() == "school" && b.kind.needs_transport() && b.sector == "pineta"));
         assert!(s.buildings.iter().any(|b| b.shelter_capacity > 0));
         assert_eq!(s.roles.len(), 3);
     }

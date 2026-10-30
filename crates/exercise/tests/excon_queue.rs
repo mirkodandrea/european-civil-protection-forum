@@ -24,7 +24,7 @@ fn started() -> Exercise {
 /// An ignition on fuel, next to the school (as in the Situation tests).
 fn ignite() -> Command {
     let scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
-    let b = scn.buildings.iter().find(|b| b.kind == scenario::BuildingKind::School).unwrap();
+    let b = scn.buildings.iter().find(|b| b.category() == "school").unwrap();
     Command::Ignite { at: Loc::Point { x: b.pos[0] - 150.0, y: b.pos[1] }, radius_m: Some(60.0) }
 }
 

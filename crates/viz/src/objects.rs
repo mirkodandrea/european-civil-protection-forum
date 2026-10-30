@@ -111,13 +111,13 @@ pub fn setup(
         }),
     };
     for (i, b) in s.buildings.iter().enumerate() {
-        let height = match b.kind {
-            BuildingKind::House => 7.0,
-            BuildingKind::FuelStation => 5.0,
+        let source_kind = scenario::canonical_visual(b.visual_kind.as_deref().unwrap_or(""));
+        let height = match (b.kind, source_kind) {
+            (_, "fuel_station") => 5.0,
+            (BuildingKind::House, _) => 7.0,
             _ => 12.0,
         } * EXAGGERATION;
         let base = to_bevy(s, b.pos, 0.0);
-        let source_kind = b.visual_kind.as_deref().unwrap_or("");
         if matches!(
             source_kind,
             "plaza"
@@ -170,11 +170,11 @@ pub fn setup(
             _ => None,
         };
         let landmark = source_model
-            .or(match b.kind {
-                BuildingKind::School => Some("school"),
-                BuildingKind::TownHall => Some("townhall"),
-                BuildingKind::FuelStation => Some("fuel"),
-                BuildingKind::Industrial => Some("industrial"),
+            .or(match source_kind {
+                "school" => Some("school"),
+                "town_hall" => Some("townhall"),
+                "fuel_station" => Some("fuel"),
+                "industrial" => Some("industrial"),
                 _ => None,
             })
             .and_then(crate::models::urban_model);

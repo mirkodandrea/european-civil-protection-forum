@@ -1146,6 +1146,8 @@ pub fn en(it: &str) -> Option<&'static str> {
         "rifugi: accolti / posti" => "shelters: sheltered / places",
         "scuola" => "school",
         "strade tagliate" => "roads cut",
+        "struttura" => "facility",
+        "struttura sensibile" => "sensitive facility",
         "svuotato" => "emptied",
         "Quando" => "When",
         "Al prossimo avanzamento (play)" => "At the next advance (play)",

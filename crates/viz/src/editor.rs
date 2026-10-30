@@ -494,15 +494,25 @@ pub(crate) fn draw(
         e.show_json = open;
     }
 }
-const BUILDING_KINDS: [(&str, &str); 7] = [
+const BUILDING_KINDS: [(&str, &str); 3] = [
     ("house", "Abitazione"),
-    ("school", "Scuola"),
-    ("hospital", "Ospedale"),
-    ("fuel_station", "Distributore"),
-    ("sports_centre", "Centro sportivo"),
-    ("town_hall", "Municipio"),
-    ("industrial", "Industria"),
+    ("sensitive", "Struttura sensibile"),
+    ("facility", "Altra struttura"),
 ];
+/// What the model does with each kind, shown under the «Tipo» selector.
+fn kind_effect(kind: scenario::BuildingKind) -> &'static str {
+    match kind {
+        scenario::BuildingKind::House => {
+            "Contata nei totali del settore; elencata solo se ha un nome o è colpita. Gli occupanti evacuano in auto."
+        }
+        scenario::BuildingKind::Sensitive => {
+            "Scuole, ospedali, RSA: gli occupanti non evacuano da soli, servono bus. Sempre elencata nei resoconti."
+        }
+        scenario::BuildingKind::Facility => {
+            "Ogni altra struttura: sempre elencata nei resoconti. Gli occupanti evacuano in auto."
+        }
+    }
+}
 fn kind_label(kind: &scenario::BuildingKind) -> &'static str {
     let id = serde_json::to_value(kind).ok();
     BUILDING_KINDS
@@ -519,10 +529,23 @@ fn kind_combo(ui: &mut egui::Ui, id: &str, kind: &mut scenario::BuildingKind) {
         .show_ui(ui, |ui| {
             for (k, label) in BUILDING_KINDS {
                 if let Ok(v) = serde_json::from_value::<scenario::BuildingKind>(k.into()) {
-                    ui.selectable_value(kind, v, label);
+                    ui.selectable_value(kind, v, label).on_hover_text(kind_effect(v));
                 }
             }
         });
+}
+/// «Tipo» (what the simulation does with the building) with its effect spelled
+/// out, then «Aspetto» (drawing and labels only).
+fn kind_fields(ui: &mut egui::Ui, id: &str, kind: &mut scenario::BuildingKind, visual: &mut Option<String>) {
+    ui.horizontal(|ui| {
+        ui.label("Tipo").on_hover_text("Cosa cambia nella simulazione");
+        kind_combo(ui, &format!("{id}-kind"), kind);
+    });
+    ui.small(kind_effect(*kind));
+    ui.horizontal(|ui| {
+        ui.label("Aspetto").on_hover_text("Solo modello 3D ed etichette: non cambia la simulazione");
+        visual_combo(ui, &format!("{id}-visual"), visual);
+    });
 }
 fn visual_combo(ui: &mut egui::Ui, id: &str, visual: &mut Option<String>) {
     egui::ComboBox::from_id_source(id)
@@ -547,14 +570,7 @@ fn building_spec_fields(ui: &mut egui::Ui, spec: &mut BuildingSpec) {
                 }
             }
         });
-    ui.horizontal(|ui| {
-        ui.label("Tipo");
-        kind_combo(ui, "spec-kind", &mut spec.kind);
-    });
-    ui.horizontal(|ui| {
-        ui.label("Variante");
-        visual_combo(ui, "spec-visual", &mut spec.visual_kind);
-    });
+    kind_fields(ui, "spec", &mut spec.kind, &mut spec.visual_kind);
     ui.horizontal(|ui| {
         ui.label("Dimensioni m");
         ui.add(egui::DragValue::new(&mut spec.size[0]).range(3. ..=400.));
@@ -648,6 +664,19 @@ fn building_tree(
     }
 }
 
+/// «Edificio 12 · Scuola · Pineta Primary School»: id, aspect and name when set.
+fn building_label(b: &scenario::Building) -> String {
+    let aspect = b
+        .visual_kind
+        .as_deref()
+        .map(|v| scenario::editor::visual_label(scenario::canonical_visual(v)));
+    std::iter::once(format!("Edificio {}", b.id))
+        .chain(aspect.map(str::to_owned))
+        .chain(b.name.clone().filter(|n| !n.is_empty()))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 fn road_class_label(class: &str) -> &str {
     match class {
         "motorway" => "Autostrada",
@@ -684,7 +713,7 @@ fn object_tree(ui: &mut egui::Ui, s: &Scenario, e: &mut Editor, d: &Document) {
     branch(ui, "objects-buildings", "Edifici", s.buildings.len(), reveal && in_buildings, |ui| {
         building_tree(ui, "objects", s, selected, reveal, |ui, i| {
             let b = &s.buildings[i];
-            item(ui, Selection::Building(i), format!("Edificio {} · {}", b.id, b.name.as_deref().unwrap_or("")));
+            item(ui, Selection::Building(i), building_label(b));
         });
     });
     let mut classes: Vec<(&str, Vec<usize>)> = Vec::new();
@@ -735,14 +764,7 @@ fn typed_fields(ui: &mut egui::Ui, selection: Selection, v: &mut serde_json::Val
                 .unwrap_or(scenario::BuildingKind::House);
             let mut visual = obj.get("visual_kind").and_then(|k| k.as_str()).map(str::to_owned);
             let mut rotation = obj.get("rotation_deg").and_then(Value::as_f64).unwrap_or(0.) as f32;
-            ui.horizontal(|ui| {
-                ui.label("Tipo");
-                kind_combo(ui, "sel-kind", &mut kind);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Variante");
-                visual_combo(ui, "sel-visual", &mut visual);
-            });
+            kind_fields(ui, "sel", &mut kind, &mut visual);
             ui.add(egui::Slider::new(&mut rotation, 0. ..=359.).text("Rotazione °"));
             ui.small("Q/E ruotano l’edificio selezionato di 15° (poi «Applica»).");
             obj.insert("kind".into(), serde_json::to_value(kind).unwrap_or_default());
@@ -846,7 +868,7 @@ fn property_fields(ui: &mut egui::Ui, v: &mut serde_json::Value, key: &str) {
         "class" => "Classe strada",
         "drivable" => "Percorribile",
         "oneway" => "Senso unico",
-        "visual_kind" => "Variante grafica",
+        "visual_kind" => "Aspetto (solo grafica)",
         "aliases" => "Nomi alternativi",
         "weather" => "Meteo",
         "wind_dir_deg" => "Vento: direzione di provenienza °",

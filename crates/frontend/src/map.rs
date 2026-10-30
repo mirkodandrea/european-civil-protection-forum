@@ -1880,10 +1880,12 @@ fn draw(
     for (i, b) in list(&stat["buildings"]).iter().enumerate() {
         if let Some(name) = b["name"].as_str().filter(|s| !s.is_empty()) {
             let st = &v["buildings"][i];
-            let critical = matches!(
-                text(&b["kind"]),
-                "school" | "hospital" | "fuel_station" | "town_hall"
-            ) || st["damage"].as_u64().unwrap_or(0) > 0
+            let critical = text(&b["kind"]) == "sensitive"
+                || matches!(
+                    scenario::canonical_visual(text(&b["visual_kind"])),
+                    "fuel_station" | "town_hall"
+                )
+                || st["damage"].as_u64().unwrap_or(0) > 0
                 || st["threatened"] == true
                 || st["evacuating"] == true;
             label(

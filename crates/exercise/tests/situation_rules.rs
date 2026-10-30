@@ -33,7 +33,7 @@ fn ids(list: &[Suggestion]) -> Vec<&str> {
 #[test]
 fn houses_are_summed_per_sector() {
     let mut ex = started(120);
-    let school = ex.world.scn.buildings.iter().find(|b| b.kind == scenario::BuildingKind::School).unwrap().pos;
+    let school = ex.world.scn.buildings.iter().find(|b| b.category() == "school").unwrap().pos;
     ignite_near(&mut ex, school);
     let preview = ex.preview_job().unwrap().run().unwrap();
     let list = ex.suggestions(Some(&preview));

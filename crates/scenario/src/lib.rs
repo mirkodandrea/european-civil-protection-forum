@@ -179,26 +179,46 @@ pub struct WeatherSpec {
     pub moisture_pct: f64,
 }
 
+/// What the model distinguishes about a building. What it *is* (school,
+/// church, mill…) is `Building::visual_kind`, which only labels and draws it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildingKind {
+    /// Counted in sector totals, listed only when named or affected;
+    /// occupants leave by car.
     House,
-    School,
-    Hospital,
-    FuelStation,
-    SportsCentre,
-    TownHall,
-    Industrial,
+    /// Occupants cannot self-evacuate by car and need buses (schools,
+    /// hospitals, care homes). Always listed.
+    #[serde(alias = "school", alias = "hospital")]
+    Sensitive,
+    /// Any other facility: always listed, occupants leave by car.
+    #[serde(alias = "fuel_station", alias = "sports_centre", alias = "town_hall", alias = "industrial")]
+    Facility,
 }
 
 impl BuildingKind {
     /// Buildings whose occupants cannot self-evacuate by car and need buses.
     pub fn needs_transport(self) -> bool {
-        matches!(self, BuildingKind::School | BuildingKind::Hospital)
+        self == BuildingKind::Sensitive
+    }
+}
+
+/// Kinds of the former seven-kind list. Loading one sets `visual_kind` to it
+/// (when unset), so a school stays drawn and labelled as a school.
+const LEGACY_KINDS: [&str; 6] = ["school", "hospital", "fuel_station", "sports_centre", "town_hall", "industrial"];
+
+/// The single spelling of a visual kind (importers write some differently).
+pub fn canonical_visual(kind: &str) -> &str {
+    match kind {
+        "fuel" => "fuel_station",
+        "townhall" => "town_hall",
+        "assembly_area" => "assembly",
+        other => other,
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Building {
     pub id: u32,
     pub kind: BuildingKind,
@@ -222,6 +242,37 @@ pub struct Building {
     /// along east). Presentation only: exposure and routing use `pos`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rotation_deg: f32,
+}
+
+impl Serialize for Building {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        Building::serialize(self, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Building {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let mut v = serde_json::Value::deserialize(d)?;
+        if let Some(legacy) = v["kind"].as_str().filter(|k| LEGACY_KINDS.contains(k)).map(str::to_owned) {
+            if v["visual_kind"].is_null() {
+                v["visual_kind"] = legacy.into();
+            }
+        }
+        Building::deserialize(v).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Building {
+    /// What the building is, for tables and labels: `house` for homes, else
+    /// its visual kind, else its model kind.
+    pub fn category(&self) -> &str {
+        match (self.kind, self.visual_kind.as_deref()) {
+            (BuildingKind::House, _) => "house",
+            (_, Some(v)) => canonical_visual(v),
+            (BuildingKind::Sensitive, None) => "sensitive",
+            (BuildingKind::Facility, None) => "facility",
+        }
+    }
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -1322,18 +1373,54 @@ mod tests {
 
     #[test]
     fn visual_category_is_optional_and_does_not_replace_operational_kind() {
-        let legacy = serde_json::json!({"id":1,"kind":"sports_centre","name":"Assembly",
+        let plain = serde_json::json!({"id":1,"kind":"facility","name":"Assembly",
             "pos":[20.,20.],"size":[30.,30.],"occupants":0,"sector":"a","shelter_capacity":100});
-        let b: super::Building = serde_json::from_value(legacy.clone()).unwrap();
+        let b: super::Building = serde_json::from_value(plain.clone()).unwrap();
         assert!(b.visual_kind.is_none());
-        assert_eq!(serde_json::to_value(&b).unwrap(), legacy);
-        let mut authored = legacy;
+        assert_eq!(b.category(), "facility");
+        assert_eq!(serde_json::to_value(&b).unwrap(), plain);
+        let mut authored = plain;
         authored["visual_kind"] = serde_json::json!("assembly");
         let b: super::Building = serde_json::from_value(authored.clone()).unwrap();
-        assert_eq!(b.kind, super::BuildingKind::SportsCentre);
+        assert_eq!(b.kind, super::BuildingKind::Facility);
         assert_eq!(b.shelter_capacity, 100);
         assert!(!b.kind.needs_transport());
         assert_eq!(serde_json::to_value(&b).unwrap(), authored);
+    }
+
+    #[test]
+    fn legacy_kinds_load_as_model_kind_plus_visual_kind() {
+        let at = |kind: &str, visual: Option<&str>| {
+            let mut v = serde_json::json!({"id":1,"kind":kind,"pos":[0.,0.],"size":[10.,10.],
+                "occupants":5,"sector":"a"});
+            if let Some(visual) = visual {
+                v["visual_kind"] = visual.into();
+            }
+            serde_json::from_value::<super::Building>(v).unwrap()
+        };
+        for (kind, model) in [
+            ("school", super::BuildingKind::Sensitive),
+            ("hospital", super::BuildingKind::Sensitive),
+            ("fuel_station", super::BuildingKind::Facility),
+            ("sports_centre", super::BuildingKind::Facility),
+            ("town_hall", super::BuildingKind::Facility),
+            ("industrial", super::BuildingKind::Facility),
+        ] {
+            let b = at(kind, None);
+            assert_eq!(b.kind, model);
+            assert_eq!(b.visual_kind.as_deref(), Some(kind));
+            assert_eq!(b.category(), kind);
+        }
+        // An authored visual kind wins; importer spellings are canonicalised.
+        assert_eq!(at("sports_centre", Some("assembly")).category(), "assembly");
+        assert_eq!(at("town_hall", Some("townhall")).category(), "town_hall");
+        assert!(at("school", None).kind.needs_transport());
+        // Homes stay homes whatever they look like.
+        assert_eq!(at("house", Some("church")).category(), "house");
+        // A migrated building saves in the new form.
+        let saved = serde_json::to_value(at("school", None)).unwrap();
+        assert_eq!(saved["kind"], "sensitive");
+        assert_eq!(saved["visual_kind"], "school");
     }
 
     use super::*;

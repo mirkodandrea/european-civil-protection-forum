@@ -105,15 +105,15 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
     {
         let id = b["id"].as_i64().context("building id")?;
         let point = pos(&b["centroid"])?;
-        let kind = match b["kind"].as_str().unwrap_or("") {
-            "school" => BuildingKind::School,
-            "hospital" => BuildingKind::Hospital,
-            "fuel" | "fuel_station" => BuildingKind::FuelStation,
-            "townhall" => BuildingKind::TownHall,
-            "industrial" => BuildingKind::Industrial,
-            "assembly" | "assembly_area" | "sports_centre" => BuildingKind::SportsCentre,
+        let source = crate::canonical_visual(b["kind"].as_str().unwrap_or(""));
+        let kind = match source {
+            "school" | "hospital" => BuildingKind::Sensitive,
+            "fuel_station" | "town_hall" | "industrial" | "assembly" | "sports_centre" => {
+                BuildingKind::Facility
+            }
             _ => BuildingKind::House,
         };
+        let assembly = matches!(source, "assembly" | "sports_centre");
         let ring = b["ring"]
             .as_array()
             .map(|p| p.iter().map(pos).collect::<Result<Vec<_>>>())
@@ -148,7 +148,7 @@ pub fn import(dir: &Path, fuel_table: &Path) -> Result<Scenario> {
             occupants: occupants.remove(&id).unwrap_or(0),
             sector: "territory".into(),
             rotation_deg: 0.0,
-            shelter_capacity: if kind == BuildingKind::SportsCentre {
+            shelter_capacity: if assembly {
                 500
             } else {
                 0

@@ -471,12 +471,8 @@ pub fn catalogue(allowed: &[String]) -> String {
 /// (a zone, a shelter, a school, the staging base, a role), so the model is
 /// never shown places from another scenario.
 pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
-    use scenario::BuildingKind::{School, SportsCentre};
-    let named = |kind: Option<scenario::BuildingKind>| {
-        scn.buildings
-            .iter()
-            .filter(|b| kind.is_none_or(|k| b.kind == k))
-            .find_map(|b| b.name.clone())
+    let named = |pick: fn(&scenario::Building) -> bool| {
+        scn.buildings.iter().filter(|b| pick(b)).find_map(|b| b.name.clone())
     };
     let zone = scn.zones.names().into_iter().next();
     let place = scn.places.first().map(|p| p.name.clone());
@@ -496,8 +492,8 @@ pub fn catalogue_for(scn: &scenario::Scenario, allowed: &[String]) -> String {
             doc = doc.replace(from, &to);
         }
     };
-    swap("Valverde Sports Centre", named(Some(SportsCentre)).or_else(|| named(None)));
-    swap("Pineta Primary School", named(Some(School)).or_else(|| named(None)));
+    swap("Valverde Sports Centre", named(|b| b.shelter_capacity > 0).or_else(|| named(|_| true)));
+    swap("Pineta Primary School", named(|b| b.category() == "school").or_else(|| named(|_| true)));
     swap("Valverde Town Hall", staging);
     swap("Pine Hill", place);
     swap("Borgo Alto", scn.districts.first().map(|d| d.name.clone()));

@@ -61,7 +61,9 @@ fn category_label(c: &str) -> String {
         "sports_centre" => ex("centro sportivo").into(),
         "town_hall" => ex("municipio").into(),
         "industrial" => ex("industria").into(),
-        other => other.into(),
+        "sensitive" => ex("struttura sensibile").into(),
+        "facility" => ex("struttura").into(),
+        other => other.replace('_', " "),
     }
 }
 
