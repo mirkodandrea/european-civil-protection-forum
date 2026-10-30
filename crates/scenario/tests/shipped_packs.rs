@@ -10,6 +10,7 @@ const ROLE_ACTIONS: &[&str] = &[
     "Reconnoitre",
     "EvacuateZone",
     "EvacuateBuilding",
+    "EvacuateDistrict",
     "IssueWarning",
     "CloseRoad",
     "ReopenRoad",

@@ -315,6 +315,10 @@ fn command_place(w: &sim::World, cmd: &sim::Command) -> Option<(scenario::Pos, f
         }
         C::EvacuateZone { zone: z, .. } | C::IssueWarning { zone: z } => zone(z),
         C::EvacuateBuilding { building: b, .. } | C::OpenShelter { building: b } => building(b),
+        C::EvacuateDistrict { district, .. } => w.scn.district(district).and_then(|d| {
+            let p = w.scn.places.iter().find(|p| p.name == d.name)?;
+            Some((p.pos, p.radius_m.unwrap_or(300.0)))
+        }),
         C::SetBuildingStatus { building: b, .. } => building(b).or_else(|| zone(b)),
         C::CloseRoad { road } | C::ReopenRoad { road } => w
             .find_road(road)

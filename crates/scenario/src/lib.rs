@@ -241,6 +241,40 @@ pub struct Road {
     pub points: Vec<Pos>,
 }
 
+/// A borgo: the homes of one locality, evacuated together by
+/// `EvacuateDistrict`. Membership is explicit, not geometric: scattered
+/// houses belong to their locality wherever they stand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct District {
+    pub id: String,
+    pub name: String,
+    /// Building ids.
+    pub buildings: Vec<u32>,
+    /// Named building where evacuees gather when the order names no
+    /// destination; usable without `OpenShelter`. `None`: the nearest
+    /// reachable gathering area, open shelter or map exit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gathering: Option<String>,
+}
+
+/// How a district evacuation leaves: everyone prepares for `prep_min`, then
+/// at most `per_min` people depart per minute, nearest homes to the borgo's
+/// departure point first.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DistrictEvacuation {
+    pub per_min: f32,
+    pub prep_min: u32,
+}
+
+impl Default for DistrictEvacuation {
+    fn default() -> Self {
+        Self {
+            per_min: 6.0,
+            prep_min: 5,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sector {
     pub id: String,
@@ -755,6 +789,11 @@ pub struct Scenario {
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
     pub sectors: Vec<Sector>,
+    /// Borghi, for `EvacuateDistrict`. Empty: the command is unavailable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub districts: Vec<District>,
+    #[serde(default)]
+    pub district_evacuation: DistrictEvacuation,
     pub zones: ZoneGrid,
     pub places: Vec<Place>,
     pub resource_types: Vec<ResourceType>,
@@ -950,6 +989,34 @@ impl Scenario {
             building_ids.len() == self.buildings.len() && road_ids.len() == self.roads.len(),
             "duplicate building or road id"
         );
+        let mut district_keys = std::collections::BTreeSet::new();
+        for d in &self.districts {
+            let own: std::collections::BTreeSet<String> =
+                [normalise(&d.id), normalise(&d.name)].into();
+            anyhow::ensure!(
+                own.iter().all(|k| district_keys.insert(k.clone())),
+                "duplicate district {}",
+                d.id
+            );
+            anyhow::ensure!(
+                !d.buildings.is_empty() && d.buildings.iter().all(|id| building_ids.contains(id)),
+                "district {} lists no or unknown buildings",
+                d.id
+            );
+            if let Some(g) = &d.gathering {
+                anyhow::ensure!(
+                    self.buildings.iter().any(|b| b.name.as_deref() == Some(g.as_str())
+                        && b.shelter_capacity > 0),
+                    "district {}: gathering area «{g}» is not a building with capacity",
+                    d.id
+                );
+            }
+        }
+        let e = &self.district_evacuation;
+        anyhow::ensure!(
+            e.per_min.is_finite() && e.per_min > 0.0 && e.prep_min <= 240,
+            "invalid district evacuation pace"
+        );
         for b in &self.buildings {
             anyhow::ensure!(
                 self.sector(&b.sector).is_some(),
@@ -1135,6 +1202,15 @@ impl Scenario {
 
     /// Resolve a free-form name against named places, facilities, sectors and
     /// roads — case-insensitive, aliases included. Returns the world position.
+    /// A borgo by id or name (also «borgo di X»), ignoring case and punctuation.
+    pub fn district(&self, key: &str) -> Option<&District> {
+        let key = normalise(key);
+        let bare = key.strip_prefix("borgodi").unwrap_or(&key);
+        self.districts
+            .iter()
+            .find(|d| [normalise(&d.id), normalise(&d.name)].iter().any(|k| k == &key || k == bare))
+    }
+
     pub fn resolve_place(&self, name: &str) -> Option<Pos> {
         let key = normalise(name);
         if key.is_empty() {

@@ -89,6 +89,7 @@ fn evacuees_on_a_road_that_is_cut_and_isolated_places() {
         completed: false,
         waiting: false,
         at_risk: false,
+        gathering: false,
         detail: String::new(),
     });
     assert!(ex.suggestions(None).iter().all(|s| s.rule != "evac_route_cut"), "road still open");

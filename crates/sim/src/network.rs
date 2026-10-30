@@ -187,6 +187,19 @@ impl Network {
                 !fire_cut && (!civilian || !s.closed)
             })
     }
+    /// The point of the network nearest `p` (any road, open or not).
+    pub fn nearest_point(&self, p: Pos) -> Option<Pos> {
+        self.edges
+            .iter()
+            .map(|e| {
+                let (a, b) = (self.nodes[e.a], self.nodes[e.b]);
+                let d = distance(a, b).powi(2).max(1e-6);
+                let t = (((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / d)
+                    .clamp(0.0, 1.0);
+                interpolate(a, b, t)
+            })
+            .min_by(|a, b| distance(*a, p).total_cmp(&distance(*b, p)))
+    }
     fn anchors(
         &self,
         p: Pos,

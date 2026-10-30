@@ -242,6 +242,8 @@ struct Cache {
     /// Per building: (cell index, weight) within 70 m.
     near: Vec<Vec<(usize, f32)>>,
     roads: Vec<(String, Vec<usize>)>,
+    /// Building ids of the borghi's gathering areas, resolved once.
+    gathering: BTreeSet<u32>,
 }
 
 #[derive(Clone)]
@@ -689,6 +691,15 @@ impl World {
     pub fn reconcile_command(&self, cmd: &Command) -> (Command, Option<String>) {
         match cmd {
             Command::EvacuateZone { zone, destination } if self.zone_code(zone).is_none() => {
+                if let Some(d) = self.scn.district(zone) {
+                    return (
+                        Command::EvacuateDistrict {
+                            district: d.name.clone(),
+                            destination: destination.clone(),
+                        },
+                        Some(format!("«{zone}» is a borgo: treated as Evacuate borgo «{}»", d.name)),
+                    );
+                }
                 if let Some(i) = self.find_building(zone) {
                     let name = self.scn.buildings[i]
                         .name
@@ -721,6 +732,15 @@ impl World {
                         Some(format!("«{zone}» is not a zone code: warning zone {code}, where it lies")),
                     );
                 }
+            }
+            Command::EvacuateBuilding { building, destination }
+                if self.find_building(building).is_none() && self.scn.district(building).is_some() =>
+            {
+                let name = self.scn.district(building).map(|d| d.name.clone()).unwrap_or_default();
+                return (
+                    Command::EvacuateDistrict { district: name.clone(), destination: destination.clone() },
+                    Some(format!("«{building}» is a borgo, not a building: treated as Evacuate borgo «{name}»")),
+                );
             }
             Command::EvacuateBuilding { building, destination }
                 if self.find_building(building).is_none() && self.zone_code(building).is_some() =>
@@ -809,7 +829,8 @@ impl World {
             }
             let destination = match cmd {
                 Command::EvacuateZone { destination, .. }
-                | Command::EvacuateBuilding { destination, .. } => {
+                | Command::EvacuateBuilding { destination, .. }
+                | Command::EvacuateDistrict { destination, .. } => {
                     destination.as_deref().and_then(|d| self.find_building(d))
                 }
                 _ => None,
@@ -1114,6 +1135,20 @@ impl World {
                 self.check_destination(destination, &mut notes)?;
                 self.check_evacuation_capacity(&[i], destination)?;
                 self.check_transport(&[i], role.is_some(), &mut take, &mut notes)?;
+            }
+            Command::EvacuateDistrict {
+                district,
+                destination,
+            } => {
+                let idx = self.district_targets(district)?;
+                if idx.is_empty() {
+                    return Err(format!("borgo {district} has nobody left to evacuate"));
+                }
+                self.check_destination(destination, &mut notes)?;
+                self.check_evacuation_capacity(&idx, destination)?;
+                self.check_transport(&idx, role.is_some(), &mut take, &mut notes)?;
+                let people: u32 = idx.iter().map(|&i| self.d.buildings[i].people_inside).sum();
+                notes.push(format!("{} homes, {people} people", idx.len()));
             }
             Command::IssueWarning { zone } => {
                 self.zone_code(zone)
@@ -1549,6 +1584,29 @@ impl World {
                     z,
                 );
             }
+            Command::EvacuateDistrict {
+                district,
+                destination,
+            } => {
+                let d = self.scn.district(district).unwrap().clone();
+                let n = self.start_district_evacuation(
+                    &d,
+                    destination.as_deref(),
+                    matches!(actor, Actor::Role(_)),
+                );
+                out.push(format!("{n} people leaving"));
+                let z = self
+                    .scn
+                    .places
+                    .iter()
+                    .find(|p| p.name == d.name)
+                    .and_then(|p| self.scn.zone_of(p.pos));
+                self.event(
+                    "evacuation_ordered",
+                    format!("{by} ordered evacuation of borgo {} ({n} people)", d.name),
+                    z,
+                );
+            }
             Command::IssueWarning { zone } => {
                 let code = self.zone_code(zone).unwrap();
                 self.d.warned.insert(code.clone());
@@ -1873,6 +1931,94 @@ impl World {
         total
     }
 
+    /// Occupied homes of a borgo not already leaving.
+    pub(crate) fn district_targets(&self, key: &str) -> Result<Vec<usize>, String> {
+        let d = self.scn.district(key).ok_or_else(|| {
+            let known: Vec<&str> = self.scn.districts.iter().map(|d| d.name.as_str()).collect();
+            if known.is_empty() {
+                format!("this scenario has no borghi (unknown \"{key}\")")
+            } else {
+                format!("unknown borgo \"{key}\" (borghi: {})", known.join(", "))
+            }
+        })?;
+        Ok(d.buildings
+            .iter()
+            .filter_map(|id| self.scn.buildings.iter().position(|b| b.id == *id))
+            .filter(|&i| {
+                let b = &self.d.buildings[i];
+                b.people_inside > b.evac_pending
+            })
+            .collect())
+    }
+
+    /// Building id of a borgo's gathering area.
+    fn gathering_of(&self, d: &scenario::District) -> Option<u32> {
+        let name = d.gathering.as_deref()?;
+        self.scn
+            .buildings
+            .iter()
+            .find(|b| b.name.as_deref() == Some(name))
+            .map(|b| b.id)
+    }
+
+    /// Gathering areas of every borgo: usable without `OpenShelter`.
+    pub(crate) fn is_gathering(&self, id: u32) -> bool {
+        self.cache.gathering.contains(&id)
+    }
+
+    /// The borgo's pace (`Scenario::district_evacuation`): everyone prepares,
+    /// then homes leave in order of distance from the departure point (the
+    /// road point nearest the homes' centre), at most `per_min` people a minute.
+    fn start_district_evacuation(
+        &mut self,
+        d: &scenario::District,
+        destination: Option<&str>,
+        constrained: bool,
+    ) -> u32 {
+        let t = self.time_s();
+        let pace = self.scn.district_evacuation;
+        let Ok(mut idx) = self.district_targets(&d.id) else {
+            return 0;
+        };
+        let n = idx.len().max(1) as f32;
+        let centre = idx.iter().fold([0.0, 0.0], |c, &i| {
+            let p = self.scn.buildings[i].pos;
+            [c[0] + p[0] / n, c[1] + p[1] / n]
+        });
+        let departure = self.network.nearest_point(centre).unwrap_or(centre);
+        let dist = |i: usize| network::distance(self.scn.buildings[i].pos, departure);
+        idx.sort_by(|&a, &b| dist(a).total_cmp(&dist(b)));
+        let dest = destination
+            .and_then(|d| self.find_building(d))
+            .map(|i| self.scn.buildings[i].id)
+            .or_else(|| self.gathering_of(d));
+        let mut gone = 0.0_f32;
+        let mut total = 0;
+        for i in idx {
+            let mut ready = t + i64::from(pace.prep_min) * 60 + (gone / pace.per_min * 60.0).round() as i64;
+            if self.scn.buildings[i].kind.needs_transport() && constrained {
+                ready += 10 * 60;
+            }
+            let b = &mut self.d.buildings[i];
+            let leaving = b.people_inside.saturating_sub(b.evac_pending);
+            b.evac_pending += leaving;
+            b.evac_done_at = Some(b.evac_done_at.map_or(ready, |r| r.min(ready)));
+            b.evac_destination = dest.or(b.evac_destination);
+            if self.scn.operations.traffic {
+                let first = self.d.traffic.vehicles.len();
+                self.schedule_traffic(i, leaving, ready, dest);
+                if destination.is_none() {
+                    for v in &mut self.d.traffic.vehicles[first..] {
+                        v.gathering = true;
+                    }
+                }
+            }
+            gone += leaving as f32;
+            total += leaving;
+        }
+        total
+    }
+
     // ------------------------------------------------------------------ time
 
     /// Advance simulated time, returning the events that happened.
@@ -1895,6 +2041,7 @@ impl World {
 
     fn step_buildings(&mut self, dt: f32) {
         let t = self.time_s();
+        let gathering = self.cache.gathering.clone();
         let state = self.fire.state();
         let burning: Vec<Pos> = state
             .iter()
@@ -1989,6 +2136,8 @@ impl World {
                     if let Some(dest) = b.evac_destination {
                         if let Some(n) = self.d.shelters.get_mut(&dest) {
                             *n += moved;
+                        } else if gathering.contains(&dest) {
+                            self.d.shelters.insert(dest, moved);
                         }
                     }
                     if spec.name.is_some() {
@@ -2212,7 +2361,18 @@ impl Cache {
                 (r.id.clone(), cells)
             })
             .collect();
-        Cache { near, roads }
+        let gathering = scn
+            .districts
+            .iter()
+            .filter_map(|d| d.gathering.as_deref())
+            .filter_map(|g| scn.buildings.iter().find(|b| b.name.as_deref() == Some(g)))
+            .map(|b| b.id)
+            .collect();
+        Cache {
+            near,
+            roads,
+            gathering,
+        }
     }
 }
 

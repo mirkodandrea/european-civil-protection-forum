@@ -214,6 +214,7 @@ impl World {
             "roads": self.scn.roads,
             "road_segments": self.network.segments(),
             "places": self.scn.places,
+            "districts": self.scn.districts,
             "roles": self.scn.roles,
             "resource_types": self.scn.resource_types,
             "reinforcements": self.scn.reinforcements,

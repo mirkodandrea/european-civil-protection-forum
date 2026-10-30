@@ -1,0 +1,164 @@
+{
+  "scenarios": [
+    {
+      "name": "medium",
+      "path": "../../data/scenarios/roccavento_island.json",
+      "injects": [
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 119,
+            "wind_speed_kmh": 36,
+            "moisture_pct": 5
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "Ignite",
+            "at": {
+              "x": 5590,
+              "y": 4370
+            },
+            "radius_m": 60
+          }
+        },
+        {
+          "at_s": 2700,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 50,
+            "wind_speed_kmh": 36
+          }
+        }
+      ]
+    },
+    {
+      "name": "valico_due_lati",
+      "path": "../../data/scenarios/roccavento_island.json",
+      "injects": [
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 119,
+            "wind_speed_kmh": 30,
+            "moisture_pct": 6
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "Ignite",
+            "at": {
+              "x": 5590,
+              "y": 4370
+            },
+            "radius_m": 60
+          }
+        },
+        {
+          "at_s": 4500,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 50,
+            "wind_speed_kmh": 30
+          }
+        }
+      ]
+    },
+    {
+      "name": "quattro_borghi",
+      "path": "../../data/scenarios/roccavento_island.json",
+      "injects": [
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 119,
+            "wind_speed_kmh": 28,
+            "moisture_pct": 7
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "Ignite",
+            "at": {
+              "x": 5590,
+              "y": 4370
+            },
+            "radius_m": 60
+          }
+        }
+      ]
+    },
+    {
+      "name": "rotazione_est",
+      "path": "../../data/scenarios/roccavento_island.json",
+      "injects": [
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 119,
+            "wind_speed_kmh": 28,
+            "moisture_pct": 6
+          }
+        },
+        {
+          "at_s": 0,
+          "actor": "master",
+          "command": {
+            "type": "Ignite",
+            "at": {
+              "x": 5870,
+              "y": 4750
+            },
+            "radius_m": 60
+          }
+        },
+        {
+          "at_s": 4500,
+          "actor": "master",
+          "command": {
+            "type": "SetWeather",
+            "wind_dir_deg": 50,
+            "wind_speed_kmh": 28
+          }
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "duration_s": 18000,
+  "sample_s": 600,
+  "realizations": 32,
+  "cutoff": 0.5,
+  "variants": [
+    {
+      "name": "operational",
+      "operational": true
+    }
+  ],
+  "strategies": [
+    {
+      "name": "nessun_ordine",
+      "orders": []
+    }
+  ]
+}

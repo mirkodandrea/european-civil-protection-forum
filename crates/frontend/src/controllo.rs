@@ -39,6 +39,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "extcircle", group: "Fuoco e interventi", icon: "◎", label: "Spegni area circolare", tip: "Spegne il fuoco entro un raggio dal punto scelto." },
     Tool { id: "extarea", group: "Fuoco e interventi", icon: "⬠", label: "Spegni area disegnata", tip: "Disegna sulla mappa un’area (almeno 3 vertici): il fuoco al suo interno si spegne subito in tutte le simulazioni. La vegetazione non cambia: il terreno non bruciato può riaccendersi se il fuoco lo raggiunge di nuovo." },
     Tool { id: "evac", group: "Fuoco e interventi", icon: "🚌", label: "Evacua zona", tip: "Ordina l’evacuazione di tutti gli edifici occupati di una zona." },
+    Tool { id: "evacborgo", group: "Fuoco e interventi", icon: "🏘", label: "Evacua borgo", tip: "Ordina l’evacuazione di tutte le case di un borgo, case sparse comprese: partenze scaglionate verso l’area di raccolta del borgo. Clicca una casa del borgo." },
     Tool { id: "warn", group: "Fuoco e interventi", icon: "📢", label: "Avvisa zona", tip: "Avvisa la popolazione di una zona: dimezza il tempo di evacuazione." },
     Tool { id: "drone", group: "Risorse e squadre", icon: "🛰", label: "Drone di monitoraggio", tip: "Invia il drone del comandante antincendio sulla zona scelta: finché è in posizione tiene aggiornata la sua mappa. Per più zone usa il comando JSON (es. \"F3-G4\")." },
     Tool { id: "bstatus", group: "Fuoco e interventi", icon: "🏠", label: "Stato edificio", tip: "Forza lo stato di danno di un edificio scelto sulla mappa." },
@@ -128,6 +129,7 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
         "extzone" => json!({"type":"Extinguish","area":zone()?}),
         "warn" => json!({"type":"IssueWarning","zone":zone()?}),
         "evac" => json!({"type":"EvacuateZone","zone":zone()?}),
+        "evacborgo" => json!({"type":"EvacuateDistrict","district":district_at(stat, points.first()?)?}),
         "drone" => json!({"type":"MonitorArea","zones":[zone()?]}),
         "line" => json!({"type":"CutFireLine","from":pt(0)?,"to":pt(1)?}),
         "extarea" => {
@@ -157,6 +159,27 @@ pub fn build_command(tool: &str, points: &[Value], p: &CmdParams, stat: &Value) 
         _ => return None,
     })
 }
+/// The borgo of the building clicked (or nearest the click, within 200 m).
+fn district_at(stat: &Value, pick: &Value) -> Option<String> {
+    let id = match pick["building_id"].as_u64() {
+        Some(id) => id,
+        None => {
+            let (x, y) = (pick["x"].as_f64()?, pick["y"].as_f64()?);
+            list(&stat["buildings"])
+                .iter()
+                .filter_map(|b| {
+                    let d = (b["pos"][0].as_f64()? - x).powi(2) + (b["pos"][1].as_f64()? - y).powi(2);
+                    (d < 40_000.).then_some((d, b["id"].as_u64()?))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))?
+                .1
+        }
+    };
+    list(&stat["districts"])
+        .iter()
+        .find(|d| list(&d["buildings"]).iter().any(|b| b.as_u64() == Some(id)))
+        .map(|d| text(&d["name"]).to_string())
+}
 /// Which map click hint applies.
 pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
     match (tool, picked) {
@@ -168,6 +191,7 @@ pub(crate) fn map_hint(tool: &str, picked: usize) -> &'static str {
         ("extarea", _) => "Area pronta. Ogni clic aggiunge un vertice; l’area si chiude da sola.",
         ("extzone" | "evac" | "warn" | "drone", _) => "Clicca una zona della mappa.",
         ("bstatus", _) => "Clicca un edificio sulla mappa.",
+        ("evacborgo", _) => "Clicca una casa del borgo sulla mappa.",
         _ => "Clicca sulla mappa il punto dell’intervento.",
     }
 }
@@ -182,6 +206,7 @@ pub fn tool_for(cmd: &Value) -> Option<&'static str> {
         "ExtinguishArea" => "extarea",
         "IssueWarning" => "warn",
         "EvacuateZone" => "evac",
+        "EvacuateDistrict" => "evacborgo",
         "MonitorArea" if list(&cmd["zones"]).len() <= 1 => "drone",
         "CutFireLine" if cmd["along"].is_null() => "line",
         "SetBuildingStatus" => "bstatus",
@@ -205,6 +230,11 @@ pub fn initial_points(cmd: &Value, stat: &Value) -> Vec<Value> {
         "Extinguish" => vec![zone(&cmd["area"])],
         "ExtinguishArea" => list(&cmd["polygon"]).iter().map(point).collect(),
         "IssueWarning" | "EvacuateZone" => vec![zone(&cmd["zone"])],
+        "EvacuateDistrict" => vec![list(&stat["districts"])
+            .iter()
+            .find(|d| text(&d["name"]) == text(&cmd["district"]) || text(&d["id"]) == text(&cmd["district"]))
+            .and_then(|d| list(&stat["places"]).iter().find(|p| p["name"] == d["name"]))
+            .and_then(|p| Some(json!({"x": p["pos"][0].as_f64()?, "y": p["pos"][1].as_f64()?})))],
         "MonitorArea" => vec![zone(&cmd["zones"][0])],
         "CutFireLine" => vec![point(&cmd["from"]), point(&cmd["to"])],
         "SetBuildingStatus" => {
@@ -928,7 +958,7 @@ pub fn controllo(p: &ControlloProps) -> Html {
     };
     let modal = match open.as_deref() {
         None => html! {},
-        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "extarea" | "evac" | "warn" | "drone" | "bstatus")) => {
+        Some(id @ ("ignite" | "line" | "drop" | "extzone" | "extcircle" | "extarea" | "evac" | "evacborgo" | "warn" | "drone" | "bstatus")) => {
             html! {<MapToolModal key={id.to_string()} tool={id.to_string()} common={common.clone()}/>}
         }
         Some("knowledge") => html! {<KnowledgeModal tool="knowledge" common={common.clone()}/>},
