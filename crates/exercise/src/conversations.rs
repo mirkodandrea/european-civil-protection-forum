@@ -7,11 +7,16 @@
 //!
 //! Rules (all enforced here, never in the UI):
 //! * only the recipient of an inject delivery can start a conversation on it;
+//! * starting one is motivated ([`ConversationReason`]): what it rests on (a
+//!   plan or procedure, a law or regulation, or personal initiative, stored as
+//!   [`BasisKind::OperationalJudgment`]), the reference for a plan or law, and
+//!   why the player starts it. Participants read it as the opening context;
+//!   EXCON and the AI contexts that read conversations get it too. Later
+//!   messages need none of it;
 //! * participants are other known players (1..=[`MAX_PARTICIPANTS`] besides the creator);
-//! * every participant can read the inject quoted at the top of the conversation
-//!   even if EXCON never sent it to them: the quote is the participant's own
-//!   copy when they have one, otherwise the creator's copy when the languages
-//!   match, otherwise its English working copy (no extra translation);
+//! * the inject quoted at the top of the conversation aggregates it under that
+//!   inject: participants who received the inject read their own copy, the
+//!   others only its title, sender and time (never its text, in any language);
 //! * a message may cite a previous message of the conversation or the inject;
 //! * a participant may answer the inject itself from the conversation
 //!   (`Exercise::player_response` with `conversation`), even without having
@@ -21,7 +26,7 @@
 //!   inject's history and the conversation reads continuously;
 //! * nothing said in a conversation is a decision: "vado in ricognizione" in
 //!   chat is an intent, recorded only as text (never parsed, never a mission).
-use crate::{chat_policy, Exercise, Message, MsgKind, Phase, MASTER};
+use crate::{chat_policy, BasisKind, Exercise, Message, MsgKind, Phase, MASTER};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -51,6 +56,104 @@ pub struct ConvMessage {
     pub proposal: Option<u64>,
 }
 
+/// Why a player started a conversation (required when starting one).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConversationReason {
+    /// Plan, procedure, law, or personal initiative (`OperationalJudgment`).
+    pub basis: BasisKind,
+    /// Which plan, procedure or law (required for those bases).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// Why the player starts the conversation, as written.
+    pub rationale: String,
+    /// English working copy of the rationale.
+    pub rationale_en: String,
+    /// Role -> rationale in that role's language (missing: the English copy).
+    pub texts: BTreeMap<String, String>,
+}
+
+/// Rationale stored, on replay, for a conversation of a session saved before
+/// starting one needed a reason.
+pub const LEGACY_REASON: &str =
+    "(not recorded: conversation started before a reason was required)";
+
+impl ConversationReason {
+    /// Check what the player gave; translations are filled in later
+    /// (`rationale_en` starts as the rationale itself).
+    pub fn new(
+        basis: Option<BasisKind>,
+        reference: Option<&str>,
+        rationale: Option<&str>,
+    ) -> Result<Self> {
+        let Some(basis) = basis else {
+            bail!("say why you start this conversation: a plan or procedure, a law or regulation, or personal initiative");
+        };
+        let reference = reference.map(str::trim).filter(|r| !r.is_empty());
+        if basis != BasisKind::OperationalJudgment && reference.is_none() {
+            bail!("say which plan, procedure or law the conversation rests on (e.g. the plan's section or the article)");
+        }
+        let Some(rationale) = rationale.map(str::trim).filter(|r| !r.is_empty()) else {
+            bail!("starting a conversation needs its rationale: why you start it");
+        };
+        if rationale.chars().count() > 2000 || reference.is_some_and(|r| r.chars().count() > 2000) {
+            bail!("the reference and the rationale are limited to 2000 characters each");
+        }
+        Ok(Self {
+            basis,
+            // Personal initiative has no reference line: a leftover one is dropped.
+            reference: reference
+                .filter(|_| basis != BasisKind::OperationalJudgment)
+                .map(String::from),
+            rationale: rationale.into(),
+            rationale_en: rationale.into(),
+            texts: BTreeMap::new(),
+        })
+    }
+
+    /// Placeholder for a conversation replayed from an older session.
+    pub fn legacy() -> Self {
+        Self {
+            basis: BasisKind::OperationalJudgment,
+            reference: None,
+            rationale: LEGACY_REASON.into(),
+            rationale_en: LEGACY_REASON.into(),
+            texts: BTreeMap::new(),
+        }
+    }
+
+    /// English wording of the basis (logs, AI context).
+    pub fn basis_label(&self) -> &'static str {
+        match self.basis {
+            BasisKind::OperationalJudgment => "personal initiative",
+            kind => crate::response::basis_label(kind),
+        }
+    }
+
+    /// The reason as participant `role` reads it.
+    fn for_role(&self, role: &str, creator: &str) -> Value {
+        let text = if role == creator {
+            &self.rationale
+        } else {
+            self.texts.get(role).unwrap_or(&self.rationale_en)
+        };
+        json!({"basis": self.basis, "reference": self.reference, "rationale": text})
+    }
+
+    /// The reason as EXCON reads it: original and English copy.
+    fn for_master(&self) -> Value {
+        json!({"basis": self.basis, "basis_label": self.basis_label(), "reference": self.reference,
+            "rationale": self.rationale, "rationale_en": self.rationale_en})
+    }
+
+    /// One English line for the AI contexts.
+    pub fn line(&self) -> String {
+        match &self.reference {
+            Some(r) => format!("{} ({r}): {}", self.basis_label(), self.rationale_en),
+            None => format!("{}: {}", self.basis_label(), self.rationale_en),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LinkedConversation {
     pub id: u64,
@@ -63,6 +166,8 @@ pub struct LinkedConversation {
     pub participants: Vec<String>,
     pub turn: u32,
     pub t_s: i64,
+    /// Why the creator started it.
+    pub reason: ConversationReason,
     pub messages: Vec<ConvMessage>,
 }
 
@@ -149,6 +254,7 @@ impl Exercise {
         text_en: &str,
         texts: &BTreeMap<String, String>,
         translation_failed: bool,
+        reason: ConversationReason,
     ) -> Result<(u64, u64)> {
         self.validate_conversation_start(creator, delivery, others, text)?;
         let inject_id = self
@@ -168,13 +274,36 @@ impl Exercise {
             participants,
             turn: self.turn,
             t_s: self.world.time_s(),
+            reason: reason.clone(),
             messages: Vec::new(),
         });
         self.record(
             "conversation_started",
             creator,
-            json!({"conversation": id, "delivery": delivery, "inject_id": inject_id, "participants": self.linked_conversation(id).map(|c| c.participants.clone())}),
+            json!({"conversation": id, "delivery": delivery, "inject_id": inject_id, "participants": self.linked_conversation(id).map(|c| c.participants.clone()),
+                "reason": reason.for_master()}),
         );
+        // The opening context, in every participant's AI conversation.
+        let title = self
+            .messages
+            .iter()
+            .find(|m| m.id == delivery)
+            .and_then(|m| m.title.clone())
+            .unwrap_or_default();
+        let clock = self.world.clock();
+        let participants = self
+            .linked_conversation(id)
+            .map(|c| c.participants.clone())
+            .unwrap_or_default();
+        for p in &participants {
+            let who = if p == creator { "you" } else { creator };
+            let line = format!(
+                "[{clock}] CONVERSATION about inject \"{title}\" started by {who} with {} — reason: {}",
+                participants.join(", "),
+                reason.line()
+            );
+            self.converse(p, "user", line);
+        }
         let mid = self.push_conversation_message(
             id,
             creator,
@@ -300,27 +429,28 @@ impl Exercise {
         mid
     }
 
-    /// The inject as `role` reads it inside a conversation (see module rules).
-    fn quoted_inject_text(&self, role: &str, delivery: &Message) -> String {
-        if let Some(own) = self.messages.iter().find(|m| {
-            m.kind == MsgKind::Inject && m.inject_id == delivery.inject_id && m.to == role
-        }) {
-            return own.text.clone();
-        }
-        if self.language_of(role) == self.language_of(&delivery.to) {
-            delivery.text.clone()
-        } else {
-            delivery.text_en.clone()
-        }
+    /// `role`'s own copy of the inject delivered as `delivery`, if EXCON sent it to them.
+    pub fn own_inject_copy(&self, role: &str, delivery: &Message) -> Option<&Message> {
+        self.messages.iter().find(|m| {
+            m.kind == MsgKind::Inject
+                && m.inject_id.is_some()
+                && m.inject_id == delivery.inject_id
+                && m.to == role
+        })
     }
 
+    /// The inject as `role` reads it inside a conversation (see module rules):
+    /// their own copy when they received it, else the title, sender and time
+    /// only (`text` null, `title_only` true).
     fn quote(&self, role: &str, c: &LinkedConversation) -> Value {
         let Some(m) = self.messages.iter().find(|m| m.id == c.delivery) else {
             return Value::Null;
         };
-        json!({"id": m.id, "kind": "inject", "inject_id": m.inject_id, "title": m.title,
-            "from": m.from, "to": m.to, "clock": m.clock, "turn": m.turn, "t_s": m.t_s,
-            "text": self.quoted_inject_text(role, m)})
+        let own = self.own_inject_copy(role, m);
+        json!({"id": m.id, "kind": "inject", "inject_id": m.inject_id,
+            "title": own.and_then(|o| o.title.clone()).or_else(|| m.title.clone()),
+            "from": m.from, "to": m.to, "persona": m.persona, "clock": m.clock, "turn": m.turn, "t_s": m.t_s,
+            "text": own.map(|o| o.text.clone()), "title_only": own.is_none()})
     }
 
     /// Conversations of one role as that player sees them.
@@ -332,6 +462,7 @@ impl Exercise {
                 json!({"id": c.id, "delivery": c.delivery, "inject_id": c.inject_id,
                     "created_by": c.created_by, "participants": c.participants,
                     "turn": c.turn, "t_s": c.t_s, "quote": self.quote(role, c),
+                    "reason": c.reason.for_role(role, &c.created_by),
                     // Responses given through this conversation, visible to all its participants.
                     "responses": self.proposals.iter()
                         .filter(|p| p.via_conversation == Some(c.id))
@@ -359,6 +490,7 @@ impl Exercise {
                 json!({"id": c.id, "delivery": c.delivery, "inject_id": c.inject_id,
                     "created_by": c.created_by, "participants": c.participants,
                     "turn": c.turn, "t_s": c.t_s, "message_count": c.messages.len(),
+                    "reason": c.reason.for_master(),
                     "messages": c.messages.iter().map(|m| json!({"id": m.id, "from": m.from, "turn": m.turn,
                         "t_s": m.t_s, "clock": m.clock, "original": m.original, "text_en": m.text_en,
                         "reply_to": m.reply_to, "translation_failed": m.translation_failed, "proposal": m.proposal})).collect::<Vec<_>>(),

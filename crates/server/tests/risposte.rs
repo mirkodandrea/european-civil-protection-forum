@@ -83,8 +83,12 @@ async fn narrated_decisions_and_communications_are_recorded_under_the_inject() {
 #[tokio::test]
 async fn a_response_to_a_player_reaches_them_through_a_conversation() {
     let (c, _, parent) = fixture().await;
+    // It opens a conversation, so it states why (personal initiative here).
     let (status, body) = call(&c, "mayor", "/api/player/mayor/actions",
         Some(json!({"reply_to":parent,"kind":"communication","narrative":"Vi giro il messaggio","to_players":["regional_cp"]}))).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    let (status, body) = call(&c, "mayor", "/api/player/mayor/actions",
+        Some(json!({"reply_to":parent,"kind":"communication","narrative":"Vi giro il messaggio","to_players":["regional_cp"],"basis":"operational_judgment","rationale":"La Regione deve saperlo"}))).await;
     assert_eq!(status, Status::Ok, "{body}");
     let (_, guest) = call(&c, "regional_cp", "/api/player/regional_cp", None).await;
     let conv = &guest["linked_conversations"][0];

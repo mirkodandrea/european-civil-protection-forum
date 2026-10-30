@@ -73,6 +73,31 @@ pub(crate) struct StartBody {
     delivery: u64,
     participants: Vec<String>,
     text: String,
+    /// Why the conversation is started: plan or procedure, law, or personal
+    /// initiative (`operational_judgment`). Required.
+    #[serde(default)]
+    basis: Option<exercise::BasisKind>,
+    /// Which plan, procedure or law (required for those bases).
+    #[serde(default)]
+    basis_note: Option<String>,
+    /// Why the player starts it, in their own words. Required.
+    #[serde(default)]
+    rationale: Option<String>,
+}
+
+/// The reason of a new conversation. A session saved before the reason was
+/// required is replayed with a placeholder, so it still loads.
+fn start_reason(body: &StartBody) -> Result<exercise::conversations::ConversationReason, crate::ApiError> {
+    let given = body.basis.is_some()
+        || body.rationale.as_deref().is_some_and(|r| !r.trim().is_empty());
+    if !given && crate::flow::REPLAYING.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(exercise::conversations::ConversationReason::legacy());
+    }
+    Ok(exercise::conversations::ConversationReason::new(
+        body.basis,
+        body.basis_note.as_deref(),
+        body.rationale.as_deref(),
+    )?)
 }
 
 #[cfg_attr(
@@ -87,6 +112,7 @@ pub(crate) async fn start(
 ) -> ApiResult {
     own(&principal, &role)?;
     let Json(body) = body;
+    let mut reason = start_reason(&body)?;
     let (language, targets, turn, revision) = {
         let ex = s.lock();
         ex.validate_conversation_start(&role, body.delivery, &body.participants, &body.text)?;
@@ -101,6 +127,16 @@ pub(crate) async fn start(
         )
     };
     let (english, texts, failed) = translations(&s, &body.text, &language, &targets).await;
+    // The participants read the reason in their own language too.
+    if reason.rationale != exercise::conversations::LEGACY_REASON {
+        let (why_en, why, why_failed) =
+            translations(&s, &reason.rationale, &language, &targets).await;
+        reason.rationale_en = why_en;
+        reason.texts = why;
+        if why_failed {
+            reason.texts.clear();
+        }
+    }
     let mut ex = s.lock();
     if ex.turn != turn || ex.clock_control.revision != revision {
         return Err(bad("exercise changed during translation; send again"));
@@ -113,6 +149,7 @@ pub(crate) async fn start(
         &english,
         &texts,
         failed,
+        reason,
     )?;
     Ok(Json(
         json!({"conversation":conversation,"message":message,"translation_failed":failed}),

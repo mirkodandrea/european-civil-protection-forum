@@ -853,6 +853,8 @@ main.page.scenario-editor.editing{display:flex;flex-direction:column;overflow:hi
 .inj-chat.conv-thread,.inj-chat.conv-new{flex-direction:column;padding:8px 12px;gap:8px}
 .conv-head{display:flex;align-items:center;gap:10px;flex:none}.conv-head span{display:grid}
 .conv-quote{margin:0;padding:8px 10px;border-left:4px solid #c18a3a;background:#fffcf5;border-radius:6px;display:grid;gap:2px}.conv-quote p{margin:0;white-space:pre-wrap;font-size:13px}.conv-quote small{font-size:12px;color:#4d625f}
+.conv-quote .conv-quote-note{font-style:italic;color:#4d625f;font-size:12px}
+.conv-reason{margin:6px 0 0;padding:6px 10px;border-left:4px solid var(--accent);background:#f3f7f9;border-radius:6px;display:grid;gap:2px}.conv-reason small{font-size:12px;color:#4d625f}.conv-reason p{margin:0;white-space:pre-wrap;font-size:13px}
 .conv-quote-cite{position:relative}.conv-cite{border:0;background:transparent;color:var(--accent);font-size:12px;padding:2px 4px}.conv-quote-cite>.conv-cite{position:absolute;right:4px;top:4px}
 .conv-people{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px 16px}.conv-people legend{font-size:12px;color:var(--muted)}
 .conv-composer textarea{min-height:56px}.conv-composer .row{margin-top:6px;flex-wrap:nowrap}

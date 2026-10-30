@@ -657,8 +657,16 @@ fn the_reply_basis_reaches_the_ai_reading() {
     assert!(err(PlayerResponse { rationale: Some(" ".into()), ..base.clone() }).contains("rationale"));
     let judgement = PlayerResponse { basis: Some(BasisKind::OperationalJudgment), basis_note: None, ..base.clone() };
     assert!(ex.validate_player_response("mayor", &judgement).is_ok(), "no reference for operational judgement");
+    // A message to other players that opens a conversation states why
+    // (basis, reference of a plan or law, rationale); once it exists, the
+    // coordination inside it needs none of them.
     let to_players = PlayerResponse { basis: None, basis_note: None, rationale: None, to_players: vec!["fire_commander".into()], ..base.clone() };
-    assert!(ex.validate_player_response("mayor", &to_players).is_ok(), "coordination needs no basis");
+    assert!(err(to_players.clone()).contains("why you start this conversation"));
+    let opening = PlayerResponse { basis: Some(BasisKind::OperationalJudgment), rationale: Some("Serve il parere dei VVF".into()), ..to_players.clone() };
+    assert!(ex.validate_player_response("mayor", &opening).is_ok(), "personal initiative needs no reference");
+    let reason = exercise::conversations::ConversationReason::new(Some(BasisKind::OperationalJudgment), None, Some("Serve il parere dei VVF")).unwrap();
+    ex.start_linked_conversation("mayor", parent, &["fire_commander".into()], "Che ne pensate?", "What do you think?", &BTreeMap::new(), false, reason).unwrap();
+    assert!(ex.validate_player_response("mayor", &to_players).is_ok(), "coordination in a conversation needs no basis");
     // Sessions saved before the rationale existed still load.
     let old: DecisionEvidence = serde_json::from_value(json!({"basis": {"kind": "plan", "reference": "Piano, scheda 4"}})).unwrap();
     assert!(old.basis.rationale.is_none());

@@ -105,7 +105,9 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
     let mut out = Vec::new();
     if let Some(m) = it.msg {
         let from = if m["persona"].is_string() { persona(m) } else { name(text(&m["from"])) };
-        out.push(ev(Kind::Inject, from, text(&m["clock"]).to_string(), text(&m["text"])));
+        // A conversation guest knows the inject by its title only.
+        let body = if m["title_only"] == true { i18n::t(l, "inject_title_only") } else { text(&m["text"]) };
+        out.push(ev(Kind::Inject, from, text(&m["clock"]).to_string(), body));
     }
     for p in &it.proposals {
         let status = text(&p["status"]);
@@ -406,10 +408,25 @@ impl crate::player_view::PlayerView {
             .join(", ")
     }
 
-    /// The inject as a quoted card (conversation context).
+    /// The inject as a quoted card (conversation context): its title only
+    /// when the player never received it.
     fn quoted_inject(&self, l: &str, m: Option<&Value>) -> Html {
         let Some(m) = m else { return html! {} };
-        quote_card(&m["id"], i18n::t(l, "inject"), &format!(" · {} · {}", text(&m["clock"]), i18n::tf(l, "from", &[&self.name(text(&m["from"]))])), text(&m["title"]), text(&m["text"]))
+        let from = if m["persona"].is_string() { text(&m["persona"]).to_string() } else { self.name(text(&m["from"])) };
+        let title_only = (m["title_only"] == true).then(|| i18n::t(l, "inject_title_only"));
+        quote_card(&m["id"], i18n::t(l, "inject"), &format!(" · {} · {}", text(&m["clock"]), i18n::tf(l, "from", &[&from])), text(&m["title"]), text(&m["text"]), title_only)
+    }
+
+    /// Why the conversation was started, as its opening context.
+    fn conversation_reason(&self, l: &str, c: &Value) -> Html {
+        let r = &c["reason"];
+        if !r.is_object() {
+            return html! {};
+        }
+        let creator = text(&c["created_by"]);
+        let head = if creator == self.own { i18n::t(l, "conv_reason_you").to_string() } else { i18n::tf(l, "conv_reason_by", &[&self.name(creator)]) };
+        let basis = i18n::t(l, crate::reply_composer::conversation_basis_label(text(&r["basis"])));
+        reason_card(&head, basis, text(&r["reference"]), text(&r["rationale"]))
     }
 
     fn view_conversation(&self, can_act: bool, _it: &Item, c: &Value) -> Html {
@@ -432,6 +449,7 @@ impl crate::player_view::PlayerView {
                 <div class="conv-head"><button class="inj-back" onclick={back}>{format!("← {}",i18n::t(l,"conv_back"))}</button><span><b>{self.conv_names(c)}</b><small>{i18n::t(l,"conv_private_hint")}</small></span></div>
                 <div class="conv-quote-cite" data-cite-target={delivery.to_string()}>{self.quoted_inject(l, Some(&c["quote"]))}
                     <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),delivery.to_string()))}>{i18n::t(l,"conv_cite")}</button></div>
+                {self.conversation_reason(l, c)}
                 <ol class="inj-chat-inner" role="log" aria-live="polite">{for messages.iter().map(|m|{
                     let mine=m["from"]==own;
                     let id=m["id"].as_u64().unwrap_or(0);
@@ -453,9 +471,19 @@ impl crate::player_view::PlayerView {
 }
 
 /// The inject a linked conversation is about, as a quoted card. Shared by the
-/// player's conversation and the EXCON conversation viewer.
-pub fn quote_card(id: &Value, label: &str, meta: &str, title: &str, body: &str) -> Html {
-    html! {<blockquote class="conv-quote" data-conv-quote={id.to_string()}><small><b>{label.to_string()}</b>{meta.to_string()}</small><b>{title.to_string()}</b><p>{body.to_string()}</p></blockquote>}
+/// player's conversation and the EXCON conversation viewer. `title_only`: the
+/// note shown instead of the text the reader never received.
+pub fn quote_card(id: &Value, label: &str, meta: &str, title: &str, body: &str, title_only: Option<&str>) -> Html {
+    html! {<blockquote class="conv-quote" data-conv-quote={id.to_string()} data-title-only={title_only.is_some().then_some("")}><small><b>{label.to_string()}</b>{meta.to_string()}</small><b>{title.to_string()}</b>
+        if let Some(note)=title_only{<p class="muted conv-quote-note">{note.to_string()}</p>}else if !body.is_empty(){<p>{body.to_string()}</p>}</blockquote>}
+}
+
+/// Why a conversation was started (who, basis, reference, rationale): its
+/// opening context, for participants and the EXCON viewer.
+pub fn reason_card(head: &str, basis: &str, reference: &str, rationale: &str) -> Html {
+    html! {<div class="conv-reason" data-conv-reason="">
+        <small><b>{head.to_string()}</b>{format!(" · {basis}")}{if reference.is_empty(){String::new()}else{format!(" · {reference}")}}</small>
+        <p>{rationale.to_string()}</p></div>}
 }
 
 /// One message of a linked conversation: author and time, the cited message,

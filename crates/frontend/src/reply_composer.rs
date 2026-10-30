@@ -6,7 +6,10 @@
 //! required), which plan or law (required for those two) and the player's
 //! rationale ("Motivazione": why this decision, required); Send stays
 //! disabled, with a hint saying what is missing, until all of it is there.
-//! Messages to other players are coordination and need none of it.
+//! Starting a conversation with other players (under an inject) is motivated
+//! the same way: what it rests on (plan or procedure, law or regulation, or
+//! personal initiative), which plan or law, and why the player starts it.
+//! Later messages inside a conversation need none of it.
 //!
 //! Players never act on the world: what they send to the inject's sender is a
 //! reply EXCON's AI reads to suggest catalogue actions (`exercise::reply_review`);
@@ -86,7 +89,17 @@ pub fn reply_sent(fields: &mut std::collections::BTreeMap<String, String>, ctx: 
 /// Body of the reply to the sender: the words, their basis, the reference
 /// (plan or law only) and the rationale.
 pub fn reply_body(narrative: &str, parent: u64, conversation: Option<u64>, basis: &str, note: &str, rationale: &str) -> Value {
-    let mut body = json!({"kind": "communication", "narrative": narrative, "reply_to": parent, "conversation": conversation});
+    with_reason(json!({"kind": "communication", "narrative": narrative, "reply_to": parent, "conversation": conversation}), basis, note, rationale)
+}
+
+/// Body of a new conversation under inject copy `delivery`: participants,
+/// first message and why it is started (basis, reference, rationale).
+pub fn start_body(delivery: u64, participants: &[String], text: &str, basis: &str, note: &str, rationale: &str) -> Value {
+    with_reason(json!({"delivery": delivery, "participants": participants, "text": text}), basis, note, rationale)
+}
+
+/// Add the basis, the reference (plan or law only) and the rationale.
+fn with_reason(mut body: Value, basis: &str, note: &str, rationale: &str) -> Value {
     if !basis.is_empty() {
         body["basis"] = json!(basis);
         if needs_reference(basis) && !note.trim().is_empty() {
@@ -110,6 +123,42 @@ pub const BASES: [(&str, &str, Option<&str>); 3] = [
 /// A plan or a law needs its reference (which one, which part).
 pub fn needs_reference(basis: &str) -> bool {
     BASES.iter().any(|(v, _, h)| *v == basis && h.is_some())
+}
+
+/// Label key of a basis chip: starting a conversation, operational judgement
+/// reads "personal initiative" (the server stores it as `operational_judgment`).
+pub fn basis_chip_label(value: &str, label: &'static str, starting: bool) -> &'static str {
+    if starting && value == "operational_judgment" {
+        "basis_initiative"
+    } else {
+        label
+    }
+}
+
+/// Label key of a stored conversation basis.
+pub fn conversation_basis_label(basis: &str) -> &'static str {
+    match basis {
+        "plan" | "procedure" => "basis_plan",
+        "law" => "basis_law",
+        _ => "basis_initiative",
+    }
+}
+
+/// What a new conversation still lacks (the hint key), in fill order.
+pub fn start_missing(text: &str, players: usize, basis: &str, note: &str, rationale: &str) -> Option<&'static str> {
+    if text.trim().is_empty() {
+        Some("need_text")
+    } else if players == 0 {
+        Some("need_players")
+    } else if !BASES.iter().any(|(v, _, _)| *v == basis) {
+        Some("need_conv_basis")
+    } else if needs_reference(basis) && note.trim().is_empty() {
+        Some("need_reference")
+    } else if rationale.trim().is_empty() {
+        Some("need_conv_rationale")
+    } else {
+        None
+    }
 }
 
 /// What a reply to the sender still lacks (the hint key), in fill order.
@@ -176,10 +225,14 @@ impl crate::player_view::PlayerView {
             (Place::Conversation { .. }, To::Players) => players.iter().map(|(_, n)| n.clone()).collect(),
             (Place::Inject { .. }, To::Players) => players.iter().filter(|(id, _)| picked.contains(id)).map(|(_, n)| n.clone()).collect(),
         };
+        // Under an inject, "other players" starts a conversation: it needs its reason.
+        let starting = to == To::Players && matches!(place, Place::Inject { .. });
         let missing = if self.state["phase"] != "orders" && to == To::Sender {
             Some("work_need_orders")
         } else if to == To::Sender {
             sender_missing(&draft, &basis, &note, &rationale)
+        } else if starting {
+            start_missing(&draft, recipients.len(), &basis, &note, &rationale)
         } else if draft.trim().is_empty() {
             Some("need_text")
         } else if recipients.is_empty() {
@@ -195,7 +248,7 @@ impl crate::player_view::PlayerView {
             self.cb(move |_: ()| {
                 let (path, body) = match (is_conv, to) {
                     (_, To::Sender) => (format!("/api/player/{own}/actions"), reply_body(&draft, parent, conversation, &basis, &note, &rationale)),
-                    (false, To::Players) => (format!("/api/player/{own}/conversations"), json!({"delivery": parent, "participants": picked, "text": draft})),
+                    (false, To::Players) => (format!("/api/player/{own}/conversations"), start_body(parent, &picked, &draft, &basis, &note, &rationale)),
                     (true, To::Players) => (format!("/api/player/{own}/conversations/{}/messages", conversation.unwrap_or(0)), json!({"text": draft, "reply_to": cite})),
                 };
                 let mut a = Action::post(path, body);
@@ -225,6 +278,7 @@ impl crate::player_view::PlayerView {
         // Unique per player too: the bench shows several players on one page.
         let radio = format!("reply-to-{}-{}", own, ctx.replace(':', "-"));
         let basis_hint = BASES.iter().find(|(v, _, _)| *v == basis).and_then(|(_, _, h)| *h);
+        let basis_title = if starting { "conv_basis_title" } else { "basis_title" };
         html! {<footer class="inj-composer reply-composer" data-reply-composer={ctx.clone()} data-reply-to={if to==To::Sender{"sender"}else{"players"}}>
             <fieldset class="reply-to" data-reply-recipient="">
                 <legend>{i18n::t(l,"to_label")}</legend>
@@ -239,15 +293,15 @@ impl crate::player_view::PlayerView {
                 placeholder={if to==To::Sender{i18n::t(l,"reply_ph")}else{i18n::t(l,"write")}} value={draft.clone()}
                 oninput={{let set=set("reply");Callback::from(move |e|set.emit(api::input(e)))}}
                 onkeydown={{let send=send.clone();Callback::from(move |e:KeyboardEvent|{if ready&&e.key()=="Enter"&&(e.ctrl_key()||e.meta_key()){e.prevent_default();send.emit(());}})}}/>
-            if to==To::Sender {
-                <div class="reply-basis-pick" data-work-block="basis">
-                    <span class="reply-basis-title">{i18n::t(l,"basis_title")}<small class="muted">{format!(" · {}",i18n::t(l,"basis_required"))}</small></span>
-                    <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,"basis_title")}>
+            if to==To::Sender || starting {
+                <div class="reply-basis-pick" data-work-block="basis" data-reason-for={if starting{"conversation"}else{"reply"}}>
+                    <span class="reply-basis-title">{i18n::t(l,basis_title)}<small class="muted">{format!(" · {}",i18n::t(l,"basis_required"))}</small></span>
+                    <div class="basis-options" role="radiogroup" aria-label={i18n::t(l,basis_title)}>
                         {for BASES.iter().map(|(value,label,_)|{
                             let on=basis==*value;
                             let set=set("basis");
                             let next=if on{String::new()}else{value.to_string()};
-                            html!{<button type="button" key={*value} class={classes!("basis-chip",on.then_some("is-selected"))} id={format!("basis-{value}")} data-basis={*value} aria-pressed={on.to_string()} onclick={Callback::from(move |_|set.emit(next.clone()))}>{i18n::t(l,label)}</button>}
+                            html!{<button type="button" key={*value} class={classes!("basis-chip",on.then_some("is-selected"))} id={format!("basis-{value}")} data-basis={*value} aria-pressed={on.to_string()} onclick={Callback::from(move |_|set.emit(next.clone()))}>{i18n::t(l,basis_chip_label(value,label,starting))}</button>}
                         })}
                     </div>
                     if let Some(hint)=basis_hint {
@@ -255,8 +309,8 @@ impl crate::player_view::PlayerView {
                     }
                 </div>
                 <label class="reply-rationale" data-work-block="rationale">
-                    <span class="reply-basis-title">{i18n::t(l,"rationale_title")}<small class="muted">{format!(" · {}",i18n::t(l,"basis_required"))}</small></span>
-                    <textarea class="reply-rationale-text" data-rationale="" rows="2" maxlength="2000" required=true placeholder={i18n::t(l,"rationale_ph")} value={rationale.clone()} oninput={{let set=set("rationale");Callback::from(move |e|set.emit(api::input(e)))}}/>
+                    <span class="reply-basis-title">{i18n::t(l,if starting{"conv_rationale_title"}else{"rationale_title"})}<small class="muted">{format!(" · {}",i18n::t(l,"basis_required"))}</small></span>
+                    <textarea class="reply-rationale-text" data-rationale="" rows="2" maxlength="2000" required=true placeholder={i18n::t(l,if starting{"conv_rationale_ph"}else{"rationale_ph"})} value={rationale.clone()} oninput={{let set=set("rationale");Callback::from(move |e|set.emit(api::input(e)))}}/>
                 </label>
             }
             if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
@@ -317,6 +371,35 @@ mod tests {
         assert_eq!(sender_missing("F4", "operational_judgment", "", "Il vento gira"), None);
         assert_eq!(sender_missing("F4", "plan", "Scheda 4", "Il vento gira"), None);
         for key in ["need_text", "need_reply_basis", "need_reference", "need_rationale", "rationale_title", "rationale_ph", "basis_required"] {
+            for l in ["it", "en"] {
+                assert!(crate::i18n_risposte::lookup(l, key).is_some(), "{l}:{key}");
+            }
+        }
+    }
+
+    /// Starting a conversation waits for text, players, a basis, the
+    /// reference of a plan or law and why; the body carries all of it.
+    #[test]
+    fn starting_a_conversation_needs_its_reason() {
+        assert_eq!(start_missing(" ", 1, "plan", "x", "y"), Some("need_text"));
+        assert_eq!(start_missing("SP12?", 0, "plan", "x", "y"), Some("need_players"));
+        assert_eq!(start_missing("SP12?", 1, "", "", "y"), Some("need_conv_basis"));
+        assert_eq!(start_missing("SP12?", 1, "law", " ", "y"), Some("need_reference"));
+        assert_eq!(start_missing("SP12?", 1, "plan", "Scheda 2", " "), Some("need_conv_rationale"));
+        assert_eq!(start_missing("SP12?", 1, "operational_judgment", "", "Serve la Polizia"), None);
+        let b = start_body(7, &["police".into()], "SP12?", "operational_judgment", "Piano", " Serve la Polizia ");
+        assert_eq!((b["delivery"].as_u64(), b["participants"][0].as_str(), b["text"].as_str()), (Some(7), Some("police"), Some("SP12?")));
+        assert_eq!((b["basis"].as_str(), b["rationale"].as_str()), (Some("operational_judgment"), Some("Serve la Polizia")));
+        assert!(b.get("basis_note").is_none(), "personal initiative has no reference");
+        let b = start_body(7, &["police".into()], "SP12?", "law", " art. 15 ", "Perché");
+        assert_eq!(b["basis_note"], "art. 15");
+        // The third chip reads "personal initiative" only when starting a conversation.
+        assert_eq!(basis_chip_label("operational_judgment", "basis_judgment", true), "basis_initiative");
+        assert_eq!(basis_chip_label("operational_judgment", "basis_judgment", false), "basis_judgment");
+        assert_eq!(basis_chip_label("plan", "basis_plan", true), "basis_plan");
+        assert_eq!(conversation_basis_label("procedure"), "basis_plan");
+        assert_eq!(conversation_basis_label("operational_judgment"), "basis_initiative");
+        for key in ["basis_initiative", "conv_basis_title", "conv_rationale_title", "conv_rationale_ph", "need_conv_basis", "need_conv_rationale", "conv_reason_by", "conv_reason_you", "inject_title_only"] {
             for l in ["it", "en"] {
                 assert!(crate::i18n_risposte::lookup(l, key).is_some(), "{l}:{key}");
             }

@@ -183,7 +183,7 @@ pub static BENCHES: &[BenchDef] = &[
             deliver(f, FIRE, &["mayor", "police"]);
         },
         steps: &[
-            Step { side: Column::Player("mayor"), text: ("apre l’inject e avvia una conversazione con la Polizia", "opens the inject and starts a conversation with the Police"), done: |w| !w.fake.conversations.is_empty() },
+            Step { side: Column::Player("mayor"), text: ("apre l’inject e avvia una conversazione con la Polizia, dicendo perché (piano, legge o iniziativa personale)", "opens the inject and starts a conversation with the Police, saying why (plan, law or personal initiative)"), done: |w| !w.fake.conversations.is_empty() },
             Step { side: Column::Player("police"), text: ("apre la conversazione e risponde", "opens the conversation and replies"), done: |w| w.fake.conversations.iter().any(|c| c.messages.iter().any(|m| m.1 == "police")) },
             Step { side: Column::Player("mayor"), text: ("risponde all’inject dalla conversazione", "answers the inject from the conversation"), done: |w| w.fake.proposals.iter().any(|p| p.via_conversation.is_some()) },
             Step { side: Column::Excon, text: ("vede la risposta in Risposte, ispeziona la conversazione e decide", "sees the response in Responses, inspects the conversation and decides"), done: |w| w.fake.proposals.iter().any(|p| p.via_conversation.is_some() && p.decision.is_some()) },

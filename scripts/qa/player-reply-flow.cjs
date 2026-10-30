@@ -2,7 +2,10 @@
 // visible. A reply to the inject's sender requires its basis (plan or
 // procedure, law or regulation, operational judgement), the reference of a
 // plan or law, and the rationale; Send stays disabled with a hint until then.
-// Messages to other players need none of it.
+// Starting a conversation with other players needs the same: a basis (plan or
+// procedure, law or regulation, personal initiative), the reference of a plan
+// or law and why; the participants read it as the opening context. Later
+// messages inside the conversation need none of it.
 // Drives the workflow bench (standalone+bench build, simulated server) and
 // takes one screenshot per state:
 //   PORT=8085 ./scripts/dev_bench.sh
@@ -45,18 +48,37 @@ const col=(page,id)=>page.locator(`[data-bench-col="${id}"]`);
     assert.equal(await send.isDisabled(),false,'Send enabled once everything is filled');
     assert.match(await send.innerText(),/Invia a|Send to/);
     await shot('1-inject-reply-to-sender');
-    // Same box, recipient = other players: the basis row goes, the people appear.
+    // Same box, recipient = other players: it starts a conversation, so it
+    // needs its reason (basis, reference of a plan or law, why).
     await box.locator('[data-to="players"]').check();
     await mayor.locator('[data-conv-person="police"]').check();
     await mayor.locator('#response-narrative').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
-    assert.equal(await mayor.locator('[data-basis]').count(),0,'no basis for a coordination message');
-    assert.equal(await mayor.locator('[data-rationale]').count(),0,'no rationale for a coordination message');
+    await mayor.locator('[data-reason-for="conversation"]').waitFor();
+    assert.match(await mayor.locator('#basis-operational_judgment').innerText(),/Iniziativa personale|Personal initiative/,'third basis: personal initiative');
+    // The basis picked for the sender carries over: clear it to see the hint.
+    if(await mayor.locator('#basis-plan[aria-pressed="true"]').count())await mayor.locator('#basis-plan').click();
+    await mayor.locator('[data-rationale]').fill('');
+    await blocked(/su cosa si basa la conversazione|conversation rests on/i,'conversation basis required');
+    await mayor.locator('#basis-law').click();
+    await mayor.locator('[data-basis-note]').fill('');
+    await blocked(/quale piano|which plan/i,'law reference required');
+    await mayor.locator('[data-basis-note]').fill('D.Lgs. 1/2018, art. 12 (funzioni dei Comuni)');
+    await blocked(/perché avvii|why you start/i,'conversation rationale required');
+    await mayor.locator('[data-rationale]').fill('Prima di evacuare F4 serve la strada libera: la chiusura della SP12 spetta alla Polizia.');
+    assert.equal(await send.isDisabled(),false,'Send enabled once the reason is there');
     await shot('2-inject-to-players');
     await mayor.locator('[data-send-conversation]').click();
     await mayor.locator('[data-conversation]').waitFor();
-    // Inside the conversation: participants preselected.
+    // The conversation opens with its reason.
+    assert.match(await mayor.locator('[data-conversation] [data-conv-reason]').innerText(),/serve la strada libera/);
+    // Inside the conversation: participants preselected, no reason asked.
     await police.locator('[data-inject-row]').first().click();await police.locator('[data-conv-row]').click();
     await police.locator('[data-reply-composer][data-reply-to="players"]').waitFor();
+    const policeReason=await police.locator('[data-conversation] [data-conv-reason]').innerText();
+    assert.match(policeReason,/D\.Lgs\. 1\/2018/,'participants read the reference');
+    assert.match(policeReason,/serve la strada libera/,'participants read why');
+    assert.equal(await police.locator('[data-reply-composer] [data-basis]').count(),0,'no basis inside a conversation');
+    assert.equal(await police.locator('[data-reply-composer] [data-rationale]').count(),0,'no rationale inside a conversation');
     await police.locator('#response-narrative').fill('Sì, pattuglia in posizione tra 10 minuti.');
     await police.locator('[data-send-conversation]').click();
     await mayor.locator('[data-conversation] [data-conv-message]').nth(1).waitFor();

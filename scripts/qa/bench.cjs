@@ -73,14 +73,21 @@ const benches={
   },
   async conversation(page){
     const mayor=col(page,'mayor'),police=col(page,'police'),excon=col(page,'excon');
-    // Under the inject: "To → other players", pick the Police, one Send starts the conversation.
+    // Under the inject: "To → other players", pick the Police, say why
+    // (basis, reference, rationale: required to start it), one Send.
     await openInject(page,'mayor');await mayor.locator('[data-reply-composer] [data-to="players"]').check();
     await mayor.locator('[data-conv-person="police"]').check();
     await mayor.locator('#response-narrative').fill('Riuscite a chiudere la SP12 prima di evacuare F4?');
+    assert.equal(await mayor.locator('[data-send-conversation]').isDisabled(),true,'no reason, no conversation');
+    await mayor.locator('#basis-plan').click();
+    await mayor.locator('[data-basis-note]').fill('Piano comunale di protezione civile, scheda 3 (viabilità)');
+    await mayor.locator('[data-rationale]').fill('La chiusura della SP12 spetta alla Polizia: va coordinata prima di evacuare.');
     await mayor.locator('[data-send-conversation]').click();await done(page,1);
     // Inside the conversation the same box defaults to its participants.
     await openInject(page,'police');await police.locator('[data-conv-row]').click();
     await police.locator('[data-reply-composer][data-reply-to="players"]').waitFor();
+    // The participant reads why the conversation was started.
+    assert.match(await police.locator('[data-conv-reason]').innerText(),/scheda 3[\s\S]*spetta alla Polizia/);
     await police.locator('#response-narrative').fill('Sì, pattuglia in posizione tra 10 minuti.');
     await police.locator('[data-send-conversation]').click();await done(page,2);
     await mayor.locator('[data-conversation] [data-conv-message]').nth(1).waitFor();
@@ -95,6 +102,7 @@ const benches={
     // The response opens the conversation it came from in the viewer.
     await excon.locator('.response-dialog [data-inspect-conversation]').first().click();
     await excon.locator('.conv-viewer [data-conv-message]').first().waitFor();
+    assert.match(await excon.locator('.conv-viewer [data-conv-reason]').innerText(),/spetta alla Polizia/,'EXCON reads the reason');
     await excon.locator('[data-close-conv-viewer]').click();
   },
   async decide(page){

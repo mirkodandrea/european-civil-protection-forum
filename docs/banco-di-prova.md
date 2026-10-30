@@ -20,7 +20,9 @@ quello corrente evidenziato.
      suggerimenti, li aggiunge, approva; il Sindaco vede l’esito.
   3. *Chiarimento*: EXCON chiede, il Sindaco risponde nel thread, EXCON chiude.
   4. *Conversazione tra player*: il Sindaco avvia la conversazione dal box di
-     risposta sotto l’inject (A chi → Altri player), Sindaco e Polizia
+     risposta sotto l’inject (A chi → Altri player) dicendo perché (piano,
+     legge o iniziativa personale, riferimento, motivo: obbligatori come sul
+     server), Sindaco e Polizia
      discutono, il Sindaco risponde all’inject dallo stesso box nella
      conversazione (A chi → mittente), EXCON la ispeziona nel visore delle
      conversazioni e decide.

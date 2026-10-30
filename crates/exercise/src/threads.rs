@@ -91,12 +91,17 @@ impl Exercise {
                 }
             }
         }
-        // A participant of a linked conversation reads the inject through it.
+        // A participant of a linked conversation who never received the
+        // inject knows it by its title only (see `crate::conversations`).
         if selected.kind == MsgKind::Inject
             && selected.to != role
             && !chain.iter().any(|m| m.id == selected.id)
         {
-            chain.push(ThreadMessage::from(selected));
+            let mut quoted = ThreadMessage::from(selected);
+            if self.own_inject_copy(role, selected).is_none() {
+                quoted.text.clear();
+            }
+            chain.push(quoted);
         }
         // Include replies already exchanged in the selected branch. A peer
         // parent stays within that pair; an inject can connect several peers.

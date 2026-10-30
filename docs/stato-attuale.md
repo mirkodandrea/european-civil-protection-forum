@@ -37,13 +37,17 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   (obbligatoria: perché questa decisione), e **un solo** pulsante «Invia a
   <destinatario>» (Ctrl/Cmd+Invio). Invia resta disabilitato, con un suggerimento
   che dice cosa manca (testo, fondamento, riferimento, motivazione), finché tutto
-  non è compilato. I messaggi ad altri player (coordinamento) non chiedono né
-  fondamento né motivazione; il PDF allegato resta fuori dal box (decisione 30/10). Niente scelta
+  non è compilato. **Avviare** una conversazione con altri player dal box
+  dell’inject («Altri player · avvia una conversazione») chiede allo stesso modo
+  **Su cosa si basa la conversazione** (Piano o procedura / Legge o norma /
+  Iniziativa personale, con la riga di riferimento per piano e legge) e **Perché
+  avvii questa conversazione** (obbligatorio); i messaggi successivi dentro una
+  conversazione non chiedono né fondamento né motivazione; il PDF allegato resta fuori dal box (decisione 30/10). Niente scelta
   preliminare «Risposta all’inject / Inizia una conversazione», niente modale, niente
   secondo pulsante «Rispondi» nella conversazione. Al mittente: `POST
   /api/player/<role>/actions` con `kind: "communication"`, `basis`, `basis_note`,
   `rationale` (stato «Inviata»); ad altri player sotto l’inject: nuova conversazione collegata
-  (`POST …/conversations`, che poi si apre); dentro una conversazione: messaggio ai
+  (`POST …/conversations` con `basis`, `basis_note`, `rationale`, che poi si apre); dentro una conversazione: messaggio ai
   suoi partecipanti (`POST …/conversations/<id>/messages`) oppure, scegliendo il
   mittente, risposta all’inject con `conversation` = id. Le bozze sono tenute per
   inject e per conversazione. Sotto il box la **guida alla risposta** (cosa, dove —
@@ -401,19 +405,36 @@ sull’inglese). La console EXCON continua a dire EXCON.
 ### Conversazioni collegate a un inject
 
 Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
-(nel box di risposta sotto l’inject: **A chi → Altri player**, scelta dei player e
-primo messaggio, Invia); poi prosegue come thread autonomo con l’inject citato in testa
-(riferimento fissato all’apertura) (`exercise::conversations`). È privata ai partecipanti verso gli altri player; EXCON
+(nel box di risposta sotto l’inject: **A chi → Altri player**, scelta dei player,
+primo messaggio e **motivo**, Invia); poi prosegue come thread autonomo con l’inject citato in testa
+(riferimento fissato all’apertura) (`exercise::conversations`).
+
+**Motivo obbligatorio all’avvio** (decisione 30/10, `ConversationReason`): su cosa
+si basa (piano o procedura, legge o norma, oppure iniziativa personale — salvata come
+`operational_judgment`), il riferimento per piano e legge (`basis_note`) e perché la
+si avvia (`rationale`). Il server rifiuta con 400 e un messaggio chiaro un avvio senza
+motivo (`POST …/conversations`, e anche `POST …/actions` con `to_players` quando apre
+una nuova conversazione); il finto server del banco applica la stessa regola. I
+messaggi successivi non lo chiedono. Il motivo è salvato sulla conversazione
+(`linked_conversations[].reason`), tradotto per ciascun partecipante come i messaggi,
+mostrato ai partecipanti come contesto d’apertura sotto l’inject citato e all’EXCON
+nel visore delle conversazioni (con la copia inglese); entra nel log
+(`conversation_started`), nella conversazione AI di ogni partecipante, nei contesti AI
+che leggono le conversazioni (suggerimenti, lettura della risposta data da una
+conversazione, brief della situazione) e nel debrief. Le sessioni salvate prima di
+questa regola si ricaricano: in replay un avvio senza motivo riceve un segnaposto
+(iniziativa personale, «not recorded…»). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
 testo originale e inglese, citazioni; `message_count`), nel visore delle conversazioni
 di Risposte (badge sulla riga dell’inject o **Ispeziona la conversazione** sulla risposta). Il testo compare anche nel log (`conversation_message`), nel debrief e
 nelle evidenze del valutatore (`linked_conversations`). Ogni messaggio può citare un messaggio precedente della
-conversazione o l’inject. Regola di visibilità dell’inject: chi entra in una
-conversazione su un inject che non ha ricevuto lo legge citato in testa alla
-conversazione (titolo, mittente, ora, testo); il testo è la copia del partecipante se ne
-ha una, altrimenti la copia di chi ha creato la conversazione se la lingua coincide,
-altrimenti la versione inglese di lavoro (nessuna traduzione aggiuntiva). Non
-vede altri inject né altre conversazioni.
+conversazione o l’inject. Regola di visibilità dell’inject (decisione 30/10): chi partecipa a una
+conversazione su un inject che **non** ha ricevuto ne vede solo **titolo**, mittente e
+ora (per raggruppare la conversazione sotto quell’inject), mai il testo, in nessuna
+lingua: `quote.text` è `null` e `quote.title_only` è `true`; la riga «ospite» e la
+citazione dicono «Solo il titolo». Il testo non arriva nemmeno ai contesti AI di quel
+player (evidenze del thread, conversazione AI). Chi ha ricevuto l’inject legge la
+propria copia. EXCON vede tutto. Non vede altri inject né altre conversazioni.
 
 Dalla conversazione si può rispondere all’inject con lo stesso box, scegliendo
 come destinatario il mittente dell’inject. Un partecipante che

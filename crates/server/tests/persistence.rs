@@ -344,3 +344,45 @@ async fn attached_pdf_survives_a_restart() {
     assert_eq!(doc.name, "plan.pdf");
     assert_eq!(ex.file_for(None, doc.id).unwrap().bytes.len(), bytes.len());
 }
+
+/// A session saved before starting a conversation needed its reason still
+/// loads: the old requests are replayed with a placeholder reason.
+#[tokio::test(flavor = "multi_thread")]
+async fn conversations_saved_without_a_reason_still_replay() {
+    let _gate = gate();
+    let d = dir("conv-reason");
+    let p = storage(&d);
+    let (c, s) = boot(&p).await;
+    assert_eq!(post(&c, &s, "/api/master/start", json!({})).await.0, Status::Ok);
+    post(&c, &s, "/api/master/inject", json!({"title":"Smoke","sender":"112","recipients":["mayor"],"text":"Smoke over the village"})).await;
+    let parent = s.lock().messages.iter().find(|m| m.kind == exercise::MsgKind::Inject && m.to == "mayor").unwrap().id;
+    let (status, got) = post(&c, &s, "/api/player/mayor/conversations", json!({"delivery":parent,"participants":["regional_cp"],"text":"Parere?","basis":"operational_judgment","rationale":"Serve la Regione"})).await;
+    assert_eq!(status, Status::Ok, "{got}");
+    let (status, got) = post(&c, &s, "/api/player/mayor/actions", json!({"reply_to":parent,"kind":"communication","narrative":"Vi giro il messaggio","to_players":["fire_commander"],"basis":"operational_judgment","rationale":"Anche i VVF"})).await;
+    assert_eq!(status, Status::Ok, "{got}");
+    server::flow::settle(&s).await;
+    p.autosave(&s, true);
+    let mut saved = storage(&d).load_session().unwrap();
+    // Strip the reasons, as an older client sent them.
+    let mut stripped = 0;
+    for e in saved.journal.iter_mut().filter(|e| e.uri.contains("/conversations") || e.uri.contains("/actions")) {
+        let mut body: Value = serde_json::from_str(&e.body).unwrap();
+        for k in ["basis", "basis_note", "rationale"] {
+            body.as_object_mut().unwrap().remove(k);
+        }
+        e.body = body.to_string();
+        stripped += 1;
+    }
+    assert_eq!(stripped, 2);
+    let p2 = storage(&d);
+    let (c2, s2) = boot(&p2).await;
+    persist::restore(&s2, server::replay_rocket(&s2), saved).await.unwrap();
+    {
+        let ex = s2.lock();
+        assert_eq!(ex.linked_conversations.len(), 2);
+        assert!(ex.linked_conversations.iter().all(|c| c.reason.rationale == exercise::conversations::LEGACY_REASON));
+    }
+    // Outside a replay the reason is required again.
+    let (status, _) = post(&c2, &s2, "/api/player/mayor/conversations", json!({"delivery":parent,"participants":["fire_commander","regional_cp"],"text":"Ancora?"})).await;
+    assert_eq!(status, Status::BadRequest);
+}

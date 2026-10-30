@@ -15,8 +15,10 @@
 //!
 //! A narrated reply to the inject's sender (the player's answer, which the
 //! EXCON's AI reads) also needs its basis, the reference for a plan,
-//! procedure or law, and the player's rationale ("why this decision"); a
-//! message to other players is coordination and needs none of them.
+//! procedure or law, and the player's rationale ("why this decision"). A
+//! message to other players is coordination and needs none of them, unless
+//! it starts a new conversation: then the same three fields are its reason
+//! ([`crate::conversations::ConversationReason`]).
 //!
 //! A narrative needs an inject to answer. A response addressed to players is
 //! also posted in a conversation with them linked to the inject.
@@ -231,6 +233,9 @@ impl Exercise {
                 }
                 None => {}
             }
+            if self.players_conversation(role, r).is_none() {
+                Self::new_conversation_reason(r)?;
+            }
         }
         if self.clarification_target(role, reply_to).is_some() {
             bail!("this answers an open question: send it as a text answer, or create a new action without replying to the question");
@@ -439,6 +444,43 @@ impl Exercise {
         Ok(pid)
     }
 
+    /// The conversation a response to players goes into, if one exists: the
+    /// one it was written from, or one on the same inject with exactly these
+    /// participants. `None`: the response starts a new conversation.
+    pub fn players_conversation(&self, role: &str, r: &PlayerResponse) -> Option<u64> {
+        let parent = r.reply_to?;
+        let mut wanted: Vec<&str> = r.to_players.iter().map(String::as_str).collect();
+        wanted.push(role);
+        wanted.sort_unstable();
+        r.conversation.or_else(|| {
+            self.linked_conversations
+                .iter()
+                .rev()
+                .find(|c| {
+                    let mut have: Vec<&str> = c.participants.iter().map(String::as_str).collect();
+                    have.sort_unstable();
+                    c.delivery == parent && have == wanted
+                })
+                .map(|c| c.id)
+        })
+    }
+
+    /// Whether this response to players would open a new conversation (and so
+    /// needs its reason).
+    pub fn response_starts_conversation(&self, role: &str, r: &PlayerResponse) -> bool {
+        !r.to_players.is_empty() && self.players_conversation(role, r).is_none()
+    }
+
+    /// The reason of a conversation a response to players starts: its basis,
+    /// reference and rationale.
+    fn new_conversation_reason(r: &PlayerResponse) -> Result<crate::conversations::ConversationReason> {
+        crate::conversations::ConversationReason::new(
+            r.basis,
+            r.basis_note.as_deref(),
+            r.rationale.as_deref(),
+        )
+    }
+
     /// Post a response addressed to players in the conversation linked to the
     /// inject: the one it was written from, an existing one with exactly these
     /// participants, or a new one. Returns the conversation id.
@@ -451,21 +493,7 @@ impl Exercise {
         text_en: &str,
     ) -> Result<u64> {
         let parent = r.reply_to.expect("validated reply_to");
-        let mut wanted: Vec<&str> = r.to_players.iter().map(String::as_str).collect();
-        wanted.push(role);
-        wanted.sort_unstable();
-        let existing = r.conversation.or_else(|| {
-            self.linked_conversations
-                .iter()
-                .rev()
-                .find(|c| {
-                    let mut have: Vec<&str> = c.participants.iter().map(String::as_str).collect();
-                    have.sort_unstable();
-                    c.delivery == parent && have == wanted
-                })
-                .map(|c| c.id)
-        });
-        let (cid, mid) = match existing {
+        let (cid, mid) = match self.players_conversation(role, r) {
             Some(cid) => {
                 let mid = self.push_conversation_message(
                     cid, role, text, text_en, &r.texts, Some(parent), r.translation_failed,
@@ -473,7 +501,14 @@ impl Exercise {
                 (cid, mid)
             }
             None => self.start_linked_conversation(
-                role, parent, &r.to_players, text, text_en, &r.texts, r.translation_failed,
+                role,
+                parent,
+                &r.to_players,
+                text,
+                text_en,
+                &r.texts,
+                r.translation_failed,
+                Self::new_conversation_reason(r)?,
             )?,
         };
         if let Some(m) = self

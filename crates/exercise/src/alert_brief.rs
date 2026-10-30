@@ -99,9 +99,14 @@ impl Exercise {
             .iter()
             .filter(|c| c.has(role))
             .flat_map(|c| {
-                c.messages.iter().map(move |m| {
-                    json!({"conversation": c.id, "participants": c.participants,
-                        "clock": m.clock, "from": m.from, "text": cut(&m.text_en)})
+                c.messages.iter().enumerate().map(move |(i, m)| {
+                    let mut entry = json!({"conversation": c.id, "participants": c.participants,
+                        "clock": m.clock, "from": m.from, "text": cut(&m.text_en)});
+                    // Why the conversation was started, with its opening message.
+                    if i == 0 {
+                        entry["started_because"] = json!(cut(&c.reason.line()));
+                    }
+                    entry
                 })
             })
             .collect::<Vec<_>>();

@@ -6,6 +6,16 @@ use exercise::response::{PlayerResponse, ResponseKind};
 use exercise::*;
 use std::{collections::BTreeMap, sync::Arc};
 
+/// The reason a player gives when starting a conversation.
+fn why() -> conversations::ConversationReason {
+    conversations::ConversationReason::new(
+        Some(BasisKind::OperationalJudgment),
+        None,
+        Some("Serve coordinarsi prima di rispondere"),
+    )
+    .unwrap()
+}
+
 fn exercise() -> Exercise {
     let mut ex = Exercise::new(
         sim::World::new(
@@ -134,7 +144,7 @@ fn a_conversation_from_an_inject_leads_to_a_recorded_decision() {
     let ids = inject(&mut ex, "Centrale 112", &["regional_cp", "fire_commander"], "Fumo sul crinale");
     let (coord, direction) = (ids[0], ids[1]);
     let (cid, _) = ex
-        .start_linked_conversation("regional_cp", coord, &["fire_commander".into()], "Servono mezzi aerei?", "Do you need aircraft?", &BTreeMap::new(), false)
+        .start_linked_conversation("regional_cp", coord, &["fire_commander".into()], "Servono mezzi aerei?", "Do you need aircraft?", &BTreeMap::new(), false, why())
         .unwrap();
     // A chat intent is text, not a decision and not a mission.
     let before = (ex.proposals.len(), ex.world.d.tasks.len());
@@ -186,7 +196,7 @@ fn a_response_from_a_conversation_is_listed_once_under_the_responders_own_row() 
     let ids = inject(&mut ex, "Centrale 112", &["regional_cp", "fire_commander"], "Fumo");
     let (coord, direction) = (ids[0], ids[1]);
     let (cid, _) = ex
-        .start_linked_conversation("regional_cp", coord, &["fire_commander".into(), "mayor".into()], "Che fate?", "What now?", &BTreeMap::new(), false)
+        .start_linked_conversation("regional_cp", coord, &["fire_commander".into(), "mayor".into()], "Che fate?", "What now?", &BTreeMap::new(), false, why())
         .unwrap();
     let decide = |t: &str| PlayerResponse { kind: ResponseKind::Decision, basis: Some(BasisKind::OperationalJudgment), conversation: Some(cid), ..text(t, coord) };
     let p = ex.player_response("fire_commander", decide("Elicottero")).unwrap();
@@ -208,9 +218,22 @@ fn rispondi_to_a_player_opens_or_reuses_the_conversation_with_them() {
         kind: ResponseKind::Communication,
         to_players: vec!["regional_cp".into()],
         texts: BTreeMap::from([("regional_cp".into(), format!("[en] {t}"))]),
+        // Coordination: no basis, no rationale.
+        basis: None,
+        rationale: None,
         ..text(t, parent)
     };
-    let first = ex.player_response("mayor", to_cp("Vi giro il bollettino")).unwrap();
+    // The first message opens the conversation: it needs its reason.
+    let err = ex.player_response("mayor", to_cp("Vi giro il bollettino")).unwrap_err();
+    assert!(err.to_string().contains("why you start"), "{err}");
+    let opening = PlayerResponse {
+        basis: Some(BasisKind::Plan),
+        basis_note: Some("Piano comunale, scheda 2".into()),
+        rationale: Some("La Regione deve sapere del bollettino".into()),
+        ..to_cp("Vi giro il bollettino")
+    };
+    let first = ex.player_response("mayor", opening).unwrap();
+    // The next one goes into the same conversation and needs nothing more.
     let second = ex.player_response("mayor", to_cp("Aggiornamento")).unwrap();
     let (a, b) = (ex.proposal(first).unwrap().addressed_to.conversation, ex.proposal(second).unwrap().addressed_to.conversation);
     assert!(a.is_some() && a == b, "same participants, same conversation");
@@ -218,6 +241,11 @@ fn rispondi_to_a_player_opens_or_reuses_the_conversation_with_them() {
     // The recipient reads it as a guest of the inject, in their language.
     let guest = ex.player_linked_conversations("regional_cp");
     assert_eq!(guest[0]["messages"][0]["text"], "[en] Vi giro il bollettino");
+    assert_eq!(guest[0]["reason"]["basis"], "plan");
+    assert_eq!(guest[0]["reason"]["reference"], "Piano comunale, scheda 2");
+    // The regional level never received the bulletin: its title only.
+    assert_eq!(guest[0]["quote"]["title"], "Bollettino");
+    assert!(guest[0]["quote"]["text"].is_null());
     // Persona and players together, unknown or own role: refused.
     let mut both = to_cp("x");
     both.to_persona = Some("Servizio meteo".into());

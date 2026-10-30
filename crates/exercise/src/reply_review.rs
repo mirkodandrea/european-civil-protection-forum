@@ -364,6 +364,10 @@ impl Exercise {
                 thread.push(json!({"kind": "inject", "message": m.id, "from": m.persona.clone().unwrap_or_else(|| m.from.clone()), "clock": m.clock, "title": m.title, "text": m.text_en}));
             }
         }
+        // A reply written from a conversation: why that conversation was started.
+        if let Some(c) = p.via_conversation.and_then(|cid| self.linked_conversation(cid)) {
+            thread.push(json!({"kind": "conversation", "conversation": c.id, "started_by": c.created_by, "participants": c.participants, "reason": c.reason.line()}));
+        }
         let reply_en = if p.translation_en.trim().is_empty() {
             p.original.clone()
         } else {

@@ -189,6 +189,16 @@ pub(crate) async fn respond(s: AppState, role: String, body: ResponseBody) -> Ap
     };
     let (language, targets, turn, revision) = {
         let ex = s.lock();
+        // A session saved before a new conversation needed its reason is
+        // replayed as a personal initiative with a placeholder rationale.
+        if crate::flow::REPLAYING.load(std::sync::atomic::Ordering::Relaxed)
+            && ex.response_starts_conversation(&role, &response)
+            && response.basis.is_none()
+            && response.rationale.as_deref().is_none_or(|r| r.trim().is_empty())
+        {
+            response.basis = Some(exercise::BasisKind::OperationalJudgment);
+            response.rationale = Some(exercise::conversations::LEGACY_REASON.into());
+        }
         ex.validate_player_response(&role, &response)?;
         let targets = response
             .to_players
