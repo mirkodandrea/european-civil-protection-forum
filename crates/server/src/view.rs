@@ -16,6 +16,8 @@ use view::{
 
 /// How many feed lines the big screen shows.
 const FEED_LINES: usize = 9;
+/// How many of the latest extinguish interventions a viewer is sent.
+const EXTINGUISHED_SENT: usize = 16;
 
 fn task_status(s: sim::TaskStatus) -> TaskStatus {
     use sim::TaskStatus as S;
@@ -83,6 +85,23 @@ fn deployment(w: &sim::World, task: &sim::DeploymentTask) -> Deployment {
             sim::Command::Reconnoitre { zone, .. } => w.parse_monitor_zones(std::slice::from_ref(zone)).unwrap_or_default(),
             _ => Vec::new(),
         },
+    }
+}
+
+fn extinguished(r: &sim::ExtinguishRec) -> view::Extinguished {
+    view::Extinguished {
+        shape: match &r.shape {
+            sim::ExtinguishShape::Rect { bounds } => view::ExtinguishShape::Rect { bounds: *bounds },
+            sim::ExtinguishShape::Disc { centre, radius_m } => view::ExtinguishShape::Disc {
+                centre: *centre,
+                radius_m: *radius_m,
+            },
+            sim::ExtinguishShape::Polygon { vertices } => view::ExtinguishShape::Polygon {
+                vertices: vertices.clone(),
+            },
+        },
+        t_s: r.t_s,
+        cells_out: u32::try_from(r.cells_out).unwrap_or(u32::MAX),
     }
 }
 
@@ -224,6 +243,10 @@ pub fn extract(ex: &Exercise, have: Have) -> Option<ViewState> {
                 radius_m: d.radius_m,
                 t_s: d.t_s,
             })
+            .collect(),
+        extinguished: w.d.extinguished[w.d.extinguished.len().saturating_sub(EXTINGUISHED_SENT)..]
+            .iter()
+            .map(extinguished)
             .collect(),
         traffic: w
             .d
@@ -493,6 +516,77 @@ fn truncate(s: &str, n: usize) -> String {
         s.to_string()
     } else {
         format!("{}…", s.chars().take(n).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cmd(v: serde_json::Value) -> sim::Command {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn extinguish_interventions_reach_the_view_and_roll_back() {
+        let scn = Arc::new(scenario::synthetic::generate(1));
+        let mut ex = Exercise::new(sim::World::new(scn, 1).unwrap());
+        ex.start().unwrap();
+        ex.direct_command(&cmd(serde_json::json!(
+            {"type":"Ignite","at":{"x":3150,"y":2720},"radius_m":120}
+        )))
+        .unwrap();
+        ex.resolve_turn(Some(30)).unwrap();
+        let w = &ex.world;
+        let burning = w
+            .fire
+            .state()
+            .iter()
+            .position(|s| *s == fire::CellFire::Burning)
+            .expect("the opening fire burns after 30 min");
+        let p = w.scn.cell_centre(scenario::Cell {
+            row: burning / w.scn.grid.cols,
+            col: burning % w.scn.grid.cols,
+        });
+        let zone = w.scn.zone_of(p).expect("a zone");
+        let bounds = w.scn.zone_bounds(&zone).unwrap();
+        let before = extract(&ex, Have::default()).unwrap();
+        assert!(before.extinguished.is_empty());
+        let t0 = ex.world.time_s();
+
+        ex.direct_command(&cmd(serde_json::json!({"type":"Extinguish","area":zone})))
+            .unwrap();
+        let poly = [
+            [p[0] + 400.0, p[1] - 300.0],
+            [p[0] + 900.0, p[1] - 300.0],
+            [p[0] + 900.0, p[1] + 300.0],
+        ];
+        let vertices: Vec<_> = poly
+            .iter()
+            .map(|q| serde_json::json!({"x": q[0], "y": q[1]}))
+            .collect();
+        ex.direct_command(&cmd(serde_json::json!({"type":"ExtinguishArea","polygon":vertices})))
+            .unwrap();
+        let v = extract(&ex, Have::default()).unwrap();
+        assert_eq!(v.extinguished.len(), 2);
+        let (zone_rec, area_rec) = (&v.extinguished[0], &v.extinguished[1]);
+        assert_eq!(zone_rec.shape, view::ExtinguishShape::Rect { bounds });
+        assert_eq!(zone_rec.t_s, t0);
+        assert!(zone_rec.cells_out > 0, "the zone held burning cells");
+        assert_eq!(
+            area_rec.shape,
+            view::ExtinguishShape::Polygon {
+                vertices: poly.to_vec()
+            }
+        );
+        assert_eq!(area_rec.t_s, t0);
+        // The compact wire form carries them too.
+        let back = view::wire::apply(&before, &view::wire::diff(&before, &v)).unwrap();
+        assert_eq!(back.extinguished, v.extinguished);
+
+        ex.rollback(2).unwrap();
+        let after = extract(&ex, Have::default()).unwrap();
+        assert!(after.extinguished.is_empty(), "rolled back with the world");
     }
 }
 

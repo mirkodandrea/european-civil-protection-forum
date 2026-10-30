@@ -1,0 +1,17 @@
+{
+  "minutes": 2,
+  "commands": [
+    {
+      "type": "Ignite",
+      "at": {
+        "x": 3150,
+        "y": 2720
+      },
+      "radius_m": 120
+    },
+    {
+      "type": "AdvanceTime",
+      "minutes": 40
+    }
+  ]
+}
