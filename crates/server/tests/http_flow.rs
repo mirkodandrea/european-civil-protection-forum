@@ -1022,23 +1022,11 @@ async fn map_reports_are_delivered_per_role_and_never_track_hidden_world_changes
 }
 
 #[tokio::test]
-async fn the_observer_needs_no_key_and_reads_only_its_dashboard() {
+async fn the_observer_dashboard_is_served_and_linked() {
     let app = app().await;
-    let observer = Some("observer");
-    let (s, identity) = call_key(&app, "GET", "/api/access", None, observer).await;
-    assert_eq!(s, Status::Ok);
-    assert_eq!(identity, json!({"kind":"observer"}));
-    let (s, dashboard) = call_key(&app, "GET", "/api/observer", None, observer).await;
+    let (s, dashboard) = call(&app, "GET", "/api/observer", None).await;
     assert_eq!(s, Status::Ok);
     assert!(dashboard["turns"].is_array() && dashboard["wall_ms"].is_u64());
-    assert_eq!(call(&app, "GET", "/api/observer", None).await.0, Status::Ok, "the EXCON reads it too");
-    for path in ["/api/static", "/api/state", "/api/master", "/api/debrief", "/api/evaluator", "/api/player/mayor"] {
-        assert_eq!(call_key(&app, "GET", path, None, observer).await.0, Status::Forbidden, "{path}");
-    }
-    for path in ["/api/master/start", "/api/master/inject", "/api/player/mayor/reply"] {
-        assert_eq!(call_key(&app, "POST", path, Some(json!({})), observer).await.0, Status::Forbidden, "{path}");
-    }
-    assert_eq!(call_key(&app, "GET", "/api/observer", None, Some("test-mayor")).await.0, Status::Forbidden);
     let (_, links) = call(&app, "GET", "/api/master/access", None).await;
     assert_eq!(links["observer"]["url"], "/observer.html");
 }

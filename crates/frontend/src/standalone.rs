@@ -444,7 +444,7 @@ fn session() -> Html {
           <div class={classes!("role-panels",(*all_roles).then_some("all-roles"))}>{for panels.iter().map(|(id,_,page)|{
              let visible = if *all_roles { roles.iter().any(|r|r.id==*id) } else { *selected==*id };
              if *page == "observer" {
-                 return html!{<section class="role-panel" data-panel={id.clone()} key={id.clone()} hidden={!visible}><crate::observer::Observers token="observer" lang={excon_lang.clone()} visible={visible}/></section>};
+                 return html!{<section class="role-panel" data-panel={id.clone()} key={id.clone()} hidden={!visible}><crate::observer::Observers token="master" lang={excon_lang.clone()} visible={visible}/></section>};
              }
              html!{<section class={classes!("role-panel",(id!="master"&&id!="advanced"&&id!="history"&&id!="evaluator").then_some("player-ui"))} data-panel={id.clone()} key={id.clone()} hidden={!visible}><App visible={visible} role={Some(id.clone())} page={Some(page.to_string())}/></section>}
           })}</div></section>

@@ -1087,11 +1087,11 @@ fn main() {
     if path.ends_with("maptest.html") {
         yew::Renderer::<maptest::MapTest>::new().render();
     } else if path.ends_with("observer.html") {
-        // The one observer needs no key; it reads the EXCON console language
-        // of this browser (Italian by default).
+        // One observer in a controlled room: it reads as the EXCON, in the
+        // EXCON console language of this browser (Italian by default).
         let lang = crate::store_lang();
         yew::Renderer::<observer::Observers>::with_props(observer::ObserverProps {
-            token: "observer".into(),
+            token: server_master(),
             lang,
             visible: true,
         })
@@ -1108,6 +1108,12 @@ fn main() {
     }
     #[cfg(feature = "standalone")]
     yew::Renderer::<standalone::Standalone>::new().render();
+}
+
+/// The EXCON identity (`server::access::MASTER_KEY`): no secret, the room is trusted.
+#[cfg(not(feature = "standalone"))]
+fn server_master() -> String {
+    "master".into()
 }
 
 /// The EXCON console language this browser chose (`ttx_excon_lang`), Italian by default.

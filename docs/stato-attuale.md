@@ -142,10 +142,10 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
 ## Vista Osservatori: cruscotto di analisi (2026-10-30)
 
 Scheda «Osservatori» nello standalone, pagina `observer.html` sul server.
-L’osservatore è uno solo e non ha chiavi: la pagina si presenta come
-`observer`, che legge soltanto `GET /api/observer` (lo legge anche l’EXCON),
+L’osservatore è uno solo, in ambiente controllato: niente chiavi né permessi,
+la pagina legge `GET /api/observer` con l’identità EXCON. Il cruscotto è
 calcolato da `exercise::observer::observer_dashboard` senza toccare
-l’esercitazione.
+l’esercitazione e la pagina non invia comandi.
 
 - **Per turno e cumulato**: ogni turno ha i suoi numeri (`turn_only`) e il
   cumulato fino a lì (`cumulative`); i turni risolti sono definitivi, quello in

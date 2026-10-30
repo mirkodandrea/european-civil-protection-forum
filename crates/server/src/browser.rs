@@ -250,7 +250,6 @@ async fn dispatch(s: AppState, role: &str, url: &str, body: Option<Value>) -> Ap
     // key boundary in this process.
     let principal = match role {
         "master" | "advanced" => Principal::Master,
-        "observer" => Principal::Observer,
         "evaluator" => Principal::Evaluator {
             id: s
                 .access

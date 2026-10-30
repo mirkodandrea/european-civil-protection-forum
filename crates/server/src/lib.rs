@@ -690,7 +690,7 @@ async fn get_evaluator(
     Ok(Json(s.lock().evaluator_view(&filter)?))
 }
 
-/// Observer dashboard (the observer and the EXCON): see [`exercise::observer`].
+/// Observer dashboard (`observer.html`, EXCON identity): see [`exercise::observer`].
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/observer"))]
 async fn get_observer(principal: Principal, s: AppState) -> ApiResult {
     let map = excon_display_map(&s, &principal).await;
@@ -804,7 +804,7 @@ async fn get_attachment(principal: Principal, s: AppState, id: u64) -> ApiResult
     let file = match &principal {
         Principal::Master => ex.file_for(None, id),
         Principal::Player { role } => ex.file_for(Some(role), id),
-        Principal::Evaluator { .. } | Principal::Observer => return Err(bad("document not found")),
+        Principal::Evaluator { .. } => return Err(bad("document not found")),
     }?;
     Ok(Json(json!({
         "id": file.meta.id, "name": file.meta.name, "size": file.meta.size,

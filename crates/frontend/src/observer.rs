@@ -1,8 +1,8 @@
 //! Observer dashboard ("Osservatori"): read-only analysis of the exercise,
 //! per turn and cumulated, overall or for one player, with the exercise's
 //! pace. Data from `GET /api/observer` (`exercise::observer`). A tab of the
-//! standalone app, `observer.html` on the server; there is one observer, with
-//! no key (identity `observer`).
+//! standalone app, `observer.html` on the server (one observer, no keys or
+//! permissions: it reads as the EXCON).
 use crate::api::{self, list, text};
 use futures::future::AbortHandle;
 use gloo_timers::callback::Interval;
