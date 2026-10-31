@@ -178,7 +178,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "exercise"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2125,7 +2125,7 @@ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "fire"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "propagator-core",
@@ -2206,7 +2206,7 @@ dependencies = [
 
 [[package]]
 name = "frontend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3493,7 +3493,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "llm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -5045,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "scenario"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "rand 0.8.8",
@@ -5168,7 +5168,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5237,7 +5237,7 @@ dependencies = [
 
 [[package]]
 name = "sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6110,7 +6110,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "view"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -6121,7 +6121,7 @@ dependencies = [
 
 [[package]]
 name = "viewer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "scenario",
@@ -6133,7 +6133,7 @@ dependencies = [
 
 [[package]]
 name = "viz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bevy_egui",
