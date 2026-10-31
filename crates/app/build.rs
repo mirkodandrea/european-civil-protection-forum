@@ -23,6 +23,12 @@ fn main() {
         println!("cargo:rerun-if-changed={}", root.join(path).display());
     }
 
+    // CI builds the bundle once and hands `web/dist` to every desktop build.
+    println!("cargo:rerun-if-env-changed=TTX_SKIP_FRONTEND");
+    if std::env::var_os("TTX_SKIP_FRONTEND").is_some_and(|v| !v.is_empty()) {
+        return;
+    }
+
     let status = Command::new("sh")
         .arg(root.join("scripts/build_frontend.sh"))
         .current_dir(&root)

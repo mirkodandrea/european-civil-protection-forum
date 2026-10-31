@@ -1,0 +1,157 @@
+name: Desktop builds
+
+# ttx (simulator, web server and 3D big screen) for Windows, macOS and Linux,
+# as zips with the scenarios and the web console. Ported from
+# propagator_abm's desktop workflow.
+on:
+  push:
+    branches: [main, desktop-build]  # desktop-build: temporary, verification
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.92.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    # The web console is the same WASM on every system: build it once.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust and WebAssembly target
+        run: rustup toolchain install 1.92.0 --profile minimal --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Trunk
+        run: |
+          curl --fail --location --retry 3 -o /tmp/trunk.tar.gz https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz
+          echo 'f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b  /tmp/trunk.tar.gz' | sha256sum --check
+          tar -xzf /tmp/trunk.tar.gz -C /tmp
+          install /tmp/trunk ~/.cargo/bin/trunk
+      - name: Build the web console
+        env:
+          TTX_BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/build_frontend.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  build:
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            exe: ttx.exe
+            launcher: Avvia-TTX.bat
+          - os: macos-14
+            name: macos
+            exe: ttx
+            launcher: Avvia-TTX.command
+          - os: ubuntu-22.04
+            name: linux
+            exe: ttx
+            launcher: avvia-ttx.sh
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.92.0 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux system libraries
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Build ttx
+        env:
+          TTX_SKIP_FRONTEND: '1'
+        run: cargo build --locked --release -p app --bin ttx
+      - name: Bundle
+        run: |
+          out="PPRD-TTX-${{ matrix.name }}"
+          mkdir -p "$out/data" "$out/web"
+          cp "target/release/${{ matrix.exe }}" "$out/"
+          cp -RL data/scenarios "$out/data/"
+          cp -RL web/dist "$out/web/"
+          # The AI needs an OpenRouter key: rename to .env and fill it in.
+          printf 'OPENROUTER_API_KEY=\n' > "$out/env.example"
+          case "${{ matrix.name }}" in
+            # The console window stays open: it shows the addresses and the log.
+            windows) printf '@echo off\r\ncd /d "%%~dp0"\r\nttx.exe %%*\r\npause\r\n' > "$out/${{ matrix.launcher }}" ;;
+            *) printf '#!/bin/sh\ncd "$(dirname "$0")"\nexec ./ttx "$@"\n' > "$out/${{ matrix.launcher }}"
+               chmod +x "$out/${{ matrix.launcher }}" "$out/ttx" ;;
+          esac
+          if [ "${{ matrix.name }}" = windows ]; then
+            7z a "$out.zip" "$out" >/dev/null
+          else
+            zip -qr "$out.zip" "$out"
+          fi
+      - name: Smoke test the bundle
+        # The runners have no GPU: start the server alone, from the unpacked
+        # folder as a user would, and check that the web console answers.
+        working-directory: PPRD-TTX-${{ matrix.name }}
+        run: |
+          ./${{ matrix.exe }} --headless --no-state --port 8090 > ../smoke.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8090/master.html >/dev/null && break
+            kill -0 $pid 2>/dev/null || { cat ../smoke.log; exit 1; }
+            sleep 2
+          done
+          for page in master.html player.html play.html api/state; do
+            curl -sf -o /dev/null "http://127.0.0.1:8090/$page" || { echo "no $page"; cat ../smoke.log; exit 1; }
+          done
+          kill $pid || true
+          echo "bundle serves the console"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: PPRD-TTX-${{ matrix.name }}.zip
+          retention-days: 7
+
+  release:
+    # Tags get a release; pushes to main refresh the rolling "download" one.
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: '{windows,macos,linux}'
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then
+            gh release create "${{ github.ref_name }}" dist/*.zip --title "PPRD East TTX ${{ github.ref_name }}" \
+              --generate-notes --latest
+            exit 0
+          fi
+          echo "Desktop builds, refreshed on every push to main (commit \`$(git rev-parse --short=8 HEAD)\`)." > notes.md
+          gh release view download >/dev/null 2>&1 || gh release create download --prerelease \
+            --title "Desktop builds" --notes-file notes.md
+          gh release edit download --notes-file notes.md
+          gh release upload download dist/*.zip --clobber
