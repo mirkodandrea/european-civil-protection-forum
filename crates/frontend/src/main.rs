@@ -41,6 +41,8 @@ mod maptest;
 mod notifications;
 mod observer;
 mod render;
+#[cfg(not(feature = "standalone"))]
+mod role_pick;
 mod risposte;
 mod reply_composer;
 mod review_board;
@@ -1086,6 +1088,8 @@ fn main() {
     #[cfg(not(feature = "standalone"))]
     if path.ends_with("maptest.html") {
         yew::Renderer::<maptest::MapTest>::new().render();
+    } else if path.ends_with("player.html") && !api::has_role() {
+        yew::Renderer::<role_pick::RolePick>::new().render();
     } else if path.ends_with("observer.html") {
         // One observer in a controlled room: it reads as the EXCON, in the
         // EXCON console language of this browser (Italian by default).

@@ -88,7 +88,7 @@ Then open:
 | Players (tablets) | Individual role link from the EXCON console |
 | Landing page | `http://<host>:8080/` |
 
-There are no access keys: EXCON is `play.html`/`master.html`, players open `player.html?role=<id>` (links are listed in the console). Anyone who can reach the port can act as any role, so run it only on a trusted network. The simulator window shows the machine's LAN address. Without an OpenRouter API key the exercise still runs in **manual mode**: injects are sent in English and the EXCON types the commands for each proposal.
+There are no access keys: EXCON is `play.html`/`master.html`, players open `player.html?role=<id>` (links are listed in the console; `player.html` alone lists the roles to choose from). Anyone who can reach the port can act as any role, so run it only on a trusted network. The simulator window shows the machine's LAN address. Without an OpenRouter API key the exercise still runs in **manual mode**: injects are sent in English and the EXCON types the commands for each proposal.
 
 ### Playing from a phone
 

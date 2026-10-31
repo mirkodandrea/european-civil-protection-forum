@@ -48,6 +48,12 @@ pub fn token() -> String {
     // No secret: the server takes the identity itself as the bearer value.
     context
 }
+/// True when the page URL names a player role (`?role=`).
+#[cfg(not(feature = "standalone"))]
+pub fn has_role() -> bool {
+    let href = window().location().href().unwrap_or_default();
+    web_sys::Url::new(&href).is_ok_and(|u| u.search_params().get("role").is_some_and(|r| !r.is_empty()))
+}
 #[cfg(not(feature = "standalone"))]
 pub async fn request(token: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
     #[cfg(feature = "bench")]
