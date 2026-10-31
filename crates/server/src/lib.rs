@@ -401,7 +401,7 @@ pub async fn serve(
     web_dir: PathBuf,
     addr: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
-    serve_with(ex, llm, web_dir, addr, None, None).await
+    serve_with(ex, llm, web_dir, addr, None, None, None).await
 }
 
 /// [`serve`] with storage: a saved `session` is replayed before listening;
@@ -414,8 +414,11 @@ pub async fn serve_with(
     addr: std::net::SocketAddr,
     storage: Option<(Arc<persist::Persist>, Option<persist::SavedSession>)>,
     scenarios: Option<Arc<library::Scenarios>>,
+    // Receives the state once a saved session has been replayed, before the
+    // server listens (the big screen's launcher starts scenarios through it).
+    ready: Option<Box<dyn FnOnce(AppState) + Send>>,
 ) -> anyhow::Result<()> {
-    let (app, _state) = match storage {
+    let (app, state) = match storage {
         None => match scenarios {
             Some(sc) => router_with_scenarios(ex, llm, Some(web_dir), sc),
             None => router(ex, llm, Some(web_dir)),
@@ -439,6 +442,9 @@ pub async fn serve_with(
             (app, state)
         }
     };
+    if let Some(ready) = ready {
+        ready(state);
+    }
     println!(
         "EXCON console: http://localhost:{}/play.html (no access keys: keep the port on a trusted network)",
         addr.port()

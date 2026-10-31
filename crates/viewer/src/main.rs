@@ -211,6 +211,7 @@ fn main() -> Result<()> {
             llm_model: String::new(),
             port: None,
             remote: Some(base),
+            launcher: None,
         },
     );
     Ok(())
