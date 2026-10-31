@@ -206,6 +206,19 @@ TTX_LIVE_LLM=1 cargo test -p llm --test live -- --nocapture   # real OpenRouter 
 
 The server tests play the whole EXCON ↔ player ↔ LLM loop over HTTP with a mock model, and also without any model.
 
+## Desktop builds and releases
+
+`.github/workflows/desktop.yml` builds `ttx` for Windows, macOS and Linux (zip with
+the scenarios, the web console, a launcher script and `env.example` for the
+OpenRouter key) and smoke-tests each bundle. Every push to `main` refreshes the
+pre-release `download`; a version is released from `main` with
+
+```bash
+./scripts/release.sh 0.2.0   # sets the workspace version, commits, tags v0.2.0, pushes
+```
+
+and the workflow publishes the `v0.2.0` release with the three zips.
+
 ## Docs
 
 - [docs/stato-attuale.md](docs/stato-attuale.md): specifica di alto livello delle capacità presenti

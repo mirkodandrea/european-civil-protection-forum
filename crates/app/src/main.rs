@@ -4,7 +4,7 @@
 //! ttx [--scenario data/scenarios/valverde_factory.json] [--scenarios-dir DIR]
 //!     [--seed 1] [--port 8080] [--web web/dist] [--headless]
 //!     [--realizations 32] [--cutoff 0.5] [--operational-model]
-//!     [--state-dir runs/state | --no-state] [--fresh]
+//!     [--state-dir runs/state | --no-state] [--fresh] [--no-launcher]
 //! ```
 //!
 //! Loads `.env` (OPENROUTER_API_KEY, optional OPENROUTER_MODEL), builds the
@@ -22,6 +22,10 @@
 //! one (roles, resources, ignitions, MSEL…), editable from the EXCON console.
 //! `--scenario` names the territory or pack to start from. `--seed`,
 //! `--realizations` and `--cutoff` override what a pack says.
+//!
+//! The big-screen window opens on a launcher, as the standalone build does:
+//! resume the saved session or start a new exercise from a scenario of the
+//! library. `--no-launcher` goes straight to the exercise.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -40,6 +44,7 @@ struct Args {
     operational_model: bool,
     state_dir: Option<PathBuf>,
     fresh: bool,
+    launcher: bool,
 }
 
 fn args() -> Result<Args> {
@@ -55,6 +60,7 @@ fn args() -> Result<Args> {
         operational_model: false,
         state_dir: Some(PathBuf::from("runs/state")),
         fresh: false,
+        launcher: true,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -70,10 +76,11 @@ fn args() -> Result<Args> {
             "--state-dir" => a.state_dir = Some(PathBuf::from(val()?)),
             "--no-state" => a.state_dir = None,
             "--fresh" => a.fresh = true,
+            "--no-launcher" => a.launcher = false,
             "--realizations" => a.realizations = Some(val()?.parse()?),
             "--cutoff" => a.cutoff = Some(val()?.parse()?),
             "-h" | "--help" => {
-                println!("ttx [--scenario FILE] [--scenarios-dir DIR] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model] [--state-dir DIR | --no-state] [--fresh]");
+                println!("ttx [--scenario FILE] [--scenarios-dir DIR] [--seed N] [--port 8080] [--web DIR] [--headless] [--realizations 32] [--cutoff 0.5] [--operational-model] [--state-dir DIR | --no-state] [--fresh] [--no-launcher]");
                 std::process::exit(0);
             }
             other => anyhow::bail!("unknown argument {other}"),
@@ -264,6 +271,7 @@ fn main() -> Result<()> {
                 llm_model: "offline visual fixture".into(),
                 port: Some(a.port),
                 remote: None,
+                launcher: None,
             },
         );
         return Ok(());
@@ -286,7 +294,7 @@ fn main() -> Result<()> {
     let headless = a.headless || !cfg!(feature = "viz");
     if headless {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(server::serve_with(ex, llm, a.web, addr, storage, Some(scenarios)));
+        return rt.block_on(server::serve_with(ex, llm, a.web, addr, storage, Some(scenarios), None));
     }
 
     let model = if llm.is_available() {
@@ -294,13 +302,28 @@ fn main() -> Result<()> {
     } else {
         "off".to_string()
     };
+    #[cfg(feature = "viz")]
+    let launcher = a.launcher.then(|| {
+        let saved = storage.as_ref().and_then(|(_, session)| session.as_ref()).map(|s| {
+            format!("{} · {} steps recorded", s.pack.name, s.journal.len())
+        });
+        Arc::new(NativeLauncher { scenarios: scenarios.clone(), saved, server: Mutex::new(None) })
+    });
+    #[cfg(feature = "viz")]
+    let ready: Option<Box<dyn FnOnce(server::AppState) + Send>> = launcher.clone().map(|l| {
+        Box::new(move |state| {
+            *l.server.lock().expect("launcher lock") = Some((state, tokio::runtime::Handle::current()));
+        }) as Box<dyn FnOnce(server::AppState) + Send>
+    });
+    #[cfg(not(feature = "viz"))]
+    let ready = None;
     let server_ex = ex.clone();
     let web = a.web.clone();
     std::thread::Builder::new()
         .name("ttx-server".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            if let Err(e) = rt.block_on(server::serve_with(server_ex, llm, web, addr, storage, Some(scenarios))) {
+            if let Err(e) = rt.block_on(server::serve_with(server_ex, llm, web, addr, storage, Some(scenarios), ready)) {
                 tracing::error!("server stopped: {e}");
             }
         })?;
@@ -311,7 +334,50 @@ fn main() -> Result<()> {
             llm_model: model,
             port: Some(a.port),
             remote: None,
+            launcher: launcher.map(|l| l as Arc<dyn viz::Launcher>),
         },
     );
     Ok(())
+}
+
+/// The big screen's launcher: scenarios of the library, started through the
+/// same path as the console's «Avvia» once the server is up.
+#[cfg(feature = "viz")]
+struct NativeLauncher {
+    scenarios: Arc<server::library::Scenarios>,
+    saved: Option<String>,
+    server: Mutex<Option<(server::AppState, tokio::runtime::Handle)>>,
+}
+
+#[cfg(feature = "viz")]
+impl viz::Launcher for NativeLauncher {
+    fn menu(&self) -> viz::LaunchMenu {
+        viz::LaunchMenu {
+            saved: self.saved.clone(),
+            options: self
+                .scenarios
+                .library
+                .list()
+                .into_iter()
+                .map(|p| viz::LaunchOption { id: p.id, name: p.name, description: p.description })
+                .collect(),
+            current: self.scenarios.running_pack().map(|p| p.id).unwrap_or_default(),
+        }
+    }
+
+    fn start(&self, id: &str) -> std::sync::mpsc::Receiver<Result<(), String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        match self.server.lock().expect("launcher lock").clone() {
+            Some((state, handle)) => {
+                let id = id.to_string();
+                handle.spawn(async move {
+                    let _ = tx.send(server::library::activate(&state, &id).await);
+                });
+            }
+            None => {
+                let _ = tx.send(Err("the server is still starting: try again in a moment".into()));
+            }
+        }
+        rx
+    }
 }

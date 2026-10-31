@@ -37,6 +37,7 @@ mod fire_textures;
 mod flames;
 mod frame;
 mod hud;
+mod launcher;
 mod materials;
 mod models;
 mod night;
@@ -49,6 +50,7 @@ mod snapshot;
 mod terrain;
 
 pub use frame::Frame;
+pub use launcher::{LaunchMenu, LaunchOption, Launcher};
 
 #[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 struct SceneSetup;
@@ -62,6 +64,8 @@ pub struct Info {
     pub port: Option<u16>,
     /// Where the state comes from, when it is not this process.
     pub remote: Option<String>,
+    /// Offers the scenario choice at startup (native `ttx` only).
+    pub launcher: Option<Arc<dyn Launcher>>,
 }
 
 /// Everything the renderer draws, copied from the view state.
@@ -146,6 +150,9 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
         primary_window.fit_canvas_to_parent = true;
     }
     let mut app = App::new();
+    if let Some(launcher) = info.launcher.clone() {
+        app.insert_resource(launcher::LaunchPanel::new(launcher));
+    }
     if let Some(editor) = editor {
         app.insert_resource(editor);
     }
@@ -225,6 +232,7 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
             )
                 .after(sync),
         )
+        .add_systems(Update, launcher::draw.after(hud::draw))
         .add_systems(PreUpdate, editor::paste_input
             .after(bevy_egui::EguiSet::ProcessInput)
             .before(bevy_egui::EguiSet::BeginFrame))
@@ -247,7 +255,8 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 camera::control
                     .after(frame::update)
                     .after(hud::draw)
-                    .after(editor::draw),
+                    .after(editor::draw)
+                    .after(launcher::draw),
                 camera::fire_lights.after(frame::update),
                 hud::draw.after(frame::update).after(fire_field::toggle),
                 editor::draw,

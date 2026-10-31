@@ -264,15 +264,22 @@ pub(crate) async fn post_delete_scenario(_principal: Principal, s: AppState, b: 
 #[rocket::post("/api/master/scenarios/activate", data = "<b>")]
 pub(crate) async fn post_activate(_principal: Principal, s: AppState, b: Json<IdBody>) -> ApiResult {
     let Json(b) = b;
-    let sc = scenarios(&s)?;
-    let pack = sc.library.load(&b.id).ok_or_else(|| bad(format!("scenario {} not found", b.id)))?;
+    activate(&s, &b.id).await.map_err(bad)?;
+    Ok(Json(json!({"running": b.id})))
+}
+
+/// Start a new exercise from pack `id` and remember it as the chosen one
+/// (the console's «Avvia» and the big screen's launcher).
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn activate(s: &AppState, id: &str) -> Result<(), String> {
+    let sc = s.scenarios.clone().ok_or("scenarios are not available")?;
+    let pack = sc.library.load(id).ok_or_else(|| format!("scenario {id} not found"))?;
     let found = problems(&sc, &pack);
     if !found.is_empty() {
-        return Err(bad(found.join("\n")));
+        return Err(found.join("\n"));
     }
-    persist::reset(&s, &pack).await.map_err(bad)?;
-    sc.library.set_active(&b.id).map_err(bad)?;
-    Ok(Json(json!({"running": b.id})))
+    persist::reset(s, &pack).await?;
+    sc.library.set_active(id)
 }
 
 // ---------------------------------------------------------------- files
