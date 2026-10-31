@@ -20,6 +20,35 @@ fn local_ip() -> String {
         .unwrap_or_else(|_| "localhost".into())
 }
 
+/// Which HUD panels are on screen: H hides or shows them all, 1–4 toggle
+/// status, feed, help and deployments one by one. Map labels (L) are apart.
+#[derive(Default)]
+pub struct Panels {
+    all_hidden: bool,
+    hidden: [bool; 4],
+}
+
+impl Panels {
+    fn update(&mut self, keys: &ButtonInput<KeyCode>) {
+        if keys.just_pressed(KeyCode::KeyH) {
+            self.all_hidden = !self.all_hidden;
+        }
+        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].into_iter().enumerate() {
+            if keys.just_pressed(key) {
+                // Asking for one panel while all are hidden shows just that one.
+                if self.all_hidden {
+                    self.all_hidden = false;
+                    self.hidden = [true; 4];
+                }
+                self.hidden[i] = !self.hidden[i];
+            }
+        }
+    }
+    fn shows(&self, i: usize) -> bool {
+        !self.all_hidden && !self.hidden[i]
+    }
+}
+
 /// Pick a graphics level: applied live, remembered for the next launch.
 fn set_level(quality: &mut crate::quality::Quality, level: &str) {
     *quality = crate::quality::Quality::preset(level);
@@ -41,6 +70,7 @@ pub fn draw(
     cam: Query<(&Camera, &GlobalTransform)>,
     mut ip: Local<Option<String>>,
     mut show_labels: Local<Option<bool>>,
+    mut panels: Local<Panels>,
 ) {
     if editor.is_some() {
         return;
@@ -57,14 +87,17 @@ pub fn draw(
     let s = &scn.0;
     let show_labels =
         show_labels.get_or_insert_with(|| std::env::var("TTX_MAP_LABELS").as_deref() == Ok("1"));
-    if keys.just_pressed(KeyCode::KeyL) {
-        *show_labels = !*show_labels;
-    }
-    if keys.just_pressed(KeyCode::KeyQ) {
-        let next = quality.next_level();
-        set_level(&mut quality, next);
-    }
     let ctx = ctx.ctx_mut();
+    if !ctx.wants_keyboard_input() {
+        if keys.just_pressed(KeyCode::KeyL) {
+            *show_labels = !*show_labels;
+        }
+        if keys.just_pressed(KeyCode::KeyQ) {
+            let next = quality.next_level();
+            set_level(&mut quality, next);
+        }
+        panels.update(&keys);
+    }
     let fire_caption = format!(
         "Fire display: {} · model {:.0} m · V toggles",
         if fire_style.continuous {
@@ -79,160 +112,171 @@ pub fn draw(
         .rounding(8.0)
         .inner_margin(12.0);
 
-    egui::Area::new(egui::Id::new("status"))
-        .anchor(Align2::LEFT_TOP, [12.0, 12.0])
-        .show(ctx, |ui| {
-            panel.show(ui, |ui| {
-                ui.label(
-                    RichText::new(&s.name)
-                        .color(Color32::WHITE)
-                        .size(20.0)
-                        .strong(),
-                );
-                let clock = scenario::format_clock(s.start_clock_s + frame.display_s);
-                let phase = if matches!(snap.phase.as_str(), "orders" | "resolving") {
-                    format!("Turn {}", snap.turn)
-                } else {
-                    snap.phase.clone()
-                };
-                ui.label(
-                    RichText::new(format!("{phase}   ·   {clock}"))
-                        .color(Color32::from_rgb(255, 210, 120))
-                        .size(26.0)
-                        .strong(),
-                );
-                // Always say whether time is moving or the game is held in the turn.
-                let (badge, color) = if snap.resolving.is_some() {
-                    ("▶ SIMULATION RUNNING", Color32::from_rgb(255, 120, 80))
-                } else if snap.clock_running {
-                    ("▶ CLOCK RUNNING", Color32::from_rgb(255, 120, 80))
-                } else if snap.phase == "orders" {
-                    ("⏸ PAUSED · ORDERS OPEN", Color32::from_rgb(120, 220, 150))
-                } else {
-                    ("⏸ PAUSED", Color32::from_rgb(170, 180, 190))
-                };
-                ui.label(RichText::new(badge).color(color).size(16.0).strong());
-                if let Some(view::TurnWindow { turn, from_s, to_s }) = snap.resolving {
-                    let done = (frame.display_s - from_s) as f32 / (to_s - from_s).max(1) as f32;
+    if panels.shows(0) {
+        egui::Area::new(egui::Id::new("status"))
+            .anchor(Align2::LEFT_TOP, [12.0, 12.0])
+            .show(ctx, |ui| {
+                panel.show(ui, |ui| {
                     ui.label(
-                        RichText::new(format!(
-                            "▶ simulating turn {turn}   → {}",
-                            scenario::format_clock(s.start_clock_s + to_s)
-                        ))
-                        .color(Color32::from_rgb(255, 120, 80))
-                        .size(16.0),
+                        RichText::new(&s.name)
+                            .color(Color32::WHITE)
+                            .size(20.0)
+                            .strong(),
                     );
-                    ui.add(egui::ProgressBar::new(done.clamp(0.0, 1.0)).desired_width(300.0));
-                }
-                if let Some(w) = snap.weather {
-                    let arrows = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"];
-                    let a =
-                        arrows[(((w.wind_dir_deg + 22.5).rem_euclid(360.0)) / 45.0) as usize % 8];
+                    let clock = scenario::format_clock(s.start_clock_s + frame.display_s);
+                    let phase = if matches!(snap.phase.as_str(), "orders" | "resolving") {
+                        format!("Turn {}", snap.turn)
+                    } else {
+                        snap.phase.clone()
+                    };
                     ui.label(
-                        RichText::new(format!(
-                            "wind {a} from {:.0}° {:.0} km/h · fuel moisture {:.0}%",
-                            w.wind_dir_deg, w.wind_speed_kmh, w.moisture_pct
-                        ))
-                        .color(Color32::LIGHT_GRAY)
-                        .size(15.0),
+                        RichText::new(format!("{phase}   ·   {clock}"))
+                            .color(Color32::from_rgb(255, 210, 120))
+                            .size(26.0)
+                            .strong(),
                     );
-                }
-                if let Some(e) = snap.ensemble {
-                    ui.label(
-                        RichText::new(format!(
-                            "fire = cells reached by ≥{:.0}% of {} runs · halo = fewer",
-                            e.cutoff * 100.0,
-                            e.realizations
-                        ))
-                        .color(Color32::from_rgb(195, 205, 215))
-                        .size(13.0),
-                    );
-                }
-                ui.label(
-                    RichText::new(&fire_caption)
-                        .color(Color32::from_rgb(195, 205, 215))
-                        .size(12.0),
-                );
-                if let Some(st) = &snap.stats {
-                    ui.add_space(4.0);
-                    for (k, v) in [
-                        ("burned area", format!("{:.1} ha", st.burned_ha)),
-                        (
-                            "buildings damaged / destroyed",
-                            format!("{} / {}", st.damaged, st.destroyed),
-                        ),
-                        ("people evacuated", st.evacuated_people.to_string()),
-                        ("people at risk", st.people_at_risk.to_string()),
-                        (
-                            "fire lines / drops",
-                            format!("{:.1} km / {}", st.line_km, st.drops),
-                        ),
-                    ] {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(k)
-                                    .color(Color32::from_rgb(195, 205, 215))
-                                    .size(14.0),
-                            );
-                            ui.label(RichText::new(v).color(Color32::WHITE).size(15.0).strong());
-                        });
+                    // Always say whether time is moving or the game is held in the turn.
+                    let (badge, color) = if snap.resolving.is_some() {
+                        ("▶ SIMULATION RUNNING", Color32::from_rgb(255, 120, 80))
+                    } else if snap.clock_running {
+                        ("▶ CLOCK RUNNING", Color32::from_rgb(255, 120, 80))
+                    } else if snap.phase == "orders" {
+                        ("⏸ PAUSED · ORDERS OPEN", Color32::from_rgb(120, 220, 150))
+                    } else {
+                        ("⏸ PAUSED", Color32::from_rgb(170, 180, 190))
+                    };
+                    ui.label(RichText::new(badge).color(color).size(16.0).strong());
+                    if let Some(view::TurnWindow { turn, from_s, to_s }) = snap.resolving {
+                        let done = (frame.display_s - from_s) as f32 / (to_s - from_s).max(1) as f32;
+                        ui.label(
+                            RichText::new(format!(
+                                "▶ simulating turn {turn}   → {}",
+                                scenario::format_clock(s.start_clock_s + to_s)
+                            ))
+                            .color(Color32::from_rgb(255, 120, 80))
+                            .size(16.0),
+                        );
+                        ui.add(egui::ProgressBar::new(done.clamp(0.0, 1.0)).desired_width(300.0));
                     }
-                }
+                    if let Some(w) = snap.weather {
+                        let arrows = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"];
+                        let a =
+                            arrows[(((w.wind_dir_deg + 22.5).rem_euclid(360.0)) / 45.0) as usize % 8];
+                        ui.label(
+                            RichText::new(format!(
+                                "wind {a} from {:.0}° {:.0} km/h · fuel moisture {:.0}%",
+                                w.wind_dir_deg, w.wind_speed_kmh, w.moisture_pct
+                            ))
+                            .color(Color32::LIGHT_GRAY)
+                            .size(15.0),
+                        );
+                    }
+                    if let Some(e) = snap.ensemble {
+                        ui.label(
+                            RichText::new(format!(
+                                "fire = cells reached by ≥{:.0}% of {} runs · halo = fewer",
+                                e.cutoff * 100.0,
+                                e.realizations
+                            ))
+                            .color(Color32::from_rgb(195, 205, 215))
+                            .size(13.0),
+                        );
+                    }
+                    ui.label(
+                        RichText::new(&fire_caption)
+                            .color(Color32::from_rgb(195, 205, 215))
+                            .size(12.0),
+                    );
+                    if let Some(st) = &snap.stats {
+                        ui.add_space(4.0);
+                        for (k, v) in [
+                            ("burned area", format!("{:.1} ha", st.burned_ha)),
+                            (
+                                "buildings damaged / destroyed",
+                                format!("{} / {}", st.damaged, st.destroyed),
+                            ),
+                            ("people evacuated", st.evacuated_people.to_string()),
+                            ("people at risk", st.people_at_risk.to_string()),
+                            (
+                                "fire lines / drops",
+                                format!("{:.1} km / {}", st.line_km, st.drops),
+                            ),
+                        ] {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(k)
+                                        .color(Color32::from_rgb(195, 205, 215))
+                                        .size(14.0),
+                                );
+                                ui.label(RichText::new(v).color(Color32::WHITE).size(15.0).strong());
+                            });
+                        }
+                    }
+                });
             });
-        });
 
-    egui::Area::new(egui::Id::new("feed"))
-        .anchor(Align2::RIGHT_TOP, [-12.0, 12.0])
-        .show(ctx, |ui| {
+    }
+
+    if panels.shows(1) {
+        egui::Area::new(egui::Id::new("feed"))
+            .anchor(Align2::RIGHT_TOP, [-12.0, 12.0])
+            .show(ctx, |ui| {
+                panel.show(ui, |ui| {
+                    ui.set_max_width(520.0);
+                    ui.label(
+                        RichText::new("Exercise feed")
+                            .color(Color32::WHITE)
+                            .size(16.0)
+                            .strong(),
+                    );
+                    if snap.feed.is_empty() {
+                        ui.label(
+                            RichText::new("Waiting for the EXCON…")
+                                .color(Color32::from_rgb(195, 205, 215)),
+                        );
+                    }
+                    for line in &snap.feed {
+                        ui.label(
+                            RichText::new(line)
+                                .color(Color32::from_rgb(220, 220, 225))
+                                .size(14.0),
+                        );
+                    }
+                });
+            });
+
+    }
+
+    if panels.shows(2) {
+        egui::Area::new(egui::Id::new("join")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
             panel.show(ui, |ui| {
-                ui.set_max_width(520.0);
-                ui.label(
-                    RichText::new("Exercise feed")
-                        .color(Color32::WHITE)
-                        .size(16.0)
-                        .strong(),
-                );
-                if snap.feed.is_empty() {
-                    ui.label(
-                        RichText::new("Waiting for the EXCON…")
-                            .color(Color32::from_rgb(195, 205, 215)),
-                    );
-                }
-                for line in &snap.feed {
-                    ui.label(
-                        RichText::new(line)
-                            .color(Color32::from_rgb(220, 220, 225))
-                            .size(14.0),
-                    );
-                }
+                ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else if cfg!(target_arch = "wasm32") { "Standalone browser simulation · camera: drag pan · right/Shift-drag rotate · wheel zoom".into() } else { match (&info.remote, info.port) { (Some(url), _) => format!("Remote view of {url}"), (None, Some(port)) => format!("Players: http://{ip}:{port}/player.html     EXCON: /master.html"), (None, None) => "Exercise view".to_string() } }).color(Color32::WHITE).size(15.0));
+                ui.label(RichText::new(format!("AI: {}   ·   drag pan · right/Shift-drag rotate · wheel zoom · A auto-orbit · F fire · G grid · R/Home reset · H panels (1–4 one by one)", if info.llm_model.is_empty() { "see EXCON page" } else { &info.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
             });
         });
 
-    egui::Area::new(egui::Id::new("join")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
-        panel.show(ui, |ui| {
-            ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else if cfg!(target_arch = "wasm32") { "Standalone browser simulation · camera: drag pan · right/Shift-drag rotate · wheel zoom".into() } else { match (&info.remote, info.port) { (Some(url), _) => format!("Remote view of {url}"), (None, Some(port)) => format!("Players: http://{ip}:{port}/player.html     EXCON: /master.html"), (None, None) => "Exercise view".to_string() } }).color(Color32::WHITE).size(15.0));
-            ui.label(RichText::new(format!("AI: {}   ·   drag pan · right/Shift-drag rotate · wheel zoom · A auto-orbit · F fire · G grid · R/Home reset", if info.llm_model.is_empty() { "see EXCON page" } else { &info.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
-        });
-    });
+    }
 
-    egui::Area::new(egui::Id::new("deployments")).anchor(Align2::RIGHT_BOTTOM, [-12.0,-12.0]).show(ctx,|ui|{
-      panel.show(ui,|ui|{
-       ui.label(RichText::new("Approved deployments").color(Color32::WHITE).strong());
-       for task in snap.deployments.iter().filter(|t|t.qty>0&&t.status!=view::TaskStatus::Cancelled).take(12) {
-        let remaining=(task.arrival_s-snap.time_s).max(0);
-        ui.label(RichText::new(format!("#{} {} ×{} · {:?}{}",task.id,task.resource,task.qty,task.status,if task.status==view::TaskStatus::EnRoute {format!(" · ETA {remaining}s")}else{String::new()})).color(Color32::WHITE));
-       }
-       ui.label(RichText::new("orange travelling/refilling/withdrawing · cyan working · green complete · red failed").color(Color32::from_rgb(195, 205, 215)).size(11.0));
-       ui.horizontal(|ui| {
-        ui.label(RichText::new("Graphics (Q)").color(Color32::from_rgb(195, 205, 215)).size(11.0));
-        for level in crate::quality::LEVELS {
-         if ui.selectable_label(quality.name == level, level).clicked() && quality.name != level {
-          set_level(&mut quality, level);
-         }
-        }
-       });
-      });
-    });
+    if panels.shows(3) {
+        egui::Area::new(egui::Id::new("deployments")).anchor(Align2::RIGHT_BOTTOM, [-12.0,-12.0]).show(ctx,|ui|{
+          panel.show(ui,|ui|{
+           ui.label(RichText::new("Approved deployments").color(Color32::WHITE).strong());
+           for task in snap.deployments.iter().filter(|t|t.qty>0&&t.status!=view::TaskStatus::Cancelled).take(12) {
+            let remaining=(task.arrival_s-snap.time_s).max(0);
+            ui.label(RichText::new(format!("#{} {} ×{} · {:?}{}",task.id,task.resource,task.qty,task.status,if task.status==view::TaskStatus::EnRoute {format!(" · ETA {remaining}s")}else{String::new()})).color(Color32::WHITE));
+           }
+           ui.label(RichText::new("orange travelling/refilling/withdrawing · cyan working · green complete · red failed").color(Color32::from_rgb(195, 205, 215)).size(11.0));
+           ui.horizontal(|ui| {
+            ui.label(RichText::new("Graphics (Q)").color(Color32::from_rgb(195, 205, 215)).size(11.0));
+            for level in crate::quality::LEVELS {
+             if ui.selectable_label(quality.name == level, level).clicked() && quality.name != level {
+              set_level(&mut quality, level);
+             }
+            }
+           });
+          });
+        });
+    }
     // Map labels are optional because they can obscure the scene at overview scale.
     if !*show_labels {
         return;
