@@ -250,7 +250,7 @@ pub fn draw(
     if panels.shows(2) {
         egui::Area::new(egui::Id::new("join")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
             panel.show(ui, |ui| {
-                ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else if cfg!(target_arch = "wasm32") { "Standalone browser simulation · camera: drag pan · right/Shift-drag rotate · wheel zoom".into() } else { match (&info.remote, info.port) { (Some(url), _) => format!("Remote view of {url}"), (None, Some(port)) => format!("Players: http://{ip}:{port}/player.html     EXCON: /master.html"), (None, None) => "Exercise view".to_string() } }).color(Color32::WHITE).size(15.0));
+                ui.label(RichText::new(if std::env::var("TTX_SNAPSHOT").is_ok() { "Reproducible visual fixture · HTTP and LLM off".into() } else if cfg!(target_arch = "wasm32") { "Standalone browser simulation · camera: drag pan · right/Shift-drag rotate · wheel zoom".into() } else { match (&info.remote, info.port) { (Some(url), _) => format!("Remote view of {url}"), (None, Some(port)) => format!("Players: http://{ip}:{port}/player     EXCON: /excon     Observers: /observer"), (None, None) => "Exercise view".to_string() } }).color(Color32::WHITE).size(15.0));
                 ui.label(RichText::new(format!("AI: {}   ·   drag pan · right/Shift-drag rotate · wheel zoom · A auto-orbit · F fire · G grid · R/Home reset · H panels (1–4 one by one)", if info.llm_model.is_empty() { "see EXCON page" } else { &info.llm_model })).color(Color32::from_rgb(195, 205, 215)).size(12.0));
             });
         });

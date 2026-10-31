@@ -382,9 +382,38 @@ pub fn assemble(state: &AppState, web_dir: Option<PathBuf>, journal: bool) -> Ro
         app = app.attach(persist::JournalFairing);
     }
     if let Some(dir) = web_dir {
-        app = app.mount("/", rocket::fs::FileServer::from(dir));
+        app = app
+            .mount("/", rocket::routes![page_excon, page_observer, page_player, page_player_role])
+            .mount("/", rocket::fs::FileServer::from(dir));
     }
     app
+}
+
+// Short page routes: each audience has its own address, and a player page
+// never falls back to the EXCON identity (`player.html` alone lists the roles).
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/excon")]
+fn page_excon() -> rocket::response::Redirect {
+    rocket::response::Redirect::to("/play.html")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/observer")]
+fn page_observer() -> rocket::response::Redirect {
+    rocket::response::Redirect::to("/observer.html")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/player")]
+fn page_player() -> rocket::response::Redirect {
+    rocket::response::Redirect::to("/player.html")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[rocket::get("/player/<role>")]
+fn page_player_role(role: &str) -> rocket::response::Redirect {
+    let role = rocket::http::RawStr::new(role).percent_encode();
+    rocket::response::Redirect::to(format!("/player.html?role={role}"))
 }
 
 /// A fresh Rocket over `state`, for replaying a saved session.
@@ -446,7 +475,7 @@ pub async fn serve_with(
         ready(state);
     }
     println!(
-        "EXCON console: http://localhost:{}/play.html (no access keys: keep the port on a trusted network)",
+        "EXCON console: http://localhost:{}/excon (no access keys: keep the port on a trusted network)",
         addr.port()
     );
     tracing::info!(
