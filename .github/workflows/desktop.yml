@@ -60,7 +60,7 @@ jobs:
             name: windows
             exe: ttx.exe
             launcher: Avvia-TTX.bat
-          - os: macos-14
+          - os: macos-15
             name: macos
             exe: ttx
             launcher: Avvia-TTX.command
