@@ -97,8 +97,9 @@ async fn a_response_to_a_player_reaches_them_through_a_conversation() {
 }
 
 /// 30/10 playtest: a reply to the sender states what it rests on (plan,
-/// procedure, law or operational judgement), the reference of a plan or law,
-/// and why (rationale); EXCON reads all of it next to the reply.
+/// procedure, law or operational judgement); the reference of a plan or law
+/// and a separate rationale are optional since 01/11 (one reply box). EXCON
+/// reads all of it next to the reply.
 #[tokio::test]
 async fn a_reply_carries_its_basis_and_rationale_to_excon() {
     let (c, _, parent) = fixture().await;
@@ -112,17 +113,21 @@ async fn a_reply_carries_its_basis_and_rationale_to_excon() {
         for (k, v) in extra.as_object().unwrap() { if v.is_null() { b.as_object_mut().unwrap().remove(k); } else { b[k] = v.clone(); } }
         b
     };
-    for (gap, error) in [(json!({"basis":null,"basis_note":null}), "basis"), (json!({"basis_note":null}), "which plan"), (json!({"rationale":"  "}), "rationale")] {
-        let (status, body) = call(&c, "mayor", path, Some(missing(gap))).await;
-        assert_eq!(status, Status::BadRequest, "{body}");
-        assert!(body["error"].as_str().unwrap().contains(error), "{body}");
-    }
+    let (status, body) = call(&c, "mayor", path, Some(missing(json!({"basis":null,"basis_note":null})))).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("basis"), "{body}");
     let (status, body) = call(&c, "mayor", path, Some(missing(json!({})))).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    // The basis alone is enough: the reasons are in the reply's words.
+    let (status, body) = call(&c, "mayor", path, Some(missing(json!({"basis_note":null,"rationale":null})))).await;
     assert_eq!(status, Status::Ok, "{body}");
     let (_, master) = call(&c, "master", "/api/master", None).await;
     let row = master["inject_responses"].as_array().unwrap().iter().find(|r| r["inject_message_id"] == parent).unwrap().clone();
     let reply = &row["replies"][0];
     assert_eq!((reply["basis"].as_str(), reply["basis_note"].as_str()), (Some("plan"), Some("Piano comunale, scheda 4")));
     assert_eq!(reply["rationale"], "Le famiglie devono attendere al coperto");
+    let bare = &row["replies"][1];
+    assert_eq!(bare["basis"], "plan");
+    assert!(bare["rationale"].is_null() || bare["rationale"] == "", "{bare}");
     assert_eq!(row["pending_proposals"].as_array().unwrap().len(), 0, "a communication waits for nobody");
 }

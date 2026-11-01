@@ -59,7 +59,6 @@ const DOS = 'Mandiamo due squadre AIB sul lato nord di F4. ' + WARN;
     await work.locator('#response-narrative').fill(text);
     await work.locator(`#basis-${basis}`).click();
     if (note) await work.locator('[data-basis-note]').fill(note);
-    await work.locator('[data-rationale]').fill('Il fronte si avvicina alle case.');
     await work.locator('[data-respond]').click();
     await p.locator('[data-response-state="rs_sent"]').first().waitFor();
   };
@@ -125,6 +124,8 @@ const DOS = 'Mandiamo due squadre AIB sul lato nord di F4. ' + WARN;
     await openInject(mayor, 'mayor');
     await reply(mayor, 'Apriamo il centro operativo comunale.', 'plan', 'Piano comunale di protezione civile, scheda 2');
     // The Mayor asks the DOS about the inject; the DOS answers.
+    // After a reply the box stays closed until the player asks for another.
+    await mayor.locator('[data-reply-more]').click();
     const work = mayor.locator('[data-reply-composer]').first();
     await work.locator('[data-to="players"]').check();
     await work.locator('[data-conv-person="fire_commander"]').check();

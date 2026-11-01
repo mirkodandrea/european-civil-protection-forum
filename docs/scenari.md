@@ -17,7 +17,7 @@ Nella UI EXCON, vista **Scenario**: elenco, personalizza/duplica, modifica (Gene
 La sessione salvata contiene il pack da cui è partita: al riavvio si ricostruisce lo stesso scenario anche se la libreria è cambiata.
 
 Nella versione nativa la finestra 3D si apre con un **launcher**, come lo standalone: «Resume session» continua la sessione salvata (se c'è), «Start new exercise» avvia lo scenario scelto con lo stesso percorso di «Avvia» della console (`library::activate`: la sessione salvata viene scartata e la scelta finisce in `active.txt`). Se lo scenario scelto è già quello in esecuzione e non c'è una sessione salvata, il pannello si chiude e basta. `--no-launcher` salta il pannello; `--headless` e le istantanee non lo mostrano.
-Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km), **Selvariva** (`selvariva_basin`, 6 × 6 km) e l'**Isola di Roccavento** (`roccavento_island`, 8 × 8 km), con i pack `valverde_night_wind`, `selvariva_crisi_integrata` e `roccavento_valico`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
+Il browser incorpora **Valverde** (`valverde_factory`, 4 × 4 km), **Selvariva** (`selvariva_basin`, 6 × 6 km) e l'**Isola di Roccavento** (`roccavento_island`, 8 × 8 km), con i pack `valverde_night_wind`, `selvariva_crisi_integrata`, `roccavento_valico` e la sua versione inglese `roccavento_valico_en`. La libreria carica sempre la base dichiarata dal pack e rifiuta basi non incluse. Il filtro «Territorio» distingue le mappe; «Personalizza» sul territorio crea uno scenario sulla mappa scelta. Il territorio di una copia resta fisso: cambiare solo l’ID della base non trasferisce luoghi, coordinate e riferimenti.
 
 I salvataggi browser nuovi registrano anche l’identità dei dati del territorio: un replay su una mappa modificata viene scartato con avviso. I salvataggi precedenti senza impronta restano leggibili. Il 3D locale ricostruisce la scena quando cambia scenario; il viewer remoto scarica la nuova scena fuori dal ciclo di rendering quando cambia territorio.
 
@@ -51,7 +51,13 @@ cargo run --release -p app -- --scenarios-dir miei_scenari --scenario mio_territ
 ## Testi in più lingue (`translations`)
 
 I contenuti dello scenario (nomi e descrizioni di ruoli e risorse, titoli e mittenti
-degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
+degli inject) sono scritti nella lingua del campo `language` dello scenario (default
+`en`, omesso quando inglese; un pack lo cambia con `edits.language`). Roccavento è
+scritto in italiano (`"language": "it"`): per un lettore inglese — EXCON compreso —
+il server traduce verso l'inglese (`translate_to_english`, ai passi 3–4) ruoli,
+risorse, inject (titolo, testo, obiettivo, evento) e i titoli delle azioni; il testo
+che un inject consegna ai player è tradotto in inglese all'invio
+(`flow::scenario_text_en`), così l'AI e l'EXCON lavorano sempre in inglese. Ogni lettore li vede nella propria lingua
 (scelta a inizio sessione) con questa precedenza:
 
 1. `translations` dello scenario: `{"it": {"Buses": "Autobus", ...}}`, lingua → testo
@@ -68,7 +74,7 @@ degli inject) sono scritti in inglese. Ogni lettore li vede nella propria lingua
 I nomi di luoghi, edifici e strade dei territori restano quelli della mappa (anche se
 italiani, es. «Area festival delle Fonti»): sono chiavi con cui comandi e pack salvati
 ritrovano i luoghi, quindi non si traducono.
-3. Traduzione LLM a runtime (solo giocatori), una volta per testo e lingua, in cache;
+3. Traduzione LLM a runtime (giocatori; anche EXCON se lo scenario non è inglese), una volta per testo e lingua, in cache;
    include i titoli degli inject scritti dall'EXCON.
 4. Senza LLM e senza voce: resta il testo dello scenario.
 

@@ -568,6 +568,13 @@ fn default_turn_minutes() -> u32 {
 
 /// Place deployments start from when the scenario names none: where older
 /// scenario packages staged their resources.
+fn english() -> String {
+    "en".into()
+}
+fn is_english(language: &String) -> bool {
+    language == "en"
+}
+
 fn legacy_staging() -> Option<String> {
     Some("Valverde Town Hall".into())
 }
@@ -864,6 +871,12 @@ pub struct Scenario {
     /// than English may carry an `en` table too.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub translations: BTreeMap<String, BTreeMap<String, String>>,
+    /// Language the scenario's own texts (roles, resources, injects) are
+    /// written in. English is the working language: other languages are
+    /// translated to English when an inject is sent, and for every reader,
+    /// English ones included, when shown.
+    #[serde(default = "english", skip_serializing_if = "is_english")]
+    pub language: String,
     pub reinforcements: Vec<ReinforcementOffer>,
     pub msel: Vec<InjectTemplate>,
     /// Legacy standalone actions: read for old files, emptied by

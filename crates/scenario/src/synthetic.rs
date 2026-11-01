@@ -342,6 +342,7 @@ pub fn generate(seed: u64) -> Scenario {
         excon_roles: vec![],
         default_persona: String::new(),
         translations: Default::default(),
+        language: "en".into(),
         reinforcements: reinforcements(),
         msel: msel(),
         timeline: vec![],

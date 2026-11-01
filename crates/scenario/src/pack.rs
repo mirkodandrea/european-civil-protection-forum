@@ -71,6 +71,9 @@ pub struct ScenarioEdits {
     /// translates its own texts also carries the territory's map labels.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translations: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    /// Language of the scenario's texts (see [`Scenario::language`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// Simulation options a pack may fix. Command-line options take precedence.
@@ -210,6 +213,9 @@ impl Scenario {
         if let Some(v) = &e.translations {
             self.translations = v.clone();
         }
+        if let Some(v) = &e.language {
+            self.language = v.clone();
+        }
         self.check()
     }
 
@@ -236,6 +242,7 @@ impl Scenario {
             districts: Some(self.districts.clone()),
             district_evacuation: Some(self.district_evacuation),
             translations: Some(self.translations.clone()),
+            language: Some(self.language.clone()),
             ..Default::default()
         }
     }
@@ -471,6 +478,7 @@ impl Scenario {
             excon_roles: vec![],
             default_persona: String::new(),
             translations: Default::default(),
+            language: "en".into(),
             reinforcements: vec![],
             msel: vec![],
             timeline: vec![],

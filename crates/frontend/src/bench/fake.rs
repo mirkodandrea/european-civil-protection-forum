@@ -381,20 +381,14 @@ impl Fake {
                 if b["kind"] == "decision" && !b["basis"].is_string() {
                     return Err("una decisione richiede il fondamento".into());
                 }
-                // A narrated reply to the sender: basis, reference of a plan
-                // or law, and rationale are required.
+                // A narrated reply to the sender needs its basis; which plan
+                // or law, and a separate rationale, are optional.
                 let filled = |k: &str| b[k].as_str().is_some_and(|t| !t.trim().is_empty());
                 let to_sender = b["to_players"].as_array().is_none_or(|p| p.is_empty());
                 if to_sender && filled("narrative") {
                     let basis = b["basis"].as_str().unwrap_or("");
                     if !["plan", "procedure", "law", "operational_judgment"].contains(&basis) {
                         return Err("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement".into());
-                    }
-                    if basis != "operational_judgment" && !filled("basis_note") {
-                        return Err("say which plan, procedure or law the reply rests on (e.g. the plan's section or the article)".into());
-                    }
-                    if !filled("rationale") {
-                        return Err("a reply to the sender needs its rationale: why this decision".into());
                     }
                 }
                 let pid = self.respond(
@@ -902,10 +896,9 @@ mod tests {
         // `kind` is required, and a decision needs its basis.
         assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"narrative": "x", "reply_to": inject}))).is_err());
         assert!(f.handle("mayor", "/api/player/mayor/actions", Some(json!({"kind": "decision", "narrative": "x", "reply_to": inject}))).is_err());
-        // A reply to the sender also needs its rationale, and a plan its reference.
+        // A reply to the sender needs its basis, nothing more.
         let reply = |extra: Value| { let mut b = json!({"kind": "communication", "narrative": "x", "reply_to": inject}); for (k, v) in extra.as_object().unwrap() { b[k] = v.clone(); } b };
-        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({"basis": "operational_judgment"})))).is_err());
-        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({"basis": "plan", "rationale": "y"})))).is_err());
+        assert!(f.handle("mayor", "/api/player/mayor/actions", Some(reply(json!({})))).is_err());
         let m = f.master();
         let row = m["inject_responses"]
             .as_array()

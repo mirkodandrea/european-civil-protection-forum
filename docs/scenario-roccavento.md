@@ -14,6 +14,20 @@ il fuoco del valico**. Da terminale:
 cargo run --release -p app -- --scenario data/scenarios/roccavento_valico.pack.json
 ```
 
+**Versione inglese** (01/11, traduzione di Sabrina): pack `roccavento_valico_en`,
+«Roccavento - The Fire at the Mountain Pass». Stessi inject, azioni e meteo;
+ruoli, risorse, rinforzi e inject in inglese (`language: "en"`), i nomi dei
+luoghi restano quelli del territorio (tradotti per i player dalla tabella
+`translations`); ruoli e risorse hanno il testo italiano originale in
+`translations.it`. Il pack italiano (`language: "it"` nel territorio) resta
+giocabile in inglese: ruoli, risorse e inject sono tradotti dall'AI a runtime
+(01/11); il pack inglese evita la traduzione automatica e usa il testo rivisto da
+Sabrina.
+
+```sh
+cargo run --release -p app -- --scenario data/scenarios/roccavento_valico_en.pack.json
+```
+
 ## Territorio
 
 - **8 × 8 km**, griglia fisica 400 × 400 a 20 m. Il terreno visuale è a 10 m,

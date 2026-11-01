@@ -60,6 +60,6 @@
     }
   },
   "provenance": "propagator_abm Scenario Factory package (EUPL-1.2), imported unchanged; sea bed, borghi, gathering areas, roles and resources authored here.",
-  "scenario_sha256": "ed36e3ccf4bdcca73be53242d04804a3e4bfb9a026f6485b3f12d6ef7ae1253d",
+  "scenario_sha256": "b30db492dbb664ecdc1cb203eef526b2e77758815f9cd9e96b2f3dd784083703",
   "pack_sha256": "d2fe5f49dc8c04e67e4c491bbe978f056d082d3bc3acb2094b69afc31f20efb0"
 }

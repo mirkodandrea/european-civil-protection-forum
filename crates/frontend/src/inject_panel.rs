@@ -89,19 +89,22 @@ struct Ev {
     actions: Vec<(String, bool)>,
     /// Responses only: communication or decision, and to whom.
     meta: String,
+    /// Responses only: what the reply rests on and, if given, which plan or law.
+    basis: String,
 }
 
 /// The conversation of an inject in order: each proposal is followed by
 /// EXCON's decision note and by the questions attached to it, so the order
 /// holds even when every timestamp is equal.
-fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
+/// `at` labels a simulated second as the exercise clock ("Day 1 13:30").
+fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String, at: &dyn Fn(i64) -> String) -> Vec<Ev> {
     let entries: Vec<&Value> = it.threads.iter().flat_map(|t| list(&t["entries"]).iter()).collect();
     // Who speaks for exercise control: the persona stored with the item, else the default one.
     let persona = |v: &Value| -> String {
         let p = text(&v["persona"]);
         if p.is_empty() { name("master") } else { p.to_string() }
     };
-    let ev = |kind, who: String, clock: String, text: &str| Ev { kind, who, clock, text: text.to_string(), status: String::new(), executions: Value::Null, actions: Vec::new(), meta: String::new() };
+    let ev = |kind, who: String, clock: String, text: &str| Ev { kind, who, clock, text: text.to_string(), status: String::new(), executions: Value::Null, actions: Vec::new(), meta: String::new(), basis: String::new() };
     let mut out = Vec::new();
     if let Some(m) = it.msg {
         let from = if m["persona"].is_string() { persona(m) } else { name(text(&m["from"])) };
@@ -112,7 +115,7 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
     for p in &it.proposals {
         let status = text(&p["status"]);
         // The player's answers are proposals too: take their time from the thread.
-        let when = entries.iter().find(|e| e["author"] == "player" && e["proposal"] == p["id"]).map(|e| text(&e["clock"]).to_string()).unwrap_or_else(|| format_offset(p["t_s"].as_i64().unwrap_or(0)));
+        let when = entries.iter().find(|e| e["author"] == "player" && e["proposal"] == p["id"]).map(|e| text(&e["clock"]).to_string()).unwrap_or_else(|| at(p["t_s"].as_i64().unwrap_or(0)));
         let rejected = list(&p["decision"]["rejected_actions"]);
         let partial = p["review"] == "partially_approved";
         let mut actions: Vec<(String, bool)> = if p["carries_actions"] == true || partial {
@@ -133,11 +136,11 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
         let recipient = if list(&to["players"]).is_empty() { text(&to["persona"]).to_string() } else { list(&to["players"]).iter().map(|r| name(text(r))).collect::<Vec<_>>().join(", ") };
         // Replies are words only: the tag says to whom, not what kind.
         let meta = if recipient.is_empty() { i18n::t(l, "kind_tag_reply").to_string() } else { i18n::tf(l, "resp_to_label", &[&recipient]) };
-        out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, meta, ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
+        out.push(Ev { status: shown.to_string(), executions: p["executions"].clone(), actions, meta, basis: basis_text(l, &p["evidence"]["basis"]), ..ev(Kind::Proposal, i18n::t(l, "thread_you").to_string(), when, text(&p["original"])) });
         let note = text(&p["decision"]["note"]);
         if !note.is_empty() {
             let kind = if status == "rejected" { Kind::Reason } else { Kind::Decision };
-            out.push(ev(kind, persona(&p["decision"]), format_offset(p["decision"]["t_s"].as_i64().unwrap_or(0)), note));
+            out.push(ev(kind, persona(&p["decision"]), at(p["decision"]["t_s"].as_i64().unwrap_or(0)), note));
         }
         if p["narrative"]==true {
             for e in entries.iter().filter(|e|e["proposal"]==p["id"]).skip(1) {
@@ -158,7 +161,7 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
                 let effects = if localized.is_empty() { english.clone() } else { localized };
                 let said = text(&outcome["text"]);
                 let body = if said.is_empty() || said == english || said == effects { if effects.is_empty() { said.to_string() } else { effects } } else if effects.is_empty() { said.to_string() } else { format!("{said} ({effects})") };
-                out.push(ev(Kind::Decision, persona(outcome), format_offset(outcome["t_s"].as_i64().unwrap_or(0)), &body));
+                out.push(ev(Kind::Decision, persona(outcome), at(outcome["t_s"].as_i64().unwrap_or(0)), &body));
             }
         }
     }
@@ -171,6 +174,29 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String) -> Vec<Ev> {
     }
     for _ in it.threads.iter().filter(|t| has_status(t, "closed") && t["review"] != true) {
         out.push(ev(Kind::Closed, String::new(), String::new(), i18n::t(l, "thread_closed")));
+    }
+    out
+}
+
+/// "Plan or procedure · Municipal plan, card 4": the basis of a reply as the
+/// player declared it; the server's placeholder for a missing reference is
+/// not shown. Empty without a basis.
+fn basis_text(l: &str, basis: &Value) -> String {
+    let label = match text(&basis["kind"]) {
+        "plan" | "procedure" => "basis_plan",
+        "law" => "basis_law",
+        "operational_judgment" => "basis_judgment",
+        _ => return String::new(),
+    };
+    let reference = text(&basis["reference"]);
+    let reference = if reference.starts_with("Declared by the player") { "" } else { reference.split("; document ").next().unwrap_or("") };
+    let mut out = format!("{}: {}", i18n::t(l, "guide_basis"), i18n::t(l, label));
+    if !reference.trim().is_empty() {
+        out.push_str(&format!(" · {}", reference.trim()));
+    }
+    let why = text(&basis["rationale"]);
+    if !why.trim().is_empty() {
+        out.push_str(&format!(" — {}", why.trim()));
     }
     out
 }
@@ -284,7 +310,7 @@ impl crate::player_view::PlayerView {
                     Some(m)=>(text(&m["title"]).to_string(),format!("{} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&name(text(&m["from"]))]))),
                     None=>(i18n::t(l,"inj_free").to_string(),String::new()),
                 };
-                let last=events(l,it,&name).last().map(|e|last_line(l,e));
+                let last=events(l,it,&name,&|t|self.game_clock(t)).last().map(|e|last_line(l,e));
                 html!{<li key={it.key.clone()}><button class={classes!("inj-row",o.action.then_some("needs-action"))} data-inject-row={it.key.clone()} onclick={pick}>
                     <span class="inj-main"><b>{title}</b><small>{meta}</small>
                         if it.guest{<small class="inj-via">{i18n::t(l,"conv_via_guest")}</small>}
@@ -323,7 +349,7 @@ impl crate::player_view::PlayerView {
     fn view_inject_thread(&self, can_act: bool, it: &Item) -> Html {
         let l = self.lang();
         let l = l.as_str();
-        let chat: Vec<Html> = events(l, it, &|id: &str| self.name(id))
+        let chat: Vec<Html> = events(l, it, &|id: &str| self.name(id), &|t| self.game_clock(t))
             .into_iter()
             .map(|e| {
                 let (mine, cls, tag): (bool, String, Option<Html>) = match e.kind {
@@ -339,6 +365,7 @@ impl crate::player_view::PlayerView {
                 html! {<li class={classes!("inj-msg",if mine{"mine"}else{"theirs"},cls)}>
                     <small><b>{e.who}</b>{format!(" · {}",e.clock)}{tag}</small>
                     if !e.text.is_empty(){<p>{e.text}</p>}
+                    if !e.basis.is_empty(){<small class="inj-basis" data-reply-basis-line="">{e.basis}</small>}
                     if !e.actions.is_empty(){<ul class="inj-actions">{for e.actions.iter().map(|(a,ok)|html!{<li class={classes!((!*ok).then_some("not-approved"))}>{a}</li>})}</ul>}
                     {extra}</li>}
             })
@@ -377,7 +404,21 @@ impl crate::player_view::PlayerView {
                 html! {<footer class="inj-composer row">{status}<small class="muted">{i18n::t(l,"guest_reply_hint")}</small><div class="grow"/>
                     <button class="primary" data-open-guest-conversation="" disabled={it.convs.is_empty()} onclick={open}>{i18n::t(l,"open_conv")}</button></footer>}
             } else {
-                html! {<>{status}{self.reply_composer(can_act, crate::reply_composer::Place::Inject { msg: m })}</>}
+                let place = crate::reply_composer::Place::Inject { msg: m };
+                let ctx = place.ctx();
+                // Once the player has replied, the thread comes first and the box
+                // opens on demand (01/11 playtest: the sent reply was hard to find
+                // under a fresh, empty form). A draft keeps it open.
+                let open = it.proposals.is_empty()
+                    || !self.field(&format!("reopen:{ctx}"), "").is_empty()
+                    || !self.field(&crate::reply_composer::draft_key(&ctx), "").trim().is_empty();
+                if open {
+                    html! {<>{status}{self.reply_composer(can_act, place)}</>}
+                } else {
+                    let more = self.cb(move |_| Msg::Field(format!("reopen:{ctx}"), "1".into()));
+                    html! {<footer class="inj-composer row inj-composer-closed">{status}<small class="muted">{i18n::t(l,"to_sender_hint")}</small><div class="grow"/>
+                        <button data-reply-more="" disabled={!can_act} onclick={more}>{i18n::t(l,"reply_more")}</button></footer>}
+                }
             }
         } else {
             html! {}
@@ -535,12 +576,27 @@ mod tests {
         assert_eq!((o.label, o.tone, o.action), ("Approvata in parte", "partial", false));
         assert_eq!(outcome("en", &item(vec![&ack], vec![])).label, "Acknowledged · nothing to execute");
         let name = |id: &str| id.to_string();
-        let ev = events("it", &item(vec![&partial], vec![]), &name);
+        let ev = events("it", &item(vec![&partial], vec![]), &name, &format_offset);
         assert_eq!(ev[0].status, "st_partially_approved");
         assert_eq!(ev[0].actions.len(), 2);
         assert!(ev[0].actions[0].1 && ev[0].actions[0].0.contains("Approvata"));
         assert!(!ev[0].actions[1].1 && ev[0].actions[1].0.contains("not threatened"), "{:?}", ev[0].actions);
         assert_eq!(i18n::status("fr", "partially_approved"), "Approuvée en partie");
+    }
+    /// 01/11 playtest: the player's own reply shows its basis and the
+    /// exercise clock, not an offset.
+    #[test]
+    fn a_sent_reply_shows_its_basis_and_clock() {
+        let p = json!({"id":1,"status":"pending","original":"I need a team in F4","t_s":1800,
+            "evidence":{"basis":{"kind":"plan","reference":"Municipal plan, card 4"}}});
+        let bare = json!({"id":2,"status":"pending","original":"x","t_s":0,
+            "evidence":{"basis":{"kind":"operational_judgment","reference":"Declared by the player: operational judgment"}}});
+        let at = |t: i64| scenario::format_clock(46_800 + t);
+        let ev = events("en", &item(vec![&p, &bare], vec![]), &|id: &str| id.to_string(), &at);
+        assert_eq!(ev[0].clock, "Day 1 13:30");
+        assert_eq!(ev[0].basis, "Based on: Plan or procedure · Municipal plan, card 4");
+        assert_eq!(ev[1].basis, "Based on: Operational judgement", "no server placeholder");
+        assert_eq!(basis_text("en", &Value::Null), "");
     }
     #[test]
     fn last_line_names_the_last_event() {
@@ -550,7 +606,7 @@ mod tests {
         let p2 = json!({"id":2,"status":"pending","original":"2 bus","t_s":0});
         let rej = json!({"id":3,"status":"rejected","original":"D6","t_s":0,"decision":{"note":"too few buses","t_s":0,"persona":"Prefettura"}});
         let th = json!({"id":1,"status":"awaiting_player","entries":[{"author":"excon","persona":"Sala operativa","proposal":1,"clock":"13:05","text":"How many buses?"}]});
-        let line = |it: &Item| last_line("it", events("it", it, &name).last().unwrap());
+        let line = |it: &Item| last_line("it", events("it", it, &name, &format_offset).last().unwrap());
         // Only the inject: its own text (the row shows sender and time).
         let mut it = Item { key: "1".into(), msg: Some(&inject), proposals: vec![], threads: vec![], convs: vec![], guest: false };
         assert_eq!(line(&it), (String::new(), String::new(), "Fire".into()));
@@ -566,7 +622,7 @@ mod tests {
         it.threads = vec![];
         let (who, _, body) = line(&it);
         assert_eq!((who.as_str(), body.as_str()), ("Prefettura ha rifiutato", "too few buses"));
-        assert_eq!(events("it", &it, &name).len(), 3);
+        assert_eq!(events("it", &it, &name, &format_offset).len(), 3);
         // A closed thread ends the conversation.
         let closed = json!({"id":1,"status":"closed","entries":[]});
         it.threads = vec![&closed];

@@ -47,6 +47,14 @@ impl PlayerView {
     pub fn messages(&self) -> &[Value] {
         list(&self.state["inbox"])
     }
+    /// A simulated second as the exercise clock ("Day 1 13:30"), like the
+    /// injects; an offset ("+00:30:00") until the scenario's start is known.
+    pub fn game_clock(&self, t_s: i64) -> String {
+        match self.stat["start_clock_s"].as_i64() {
+            Some(start) => scenario::format_clock(start + t_s),
+            None => crate::timeline::format_offset(t_s),
+        }
+    }
     pub fn name(&self, id: &str) -> String {
         if id == "master" {
             // Players never read "EXCON": exercise control speaks as a persona.

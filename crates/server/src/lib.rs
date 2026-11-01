@@ -75,7 +75,7 @@ pub struct AppState {
     /// Background turn preview of the EXCON situation view.
     situation: situation::SlotRef,
     presence: Arc<Mutex<std::collections::BTreeMap<String, (String, Instant)>>>,
-    /// Runtime translations of scenario texts, by (English text, language).
+    /// Runtime translations of scenario texts, by (source text, language).
     text_cache: Arc<Mutex<std::collections::BTreeMap<(String, String), CachedText>>>,
     /// Saved session; `None` keeps everything in memory.
     #[cfg(not(target_arch = "wasm32"))]
@@ -92,23 +92,26 @@ struct CachedText {
 }
 const TEXT_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
 /// Most texts translated at runtime for one view.
-const MAX_RUNTIME_TEXTS: usize = 60;
+const MAX_RUNTIME_TEXTS: usize = 120;
 
 /// Source text -> text in `language` for the scenario-authored content
 /// (role, resource and inject texts, senders; for a player also the map
 /// labels). The built-in glossary and the scenario's own `translations` come
 /// first and work without an LLM; for a player the rest (and `extra`, e.g.
 /// titles of injects the EXCON wrote) is translated once per language and
-/// cached. What cannot be translated stays in the scenario's language. Map
-/// labels are only ever static: the EXCON keeps the territory's names, which
-/// its commands use.
+/// cached. A scenario written in another language than English is
+/// translated for the EXCON too, its inject texts included, and towards
+/// English as well (01/11 playtest: an English console read Italian roles
+/// and injects). What cannot be translated stays in the scenario's language.
+/// Map labels are only ever static: the EXCON keeps the territory's names,
+/// which its commands use.
 async fn display_map(
     s: &AppState,
     language: &str,
     extra: Vec<String>,
     player: bool,
 ) -> std::collections::BTreeMap<String, String> {
-    let (mut map, mut texts) = {
+    let (mut map, mut texts, source) = {
         let ex = s.lock();
         let scn = &ex.world.scn;
         let mut map = scn.display_map(language);
@@ -118,16 +121,23 @@ async fn display_map(
             }
         }
         let mut texts = scn.translatable_texts();
-        // A role written in the player's language needs no translation.
+        if !player && scn.language != "en" {
+            texts.extend(scn.msel.iter().flat_map(|m| {
+                [m.text.clone(), m.objective.clone(), m.event.clone()]
+                    .into_iter()
+                    .chain(m.actions.iter().map(|a| a.title.clone()))
+            }));
+        }
+        // A role written in the reader's language needs no translation.
         for r in scn.roles.iter().filter(|r| r.language == language) {
             texts.retain(|t| *t != r.name && *t != r.description);
         }
-        (map, texts)
+        (map, texts, scn.language.clone())
     };
-    if language == "en" {
+    if language == source {
         return map;
     }
-    let use_llm = player;
+    let use_llm = player || source != "en";
     texts.extend(extra);
     texts.sort();
     texts.dedup();
@@ -144,8 +154,14 @@ async fn display_map(
             .map(|c| c.text.clone())
     };
     let missing: Vec<String> = texts.iter().filter(|t| cached(t).is_none()).cloned().collect();
+    let source = source.as_str();
     let done = futures::future::join_all(missing.iter().map(|t| async move {
-        let r = s.llm.translate(t, language).await.ok().filter(|x| !x.trim().is_empty());
+        let r = if language == "en" {
+            s.llm.translate_to_english(t, source).await
+        } else {
+            s.llm.translate(t, language).await
+        };
+        let r = r.ok().filter(|x| !x.trim().is_empty());
         (t.clone(), r)
     }))
     .await;
@@ -1582,7 +1598,8 @@ async fn post_msel_send(
         _ => t.recipients.clone(),
     };
     let actions = exercise::actions::SendActions { run: b.actions, custom: Vec::new() };
-    let ids = flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &recipients, &t.text, &actions).await?;
+    let text = flow::scenario_text_en(&s, &t.text).await;
+    let ids = flow::send_inject(&s, Some(&t.id), &t.title, &t.sender, &recipients, &text, &actions).await?;
     let ex = s.lock();
     Ok(Json(json!({"messages": ids, "sent_to": ex.inject_sent_to.get(&t.id)})))
 }

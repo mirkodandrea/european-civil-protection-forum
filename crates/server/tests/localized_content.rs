@@ -132,3 +132,41 @@ fn scenario_translations_override_the_glossary() {
     assert_eq!(scn.display_map("it")["Buses"], "Pullman");
     assert_eq!(scn.display_map("it")["Air tankers"], "Mezzi aerei");
 }
+
+/// 01/11 playtest: a scenario written in Italian reaches English readers in
+/// English, players and the EXCON console alike, and its injects travel as an
+/// English working copy (an English reader used to be taken as reading the
+/// source already).
+#[rocket::async_test]
+async fn a_scenario_written_in_italian_is_translated_for_english_readers() {
+    let mut scn = scenario::synthetic::generate(scenario::synthetic::DEFAULT_SEED);
+    scn.language = "it".into();
+    scn.roles.iter_mut().find(|r| r.id == "mayor").unwrap().description = "Sindaco: avvisi ed evacuazioni.".into();
+    scn.msel[0].text = "Fumo sopra il paese.".into();
+    let (inject, objective) = (scn.msel[0].id.clone(), scn.msel[0].objective.clone());
+    let c = client_with(llm::Llm::mock(|_, _, user| Ok(format!("[en] {user}"))), "en", scn).await;
+    let v = get(&c, "/api/player/mayor", "mayor-test").await;
+    assert_eq!(v["role"]["description"], "[en] Sindaco: avvisi ed evacuazioni.");
+    let stat = get(&c, "/api/static", "master-test").await.to_string();
+    assert!(stat.contains("[en] Sindaco: avvisi ed evacuazioni."), "the EXCON reads the role in English");
+    assert!(stat.contains("[en] Fumo sopra il paese.") && stat.contains(&format!("[en] {objective}")), "and the planned injects");
+    let sent = c
+        .post(format!("/api/master/msel/{inject}/send"))
+        .header(Header::new("Authorization", "Bearer master-test"))
+        .body(r#"{"recipients":["mayor"]}"#)
+        .dispatch()
+        .await;
+    assert_eq!(sent.status(), rocket::http::Status::Ok);
+    let v = get(&c, "/api/player/mayor", "mayor-test").await;
+    let texts: Vec<&str> = v["inbox"].as_array().unwrap().iter().filter_map(|m| m["text"].as_str()).collect();
+    assert!(texts.contains(&"[en] Fumo sopra il paese."), "{texts:?}");
+}
+
+/// An English scenario read in English needs no LLM call.
+#[rocket::async_test]
+async fn an_english_scenario_is_not_translated_into_english() {
+    let c = client(llm::Llm::mock(|_, _, user| Ok(format!("[en] {user}"))), "en").await;
+    let v = get(&c, "/api/player/mayor", "mayor-test").await;
+    assert!(!v.to_string().contains("[en] "));
+    assert!(!get(&c, "/api/static", "master-test").await.to_string().contains("[en] "));
+}

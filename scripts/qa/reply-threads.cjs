@@ -56,6 +56,9 @@ function reading(user, gazetteer) {
     const back = fire.locator('[data-inject-back]');
     if (await back.count()) await back.click();
     await fire.locator('[data-inject-row]').first().click();
+    // After a reply the box stays closed until the player asks for another.
+    const more = fire.locator('[data-reply-more]');
+    if (await more.count()) await more.click();
     // One composer under the inject: reply to the inject's sender, one Send.
     const box = fire.locator('[data-reply-composer]').first();
     await box.locator('[data-to="sender"]').check();
@@ -63,10 +66,10 @@ function reading(user, gazetteer) {
     await field.click();
     await field.pressSequentially(text.slice(0, 1));
     await field.fill(text);
-    // A reply to the sender states its basis and why (required).
-    assert.ok(await box.locator('[data-reply-send]').isDisabled(), 'Send waits for basis and rationale');
+    // A reply to the sender states its basis (required); the reasons are in the text.
+    assert.ok(await box.locator('[data-reply-send]').isDisabled(), 'Send waits for the basis');
+    assert.equal(await box.locator('[data-rationale]').count(), 0, 'no separate rationale box');
     await box.locator('#basis-operational_judgment').click();
-    await box.locator('[data-rationale]').fill('Il fronte scende verso F4: va fermato prima delle case');
     await box.locator('[data-reply-send]:not([disabled])').waitFor();
     await box.locator('[data-reply-send]').click();
     await fire.locator('#response-narrative').first().waitFor();
@@ -104,7 +107,7 @@ function reading(user, gazetteer) {
     assert.equal(await open().count(), 1);
     const badge = () => master.locator('[data-view="risposte"] .unread').count();
     assert.equal(await badge(), 1, 'the reply awaits the EXCON');
-    assert.match(await board.locator('[data-review-rationale]').first().innerText(), /prima delle case/, 'the EXCON reads the rationale');
+    assert.equal(await board.locator('[data-review-rationale]').count(), 0, 'no separate rationale: the reasons are in the reply');
     await shot('01-first-reply-open');
 
     // 2. EXCON handles everything: queue the team (any feasible place), ignore the line, discard the question.

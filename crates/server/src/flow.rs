@@ -65,6 +65,18 @@ pub async fn translations(
     join_all(futs).await.into_iter().collect()
 }
 
+/// A scenario text as the English working copy: a scenario written in
+/// another language goes to English first, as an inject the EXCON writes in
+/// its own language does, or English-speaking players would read it
+/// untranslated. The text itself without an LLM or on failure.
+pub async fn scenario_text_en(state: &AppState, text: &str) -> String {
+    let language = state.lock().world.scn.language.clone();
+    if language == "en" || text.trim().is_empty() || !state.llm.is_available() {
+        return text.to_string();
+    }
+    state.llm.translate_to_english(text, &language).await.unwrap_or_else(|_| text.to_string())
+}
+
 /// Send an inject to recipients (role ids or "all"), translated per player.
 pub async fn send_inject(
     state: &AppState,
@@ -500,7 +512,8 @@ pub fn dispatch_due(state: &AppState) {
                     return;
                 }
             };
-            let tr = translations(&state, &to, &template.text).await;
+            let text = scenario_text_en(&state, &template.text).await;
+            let tr = translations(&state, &to, &text).await;
             let mut ex = state.lock();
             if ex
                 .scheduled_injects
@@ -516,7 +529,7 @@ pub fn dispatch_due(state: &AppState) {
                 &template.title,
                 &template.sender,
                 &to,
-                &template.text,
+                &text,
                 &tr,
                 &exercise::actions::SendActions::all(),
             );

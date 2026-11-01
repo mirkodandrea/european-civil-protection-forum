@@ -113,6 +113,7 @@ function reading(user, gazetteer) {
     await work.locator('[data-reply-guide]').waitFor();
     await work.locator('#response-narrative').fill(DOS);
     await shot('02-player-reply-guidance');
+    await work.locator('#basis-operational_judgment').click();
     await work.locator('[data-respond]').click();
     await fire.locator('[data-response-state="rs_sent"]').first().waitFor();
     await shot('03-player-reply-sent');
@@ -181,6 +182,7 @@ function reading(user, gazetteer) {
     // 7. The Mayor replies; the EXCON executes what is feasible.
     await openInject(mayor, 'mayor');
     await mayor.locator('[data-reply-composer] #response-narrative').fill(MAYOR);
+    await mayor.locator('[data-reply-composer] #basis-plan').click();
     await mayor.locator('[data-reply-composer] [data-respond]').click();
     await toBoard();
     await board.locator('[data-review]').filter({ hasText: /Evacuiamo/ }).locator('[data-review-item]').nth(2).waitFor({ timeout: 20000 });

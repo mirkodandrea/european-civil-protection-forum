@@ -638,8 +638,8 @@ fn the_reply_basis_reaches_the_ai_reading() {
     let view = ex.review_view();
     let row = view["reviews"].as_array().unwrap().iter().find(|r| r["proposal"] == pid).unwrap();
     assert_eq!(row["rationale"], "Le famiglie evacuate devono attendere al coperto", "the EXCON board shows why");
-    // A reply to the sender needs its basis, the reference of a plan or law,
-    // and the rationale; a message to other players needs none of them.
+    // A reply to the sender needs its basis; which plan or law, and a
+    // separate rationale, are optional (01/11 playtest: one reply box).
     let base = PlayerResponse {
         narrative: Some("Evacuiamo F4".into()),
         narrative_en: "We evacuate F4".into(),
@@ -653,8 +653,8 @@ fn the_reply_basis_reaches_the_ai_reading() {
     assert!(ex.validate_player_response("mayor", &base).is_ok());
     let err = |r: PlayerResponse| ex.validate_player_response("mayor", &r).unwrap_err().to_string();
     assert!(err(PlayerResponse { basis: None, basis_note: None, ..base.clone() }).contains("basis"));
-    assert!(err(PlayerResponse { basis_note: Some("  ".into()), ..base.clone() }).contains("which plan, procedure or law"));
-    assert!(err(PlayerResponse { rationale: Some(" ".into()), ..base.clone() }).contains("rationale"));
+    let words_only = PlayerResponse { basis_note: Some("  ".into()), rationale: None, ..base.clone() };
+    assert!(ex.validate_player_response("mayor", &words_only).is_ok(), "a plan without its reference, no rationale");
     let judgement = PlayerResponse { basis: Some(BasisKind::OperationalJudgment), basis_note: None, ..base.clone() };
     assert!(ex.validate_player_response("mayor", &judgement).is_ok(), "no reference for operational judgement");
     // A message to other players that opens a conversation states why

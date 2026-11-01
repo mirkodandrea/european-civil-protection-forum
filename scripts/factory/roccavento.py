@@ -230,6 +230,8 @@ def generate(source):
     crews = defaultdict(int)
     for t in game['roster']:
         crews[t['station']] += 1
+    # Texts written in Italian: translated to English when sent and shown.
+    s['language'] = 'it'
     s['roles'] = [dict(id=rid, name=name, level=level, language='it', description=desc,
                        allowed_actions=actions, resources=res) for rid, name, level, desc, actions, res in [
         ('comune', 'Comune di Roccavento', 'local',

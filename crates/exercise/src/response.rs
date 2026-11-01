@@ -130,17 +130,10 @@ impl Exercise {
         }
         let narrative = r.narrative_text();
         // A narrated reply to the inject's sender is what the EXCON's AI reads:
-        // it states its basis, the reference for a plan or law, and why.
-        if narrative.is_some() && r.to_players.is_empty() {
-            let Some(kind) = r.basis else {
-                bail!("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement");
-            };
-            if kind != BasisKind::OperationalJudgment && r.note_text().is_none() {
-                bail!("say which plan, procedure or law the reply rests on (e.g. the plan's section or the article)");
-            }
-            if r.rationale_text().is_none() {
-                bail!("a reply to the sender needs its rationale: why this decision");
-            }
+        // it states its basis (01/11 playtest: one box for the reply and its
+        // reasons; which plan or law, and a separate rationale, are optional).
+        if narrative.is_some() && r.to_players.is_empty() && r.basis.is_none() {
+            bail!("a reply to the sender needs its basis: plan or procedure, law or regulation, or operational judgement");
         }
         if narrative.is_none() && r.commands.is_empty() {
             bail!("a response needs a narrative or at least one action");

@@ -1247,3 +1247,9 @@ td.num .obs-bar{display:inline-block;vertical-align:middle;margin-right:8px;widt
 #observer-table .obs-table{width:auto;min-width:min(100%,640px)}
 #observer-table .obs-table td,#observer-table .obs-table thead th:not(:first-child){text-align:right;min-width:86px}
 #observer-table .obs-table tbody th{min-width:240px;padding-right:32px}
+/* 01/11 playtest: an open inject gets the wider column, its thread keeps room above the reply box, and a sent reply shows its basis. */
+@media(min-width:1051px){.tactical-grid:has(.inj-detail){grid-template-columns:minmax(0,.8fr) minmax(460px,1.2fr)}}
+.bench-col .tactical-grid:has(.inj-detail){grid-template-columns:minmax(0,1fr)}
+.inj-detail .inj-chat{min-height:160px}.inj-detail .inj-composer{max-height:55%}
+.inj-composer-closed{align-items:center;gap:12px}
+.inj-msg small.inj-basis{display:block;margin-top:4px;color:var(--muted)}
