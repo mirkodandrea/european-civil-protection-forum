@@ -208,7 +208,7 @@ The server tests play the whole EXCON ↔ player ↔ LLM loop over HTTP with a m
 
 ## Desktop builds and releases
 
-`.github/workflows/desktop.yml` builds `ttx` for Windows, macOS and Linux (zip with
+`.github/workflows/desktop.yml` builds `ttx` for Windows and Linux (macOS is commented out in the matrix for now) (zip with
 the scenarios, the web console, a launcher script and `env.example` for the
 OpenRouter key) and smoke-tests each bundle. Every push to `main` refreshes the
 pre-release `download`; a version is released from `main` with

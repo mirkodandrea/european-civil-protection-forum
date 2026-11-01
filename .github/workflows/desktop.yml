@@ -1,6 +1,6 @@
 name: Desktop builds
 
-# ttx (simulator, web server and 3D big screen) for Windows, macOS and Linux,
+# ttx (simulator, web server and 3D big screen) for Windows and Linux (macOS off for now),
 # as zips with the scenarios and the web console. Ported from
 # propagator_abm's desktop workflow.
 on:
@@ -60,10 +60,11 @@ jobs:
             name: windows
             exe: ttx.exe
             launcher: Avvia-TTX.bat
-          - os: macos-15
-            name: macos
-            exe: ttx
-            launcher: Avvia-TTX.command
+          # macOS is off for now: restore this entry to build it again.
+          # - os: macos-15
+          #   name: macos
+          #   exe: ttx
+          #   launcher: Avvia-TTX.command
           - os: ubuntu-22.04
             name: linux
             exe: ttx
