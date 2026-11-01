@@ -434,8 +434,12 @@ impl Component for App {
         ctx.link().send_future(async move {
             let result = async {
                 let access = api::request(&key, "/api/access", None).await?;
-                if access["kind"] == "master" {
+                if access["kind"] == "master" && cfg!(feature = "standalone") {
                     // The server translates player messages to the EXCON language.
+                    // Standalone: the launcher choice of this browser. On a server the
+                    // language is the server's, shared by every EXCON screen, and only
+                    // an explicit choice changes it (`Msg::ExconLang`): a second PC
+                    // opening the console must not switch it back to its own default.
                     let lang = web_sys::window()
                         .and_then(|w| w.local_storage().ok().flatten())
                         .and_then(|s| s.get_item("ttx_excon_lang").ok().flatten())
@@ -535,6 +539,13 @@ impl Component for App {
                     self.page = "evaluator".into()
                 } else if self.is_master() {
                     self.active = "timeline".into();
+                    if !cfg!(feature = "standalone") {
+                        if let Some(l) = self.links["excon_language"].as_str() {
+                            if api::EXCON_LANGUAGES.iter().any(|(id, _)| *id == l) {
+                                self.excon_lang = l.into();
+                            }
+                        }
+                    }
                 } else if !self.is_master() {
                     self.page = "chat".into();
                     self.active = "function".into();
@@ -814,11 +825,17 @@ impl Component for App {
                 if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
                     let _ = s.set_item("ttx_excon_lang", &l);
                 }
-                self.excon_lang = l;
-                // Child views are cached; reloading re-renders every string.
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().reload();
-                }
+                self.excon_lang = l.clone();
+                let token = self.token.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    if !cfg!(feature = "standalone") {
+                        let _ = api::request(&token, "/api/player/master/language", Some(json!({"language": l}))).await;
+                    }
+                    // Child views are cached; reloading re-renders every string.
+                    if let Some(w) = web_sys::window() {
+                        let _ = w.location().reload();
+                    }
+                });
             }
             Msg::CloseInject => {
                 self.inject_open = false;
@@ -1092,14 +1109,20 @@ fn main() {
         yew::Renderer::<role_pick::RolePick>::new().render();
     } else if path.ends_with("observer.html") {
         // One observer in a controlled room: it reads as the EXCON, in the
-        // EXCON console language of this browser (Italian by default).
-        let lang = crate::store_lang();
-        yew::Renderer::<observer::Observers>::with_props(observer::ObserverProps {
-            token: server_master(),
-            lang,
-            visible: true,
-        })
-        .render();
+        // EXCON language of the server (the observer screen is often another PC).
+        wasm_bindgen_futures::spawn_local(async {
+            let links = api::request(&server_master(), "/api/master/access", None).await.unwrap_or_default();
+            let lang = links["excon_language"]
+                .as_str()
+                .filter(|l| api::EXCON_LANGUAGES.iter().any(|(id, _)| id == l))
+                .map_or_else(crate::store_lang, str::to_string);
+            yew::Renderer::<observer::Observers>::with_props(observer::ObserverProps {
+                token: server_master(),
+                lang,
+                visible: true,
+            })
+            .render();
+        });
     } else {
         // `Renderer::new` would use `AppProps::default()`, where `visible` is
         // false (the `prop_or(true)` only applies inside `html!`): the page

@@ -609,8 +609,10 @@ async fn get_access(principal: Principal) -> ApiResult {
 
 #[cfg_attr(not(target_arch = "wasm32"), rocket::get("/api/master/access"))]
 async fn get_access_links(_principal: Principal, s: AppState) -> ApiResult {
+    // `excon_language` is shared by every EXCON and observer screen.
+    let excon_language = s.lock().excon_language.clone();
     Ok(Json(
-        json!({"players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>(), "observer": {"url": "/observer.html"}}),
+        json!({"excon_language": excon_language, "players": s.access.player_ids().iter().map(|role| json!({"role":role,"url":format!("/player.html?role={role}")})).collect::<Vec<_>>(), "evaluators":s.access.evaluators.keys().map(|id| json!({"id":id,"url":format!("/evaluator.html?evaluator={id}")})).collect::<Vec<_>>(), "observer": {"url": "/observer.html"}}),
     ))
 }
 
@@ -1526,7 +1528,16 @@ async fn post_inject(_principal: Principal, s: AppState, b: Json<InjectBody>) ->
         s.lock().validate_observation(o)?;
     }
     let actions = exercise::actions::SendActions { run: None, custom: b.actions.clone() };
-    let ids = flow::send_inject(&s, None, &b.title, &b.sender, &b.recipients, &b.text, &actions).await?;
+    // Inject texts travel in English and are translated per player: an inject the
+    // EXCON writes in its own language goes to English first, or English-speaking
+    // players would receive it untranslated.
+    let language = s.lock().excon_language.clone();
+    let text = if language == "en" || b.text.trim().is_empty() || !s.llm.is_available() {
+        b.text.clone()
+    } else {
+        s.llm.translate_to_english(&b.text, &language).await.unwrap_or_else(|_| b.text.clone())
+    };
+    let ids = flow::send_inject(&s, None, &b.title, &b.sender, &b.recipients, &text, &actions).await?;
     if let Some(o) = b.observation {
         let mut ex = s.lock();
         for id in &ids {

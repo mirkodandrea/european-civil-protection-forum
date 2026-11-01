@@ -243,7 +243,11 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    scheda di ciascun ruolo; le sessioni salvate prima di questa modifica
    (`SavedSession::language_choice` assente) si riprendono con le lingue dello
    scenario. Sul server la lingua della console EXCON è chiesta di nuovo quando
-   l’esercitazione torna al briefing (riavvio). L’EXCON
+   l’esercitazione torna al briefing (riavvio). Sul server la lingua EXCON è
+   una sola (`excon_language`, in `GET /api/master/access`), condivisa da
+   tutte le console e dalla pagina osservatori: aprire la console su un altro
+   PC non la cambia, solo una scelta esplicita sì. Gli inject scritti
+   dall’EXCON in un’altra lingua passano prima all’inglese, poi a ogni player. L’EXCON
    vede chi manca accanto ad “Avvia esercitazione”, che resta disabilitato
    finché tutti hanno scelto; “Avvia comunque” (`POST /api/master/start
    {force:true}`) parte senza attendere. La scheda iniziale
