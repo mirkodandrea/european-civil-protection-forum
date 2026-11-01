@@ -599,20 +599,35 @@ pub async fn run_excon_translator(state: AppState) {
             let ex = state.lock();
             (ex.excon_language.clone(), ex.excon_pending())
         };
-        for (id, text, src) in work {
-            let out = if src == lang || text.trim().is_empty() {
-                text.clone()
-            } else {
-                state.llm.translate(&text, &lang).await.unwrap_or_else(|_| text.clone())
+        for (id, text, src, rationale) in work {
+            let out = to_excon(&state, &text, &src, &lang).await;
+            let rationale = match rationale {
+                Some((r, rsrc)) => Some(to_excon(&state, &r, &rsrc, &lang).await),
+                None => None,
             };
             // The console language may have changed meanwhile: retry then.
             let mut ex = state.lock();
             if ex.excon_language == lang {
-                ex.set_excon_text(id, &lang, out);
+                ex.set_excon_text(id, &lang, out, rationale);
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     }
+}
+
+/// `text` (in `src`) in the EXCON language `lang`; the text itself on failure.
+/// `translate` treats English targets as already English, so an English
+/// console needs `translate_to_english`.
+async fn to_excon(state: &AppState, text: &str, src: &str, lang: &str) -> String {
+    if src == lang || text.trim().is_empty() {
+        return text.to_string();
+    }
+    let out = if lang == "en" {
+        state.llm.translate_to_english(text, src).await
+    } else {
+        state.llm.translate(text, lang).await
+    };
+    out.unwrap_or_else(|_| text.to_string())
 }
 
 /// Wall-time pacing while a decision turn stays open. Revision changes (pause,

@@ -221,3 +221,26 @@ fn advancing_does_not_execute_narratives_and_rollback_restores_prior_outcome() {
     assert_eq!(ex.proposal(p).unwrap().status, ProposalStatus::RolledBack);
     assert!(ex.proposal(p).unwrap().narrative_outcomes.is_empty());
 }
+
+/// An English console reads the English working copy of an Italian reply, not
+/// the player's words; the rationale goes with the player's language.
+#[test]
+fn excon_copy_of_a_reply_follows_the_console_language() {
+    let (mut ex, parent) = fixture();
+    ex.set_language("mayor", "it").unwrap();
+    ex.set_language(MASTER, "en").unwrap();
+    submit(&mut ex, parent);
+    let pending = ex.excon_pending();
+    let (id, text, src, rationale) = pending.last().unwrap().clone();
+    assert_eq!((text.as_str(), src.as_str()), ("Activate psychological support", "en"));
+    assert_eq!(rationale, Some(("Rationale stated by the player".into(), "it".into())));
+
+    ex.set_language(MASTER, "it").unwrap();
+    let (_, text, src, _) = ex.excon_pending().last().unwrap().clone();
+    assert_eq!((text.as_str(), src.as_str()), ("Attivo supporto psicologico", "it"));
+
+    ex.set_excon_text(id, "it", text, Some("Motivazione tradotta".into()));
+    assert!(ex.excon_pending().iter().all(|(m, ..)| *m != id));
+    let m = ex.messages.iter().find(|m| m.id == id).unwrap();
+    assert_eq!(m.rationale_excon.as_deref(), Some("Motivazione tradotta"));
+}

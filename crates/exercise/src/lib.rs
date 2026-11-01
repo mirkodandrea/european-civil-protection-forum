@@ -108,6 +108,9 @@ pub struct Message {
     /// Copy for the EXCON console, in `excon_language` (see [`Exercise::excon_pending`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_excon: Option<String>,
+    /// The reply's rationale in `excon_language`, next to `text_excon`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale_excon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excon_lang: Option<String>,
     pub original: Option<String>,
@@ -839,9 +842,12 @@ impl Exercise {
     }
 
     /// Player messages to the EXCON that still lack a copy in the EXCON
-    /// language: `(id, source text, source language)`. The source is the
-    /// player's original, so the translation never goes through English twice.
-    pub fn excon_pending(&self) -> Vec<(u64, String, String)> {
+    /// language: `(id, source text, source language, rationale)`. The source is
+    /// the player's original, so the translation never goes through English
+    /// twice; an English console takes the English working copy as it is. The
+    /// rationale of a reply comes with its own language (the player's).
+    #[allow(clippy::type_complexity)]
+    pub fn excon_pending(&self) -> Vec<(u64, String, String, Option<(String, String)>)> {
         self.messages
             .iter()
             .filter(|m| {
@@ -850,18 +856,42 @@ impl Exercise {
                     && matches!(m.kind, MsgKind::Reply | MsgKind::Clarification)
                     && m.excon_lang.as_deref() != Some(self.excon_language.as_str())
             })
-            .map(|m| match (&m.original, &m.language_src) {
-                (Some(o), Some(l)) => (m.id, o.clone(), l.clone()),
-                _ => (m.id, m.text_en.clone(), "en".into()),
+            .map(|m| {
+                let rationale = (m.kind == MsgKind::Reply)
+                    .then(|| self.rationale_of(m.proposal))
+                    .flatten()
+                    .map(|r| (r, m.language_src.clone().unwrap_or_else(|| "en".into())));
+                let (text, src) = match (&m.original, &m.language_src) {
+                    (Some(o), Some(l)) if self.excon_language != "en" => (o.clone(), l.clone()),
+                    _ => (m.text_en.clone(), "en".to_string()),
+                };
+                (m.id, text, src, rationale)
             })
             .collect()
     }
 
-    pub fn set_excon_text(&mut self, id: u64, lang: &str, text: String) {
+    pub fn set_excon_text(&mut self, id: u64, lang: &str, text: String, rationale: Option<String>) {
         if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
             m.text_excon = Some(text);
+            m.rationale_excon = rationale;
             m.excon_lang = Some(lang.into());
         }
+    }
+
+    /// The EXCON copy of the reply that declared `proposal`, if translated yet.
+    pub(crate) fn excon_reply_of(&self, proposal: Option<u64>) -> Option<&Message> {
+        let pid = proposal?;
+        self.messages
+            .iter()
+            .find(|m| m.proposal == Some(pid) && m.to == MASTER && m.kind == MsgKind::Reply && m.text_excon.is_some())
+    }
+
+    /// A reply's rationale as the EXCON reads it: its copy in the console
+    /// language, else the player's own words.
+    pub(crate) fn rationale_for_excon(&self, proposal: Option<u64>) -> Option<String> {
+        self.excon_reply_of(proposal)
+            .and_then(|m| m.rationale_excon.clone())
+            .or_else(|| self.rationale_of(proposal))
     }
 
     pub fn set_language(&mut self, role: &str, lang: &str) -> Result<()> {
@@ -1225,6 +1255,7 @@ impl Exercise {
         let reply_to = message_reply_to.or(thread_reply_to);
         let m = Message {
             text_excon: None,
+            rationale_excon: None,
             excon_lang: None,
             original: None,
             language_src: None,

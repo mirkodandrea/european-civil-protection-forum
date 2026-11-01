@@ -135,7 +135,7 @@ impl Exercise {
                             "actions": p.commands.len(), "outcomes": p.narrative_outcomes.len(),
                             "executed": p.executions.iter().filter(|e| e.ok).count()})),
                         "conversation": r.proposal.and_then(|pid| self.proposal(pid)).and_then(|p| p.via_conversation),
-                        "basis": self.basis_of(r.proposal), "basis_note": self.basis_note_of(r.proposal), "rationale": self.rationale_of(r.proposal), "document": r.proposal.and_then(|pid| self.document_of(pid))})
+                        "basis": self.basis_of(r.proposal), "basis_note": self.basis_note_of(r.proposal), "rationale": r.rationale_excon.clone().or_else(|| self.rationale_of(r.proposal)), "document": r.proposal.and_then(|pid| self.document_of(pid))})
                     })
                     .collect();
                 // Latest EXCON verdict on this recipient's responses (newest last).
@@ -171,7 +171,7 @@ impl Exercise {
                     .map(|p| {
                         json!({"id": p.id, "status": p.status, "review": p.review, "summary": p.summary,
                         "original": p.original, "reply_to": p.reply_to, "turn": p.turn,
-                        "basis": self.basis_of(Some(p.id)), "basis_note": self.basis_note_of(Some(p.id)), "rationale": self.rationale_of(Some(p.id)), "document": self.document_of(p.id),
+                        "basis": self.basis_of(Some(p.id)), "basis_note": self.basis_note_of(Some(p.id)), "rationale": self.rationale_for_excon(Some(p.id)), "document": self.document_of(p.id),
                         "role": p.source.label(), "conversation": p.via_conversation,
                         "narrative": p.narrative, "carries_actions": p.carries_actions,
                         "awaiting_clarification": p.status == ProposalStatus::NeedsClarification
@@ -208,7 +208,7 @@ impl Exercise {
                         "clarification_thread": clarification,
                         "basis": if t.kind == MsgKind::Reply { self.basis_of(t.proposal) } else { None },
                         "basis_note": if t.kind == MsgKind::Reply { self.basis_note_of(t.proposal) } else { None },
-                        "rationale": if t.kind == MsgKind::Reply { self.rationale_of(t.proposal) } else { None },
+                        "rationale": if t.kind == MsgKind::Reply { t.rationale_excon.clone().or_else(|| self.rationale_of(t.proposal)) } else { None },
                         "document": if t.kind == MsgKind::Reply { t.proposal.and_then(|pid| self.document_of(pid)) } else { None }})
                     })
                     .collect();
