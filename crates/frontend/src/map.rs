@@ -1758,7 +1758,7 @@ fn draw(
         }
         let area = n(&e["area_ha"]);
         label(
-            &format!("{} · ~{} ha", crate::i18n::tf(lang, "map_estimate", &[text(&e["source"]), text(&e["clock"])]), if area < 10. { format!("{area:.1}") } else { format!("{area:.0}") }),
+            &format!("{} · ~{} ha", crate::i18n::tf(lang, "map_estimate", &[text(&e["source"]), &crate::i18n::clock(lang, text(&e["clock"]))]), if area < 10. { format!("{area:.1}") } else { format!("{area:.0}") }),
             x,
             y - r,
             0,

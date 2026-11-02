@@ -223,15 +223,20 @@ fn the_acceptance_scenario_runs_end_to_end() {
         text, "Per la linea tagliafuoco: tra quali punti e con quali mezzi?",
         "sent as reviewed"
     );
+    // The EXCON wrote in its language; the player reads the translation.
     let asked = ex
         .send_review_question(
             q,
             &text,
+            "Pour la ligne d’arrêt : entre quels points et avec quels moyens ?",
             "For the fire line: between which points and with which means?",
             persona,
         )
         .unwrap();
-    assert_eq!(ex.messages.last().unwrap().text, text);
+    assert_eq!(ex.messages.last().unwrap().text, "Pour la ligne d’arrêt : entre quels points et avec quels moyens ?");
+    assert_eq!(ex.messages.last().unwrap().text_excon.as_deref(), Some(text.as_str()), "the EXCON reads its own words");
+    let sent = ex.review.questions.iter().find(|x| x.id == q).unwrap();
+    assert_eq!(sent.text, text, "the board keeps the EXCON's wording");
     assert_eq!(clarifications(&ex), 1);
     let threads = ex.player_review_threads("fire_commander");
     assert_eq!(threads.len(), 1);
@@ -440,9 +445,15 @@ fn a_gap_the_model_does_not_ask_about_gets_a_template_question() {
     let q: Vec<_> = ex.review.questions.iter().collect();
     assert_eq!(q.len(), 1);
     assert!(q[0].template && q[0].state == QuestionState::Draft);
-    // In the recipient's language (the DOS plays in English here).
+    // In the EXCON's language (English here), whatever the player's: the
+    // player receives its translation when the EXCON sends it.
     assert!(q[0].text.contains("fire line"), "{}", q[0].text);
-    ex.set_language("fire_commander", "it").unwrap();
+    ex.set_language("fire_commander", "fr").unwrap();
+    let rev = ex.begin_review(pid).unwrap();
+    ex.ingest_reading(pid, rev, Reading::default()).unwrap();
+    let draft = ex.review.questions.iter().find(|q| q.state == QuestionState::Draft).unwrap();
+    assert!(draft.text.contains("fire line") && draft.language == "en", "{}", draft.text);
+    ex.set_language(exercise::MASTER, "it").unwrap();
     let rev = ex.begin_review(pid).unwrap();
     ex.ingest_reading(pid, rev, Reading::default()).unwrap();
     let draft = ex

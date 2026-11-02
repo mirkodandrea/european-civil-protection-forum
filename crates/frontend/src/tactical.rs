@@ -2,9 +2,9 @@ use crate::{
     api::{self, list, text},
     i18n,
     map::SituationMap,
-    widgets, Msg,
+    Msg,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use yew::prelude::*;
 
 /// Where a map click points, as words for the reply: a named building, else
@@ -145,9 +145,9 @@ impl crate::player_view::PlayerView {
         <main id="map-view" class="page tactical-view" hidden={self.active!="map"}>
             <section class="tactical-toolbar"><div><strong>{i18n::t(l,"tactical")}</strong><span class="muted">{self.name(&own)}</span></div></section>
             <section class="tactical-resources" id="resources" aria-label={i18n::t(l,"resources")}>{for self.state["resources"].as_object().into_iter().flatten().map(|(id,pool)|{let account=&self.state["resource_accounting"][id];html!{<div class="resource-token"><strong>{account["available"].to_string()}</strong><span>{resource_name(id)}<small>{i18n::tf(l,"res_of",&[&pool["total"].to_string(),&(account["committed"].as_u64().unwrap_or(0)+account["deployed"].as_u64().unwrap_or(0)).to_string()])}</small></span></div>}})}</section>
-            <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[clock,&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
+            <div class="tactical-grid"><section class="tactical-map card"><div class="tactical-map-heading"><h3>{i18n::t(l,"sit_map")}</h3>if !selection.is_empty(){<span class="selection-chip">{i18n::tf(l,"selection",&[&selection])}</span>}</div><p id="map-status" class={classes!("observation-status",(!self.state["map"]["last_observation_clock"].is_string()).then_some("unknown"))}>{if let Some(clock)=self.state["map"]["last_observation_clock"].as_str(){let age=(self.state["time_s"].as_i64().unwrap_or(0)-self.state["map"]["last_observation_s"].as_i64().unwrap_or(0))/60;let source=self.state["map"]["last_observation_source"].as_str().map(String::from).unwrap_or_else(||self.name("master"));let live=list(&self.state["map"]["live_zones"]).iter().map(text).collect::<Vec<_>>().join(", ");format!("{}{}{}",i18n::tf(l,"map_updated",&[&i18n::clock(l,clock),&source]),if age>0{i18n::tf(l,"map_age",&[&age.to_string()])}else{String::new()},if live.is_empty(){String::new()}else{i18n::tf(l,"map_drone_live",&[&live])})}else{i18n::t(l,"no_map_data").into()}}</p>
                 if self.maps{<SituationMap id="player-map" stat={self.stat.clone()} view={view.clone()} simple=true onclick={map_click.clone()} pending={pending.clone()} selected_zones={map_zones.clone()} lang={l.to_string()}/>}<p class="map-instruction">{i18n::t(l,"map_hint_reply")}</p>
-                if !list(&self.state["map"]["forecast_products"]).is_empty(){<details><summary>{i18n::t(l,"forecasts")}</summary>{for list(&self.state["map"]["forecast_products"]).iter().map(|f|widgets::details(i18n::tf(l,"issued",&[&f["issued_s"].to_string()]),&json!({"assumptions":f["assumptions"],"horizons":f["horizons"]})))}</details>}
+                if !list(&self.state["map"]["forecast_products"]).is_empty(){<details><summary>{i18n::t(l,"forecasts")}</summary>{for list(&self.state["map"]["forecast_products"]).iter().map(|f|forecast_details(l,f))}</details>}
                 if !list(&self.state["deployments"]).is_empty(){<details open=true class="tactical-missions"><summary>{i18n::t(l,"missions")}</summary>{for list(&self.state["deployments"]).iter().map(|d|{let drone=list(&self.state["map"]["drones"]).iter().find(|x|x["task"]==d["task"]["id"]).cloned();let detail=match &drone{Some(x)=>i18n::tf(l,"mission_drone_detail",&[&list(&x["zones"]).iter().map(|z|text(z).to_string()).collect::<Vec<_>>().join(", ")]),None=>text(&d["task"]["detail"]).to_string()};html!{<p><b>{resource_name(text(&d["task"]["resource"]))}</b>{format!(" · {}",i18n::mission_status(l,text(&d["task"]["status"])))}<br/><small>{detail}</small></p>}})}</details>}
             </section>
             <section class="tactical-timeline card" id="player-timeline"><header><div><h3>{i18n::t(l,"injects_replies")}</h3><small>{i18n::t(l,"own_events")}</small></div><label>{i18n::t(l,"turn_label")}<select aria-label={i18n::t(l,"player_turn")} value={turn} onchange={self.cb(|e|Msg::Field("work:turn".into(),api::select(e)))}>{for turns.iter().rev().map(|t|html!{<option value={t.to_string()} selected={*t==current_turn}>{t}</option>})}</select></label></header>
@@ -161,6 +161,7 @@ impl crate::player_view::PlayerView {
 #[cfg(test)]
 mod place_tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn building_names_are_not_zone_codes() {
@@ -195,4 +196,14 @@ mod place_tests {
         assert!(body.contains("guide_basis"), "the guide asks for plans, procedures or operational judgement");
         assert!(body.contains("guide_why"), "the guide asks for the rationale");
     }
+}
+
+/// A published forecast as its player reads it: when, which horizons, on
+/// which assumptions (the EXCON's reviewed text).
+fn forecast_details(l: &str, f: &Value) -> Html {
+    let horizons = list(&f["horizons"]).iter().map(|h| format!("+{} {}", h["after_s"].as_i64().unwrap_or(0) / 60, i18n::pair(l, "min", "min"))).collect::<Vec<_>>().join(", ");
+    html! {<details class="rv-details"><summary>{i18n::tf(l, "issued", &[&f["issued_s"].to_string()])}</summary><dl class="rv-dl">
+        <dt>{i18n::pair(l, "Orizzonti", "Horizons")}</dt><dd>{horizons}</dd>
+        if !text(&f["assumptions"]).is_empty(){<dt>{i18n::pair(l, "Ipotesi", "Assumptions")}</dt><dd>{text(&f["assumptions"]).to_string()}</dd>}
+    </dl></details>}
 }

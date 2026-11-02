@@ -133,9 +133,10 @@ pub struct ReviewQuestion {
     pub id: u64,
     pub proposal: u64,
     pub to: String,
-    /// In the recipient's language: what the EXCON reviews, edits and sends verbatim.
+    /// In the EXCON's language: what the EXCON reviews and edits. The player
+    /// receives its translation (the message), never this draft as such.
     pub text: String,
-    /// The recipient's language.
+    /// The language of `text` (the EXCON's when drafted).
     pub language: String,
     /// English working copy, made when the question is sent.
     pub text_en: Option<String>,
@@ -851,7 +852,8 @@ impl Exercise {
         for (to, text, mut about, reason, template) in drafts {
             about.sort_unstable();
             about.dedup();
-            let language = self.language_of(&to);
+            // Drafted in the EXCON's language: translated for the player when sent.
+            let language = self.language_of(MASTER);
             let text = if template {
                 self.template_question(&about, &language)
             } else {
@@ -1162,7 +1164,7 @@ impl Exercise {
             proposal: pid,
             to: to.into(),
             text: text.into(),
-            language: self.language_of(to),
+            language: self.language_of(MASTER),
             text_en: None,
             about: Vec::new(),
             cross_role: to != author,
@@ -1184,8 +1186,9 @@ impl Exercise {
     }
 
     /// What an EXCON-reviewed draft will say: `(recipient, text in the
-    /// recipient's language, persona)`, with the EXCON's edits applied.
-    /// Nothing is sent: the caller makes the English copy, then calls
+    /// EXCON's language, persona)`, with the EXCON's edits applied.
+    /// Nothing is sent: the caller translates it for the recipient and makes
+    /// the English copy, then calls
     /// [`Exercise::send_review_question`].
     pub fn review_question_to_send(
         &self,
@@ -1217,12 +1220,14 @@ impl Exercise {
         ))
     }
 
-    /// The EXCON sends a reviewed draft: `text` exactly as reviewed, in the
-    /// player's language, with its English copy. The only way a question leaves.
+    /// The EXCON sends a reviewed draft: `text` exactly as reviewed (the
+    /// EXCON's language), `player_text` its translation for the recipient,
+    /// `text_en` the English copy. The only way a question leaves.
     pub fn send_review_question(
         &mut self,
         qid: u64,
         text: &str,
+        player_text: &str,
         text_en: &str,
         persona: Option<String>,
     ) -> Result<u64> {
@@ -1252,7 +1257,7 @@ impl Exercise {
             &to,
             MsgKind::Clarification,
             Some("Clarification requested"),
-            text,
+            player_text,
             text_en,
             None,
             thread,
@@ -1267,6 +1272,12 @@ impl Exercise {
         });
         let who = self.persona_name(persona.as_deref(), "en");
         self.set_message_persona(mid, persona.clone());
+        // The EXCON reads its own wording, not the player's translation.
+        let excon = self.excon_language.clone();
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == mid) {
+            m.text_excon = Some(text.trim().into());
+            m.excon_lang = Some(excon);
+        }
         let q = self.question_mut(qid)?;
         q.state = QuestionState::Sent;
         q.text_en = Some(text_en.trim().into());

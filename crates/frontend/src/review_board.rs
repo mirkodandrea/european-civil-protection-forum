@@ -312,8 +312,7 @@ fn review_group(r: &Value, props: &ReviewBoardProps, roles: &[Value], edits: &Us
                         </div>
                         if state=="draft"{<>
                             <textarea class="rb-qtext" data-review-qtext={qid.to_string()} value={draft.clone()} oninput={set(key.clone())}/>
-                            <div class="rb-row"><small class="muted">{crate::exfmt!("Parte così com’è, nella lingua del player ({}).","Sent as written, in the player's language ({}).",text(&q["language"]))}</small>
-                                if !text(&q["reason"]).is_empty()&&q["cross_role"]!=true{<small class="muted">{text(&q["reason"])}</small>}
+                            <div class="rb-row">if !text(&q["reason"]).is_empty()&&q["cross_role"]!=true{<small class="muted">{text(&q["reason"])}</small>}
                                 <div class="grow"/>
                                 <button class="rb-mini" disabled={props.busy} data-review-discard={qid.to_string()} onclick={post(format!("/api/master/review/discard/{qid}"),json!({}))}>{tr("Scarta","Discard")}</button>
                                 <button class="primary" disabled={props.busy||draft.trim().is_empty()} data-review-send={qid.to_string()} onclick={post(format!("/api/master/review/send/{qid}"),json!({"text":draft}))}>{tr("Invia","Send")}</button></div>
@@ -360,7 +359,7 @@ fn ask_form(pid: u64, author: &Value, roles: &[Value], edits: &UseStateHandle<BT
     };
     html! {<details class="rb-ask"><summary>{tr("+ Scrivi una domanda","+ Write a question")}</summary>
         <div class="rb-row"><label>{tr("A ","To ")}<select onchange={on_to}>{for roles.iter().map(|r|{let id=text(&r["id"]).to_string();html!{<option value={id.clone()} selected={id==to}>{text(&r["name"]).to_string()}</option>}})}</select></label></div>
-        <textarea value={txt.clone()} oninput={on_text} placeholder={tr("Nella lingua del player. Diventa una bozza da rivedere.","In the player's language. It becomes a draft to review.")}/>
+        <textarea value={txt.clone()} oninput={on_text} placeholder={tr("Diventa una bozza da rivedere.","It becomes a draft to review.")}/>
         <div class="rb-row"><div class="grow"/><button disabled={busy||txt.trim().is_empty()} onclick={add}>{tr("Aggiungi bozza","Add draft")}</button></div>
     </details>}
 }

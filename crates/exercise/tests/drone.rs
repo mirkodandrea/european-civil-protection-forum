@@ -280,3 +280,33 @@ fn excon_recall_stops_coverage_at_once() {
     assert_eq!(ex.world.d.pools["fire_commander"]["drones"].available(), 1);
     assert_eq!(drone_messages(&ex).last().unwrap(), "Drone returned");
 }
+
+/// Notices the exercise writes itself reach every player in their language:
+/// Italian and English are written here, other languages wait for the
+/// server's translation of the English text (never shown half-done to EXCON).
+#[test]
+fn drone_and_rollback_notices_are_translated_for_other_languages() {
+    let mut ex = exercise_with(|_| {});
+    ex.set_language("fire_commander", "fr").unwrap();
+    ex.set_language("mayor", "it").unwrap();
+    ex.set_language("regional_cp", "en").unwrap();
+    ignite(&mut ex);
+    ex.direct_command(&monitor(&["F3-G4"])).unwrap();
+    let arrival = task(&ex).arrival_s;
+    run_to(&mut ex, arrival + 10, 10);
+    let pending = ex.player_pending();
+    let (id, source, lang) = pending.iter().find(|(id, ..)| ex.messages.iter().any(|m| m.id == *id && m.to == "fire_commander")).cloned().expect("the French player's drone notice waits");
+    assert_eq!(lang, "fr");
+    assert!(source.starts_with("The drone is on station"), "{source}");
+    // A stale translation (other source) is ignored; the right one lands.
+    ex.set_player_text(id, "something else", "x".into());
+    assert!(ex.player_pending().iter().any(|p| p.0 == id));
+    ex.set_player_text(id, &source, "Le drone est en position.".into());
+    assert!(!ex.player_pending().iter().any(|p| p.0 == id));
+    assert_eq!(ex.messages.iter().find(|m| m.id == id).unwrap().text, "Le drone est en position.");
+    // Rollback notices are English: every other language is queued.
+    ex.rollback(1).unwrap();
+    let queued: Vec<String> = ex.player_pending().iter().filter_map(|(id, ..)| ex.messages.iter().find(|m| m.id == *id).map(|m| m.to.clone())).collect();
+    assert!(queued.contains(&"fire_commander".to_string()) && queued.contains(&"mayor".to_string()), "{queued:?}");
+    assert!(!queued.contains(&"regional_cp".to_string()), "{queued:?}");
+}

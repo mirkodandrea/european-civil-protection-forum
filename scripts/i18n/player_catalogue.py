@@ -6,7 +6,8 @@ ka az):
 
 * player keys of `crates/frontend/src/i18n.rs` (`en()`), unless one of the
   per-language catalogues (`i18n_lang`, `i18n_reply`, ...) already has them;
-* English texts of `pair(lang, "it", "en")` calls in `crates/frontend/src`.
+* English texts of `pair(lang, "it", "en")` calls in `crates/frontend/src`;
+* English texts of the reply composer (`i18n_risposte.rs`, `fn en`).
 
 Translations live in `crates/frontend/src/i18n_more.json`
 ({lang: {source: text}}, source = key id or English text). The Rust test
@@ -49,6 +50,10 @@ def sources():
         m = re.search(r'KEYS: \[&str; \d+\] = \[(.*?)\];', body, re.S)
         covered |= {unescape(k) for k in re.findall(STR, m.group(1))}
     out = {k: v for k, v in en.items() if k not in covered}
+    risposte = open(os.path.join(SRC, "i18n_risposte.rs"), encoding="utf8").read()
+    risposte = risposte[risposte.index("fn en(key"):risposte.index("pub fn lookup")]
+    for en_text in re.findall(r'=>\s*' + STR + r',', risposte):
+        out[unescape(en_text)] = unescape(en_text)
     for name in sorted(os.listdir(SRC)):
         if not name.endswith(".rs"):
             continue

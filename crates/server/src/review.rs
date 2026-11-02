@@ -116,37 +116,35 @@ pub(crate) async fn post(
     }
 }
 
-/// Send the draft `qid` as reviewed: the text goes out verbatim in the
-/// player's language; the English copy is a translation for the record.
+/// Send the draft `qid` as reviewed: the EXCON writes in its own language;
+/// the player receives the translation in theirs, the record an English copy.
 async fn send(state: &AppState, qid: u64, b: ReviewBody) -> ApiResult {
-    let (to, text, persona, language, turn, revision) = {
+    let (to, text, persona, excon, player, turn, revision) = {
         let ex = state.lock();
         let (to, text, persona) =
             ex.review_question_to_send(qid, b.text.as_deref(), b.persona.as_deref())?;
-        let language = ex.language_of(&to);
+        let (excon, player) = (ex.language_of(exercise::MASTER), ex.language_of(&to));
         (
             to,
             text,
             persona,
-            language,
+            excon,
+            player,
             ex.turn,
             ex.clock_control.revision,
         )
     };
-    let text_en = if language == "en" || !state.llm.is_available() {
-        text.clone()
+    let player_text = crate::flow::translate_between(state, &text, &excon, &player).await;
+    let text_en = if player == "en" {
+        player_text.clone()
     } else {
-        state
-            .llm
-            .translate_to_english(&text, &language)
-            .await
-            .unwrap_or_else(|_| text.clone())
+        crate::flow::translate_between(state, &text, &excon, "en").await
     };
     let mut ex = state.lock();
     if ex.turn != turn || ex.clock_control.revision != revision {
         return Err(bad("exercise changed while sending; send again"));
     }
-    let message = ex.send_review_question(qid, &text, &text_en, persona)?;
+    let message = ex.send_review_question(qid, &text, &player_text, &text_en, persona)?;
     Ok(Json(json!({"message": message, "to": to})))
 }
 

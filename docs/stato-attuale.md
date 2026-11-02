@@ -89,11 +89,13 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   scartato, mai indovinato. I completi si eseguono subito, senza aspettare i
   chiarimenti.
 - **Domande**: l’AI scrive **una** domanda per player che raccoglie tutte le
-  lacune, nella lingua del player e con la voce del personaggio EXCON (mittente
+  lacune, nella lingua dell’EXCON e con la voce del personaggio EXCON (mittente
   dell’inject o `default_persona`), richiamando la guida alla risposta; se il
   modello non la scrive, una domanda standard (it/en) copre comunque ogni lacuna.
-  **Ogni domanda è una bozza**: l’EXCON la modifica e la invia con un clic
-  (`POST /api/master/review/send/<id>`); nulla parte da solo, nemmeno le domande
+  **Ogni domanda è una bozza**: l’EXCON la modifica nella sua lingua e la invia
+  con un clic (`POST /api/master/review/send/<id>`); all’invio il server la
+  traduce nella lingua del player (copia inglese per il registro) e l’EXCON
+  continua a leggerne la propria versione. Nulla parte da solo, nemmeno le domande
   banali. Può anche scrivere una domanda propria (`ask`) o scartarla (`discard`).
   L’AI può proporre una domanda a un **altro ruolo** (incongruenza tra ruoli: il
   DOS usa il bulldozer del Comune → chiedere al Sindaco?), sempre come bozza.
@@ -609,6 +611,27 @@ scritti in linea come coppia italiano/inglese passano da `i18n::pair`. I test di
 schermata solo player usa il catalogo EXCON (`ex`, `exfmt!`) o un ramo
 italiano/inglese. `ex()` in un pannello player non italiano mostra l’inglese
 (o la traduzione di `i18n_more`), mai l’italiano.
+
+Il compositore delle risposte (`i18n_risposte`, solo it/en nel codice) ha le
+altre lingue in `i18n_more.json`, indicizzate dal testo inglese; per quelle
+chiavi vince sulle chiavi omonime più vecchie, come in it/en. Le etichette
+d’orario del server («Day 1 13:30») passano da `i18n::clock`, che traduce la
+parola del giorno («Jour 1 13:30»); i titoli fissi che il server dà ai propri
+messaggi («Turn status», «Clarification requested», rapporti del drone e delle
+mappe…) passano da `i18n::message_title`.
+
+I testi che l’esercitazione scrive da sé ai player (rollback, drone,
+ricognizione, informazioni cartografiche senza traduzione) sono segnati
+`to_translate`: il ciclo di `flow::run_excon_translator` li traduce nella
+lingua di ciascun player (`player_pending` / `set_player_text`). Le
+etichette delle mappe dei territori in alfabeti non latini (el, uk, hy, ka)
+traslitterano anche i nomi propri («Вальверде», «Βαλβέρδε»).
+
+EXCON e osservatori restano solo italiano/inglese; tutto il resto è
+localizzato. Verifica completa di ogni schermata player:
+`scripts/qa/player-localization.cjs` (player in ucraino, LLM simulato con
+traslitterazione: fallisce se resta una parola in alfabeto latino fuori dalla
+lista ammessa — marchio, «inject», «EXCON», codici di zona e strada).
 
 ## Banco di prova (sviluppo)
 

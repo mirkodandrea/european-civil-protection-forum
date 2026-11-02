@@ -110,6 +110,8 @@ impl Exercise {
             &text_en,
             None,
         );
+        // Italian and English are written here; other languages are translated.
+        self.mark_for_translation(mid, if italian { "it" } else { "en" });
         let persona = self.persona_for(Some(source), None);
         self.set_message_persona(mid, persona);
     }

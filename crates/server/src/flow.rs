@@ -606,6 +606,7 @@ pub async fn settle(state: &AppState) {
 /// Player messages reach the EXCON in the EXCON language, as chat does between
 /// players: the player's own words are translated (or copied when the language
 /// matches), falling back to the English working copy on failure.
+/// The same loop translates the notices the exercise writes itself to players.
 pub async fn run_excon_translator(state: AppState) {
     loop {
         let (lang, work) = {
@@ -624,15 +625,27 @@ pub async fn run_excon_translator(state: AppState) {
                 ex.set_excon_text(id, &lang, out, rationale);
             }
         }
+        // Notices the exercise wrote itself (rollback, drone and map reports)
+        // reach each player in their language.
+        let notices = state.lock().player_pending();
+        for (id, source, lang) in notices {
+            let out = translate_between(&state, &source, "en", &lang).await;
+            state.lock().set_player_text(id, &source, out);
+        }
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     }
 }
 
 /// `text` (in `src`) in the EXCON language `lang`; the text itself on failure.
-/// `translate` treats English targets as already English, so an English
-/// console needs `translate_to_english`.
 async fn to_excon(state: &AppState, text: &str, src: &str, lang: &str) -> String {
-    if src == lang || text.trim().is_empty() {
+    translate_between(state, text, src, lang).await
+}
+
+/// `text` (in `src`) in `lang`; the text itself without an LLM or on failure.
+/// `translate` treats English targets as already English, so an English
+/// target needs `translate_to_english`.
+pub(crate) async fn translate_between(state: &AppState, text: &str, src: &str, lang: &str) -> String {
+    if src == lang || text.trim().is_empty() || !state.llm.is_available() {
         return text.to_string();
     }
     let out = if lang == "en" {

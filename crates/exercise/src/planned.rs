@@ -204,7 +204,7 @@ impl Exercise {
                             .map(|c| c.id);
                         json!({"id": t.id, "kind": t.kind, "from": t.from, "to": t.to,
                         "turn": t.turn, "clock": t.clock, "t_s": t.t_s, "title": t.title,
-                        "text": if t.to != MASTER { &t.text_en } else if t.kind == MsgKind::Chat { t.text_excon.as_ref().unwrap_or(&t.text) } else { t.text_excon.as_ref().unwrap_or(&t.text_en) }, "original": original, "reply_to": t.reply_to,
+                        "text": if t.to != MASTER { t.text_excon.as_ref().unwrap_or(&t.text_en) } else if t.kind == MsgKind::Chat { t.text_excon.as_ref().unwrap_or(&t.text) } else { t.text_excon.as_ref().unwrap_or(&t.text_en) }, "original": original, "reply_to": t.reply_to,
                         "clarification_thread": clarification,
                         "basis": if t.kind == MsgKind::Reply { self.basis_of(t.proposal) } else { None },
                         "basis_note": if t.kind == MsgKind::Reply { self.basis_note_of(t.proposal) } else { None },

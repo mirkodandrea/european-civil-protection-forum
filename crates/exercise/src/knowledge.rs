@@ -328,6 +328,9 @@ impl Exercise {
             &text,
             None,
         );
+        if translated.is_none() {
+            self.mark_for_translation(mid, "en");
+        }
         // The information source is who the player hears it from.
         let persona = self.persona_for(Some(source), None);
         self.set_message_persona(mid, persona);

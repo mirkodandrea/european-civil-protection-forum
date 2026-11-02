@@ -116,6 +116,11 @@ pub struct Message {
     pub original: Option<String>,
     pub language_src: Option<String>,
     pub translation_failed: bool,
+    /// Written by the exercise itself in English for a player of another
+    /// language: the server replaces `text` with its translation
+    /// (see [`Exercise::player_pending`]).
+    #[serde(skip)]
+    pub to_translate: bool,
     /// Unique delivery event, shared by every recipient of an inject.
     pub inject_id: Option<u64>,
     pub reply_to: Option<u64>,
@@ -878,6 +883,40 @@ impl Exercise {
         }
     }
 
+    /// A notice the exercise writes itself to a player (rollback, drone and
+    /// map reports): `text` stays as given until the server translates
+    /// `text_en` into the player's language, unless it already is in it.
+    pub(crate) fn mark_for_translation(&mut self, id: u64, text_language: &str) {
+        let Some(to) = self.messages.iter().find(|m| m.id == id).map(|m| m.to.clone()) else {
+            return;
+        };
+        if to == MASTER || self.language_of(&to) == text_language {
+            return;
+        }
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
+            m.to_translate = true;
+        }
+    }
+
+    /// Notices still waiting for their translation: `(id, English text,
+    /// player language)`.
+    pub fn player_pending(&self) -> Vec<(u64, String, String)> {
+        self.messages
+            .iter()
+            .filter(|m| m.to_translate)
+            .map(|m| (m.id, m.text_en.clone(), self.language_of(&m.to)))
+            .collect()
+    }
+
+    /// The translation of notice `id`, made from `source` (its English text);
+    /// ignored if the notice changed or went away meanwhile.
+    pub fn set_player_text(&mut self, id: u64, source: &str, text: String) {
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id && m.to_translate && m.text_en == source) {
+            m.text = text;
+            m.to_translate = false;
+        }
+    }
+
     /// The EXCON copy of the reply that declared `proposal`, if translated yet.
     pub(crate) fn excon_reply_of(&self, proposal: Option<u64>) -> Option<&Message> {
         let pid = proposal?;
@@ -1177,7 +1216,8 @@ impl Exercise {
                 "The exercise has been rolled back to the start of turn {turn} ({}).",
                 self.world.clock()
             );
-            self.add_message(MASTER, &r, MsgKind::System, None, &text, &text, None);
+            let id = self.add_message(MASTER, &r, MsgKind::System, None, &text, &text, None);
+            self.mark_for_translation(id, "en");
         }
         Ok(())
     }
@@ -1260,6 +1300,7 @@ impl Exercise {
             original: None,
             language_src: None,
             translation_failed: false,
+            to_translate: false,
             inject_id,
             reply_to,
             recipients,

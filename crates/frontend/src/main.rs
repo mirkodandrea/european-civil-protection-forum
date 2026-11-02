@@ -1039,7 +1039,7 @@ impl Component for App {
             </section></div>};
         }
         html! {<>
-            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{text(if self.is_master()||self.is_evaluator(){&self.state["world"]["stats"]["clock"]}else{&self.state["clock"]})}{i18n::t(l,"clock_note")}</div>}</div>if self.is_master()&&!self.is_evaluator()&&!self.state["progress"].is_null(){<timers::ExerciseTimers progress={self.state["progress"].clone()}/>}<div class="grow"/>
+            <header class="topbar" id={format!("app-header-{}",self.own)}><div class="brand"><div class="eyebrow">{"PPRD East 4 · TTX"}</div><h1>{title}</h1></div><div><span class="pill" id="turn">{i18n::tf(l,"turn_phase",&[&self.state["turn"].to_string(),i18n::phase(l,phase)])}</span>{sim_badge}if !compact{<div class="clock" id="clock">{if self.is_master()||self.is_evaluator(){text(&self.state["world"]["stats"]["clock"]).to_string()}else{i18n::clock(l,text(&self.state["clock"]))}}{i18n::t(l,"clock_note")}</div>}</div>if self.is_master()&&!self.is_evaluator()&&!self.state["progress"].is_null(){<timers::ExerciseTimers progress={self.state["progress"].clone()}/>}<div class="grow"/>
             if self.is_master()&&!self.is_evaluator()&&self.page!="history" {{time_controls.clone()}}
             {self.view_notification_bell(ctx)}
             </header>

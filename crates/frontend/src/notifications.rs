@@ -535,7 +535,7 @@ impl App {
             let title = if is_chat {
                 format!("{} · {}", crate::i18n::pair(lang, "Messaggio", "Message"), self.name(peer))
             } else if !text(&m["title"]).is_empty() {
-                text(&m["title"]).to_string()
+                crate::i18n::message_title(lang, text(&m["title"])).to_string()
             } else {
                 crate::i18n::pair(lang, "Aggiornamento ricevuto", "Update received").into()
             };
@@ -762,6 +762,15 @@ impl App {
             .forget();
         }
     }
+    /// A notice's clock as its reader sees it: the player's day word, the
+    /// EXCON's label as is.
+    fn notice_clock(&self, lang: &str, clock: &str) -> String {
+        if self.is_master() || self.is_evaluator() {
+            clock.to_string()
+        } else {
+            crate::i18n::clock(lang, clock)
+        }
+    }
     pub fn view_notification_bell(&self, ctx: &Context<Self>) -> Html {
         let lang = self.lang();
         let l = lang.as_str();
@@ -771,7 +780,7 @@ impl App {
             if self.notifications.open {<button type="button" class="notification-backdrop" tabindex="-1" aria-label={crate::i18n::pair(l,"Chiudi notifiche","Close notifications")} onclick={ctx.link().callback(|_|Msg::ToggleNotifications)}/><section class="notification-panel" id={format!("notification-panel-{}",self.own)} data-notification-panel="true" role="region" aria-label={crate::i18n::pair(l,"Notifiche","Notifications")} onkeydown={ctx.link().batch_callback(|e:KeyboardEvent|if e.key()=="Escape"{Some(Msg::ToggleNotifications)}else{None})}>
                 <header><strong>{crate::i18n::pair(l,"Notifiche","Notifications")}</strong><button type="button" data-mark-notifications-read="true" disabled={unread==0} onclick={ctx.link().callback(|_|Msg::ReadNotifications)}>{crate::i18n::pair(l,"Segna tutte lette","Mark all read")}</button></header>
                 if self.notifications.items.is_empty(){<p class="muted">{crate::i18n::pair(l,"Nessuna notifica","No notifications")}</p>}
-                <ol>{for self.notifications.items.iter().rev().map(|n|{let key=n.key.clone();html!{<li key={key.clone()}><button type="button" data-open-notification={key.clone()} class={classes!("notification-item",(!n.read).then_some("unread-event"),(n.priority==Priority::Action).then_some("needs-action"))} onclick={ctx.link().callback(move |_|Msg::OpenNotification(key.clone()))}><strong>{&n.title}</strong><small>{if n.priority==Priority::Action&&!n.read{format!("{} · {}",crate::i18n::pair(l,"Richiede azione","Needs action"),n.clock)}else{n.clock.clone()}}</small><span>{&n.detail}</span></button></li>}})}</ol>
+                <ol>{for self.notifications.items.iter().rev().map(|n|{let key=n.key.clone();html!{<li key={key.clone()}><button type="button" data-open-notification={key.clone()} class={classes!("notification-item",(!n.read).then_some("unread-event"),(n.priority==Priority::Action).then_some("needs-action"))} onclick={ctx.link().callback(move |_|Msg::OpenNotification(key.clone()))}><strong>{&n.title}</strong><small>{if n.priority==Priority::Action&&!n.read{format!("{} · {}",crate::i18n::pair(l,"Richiede azione","Needs action"),self.notice_clock(l,&n.clock))}else{self.notice_clock(l,&n.clock)}}</small><span>{&n.detail}</span></button></li>}})}</ol>
             </section>}
         </div>}
     }

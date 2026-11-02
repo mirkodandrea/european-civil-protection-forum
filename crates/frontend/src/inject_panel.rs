@@ -175,6 +175,9 @@ fn events(l: &str, it: &Item, name: &dyn Fn(&str) -> String, at: &dyn Fn(i64) ->
     for _ in it.threads.iter().filter(|t| has_status(t, "closed") && t["review"] != true) {
         out.push(ev(Kind::Closed, String::new(), String::new(), i18n::t(l, "thread_closed")));
     }
+    for e in &mut out {
+        e.clock = i18n::clock(l, &e.clock);
+    }
     out
 }
 
@@ -307,7 +310,7 @@ impl crate::player_view::PlayerView {
                 let o=outcome(l,it);
                 let pick={let key=it.key.clone();self.cb(move |_|Msg::OpenInjectDetail(key.clone()))};
                 let (title,meta)=match it.msg{
-                    Some(m)=>(text(&m["title"]).to_string(),format!("{} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&name(text(&m["from"]))]))),
+                    Some(m)=>(i18n::message_title(l,text(&m["title"])).to_string(),format!("{} · {}",i18n::clock(l,text(&m["clock"])),i18n::tf(l,"from",&[&name(text(&m["from"]))]))),
                     None=>(i18n::t(l,"inj_free").to_string(),String::new()),
                 };
                 let last=events(l,it,&name,&|t|self.game_clock(t)).last().map(|e|last_line(l,e));
@@ -331,7 +334,7 @@ impl crate::player_view::PlayerView {
         let conv_open = self.field("inj:conv", "");
         let conv = it.convs.iter().find(|c| c["id"].to_string() == conv_open).copied();
         let head = match it.msg {
-            Some(m) => html! {<><h3 id="inj-modal-title">{text(&m["title"])}</h3><small>{format!("{} · {}",text(&m["clock"]),i18n::tf(l,"from",&[&self.name(text(&m["from"]))]))}</small></>},
+            Some(m) => html! {<><h3 id="inj-modal-title">{i18n::message_title(l,text(&m["title"]))}</h3><small>{format!("{} · {}",i18n::clock(l,text(&m["clock"])),i18n::tf(l,"from",&[&self.name(text(&m["from"]))]))}</small></>},
             None => html! {<h3 id="inj-modal-title">{i18n::t(l,"inj_free")}</h3>},
         };
         let body = if let Some(c) = conv {
@@ -361,7 +364,7 @@ impl crate::player_view::PlayerView {
                     Kind::Question => (false, "question".into(), Some(html! {<span class="pill kind">{i18n::t(l,"inj_clar_label")}</span>})),
                     Kind::Closed => return html! {<li class="inj-sys">{e.text}</li>},
                 };
-                let extra = if list(&e.executions).is_empty() { html! {} } else { html! {<details><summary>{i18n::t(l,"exec_results")}</summary>{crate::render::render_value("executions",&e.executions)}</details>} };
+                let extra = if list(&e.executions).is_empty() { html! {} } else { html! {<details><summary>{i18n::t(l,"exec_results")}</summary>{executions(l,&e.executions)}</details>} };
                 html! {<li class={classes!("inj-msg",if mine{"mine"}else{"theirs"},cls)}>
                     <small><b>{e.who}</b>{format!(" · {}",e.clock)}{tag}</small>
                     if !e.text.is_empty(){<p>{e.text}</p>}
@@ -455,7 +458,7 @@ impl crate::player_view::PlayerView {
         let Some(m) = m else { return html! {} };
         let from = if m["persona"].is_string() { text(&m["persona"]).to_string() } else { self.name(text(&m["from"])) };
         let title_only = (m["title_only"] == true).then(|| i18n::t(l, "inject_title_only"));
-        quote_card(&m["id"], i18n::t(l, "inject"), &format!(" · {} · {}", text(&m["clock"]), i18n::tf(l, "from", &[&from])), text(&m["title"]), text(&m["text"]), title_only)
+        quote_card(&m["id"], i18n::t(l, "inject"), &format!(" · {} · {}", i18n::clock(l,text(&m["clock"])), i18n::tf(l, "from", &[&from])), text(&m["title"]), text(&m["text"]), title_only)
     }
 
     /// Why the conversation was started, as its opening context.
@@ -497,7 +500,7 @@ impl crate::player_view::PlayerView {
                     let quote=m["reply_to"].as_u64().and_then(cited);
                     let body=if mine&&m["original"].is_string(){text(&m["original"])}else{text(&m["text"])};
                     let who=if mine{i18n::t(l,"thread_you").to_string()}else{self.name(text(&m["from"]))};
-                    conv_bubble(mine,m,&who,quote,body,html!{<>
+                    conv_bubble(mine,m,&who,&i18n::clock(l,text(&m["clock"])),quote,body,html!{<>
                         if let Some(pid)=m["proposal"].as_u64(){{self.conv_response_tag(l,pid)}}
                         <button type="button" class="conv-cite" onclick={self.cb(move |_|Msg::Field("inj:conv_reply".into(),id.to_string()))}>{i18n::t(l,"conv_cite")}</button></>})
                 })}
@@ -519,6 +522,18 @@ pub fn quote_card(id: &Value, label: &str, meta: &str, title: &str, body: &str, 
         if let Some(note)=title_only{<p class="muted conv-quote-note">{note.to_string()}</p>}else if !body.is_empty(){<p>{body.to_string()}</p>}</blockquote>}
 }
 
+/// What the simulator did with a reply's actions, in the player's language:
+/// done or not, and which action. The simulator's own note is English, so
+/// only English readers see it.
+fn executions(l: &str, v: &Value) -> Html {
+    html! {<ul class="rv-list">{for list(v).iter().map(|x| {
+        let ok = x["ok"] == true;
+        let note = text(&x["detail"]);
+        html!{<li class="rv-exec"><span class={classes!("pill", if ok {"rv-ok"} else {"rv-bad"})}>{if ok {"✓"} else {"✗"}}</span>{" "}<b>{crate::widgets::command_summary(l, &x["command"])}</b>
+            if l == "en" && !note.is_empty() {<span class="rv-msg">{format!(" — {note}")}</span>}</li>}
+    })}</ul>}
+}
+
 /// Why a conversation was started (who, basis, reference, rationale): its
 /// opening context, for participants and the EXCON viewer.
 pub fn reason_card(head: &str, basis: &str, reference: &str, rationale: &str) -> Html {
@@ -527,11 +542,11 @@ pub fn reason_card(head: &str, basis: &str, reference: &str, rationale: &str) ->
         <p>{rationale.to_string()}</p></div>}
 }
 
-/// One message of a linked conversation: author and time, the cited message,
+/// One message of a linked conversation: author and (localized) time, the cited message,
 /// the text and any `extra` (response tag, cite button).
-pub fn conv_bubble(mine: bool, m: &Value, who: &str, quote: Option<(String, String)>, body: &str, extra: Html) -> Html {
+pub fn conv_bubble(mine: bool, m: &Value, who: &str, clock: &str, quote: Option<(String, String)>, body: &str, extra: Html) -> Html {
     html! {<li key={m["id"].to_string()} class={classes!("inj-msg",if mine{"mine"}else{"theirs"})} data-conv-message={m["id"].to_string()}>
-        <small><b>{who.to_string()}</b>{format!(" · {}",text(&m["clock"]))}</small>
+        <small><b>{who.to_string()}</b>{format!(" · {clock}")}</small>
         if let Some((who,what))=quote{<a class="message-quote-link" data-conv-cites={m["reply_to"].to_string()}><b>{who}</b><span>{what}</span></a>}
         <p>{body.to_string()}</p>
         {extra}</li>}

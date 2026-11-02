@@ -4,6 +4,10 @@ pub use crate::i18n_excon::{ex, is_en, set_ui_lang_if_visible, with_ui_lang};
 pub fn t(lang: &str, key: &'static str) -> &'static str {
     if let Some(s) = crate::i18n_risposte::lookup(lang, key) {
         s
+    } else if let Some(en) = crate::i18n_risposte::fallback(key) {
+        // Other languages: the reply composer's texts, read from `i18n_more`
+        // by their English text (it wins over older keys of the same name).
+        crate::i18n_more::lookup(lang, en).unwrap_or(en)
     } else if let Some(s) = crate::i18n_review::lookup(lang, key) {
         s
     } else if let Some(s) = crate::i18n_lobby::lookup(lang, key) {
@@ -17,7 +21,6 @@ pub fn t(lang: &str, key: &'static str) -> &'static str {
             .or_else(|| crate::i18n_lang::lookup(lang, key))
             .or_else(|| crate::i18n_function::lookup(lang, key))
             .or_else(|| crate::i18n_place::lookup(lang, key))
-            .or_else(|| crate::i18n_risposte::fallback(key))
             .or_else(|| crate::i18n_more::lookup(lang, key))
             .unwrap_or_else(|| en(key))
     }
@@ -30,6 +33,30 @@ pub fn pair(lang: &str, it: &'static str, en: &'static str) -> &'static str {
         "it" => it,
         "en" => en,
         other => crate::i18n_more::lookup(other, en).unwrap_or(en),
+    }
+}
+/// An exercise clock label ("Day 1 13:30") with its day word localized.
+pub fn clock(lang: &str, s: &str) -> String {
+    match s.strip_prefix("Day ") {
+        Some(rest) => format!("{} {rest}", pair(lang, "Giorno", "Day")),
+        None => s.to_string(),
+    }
+}
+/// A fixed English title the server gives its own messages (turn status,
+/// clarification, drone and map reports, ...) in the player's language; other titles
+/// (injects, already translated) pass through.
+pub fn message_title<'a>(lang: &str, title: &'a str) -> &'a str {
+    match title {
+        "Turn status" => pair(lang, "Stato del turno", "Turn status"),
+        "Clarification requested" => pair(lang, "Richiesta di chiarimento", "Clarification requested"),
+        "Orders reviewed" => pair(lang, "Ordini esaminati", "Orders reviewed"),
+        "Narrative outcome" => pair(lang, "Esito narrativo", "Narrative outcome"),
+        "Reviewed forecast" => pair(lang, "Previsione revisionata", "Reviewed forecast"),
+        "Map information" => pair(lang, "Informazioni cartografiche", "Map information"),
+        "Reconnaissance report" => pair(lang, "Ricognizione completata", "Reconnaissance report"),
+        "Drone on station" => pair(lang, "Drone in posizione", "Drone on station"),
+        "Drone returned" => pair(lang, "Drone rientrato", "Drone returned"),
+        _ => title,
     }
 }
 /// Localized command field name (`zone`, `qty`, ...); unknown names pass through.

@@ -121,7 +121,7 @@ impl App {
                         let body = if text(&summary["text"]).is_empty() {html!{<p class="muted">{i18n::t(&lang,"function_summary_empty")}</p>}} else {summary_body(text(&summary["text"]))};
                         html! {<li key={format!("{}:{}",turn,text(&summary["clock"]))} class={classes!("summary-card", format!("summary-{raw_status}"))}>
                             <details open={idx == 0}>
-                                <summary><span class="summary-turn">{turn.clone()}</span><strong>{i18n::tf(&lang,"function_turn_clock",&[&turn,text(&summary["clock"])])}</strong><span class="pill">{status}</span></summary>
+                                <summary><span class="summary-turn">{turn.clone()}</span><strong>{i18n::tf(&lang,"function_turn_clock",&[&turn,&i18n::clock(&lang,text(&summary["clock"]))])}</strong><span class="pill">{status}</span></summary>
                                 {body}
                             </details>
                         </li>}

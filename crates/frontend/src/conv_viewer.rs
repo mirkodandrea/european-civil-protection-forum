@@ -134,7 +134,7 @@ fn conversation(props: &ConvViewerProps, c: &Value) -> Html {
                     if crate::i18n_excon::is_en()&&!original.is_empty()&&original!=text(&m["text_en"]){<details><summary>{crate::exfmt!("Originale","Original")}</summary>{original}</details>}
                     if m["translation_failed"]==true{<small class="danger">{crate::exfmt!("Traduzione non riuscita","Translation failed")}</small>}
                 </>};
-                conv_bubble(false,m,&role_name(roles,text(&m["from"])),quote,body(m),extra)
+                conv_bubble(false,m,&role_name(roles,text(&m["from"])),text(&m["clock"]),quote,body(m),extra)
             })}
             {for list(&c["responses"]).iter().filter_map(|id|id.as_u64()).map(|pid|{
                 let by=list(&props.proposals).iter().find(|p|p["id"]==pid).map(|p|role_name(roles,text(&p["source"]["role"]))).unwrap_or_default();

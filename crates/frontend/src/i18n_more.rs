@@ -29,8 +29,9 @@ mod tests {
 
     const LANGS: [&str; 10] = ["fr", "de", "es", "pt", "ro", "el", "uk", "hy", "ka", "az"];
     /// Screens only players see: every text must go through the catalogues.
-    const PLAYER_FILES: [&str; 8] = [
+    const PLAYER_FILES: [&str; 9] = [
         "inject_panel.rs",
+        "reply_composer.rs",
         "tactical.rs",
         "function.rs",
         "map.rs",
@@ -141,6 +142,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The reply composer (`i18n_risposte`) is Italian/English in code; every
+    /// other language reads it here by its English text, never English.
+    #[test]
+    fn every_reply_composer_text_is_translated_in_every_language() {
+        let body = src("i18n_risposte.rs");
+        let en_body = &body[body.find("fn en(key").unwrap()..body.find("pub fn lookup").unwrap()];
+        let keys: Vec<&str> = en_body
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('"'))
+            .filter_map(|l| l.split_once("\" =>").map(|(k, _)| k))
+            .flat_map(|k| k.split("\" | \""))
+            .collect();
+        assert!(keys.len() > 100, "parsed {} keys", keys.len());
+        let mut missing = Vec::new();
+        for lang in LANGS {
+            for key in &keys {
+                let key: &'static str = Box::leak(key.to_string().into_boxed_str());
+                let en = crate::i18n_risposte::fallback(key).unwrap();
+                let shown = crate::i18n::t(lang, key);
+                if lookup(lang, en) != Some(shown) {
+                    missing.push(format!("{lang}/{key}"));
+                }
+                assert_eq!(shown.matches("{}").count(), en.matches("{}").count(), "{lang}/{key}: placeholders differ");
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "{} missing reply-composer translations (run scripts/i18n/player_catalogue.py): {missing:?}",
+            missing.len()
+        );
+    }
+
+    #[test]
+    fn clock_labels_name_the_day_in_the_player_language() {
+        assert_eq!(crate::i18n::clock("en", "Day 1 13:30"), "Day 1 13:30");
+        assert_eq!(crate::i18n::clock("it", "Day 1 13:30"), "Giorno 1 13:30");
+        assert_eq!(crate::i18n::clock("fr", "Day 2 01:00"), format!("{} 2 01:00", lookup("fr", "Day").unwrap()));
+        assert_eq!(crate::i18n::clock("fr", "13:30"), "13:30");
     }
 
     #[test]
