@@ -191,4 +191,21 @@ mod tests {
         assert_eq!(crate::i18n::pair("fr", "Notifiche", "Notifications"), lookup("fr", "Notifications").unwrap());
         assert_eq!(crate::i18n::pair("xx", "Notifiche", "Notifications"), "Notifications");
     }
+
+    /// For players EXCON does not exist (02/11): exercise control speaks as
+    /// the operations room or the scenario's persona. No player text names it.
+    #[test]
+    fn player_texts_never_name_excon() {
+        for (lang, texts) in catalogue() {
+            for (key, text) in texts {
+                assert!(!text.contains("EXCON") && !text.contains("Exercise control"), "{lang} {key}: {text}");
+            }
+        }
+        for (file, src) in [("i18n.rs", include_str!("i18n.rs")), ("i18n_risposte.rs", include_str!("i18n_risposte.rs"))] {
+            for line in src.lines().filter(|l| l.contains("\" => \"")) {
+                let text = line.split("\" => \"").nth(1).unwrap_or_default();
+                assert!(!text.contains("EXCON") && !text.contains("Exercise control"), "{file}: {line}");
+            }
+        }
+    }
 }

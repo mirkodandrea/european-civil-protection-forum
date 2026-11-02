@@ -127,15 +127,10 @@ pub(crate) async fn start(
         )
     };
     let (english, texts, failed) = translations(&s, &body.text, &language, &targets).await;
-    // The participants read the reason in their own language too.
+    // Only EXCON reads the reason: its English working copy is enough.
     if reason.rationale != exercise::conversations::LEGACY_REASON {
-        let (why_en, why, why_failed) =
-            translations(&s, &reason.rationale, &language, &targets).await;
+        let (why_en, _, _) = translations(&s, &reason.rationale, &language, &[]).await;
         reason.rationale_en = why_en;
-        reason.texts = why;
-        if why_failed {
-            reason.texts.clear();
-        }
     }
     let mut ex = s.lock();
     if ex.turn != turn || ex.clock_control.revision != revision {

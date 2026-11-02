@@ -59,7 +59,7 @@ impl PlayerView {
         if id == "master" {
             // Players never read "EXCON": exercise control speaks as a persona.
             match text(&self.state["default_persona"]) {
-                "" => "EXCON".into(),
+                "" => crate::i18n::t(&self.lang(), "ops_room").to_string(),
                 p => p.into(),
             }
         } else {

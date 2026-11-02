@@ -78,6 +78,13 @@ impl Exercise {
             None => json!([]),
         };
         let mut linked = self.player_linked_conversations(role);
+        // The players' view leaves out why a conversation was started; the AI
+        // that serves EXCON reads it (English line).
+        for c in &mut linked {
+            if let Some(conv) = c["id"].as_u64().and_then(|id| self.linked_conversation(id)) {
+                c["reason"] = json!(conv.reason.line());
+            }
+        }
         if let Some(cid) = conversation {
             let Some(pos) = linked.iter().position(|c| c["id"] == cid) else {
                 bail!("conversation {cid} is not one of yours");

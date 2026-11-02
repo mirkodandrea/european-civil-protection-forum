@@ -908,9 +908,16 @@ impl Exercise {
             .collect()
     }
 
-    /// The translation of notice `id`, made from `source` (its English text);
-    /// ignored if the notice changed or went away meanwhile.
-    pub fn set_player_text(&mut self, id: u64, source: &str, text: String) {
+    /// The translation of notice `id` into `lang`, made from `source` (its
+    /// English text); ignored if the notice changed or went away meanwhile,
+    /// or the player switched language again.
+    pub fn set_player_text(&mut self, id: u64, source: &str, lang: &str, text: String) {
+        let Some(to) = self.messages.iter().find(|m| m.id == id).map(|m| m.to.clone()) else {
+            return;
+        };
+        if self.language_of(&to) != lang {
+            return;
+        }
         if let Some(m) = self.messages.iter_mut().find(|m| m.id == id && m.to_translate && m.text_en == source) {
             m.text = text;
             m.to_translate = false;
@@ -949,10 +956,31 @@ impl Exercise {
         let Some(p) = self.players.get_mut(role) else {
             bail!("unknown role {role}")
         };
-        p.language = lang.to_string();
+        let previous = std::mem::replace(&mut p.language, lang.to_string());
         p.language_confirmed = true;
         self.record("language_set", role, json!({"language": lang}));
+        if previous != lang {
+            self.retranslate_for(role, lang);
+        }
         Ok(())
+    }
+
+    /// A player who confirms or changes their language reads what already
+    /// reached them in the new one (02/11 playtest: an inject sent before
+    /// the Italian player picked Italian stayed English). Received messages
+    /// go back to the translator loop ([`Exercise::player_pending`]), and so
+    /// do the conversation texts ([`Exercise::conversation_pending`]); an
+    /// English reader takes the English working copies at once.
+    fn retranslate_for(&mut self, role: &str, lang: &str) {
+        for m in self.messages.iter_mut().filter(|m| m.to == role && m.from != role && !m.text_en.trim().is_empty()) {
+            if lang == "en" {
+                m.text = m.text_en.clone();
+                m.to_translate = false;
+            } else {
+                m.to_translate = true;
+            }
+        }
+        self.retranslate_conversations_for(role, lang);
     }
 
     /// Expand `"all"` and check role ids.

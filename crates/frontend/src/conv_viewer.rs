@@ -43,17 +43,15 @@ fn body(m: &Value) -> &str {
     }
 }
 
-/// Why the conversation was started, in EXCON's language (English console:
-/// the English copy of the rationale).
-fn reason(c: &Value, roles: &[Value]) -> Html {
-    let r = &c["reason"];
-    if !r.is_object() {
-        return html! {};
-    }
+/// Why the conversation was started, next to its title, in EXCON's language
+/// (English console: the English copy of the rationale). Only EXCON reads it.
+fn reason_line(c: &Value) -> String {
     let lang = if crate::i18n_excon::is_en() { "en" } else { "it" };
-    let rationale = if lang == "en" && !text(&r["rationale_en"]).is_empty() { text(&r["rationale_en"]) } else { text(&r["rationale"]) };
-    let head = crate::i18n::tf(lang, "conv_reason_by", &[&role_name(roles, text(&c["created_by"]))]);
-    crate::inject_panel::reason_card(&head, crate::i18n::t(lang, crate::reply_composer::conversation_basis_label(text(&r["basis"]))), text(&r["reference"]), rationale)
+    let mut r = c["reason"].clone();
+    if lang == "en" && !text(&r["rationale_en"]).is_empty() {
+        r["rationale"] = r["rationale_en"].clone();
+    }
+    crate::inject_panel::reason_line(lang, &r)
 }
 
 fn state_label(proposals: &Value, pid: u64) -> Option<&'static str> {
@@ -92,7 +90,7 @@ pub fn conversation_viewer(props: &ConvViewerProps) -> Html {
                 let responses=list(&c["responses"]).len();
                 let last=list(&c["messages"]).last().map(|m|text(&m["clock"]).to_string()).unwrap_or_default();
                 let onclick={let current=current.clone();Callback::from(move |_|current.set(Some(cid)))};
-                html!{<button key={cid} class={classes!("conv-viewer-item",active.then_some("active"))} data-conv-viewer-item={cid.to_string()} aria-current={active.then_some("true")} {onclick}>
+                html!{<button key={cid} class={classes!("conv-viewer-item",active.then_some("active"))} data-conv-viewer-item={cid.to_string()} aria-current={active.then_some("true")} title={reason_line(c)} {onclick}>
                     <b>{people(c,roles)}</b>
                     <small>{crate::exfmt!("#{} · {} messaggi","#{} · {} messages",cid,list(&c["messages"]).len())}{if last.is_empty(){String::new()}else{format!(" · {last}")}}</small>
                     if responses>0{<span class="pill conv-response-tag">{if responses==1{crate::exfmt!("1 risposta","1 response")}else{crate::exfmt!("{} risposte","{} responses",responses)}}</span>}
@@ -113,6 +111,8 @@ fn conversation(props: &ConvViewerProps, c: &Value) -> Html {
     let cid = c["id"].as_u64().unwrap_or(0);
     let messages = list(&c["messages"]);
     let delivery = c["delivery"].as_u64();
+    let opening = crate::inject_panel::opening_message(c);
+    let reason = reason_line(c);
     let cited = |id: u64| -> Option<(String, String)> {
         if Some(id) == delivery || r["inject_message_id"].as_u64() == Some(id) {
             Some((crate::i18n::ex("Inject").to_string(), text(&r["title"]).to_string()))
@@ -121,13 +121,15 @@ fn conversation(props: &ConvViewerProps, c: &Value) -> Html {
         }
     };
     html! {<div key={cid} class="inj-chat conv-thread" data-conversation={cid.to_string()}>
-        <div class="conv-head"><span><b>{people(c,roles)}</b><small>{crate::exfmt!("Conversazione #{} avviata da {}","Conversation #{} started by {}",cid,role_name(roles,text(&c["created_by"])))}</small></span></div>
-        {quote_card(&r["inject_message_id"],crate::i18n::ex("Inject"),&format!(" · {} · {}",text(&r["clock"]),role_name(roles,text(&r["role"]))),text(&r["title"]),text(&r["inject_text"]),None)}
-        {reason(c,roles)}
+        <div class="conv-head"><span><b>{people(c,roles)}</b><small>{crate::exfmt!("Conversazione #{} avviata da {}","Conversation #{} started by {}",cid,role_name(roles,text(&c["created_by"])))}</small>
+            if !reason.is_empty(){<small class="conv-reason-line" data-conv-reason="">{reason.clone()}</small>}</span></div>
+        {quote_card(&r["inject_message_id"],crate::i18n::ex("Inject"),&format!(" · {} · {}",text(&r["clock"]),role_name(roles,text(&r["role"]))),text(&r["title"]),text(&r["inject_text"]),false)}
         <ol class="inj-chat-inner" role="log">
             if messages.is_empty(){<li class="inj-sys">{crate::exfmt!("Nessun messaggio","No messages")}</li>}
             {for messages.iter().map(|m|{
-                let quote=m["reply_to"].as_u64().and_then(cited);
+                let first=opening==m["id"].as_u64();
+                // The opening message is about the inject quoted above: no citation of it.
+                let quote=m["reply_to"].as_u64().filter(|id|!(first&&Some(*id)==delivery)).and_then(cited);
                 let original=text(&m["original"]);
                 let extra=html!{<>
                     if let Some(pid)=m["proposal"].as_u64(){<small class="pill conv-response-tag" data-conv-response-tag={pid.to_string()}>{match state_label(&props.proposals,pid){Some(s)=>crate::exfmt!("Risposta registrata #{} · {}","Recorded response #{} · {}",pid,s),None=>crate::exfmt!("Risposta registrata #{}","Recorded response #{}",pid)}}</small>}

@@ -299,9 +299,12 @@ fn drone_and_rollback_notices_are_translated_for_other_languages() {
     assert_eq!(lang, "fr");
     assert!(source.starts_with("The drone is on station"), "{source}");
     // A stale translation (other source) is ignored; the right one lands.
-    ex.set_player_text(id, "something else", "x".into());
+    ex.set_player_text(id, "something else", "fr", "x".into());
     assert!(ex.player_pending().iter().any(|p| p.0 == id));
-    ex.set_player_text(id, &source, "Le drone est en position.".into());
+    // So is one made for a language the player has left meanwhile.
+    ex.set_player_text(id, &source, "de", "Die Drohne ist in Position.".into());
+    assert!(ex.player_pending().iter().any(|p| p.0 == id));
+    ex.set_player_text(id, &source, "fr", "Le drone est en position.".into());
     assert!(!ex.player_pending().iter().any(|p| p.0 == id));
     assert_eq!(ex.messages.iter().find(|m| m.id == id).unwrap().text, "Le drone est en position.");
     // Rollback notices are English: every other language is queued.

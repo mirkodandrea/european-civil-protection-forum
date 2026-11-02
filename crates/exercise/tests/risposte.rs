@@ -241,8 +241,9 @@ fn rispondi_to_a_player_opens_or_reuses_the_conversation_with_them() {
     // The recipient reads it as a guest of the inject, in their language.
     let guest = ex.player_linked_conversations("regional_cp");
     assert_eq!(guest[0]["messages"][0]["text"], "[en] Vi giro il bollettino");
-    assert_eq!(guest[0]["reason"]["basis"], "plan");
-    assert_eq!(guest[0]["reason"]["reference"], "Piano comunale, scheda 2");
+    // Why it was started is EXCON's to read (02/11), not the guest's.
+    assert!(guest[0].get("reason").is_none());
+    assert_eq!(ex.master_linked_conversations()[0]["reason"]["reference"], "Piano comunale, scheda 2");
     // The regional level never received the bulletin: its title only.
     assert_eq!(guest[0]["quote"]["title"], "Bollettino");
     assert!(guest[0]["quote"]["text"].is_null());

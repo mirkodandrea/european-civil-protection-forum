@@ -433,7 +433,7 @@ fn a_recipient_invited_to_a_conversation_keeps_their_own_copy() {
 }
 
 #[test]
-fn starting_a_conversation_needs_its_reason_and_participants_read_it() {
+fn starting_a_conversation_needs_its_reason_and_only_excon_reads_it() {
     use conversations::ConversationReason as Why;
     // Validation: a basis, the reference of a plan or law, and a rationale.
     let msg = |r: anyhow::Result<Why>| r.unwrap_err().to_string();
@@ -445,23 +445,22 @@ fn starting_a_conversation_needs_its_reason_and_participants_read_it() {
     let own = Why::new(Some(BasisKind::OperationalJudgment), Some("Piano"), Some(" Il vento gira ")).unwrap();
     assert_eq!((own.reference.as_deref(), own.rationale.as_str()), (None, "Il vento gira"));
     assert_eq!(own.line(), "personal initiative: Il vento gira");
-    // Stored on the conversation, shown to participants (in their language),
-    // to EXCON, in the log and in every participant's AI conversation.
+    // Stored on the conversation, shown to EXCON, in the log and in every
+    // participant's AI conversation; never in the participants' view (02/11).
     let (mut ex, parent) = fixture();
     let mut reason = why();
     reason.rationale_en = "The Region decides on evacuation".into();
-    reason.texts = BTreeMap::from([("regional_cp".into(), "La Région décide".into())]);
     let (cid, _) = ex
         .start_linked_conversation("mayor", parent, &["regional_cp".into()], "Parere?", "Opinion?", &BTreeMap::new(), false, reason)
         .unwrap();
     let c = ex.linked_conversation(cid).unwrap();
     assert_eq!(c.reason.basis, BasisKind::Plan);
     assert_eq!(c.reason.reference.as_deref(), Some("Piano comunale, scheda 4"));
-    let guest = &ex.player_linked_conversations("regional_cp")[0]["reason"];
-    assert_eq!(guest["rationale"], "La Région décide");
-    assert_eq!(guest["basis"], "plan");
-    assert_eq!(guest["reference"], "Piano comunale, scheda 4");
-    assert_eq!(ex.player_linked_conversations("mayor")[0]["reason"]["rationale"], "La Regione decide sull'evacuazione");
+    for role in ["mayor", "regional_cp"] {
+        let view = json!(ex.player_linked_conversations(role)).to_string();
+        assert!(ex.player_linked_conversations(role)[0].get("reason").is_none(), "{role}");
+        assert!(!view.contains("La Regione decide") && !view.contains("Piano comunale, scheda 4") && !view.contains("The Region decides"), "{role}: {view}");
+    }
     let master = &ex.master_linked_conversations()[0]["reason"];
     assert_eq!(master["rationale"], "La Regione decide sull'evacuazione");
     assert_eq!(master["rationale_en"], "The Region decides on evacuation");
@@ -469,9 +468,9 @@ fn starting_a_conversation_needs_its_reason_and_participants_read_it() {
     for role in ["mayor", "regional_cp"] {
         assert!(json!(ex.conversation(role)).to_string().contains("reason: plans (Piano comunale, scheda 4): The Region decides on evacuation"), "{role}");
     }
-    // The AI contexts that read conversations carry it.
+    // The AI contexts that serve EXCON carry it.
     let ctx = ex.player_suggestion_context("regional_cp", "We advise", Some(parent), Some(cid), &[]).unwrap();
-    assert!(ctx.conversations.to_string().contains("La Région décide"));
+    assert!(ctx.conversations.to_string().contains("The Region decides on evacuation"));
     let p = ex.player_response("mayor", narrative("We evacuate", parent)).unwrap();
     assert!(ex.excon_suggestion_context(p).unwrap().conversations.to_string().contains("The Region decides"));
     // Later messages need no reason.
@@ -538,4 +537,47 @@ fn an_order_as_role_is_approved_and_executed_at_once() {
         .to_string();
     assert!(err.contains("Z99"), "{err}");
     assert!(ex.proposals.iter().all(|p| p.status != ProposalStatus::Pending));
+}
+
+/// 02/11 playtest: an inject and a conversation that reached a player before
+/// they picked Italian stayed English. Confirming or changing the language
+/// sends what they received back to the translator loop; English is at once.
+#[test]
+fn a_language_change_translates_again_what_the_player_received() {
+    let (mut ex, parent) = fixture();
+    ex.set_language("mayor", "en").unwrap();
+    ex.set_language("regional_cp", "en").unwrap();
+    // The inject the mayor received goes back to the loop in Italian.
+    ex.set_language("mayor", "it").unwrap();
+    let pending = ex.player_pending();
+    let (id, source, lang) = pending.iter().find(|p| p.0 == parent).cloned().expect("the inject waits");
+    assert_eq!((source.as_str(), lang.as_str()), ("Residents report smoke from the north.", "it"));
+    // A translation for a language the player has left is dropped.
+    ex.set_player_text(id, &source, "de", "Anwohner melden Rauch.".into());
+    assert!(ex.player_pending().iter().any(|p| p.0 == parent));
+    ex.set_player_text(id, &source, "it", "I residenti segnalano fumo.".into());
+    assert_eq!(ex.messages.iter().find(|m| m.id == parent).unwrap().text, "I residenti segnalano fumo.");
+    let cid = conversation(&mut ex, parent);
+    assert!(ex.conversation_pending().is_empty(), "everyone reads the messages already");
+    // The guest's conversation messages are made again in French.
+    ex.set_language("regional_cp", "fr").unwrap();
+    let pending = ex.conversation_pending();
+    let msg = pending.first().cloned().expect("the message waits");
+    assert_eq!((msg.0, msg.2.as_str(), msg.3.as_str(), msg.4.as_str(), msg.5.as_str()), (cid, "regional_cp", "We need your view on the smoke", "en", "fr"));
+    assert!(pending.iter().all(|p| p.2 != "mayor"), "the mayor's own words stay as written");
+    // Until then the English copy shows; a translation for a left language is dropped.
+    assert_eq!(ex.player_linked_conversations("regional_cp")[0]["messages"][0]["text"], "We need your view on the smoke");
+    ex.set_conversation_text(cid, msg.1, "regional_cp", "de", "x".into());
+    assert_eq!(ex.conversation_pending().len(), pending.len());
+    ex.set_conversation_text(cid, msg.1, "regional_cp", "fr", "Votre avis sur la fumée".into());
+    assert_eq!(ex.player_linked_conversations("regional_cp")[0]["messages"][0]["text"], "Votre avis sur la fumée");
+    // A participant who shares the author's language gets the author's words back.
+    ex.set_language("regional_cp", "it").unwrap();
+    let back = ex.conversation_pending().into_iter().next().unwrap();
+    assert_eq!((back.3.as_str(), back.4.as_str()), ("Serve un parere sul fumo", "it"));
+    // English needs no translation.
+    ex.set_language("regional_cp", "en").unwrap();
+    ex.set_language("mayor", "en").unwrap();
+    assert!(ex.conversation_pending().is_empty() && !ex.player_pending().iter().any(|p| p.0 == parent));
+    assert_eq!(ex.messages.iter().find(|m| m.id == parent).unwrap().text, "Residents report smoke from the north.");
 }

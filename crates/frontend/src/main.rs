@@ -311,8 +311,10 @@ impl App {
     fn name(&self, id: &str) -> String {
         if id == "master" {
             // Players never read "EXCON": exercise control speaks as a persona.
-            if self.is_master() || self.is_evaluator() || text(&self.state["default_persona"]).is_empty() {
+            if self.is_master() || self.is_evaluator() {
                 "EXCON".into()
+            } else if text(&self.state["default_persona"]).is_empty() {
+                crate::i18n::t(&self.lang(), "ops_room").to_string()
             } else {
                 text(&self.state["default_persona"]).into()
             }

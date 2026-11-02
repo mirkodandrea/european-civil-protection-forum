@@ -177,17 +177,18 @@ async fn a_linked_conversation_lets_another_player_answer_the_inject() {
     let (status, body) = call(&c, "mayor", "/api/player/mayor/conversations", Some(start)).await;
     assert_eq!(status, Status::Ok, "{body}");
     let cid = body["conversation"].as_u64().unwrap();
-    // The guest reads the inject's title only and why the conversation was
-    // started; the outsider sees nothing.
+    // The guest reads the inject's title only, never why the conversation
+    // was started (EXCON's to read, 02/11); the outsider sees nothing.
     let (_, guest) = call(&c, "regional_cp", "/api/player/regional_cp", None).await;
     let conv = &guest["linked_conversations"][0];
     assert_eq!(conv["quote"]["title"], "Smoke");
     assert!(conv["quote"]["text"].is_null(), "{conv}");
     assert!(!guest.to_string().contains("Smoke over the village"));
     assert_eq!(conv["messages"][0]["text"], "Ci serve il vostro parere");
-    assert_eq!(conv["reason"]["basis"], "plan");
-    assert_eq!(conv["reason"]["reference"], "Piano comunale, scheda 4");
-    assert_eq!(conv["reason"]["rationale"], "La Regione decide se evacuare");
+    assert!(conv.get("reason").is_none(), "{conv}");
+    assert!(!guest.to_string().contains("La Regione decide se evacuare"));
+    let (_, mayor) = call(&c, "mayor", "/api/player/mayor", None).await;
+    assert!(!mayor.to_string().contains("La Regione decide se evacuare"), "not even the one who wrote it");
     assert!(guest["inbox"]
         .as_array()
         .unwrap()

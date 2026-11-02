@@ -781,10 +781,14 @@ impl Fake {
             "clock": clock(*t_s), "text": text, "text_en": text, "original": text, "reply_to": reply_to})).collect();
         let responses: Vec<Value> = self.proposals.iter().filter(|p| p.via_conversation == Some(c.id))
             .map(|p| json!({"id": p.id, "by": p.role, "status": p.status, "narrative": p.narrative, "actions": p.commands.len()})).collect();
-        json!({"id": c.id, "delivery": c.quote, "inject_id": c.delivery, "created_by": c.participants[0], "participants": c.participants,
+        let mut out = json!({"id": c.id, "delivery": c.quote, "inject_id": c.delivery, "created_by": c.participants[0], "participants": c.participants,
             "turn": 1, "t_s": c.messages.first().map(|m| m.4).unwrap_or(0), "quote": quote, "messages": messages, "message_count": c.messages.len(),
-            "reason": {"basis": basis, "reference": reference, "rationale": rationale, "rationale_en": rationale},
-            "responses": if viewer.is_some() { json!(responses) } else { json!(responses.iter().map(|r| r["id"].clone()).collect::<Vec<_>>()) }})
+            "responses": if viewer.is_some() { json!(responses) } else { json!(responses.iter().map(|r| r["id"].clone()).collect::<Vec<_>>()) }});
+        // Why it was started is EXCON's to read (02/11), as on the server.
+        if viewer.is_none() {
+            out["reason"] = json!({"basis": basis, "reference": reference, "rationale": rationale, "rationale_en": rationale});
+        }
+        out
     }
 
     /// `/api/player/<role>`.
@@ -1023,9 +1027,7 @@ mod tests {
         );
         // Police received the inject too: its own copy, text included.
         assert!(f.player("police")["linked_conversations"][0]["quote"]["text"].is_string());
-        let reason = &f.player("police")["linked_conversations"][0]["reason"];
-        assert_eq!((reason["basis"].as_str(), reason["rationale"].as_str()), (Some("operational_judgment"), Some("La Polizia chiude la strada")));
-        assert!(reason["reference"].is_null(), "personal initiative has no reference");
+        assert!(f.player("police")["linked_conversations"][0].get("reason").is_none(), "the reason is EXCON's to read");
         let row = f.master()["inject_responses"]
             .as_array()
             .unwrap()
@@ -1034,12 +1036,15 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(row["conversations"].as_array().unwrap().len(), 1);
+        let reason = &row["conversations"][0]["reason"];
+        assert_eq!((reason["basis"].as_str(), reason["rationale"].as_str()), (Some("operational_judgment"), Some("La Polizia chiude la strada")));
+        assert!(reason["reference"].is_null(), "personal initiative has no reference");
     }
 
-    /// A participant who never received the inject reads its title only; the
-    /// reason travels with the conversation to participants and EXCON.
+    /// A participant who never received the inject reads its title only; why
+    /// the conversation was started is EXCON's to read (02/11).
     #[test]
-    fn a_guest_reads_the_inject_title_and_the_reason_only() {
+    fn a_guest_reads_the_inject_title_only_and_excon_the_reason() {
         let mut f = Fake::new("it");
         f.plan("I2", "Strada chiusa", "La SP12 è bloccata da un albero.", &["mayor"]);
         let d = f.send("I2", &["mayor".into()]).unwrap();
@@ -1051,7 +1056,7 @@ mod tests {
         assert!(guest["quote"]["text"].is_null());
         assert_eq!(guest["quote"]["title_only"], true);
         assert!(!f.player("police").to_string().contains("bloccata"));
-        assert_eq!(guest["reason"]["reference"], "Piano comunale, scheda 2");
+        assert!(guest.get("reason").is_none() && !f.player("police").to_string().contains("Serve la Polizia"));
         assert_eq!(f.player("mayor")["linked_conversations"][0]["quote"]["text"], "La SP12 è bloccata da un albero.");
         let row = f.master()["inject_responses"][0].clone();
         assert_eq!(row["conversations"][0]["reason"]["rationale"], "Serve la Polizia sulla SP12");

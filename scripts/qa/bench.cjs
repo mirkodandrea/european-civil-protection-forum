@@ -86,7 +86,8 @@ const benches={
     await openInject(page,'police');await police.locator('[data-conv-row]').click();
     await police.locator('[data-reply-composer][data-reply-to="players"]').waitFor();
     // The participant reads why the conversation was started.
-    assert.match(await police.locator('[data-conv-reason]').innerText(),/scheda 3[\s\S]*spetta alla Polizia/);
+    // Why it was started is EXCON's to read: not on the participant's page.
+    assert.ok(!(await police.innerText()).includes('spetta alla Polizia'),'the reason is EXCON only');
     await police.locator('#response-narrative').fill('Sì, pattuglia in posizione tra 10 minuti.');
     await police.locator('[data-send-conversation]').click();await done(page,2);
     await mayor.locator('[data-conversation] [data-conv-message]').nth(1).waitFor();
@@ -100,7 +101,7 @@ const benches={
     // The response opens the conversation it came from in the viewer.
     await excon.locator('.response-dialog [data-inspect-conversation]').first().click();
     await excon.locator('.conv-viewer [data-conv-message]').first().waitFor();
-    assert.match(await excon.locator('.conv-viewer [data-conv-reason]').innerText(),/spetta alla Polizia/,'EXCON reads the reason');
+    assert.match(await excon.locator('.conv-viewer [data-conv-reason]').innerText(),/scheda 3[\s\S]*spetta alla Polizia/,'EXCON reads the reason');
     await excon.locator('[data-close-conv-viewer]').click();
   },
   async decide(page){

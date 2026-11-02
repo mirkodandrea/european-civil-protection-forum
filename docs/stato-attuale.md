@@ -41,13 +41,16 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   dell’inject («Altri player · avvia una conversazione») chiede allo stesso modo
   **Su cosa si basa la conversazione** (Piano o procedura / Legge o norma /
   Iniziativa personale, con la riga di riferimento per piano e legge) e **Perché
-  avvii questa conversazione** (obbligatorio); i messaggi successivi dentro una
+  avvii questa conversazione** (obbligatorio: in un box unico nessuno potrebbe
+  garantirlo); fondamento e motivo li legge
+  solo EXCON, accanto al titolo della conversazione nel suo visore: i partecipanti,
+  autore compreso, vedono solo i messaggi (playtest 02/11); i messaggi successivi dentro una
   conversazione non chiedono né fondamento né motivazione; il PDF allegato resta fuori dal box (decisione 30/10). Niente scelta
   preliminare «Risposta all’inject / Inizia una conversazione», niente modale, niente
   secondo pulsante «Rispondi» nella conversazione. Al mittente: `POST
   /api/player/<role>/actions` con `kind: "communication"`, `basis` e, se scritto,
   `basis_note` (stato «Inviata»); ad altri player sotto l’inject: nuova conversazione collegata
-  (`POST …/conversations` con `basis`, `basis_note`, `rationale`, che poi si apre); dentro una conversazione: messaggio ai
+  (`POST …/conversations` con `basis`, `basis_note`, `rationale`, che poi si apre come scheda); dentro una conversazione: messaggio ai
   suoi partecipanti (`POST …/conversations/<id>/messages`) oppure, scegliendo il
   mittente, risposta all’inject con `conversation` = id. Le bozze sono tenute per
   inject e per conversazione. Quando il player ha già risposto a un inject, il box resta
@@ -55,7 +58,10 @@ approvazione nella pagina del player. Solo l’EXCON cambia il mondo, e solo con
   (`data-reply-more`): il messaggio inviato resta leggibile, con la riga «Su cosa si
   basa: <fondamento> · <riferimento> — <motivazione>» e l'orario di gioco («Giorno 1
   13:30», da `start_clock_s`). Sopra i 1050 px il thread dell'inject prende la colonna
-  più larga accanto alla mappa (playtest 01/11). Sotto il box la **guida alla risposta** (cosa, dove —
+  più larga accanto alla mappa (playtest 01/11; dal 02/11 circa il 70%); con un
+  inject aperto su schermi bassi (≤ 900 px, portatili) la fascia delle risorse e
+  l’intestazione del pannello lasciano il posto al thread, e il box resta compatto
+  (testo che cresce con il contenuto, massimo il 45% del pannello). Sotto il box la **guida alla risposta** (cosa, dove —
   zona come F4, lato di zona F4:N, luogo o coordinate —, con quali mezzi, entro
   quando, chi si informa, **su quale piano, procedura, norma o giudizio operativo
   ci si basa** e **perché**, nella stessa risposta, con un esempio) e il materiale di decisione del ruolo (competenze e
@@ -271,13 +277,17 @@ API: `POST /api/master/resolve {minutes?, substep?, until?: "next_inject"|"turn_
    di altri ruoli o EXCON; se l’AI manca, la scheda lo indica. Il rollback elimina
    i riepiloghi dei turni annullati. Nella scheda **Risposte** (en “Response”) la
    mappa tattica sta a sinistra e l’elenco degli inject a destra. Un click su un
-   inject apre al posto dell’elenco il dettaglio (indietro all’elenco, come nelle
-   Conversazioni): thread dell’inject con le risposte, i chiarimenti e gli esiti,
-   conversazioni nate dall’inject (sotto le risposte) e in fondo il **box di
+   inject apre al posto dell’elenco il dettaglio (indietro all’elenco): una sola
+   intestazione (titolo, ora, mittente, stato) e sotto le **schede sorelle** — il
+   thread con il mittente (l’inject con le risposte, i chiarimenti e gli esiti) e
+   una scheda per ogni conversazione nata dall’inject (partecipanti, numero di
+   messaggi) — al posto del secondo livello di dettaglio («Torna al messaggio»)
+   tolto dopo il playtest 02/11. Ogni scheda ha in fondo il **box di
    risposta unico** (vedi «Solo l’EXCON agisce» sopra): destinatario visibile,
    testo e fondamento obbligatori verso il mittente, un solo Invia. Chi ha solo letto l’inject via
-   conversazione apre la conversazione e risponde da lì. Ogni inject può ricevere
-   più risposte.
+   conversazione non ha il thread: la riga apre direttamente la conversazione e
+   risponde da lì. Le chat restano scorse all’ultimo messaggio, ma un thread corto
+   sta subito sotto le schede. Ogni inject può ricevere più risposte.
 3. La risposta è verificata prima di produrre effetti. EXCON vede inject inviati e risposte nella tab Risposte (stato per
    destinatario, badge delle approvazioni), ne controlla la fattibilità e decide:
    approva, rifiuta oppure chiede un chiarimento (la proposta resta aperta con i suoi comandi; la
@@ -442,13 +452,18 @@ esiti; `GET /api/player/<role>` lo risolve (`persona`, `default_persona`) e sost
 ogni «EXCON» residuo nelle stringhe. Le chiavi tradotte con «EXCON» sono state
 riscritte; cinque stringhe (`clock_note`, `sit_report`, `awaiting_start`,
 `inject_info`, `map_legend`) non sono più nel catalogo delle altre lingue (ripiego
-sull’inglese). La console EXCON continua a dire EXCON.
+sull’inglese). Dal 02/11 nemmeno le spiegazioni dell’interfaccia nominano EXCON
+(«EXCON può leggerla», «la legge solo EXCON»), e sotto la risposta al mittente non c’è
+più la spiegazione «la sala operativa legge la risposta…»: per i player EXCON non esiste; un test
+(`player_texts_never_name_excon`) controlla i cataloghi dei player in tutte le lingue.
+La console EXCON continua a dire EXCON.
 
 ### Conversazioni collegate a un inject
 
 Chi ha ricevuto un inject può aprire una conversazione con uno o più altri player
 (nel box di risposta sotto l’inject: **A chi → Altri player**, scelta dei player,
-primo messaggio e **motivo**, Invia); poi prosegue come thread autonomo con l’inject citato in testa
+primo messaggio, **fondamento** e **motivo**, Invia); poi prosegue come scheda
+accanto al thread dell’inject, con l’inject citato in testa
 (riferimento fissato all’apertura) (`exercise::conversations`).
 
 **Motivo obbligatorio all’avvio** (decisione 30/10, `ConversationReason`): su cosa
@@ -458,12 +473,20 @@ si avvia (`rationale`). Il server rifiuta con 400 e un messaggio chiaro un avvio
 motivo (`POST …/conversations`, e anche `POST …/actions` con `to_players` quando apre
 una nuova conversazione); il finto server del banco applica la stessa regola. I
 messaggi successivi non lo chiedono. Il motivo è salvato sulla conversazione
-(`linked_conversations[].reason`), tradotto per ciascun partecipante come i messaggi,
-mostrato ai partecipanti come contesto d’apertura sotto l’inject citato e all’EXCON
-nel visore delle conversazioni (con la copia inglese); entra nel log
-(`conversation_started`), nella conversazione AI di ogni partecipante, nei contesti AI
-che leggono le conversazioni (suggerimenti, lettura della risposta data da una
-conversazione, brief della situazione) e nel debrief. Le sessioni salvate prima di
+(`linked_conversations[].reason`, con la copia inglese `rationale_en`) e lo legge
+**solo EXCON** (decisione 02/11): nel visore delle conversazioni è una riga
+«Su cosa si basa: <fondamento> · <riferimento> — <motivo>» accanto al titolo
+della conversazione (`data-conv-reason`, anche come tooltip nell’elenco), non un
+blocco prima del primo messaggio. La vista dei player (`/api/player/<role>`,
+`player_linked_conversations`) non ha più `reason`, nemmeno per chi l’ha scritto, e
+il motivo non viene tradotto per i partecipanti. Così ogni invio è un solo messaggio
+nella conversazione (playtest 02/11: il blocco «X ha avviato la conversazione»
+seguito dal messaggio sembrava un messaggio sdoppiato); il primo messaggio non
+mostra la citazione dell’inject, già in testa. Entra nel log
+(`conversation_started`), nella conversazione AI di ogni partecipante (mai mostrata
+ai player), nei contesti AI che servono EXCON e leggono le conversazioni (suggerimenti
+— riga inglese `reason` aggiunta alla vista del player —, lettura della risposta data
+da una conversazione, brief della situazione) e nel debrief. Le sessioni salvate prima di
 questa regola si ricaricano: in replay un avvio senza motivo riceve un segnaposto
 (iniziativa personale, «not recorded…»). È privata ai partecipanti verso gli altri player; EXCON
 invece legge la trascrizione completa (`linked_conversations[].messages`: autore, ora,
@@ -473,8 +496,9 @@ nelle evidenze del valutatore (`linked_conversations`). Ogni messaggio può cita
 conversazione o l’inject. Regola di visibilità dell’inject (decisione 30/10): chi partecipa a una
 conversazione su un inject che **non** ha ricevuto ne vede solo **titolo**, mittente e
 ora (per raggruppare la conversazione sotto quell’inject), mai il testo, in nessuna
-lingua: `quote.text` è `null` e `quote.title_only` è `true`; la riga «ospite» e la
-citazione dicono «Solo il titolo». Il testo non arriva nemmeno ai contesti AI di quel
+lingua: `quote.text` è `null` e `quote.title_only` è `true`; la riga «ospite» mostra
+l’ultimo messaggio della conversazione e la citazione solo titolo, mittente e ora,
+senza note (dal 02/11 niente frase «Solo il titolo…»). Il testo non arriva nemmeno ai contesti AI di quel
 player (evidenze del thread, conversazione AI). Chi ha ricevuto l’inject legge la
 propria copia. EXCON vede tutto. Non vede altri inject né altre conversazioni.
 
@@ -494,7 +518,7 @@ riferimento alla conversazione. Fuori dalla conversazione `reply_to` verso quell
   `basis` = `plan|law|operational_judgment`), il riferimento `basis_note` (quale piano,
   procedura o norma; facoltativo per piano e legge, assente per il giudizio
   operativo); il perché sta nel testo della risposta (dal 01/11 niente campo
-  `rationale` verso il mittente; resta per l’avvio di una conversazione). Il PDF resta supportato dall’API ma il box non lo offre più
+  `rationale` verso il mittente; resta, obbligatorio, per l’avvio di una conversazione). Il PDF resta supportato dall’API ma il box non lo offre più
   (era nel vecchio modale con tipo comunicazione/decisione e azioni). La base diventa `Proposal.evidence.basis.kind`
   (`BasisKind::Law` è nuovo) e compare in `inject_responses[].replies[]`, in
   `pending_proposals[]` e nei messaggi `reply` del `thread` come `basis` e `document`;
@@ -623,7 +647,16 @@ mappe…) passano da `i18n::message_title`.
 I testi che l’esercitazione scrive da sé ai player (rollback, drone,
 ricognizione, informazioni cartografiche senza traduzione) sono segnati
 `to_translate`: il ciclo di `flow::run_excon_translator` li traduce nella
-lingua di ciascun player (`player_pending` / `set_player_text`). Le
+lingua di ciascun player (`player_pending` / `set_player_text`).
+Un player che conferma o cambia lingua dopo aver già ricevuto qualcosa (playtest
+02/11: EXCON avvia con «Avvia comunque», manda un inject, poi la Direzione sceglie
+l’italiano e legge ancora l’inglese) rilegge tutto nella nuova lingua:
+`Exercise::set_language` rimette in coda i messaggi ricevuti (dalla copia inglese) e
+toglie le traduzioni delle sue conversazioni; lo stesso ciclo le rifà
+(`conversation_pending` / `set_conversation_text`; chi condivide la lingua
+dell’autore riceve le sue parole, non un doppio passaggio dall’inglese). Fino ad
+allora si legge la copia inglese; una traduzione arrivata per una lingua già
+lasciata viene scartata. Verso l’inglese non serve l’AI. Le
 etichette delle mappe dei territori in alfabeti non latini (el, uk, hy, ka)
 traslitterano anche i nomi propri («Вальверде», «Βαλβέρδε»).
 

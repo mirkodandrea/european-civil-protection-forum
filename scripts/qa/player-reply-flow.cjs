@@ -70,14 +70,14 @@ const col=(page,id)=>page.locator(`[data-bench-col="${id}"]`);
     await shot('2-inject-to-players');
     await mayor.locator('[data-send-conversation]').click();
     await mayor.locator('[data-conversation]').waitFor();
-    // The conversation opens with its reason.
-    assert.match(await mayor.locator('[data-conversation] [data-conv-reason]').innerText(),/serve la strada libera/);
+    // The conversation opens with one message; the reason is EXCON's to read.
+    assert.equal(await mayor.locator('[data-conversation] [data-conv-message]').count(),1,'one opening message');
+    assert.ok(!(await mayor.locator('[data-conversation]').innerText()).includes('serve la strada libera'),'no reason for players');
     // Inside the conversation: participants preselected, no reason asked.
     await police.locator('[data-inject-row]').first().click();await police.locator('[data-conv-row]').click();
     await police.locator('[data-reply-composer][data-reply-to="players"]').waitFor();
-    const policeReason=await police.locator('[data-conversation] [data-conv-reason]').innerText();
-    assert.match(policeReason,/D\.Lgs\. 1\/2018/,'participants read the reference');
-    assert.match(policeReason,/serve la strada libera/,'participants read why');
+    const policeView=await police.locator('[data-conversation]').innerText();
+    assert.ok(!policeView.includes('D.Lgs. 1/2018')&&!policeView.includes('serve la strada libera'),'participants do not read the reason');
     assert.equal(await police.locator('[data-reply-composer] [data-basis]').count(),0,'no basis inside a conversation');
     assert.equal(await police.locator('[data-reply-composer] [data-rationale]').count(),0,'no rationale inside a conversation');
     await police.locator('#response-narrative').fill('Sì, pattuglia in posizione tra 10 minuti.');

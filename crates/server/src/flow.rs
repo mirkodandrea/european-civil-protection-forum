@@ -627,10 +627,16 @@ pub async fn run_excon_translator(state: AppState) {
         }
         // Notices the exercise wrote itself (rollback, drone and map reports)
         // reach each player in their language.
+        // and so does what a player received before confirming or changing language.
         let notices = state.lock().player_pending();
         for (id, source, lang) in notices {
             let out = translate_between(&state, &source, "en", &lang).await;
-            state.lock().set_player_text(id, &source, out);
+            state.lock().set_player_text(id, &source, &lang, out);
+        }
+        let conversation_texts = state.lock().conversation_pending();
+        for (id, message, role, source, src, lang) in conversation_texts {
+            let out = translate_between(&state, &source, &src, &lang).await;
+            state.lock().set_conversation_text(id, message, &role, &lang, out);
         }
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     }

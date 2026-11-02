@@ -10,7 +10,7 @@
 //! * starting one is motivated ([`ConversationReason`]): what it rests on (a
 //!   plan or procedure, a law or regulation, or personal initiative, stored as
 //!   [`BasisKind::OperationalJudgment`]), the reference for a plan or law, and
-//!   why the player starts it. Participants read it as the opening context;
+//!   why the player starts it. Only EXCON reads it (02/11 playtest);
 //!   EXCON and the AI contexts that read conversations get it too. Later
 //!   messages need none of it;
 //! * participants are other known players (1..=[`MAX_PARTICIPANTS`] besides the creator);
@@ -48,6 +48,8 @@ pub struct ConvMessage {
     pub text_en: String,
     /// Role -> text in that role's language.
     pub texts: BTreeMap<String, String>,
+    /// The author's language when writing it.
+    pub language: String,
     /// A previous message of the conversation, or the inject delivery.
     pub reply_to: Option<u64>,
     pub translation_failed: bool,
@@ -56,7 +58,9 @@ pub struct ConvMessage {
     pub proposal: Option<u64>,
 }
 
-/// Why a player started a conversation (required when starting one).
+/// Why a player started a conversation (required when starting one). Only
+/// EXCON reads it (02/11 playtest), next to the conversation's title, and the
+/// AI contexts that serve EXCON; the participants' view leaves it out.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ConversationReason {
     /// Plan, procedure, law, or personal initiative (`OperationalJudgment`).
@@ -68,8 +72,6 @@ pub struct ConversationReason {
     pub rationale: String,
     /// English working copy of the rationale.
     pub rationale_en: String,
-    /// Role -> rationale in that role's language (missing: the English copy).
-    pub texts: BTreeMap<String, String>,
 }
 
 /// Rationale stored, on replay, for a conversation of a session saved before
@@ -106,7 +108,6 @@ impl ConversationReason {
                 .map(String::from),
             rationale: rationale.into(),
             rationale_en: rationale.into(),
-            texts: BTreeMap::new(),
         })
     }
 
@@ -117,7 +118,6 @@ impl ConversationReason {
             reference: None,
             rationale: LEGACY_REASON.into(),
             rationale_en: LEGACY_REASON.into(),
-            texts: BTreeMap::new(),
         }
     }
 
@@ -129,16 +129,6 @@ impl ConversationReason {
         }
     }
 
-    /// The reason as participant `role` reads it.
-    fn for_role(&self, role: &str, creator: &str) -> Value {
-        let text = if role == creator {
-            &self.rationale
-        } else {
-            self.texts.get(role).unwrap_or(&self.rationale_en)
-        };
-        json!({"basis": self.basis, "reference": self.reference, "rationale": text})
-    }
-
     /// The reason as EXCON reads it: original and English copy.
     fn for_master(&self) -> Value {
         json!({"basis": self.basis, "basis_label": self.basis_label(), "reference": self.reference,
@@ -147,9 +137,14 @@ impl ConversationReason {
 
     /// One English line for the AI contexts.
     pub fn line(&self) -> String {
-        match &self.reference {
-            Some(r) => format!("{} ({r}): {}", self.basis_label(), self.rationale_en),
-            None => format!("{}: {}", self.basis_label(), self.rationale_en),
+        let head = match &self.reference {
+            Some(r) => format!("{} ({r})", self.basis_label()),
+            None => self.basis_label().to_string(),
+        };
+        if self.rationale_en.trim().is_empty() {
+            head
+        } else {
+            format!("{head}: {}", self.rationale_en)
         }
     }
 }
@@ -214,6 +209,51 @@ impl Exercise {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// See `Exercise::retranslate_for`: the texts `role` reads in its
+    /// conversations are dropped so the translator loop makes them again in
+    /// `lang` (until then the English copy shows). What `role` wrote stays.
+    pub(crate) fn retranslate_conversations_for(&mut self, role: &str, lang: &str) {
+        for c in self.linked_conversations.iter_mut().filter(|c| c.has(role)) {
+            for m in c.messages.iter_mut().filter(|m| m.from != role) {
+                if lang == "en" {
+                    m.texts.insert(role.into(), m.text_en.clone());
+                } else {
+                    m.texts.remove(role);
+                }
+            }
+        }
+    }
+
+    /// Conversation messages still to translate for a participant:
+    /// `(conversation, message, role, source, source language, target language)`. A participant who shares the author's
+    /// language gets the author's words back, not a round trip through English.
+    #[allow(clippy::type_complexity)]
+    pub fn conversation_pending(&self) -> Vec<(u64, u64, String, String, String, String)> {
+        let mut out = Vec::new();
+        for c in &self.linked_conversations {
+            for role in &c.participants {
+                let lang = self.language_of(role);
+                for m in c.messages.iter().filter(|m| m.from != *role && !m.texts.contains_key(role)) {
+                    let (source, src) = if m.language == lang { (m.original.clone(), lang.clone()) } else { (m.text_en.clone(), "en".into()) };
+                    out.push((c.id, m.id, role.clone(), source, src, lang.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// Store a translation made by the loop, unless the participant's
+    /// language changed meanwhile or the text is already there.
+    pub fn set_conversation_text(&mut self, id: u64, message: u64, role: &str, lang: &str, text: String) {
+        if self.language_of(role) != lang {
+            return;
+        }
+        let Some(m) = self.linked_conversations.iter_mut().find(|c| c.id == id).and_then(|c| c.messages.iter_mut().find(|m| m.id == message)) else {
+            return;
+        };
+        m.texts.entry(role.to_string()).or_insert(text);
     }
 
     pub fn validate_conversation_start(
@@ -395,6 +435,7 @@ impl Exercise {
             original: text.into(),
             text_en: text_en.into(),
             texts: by_role,
+            language: self.language_of(from),
             reply_to,
             translation_failed,
             proposal: None,
@@ -462,7 +503,7 @@ impl Exercise {
                 json!({"id": c.id, "delivery": c.delivery, "inject_id": c.inject_id,
                     "created_by": c.created_by, "participants": c.participants,
                     "turn": c.turn, "t_s": c.t_s, "quote": self.quote(role, c),
-                    "reason": c.reason.for_role(role, &c.created_by),
+                    // Why it was started is for EXCON only (02/11): not in the players' view.
                     // Responses given through this conversation, visible to all its participants.
                     "responses": self.proposals.iter()
                         .filter(|p| p.via_conversation == Some(c.id))

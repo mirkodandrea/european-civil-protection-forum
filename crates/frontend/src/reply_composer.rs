@@ -8,8 +8,9 @@
 //! disabled, with a hint saying what is missing, until text and basis are there.
 //! Starting a conversation with other players (under an inject) is motivated
 //! the same way: what it rests on (plan or procedure, law or regulation, or
-//! personal initiative), which plan or law, and why the player starts it.
-//! Later messages inside a conversation need none of it.
+//! personal initiative), which plan or law, and why the player starts it
+//! (required: a single box could not guarantee it). Only EXCON reads the
+//! reason (02/11 playtest). Later messages inside a conversation need none of it.
 //!
 //! Players never act on the world: what they send to the inject's sender is a
 //! reply EXCON's AI reads to suggest catalogue actions (`exercise::reply_review`);
@@ -317,7 +318,7 @@ impl crate::player_view::PlayerView {
             if !self.error.is_empty(){<p class="error" role="alert">{&self.error}</p>}
             <details class="reply-guide-more"><summary>{i18n::t(l,"guide_open")}</summary>{self.reply_guidance(l,false)}</details>
             <div class="row reply-send-bar">
-                <small class="muted work-hint" role="status">{match missing{Some(m)=>i18n::t(l,m),None=>i18n::t(l,if to==To::Sender{"to_sender_hint"}else{"to_players_hint"})}}</small>
+                <small class="muted work-hint" role="status">{match missing{Some(m)=>i18n::t(l,m),None if to==To::Sender=>"",None=>i18n::t(l,"to_players_hint")}}</small>
                 <div class="grow"/>
                 <button class="primary" id="respond-submit" data-reply-send="" data-respond={(to==To::Sender).then_some("")} data-send-conversation={(to==To::Players).then_some("")} disabled={!ready} onclick={send.reform(|_: MouseEvent| ())}>
                     {if recipients.is_empty(){i18n::t(l,"send_response").to_string()}else{i18n::tf(l,"send_to",&[&recipients.join(", ")])}}</button>
@@ -397,7 +398,7 @@ mod tests {
         assert_eq!(basis_chip_label("plan", "basis_plan", true), "basis_plan");
         assert_eq!(conversation_basis_label("procedure"), "basis_plan");
         assert_eq!(conversation_basis_label("operational_judgment"), "basis_initiative");
-        for key in ["basis_initiative", "conv_basis_title", "conv_rationale_title", "conv_rationale_ph", "need_conv_basis", "need_conv_rationale", "conv_reason_by", "conv_reason_you", "inject_title_only"] {
+        for key in ["basis_initiative", "conv_basis_title", "conv_rationale_title", "conv_rationale_ph", "need_conv_basis", "need_conv_rationale", "guide_basis"] {
             for l in ["it", "en"] {
                 assert!(crate::i18n_risposte::lookup(l, key).is_some(), "{l}:{key}");
             }
