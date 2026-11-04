@@ -7,8 +7,9 @@
 //! - `render thread`: the render schedule less `ManageViews`, where the wait
 //!   for the swap-chain texture (the throttle) happens; `graph` is its
 //!   `render_system` alone (encoding and submit);
-//! - `gpu`: between stage-boundary timestamps of two empty passes placed first
-//!   and last in the render graph (Apple GPUs take no other kind).
+//! - `gpu`: between stage-boundary timestamps of two empty passes submitted
+//!   first and last in the frame's `RenderGraph` schedule (Apple GPUs take no
+//!   other kind).
 //!
 //! The GPU lowers its clock until the work fills the paced frame, so at the
 //! real size `gpu` is only an upper bound and barely moves between versions.
@@ -21,8 +22,8 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 
-use bevy::render::renderer::{render_system, RenderDevice};
-use bevy::render::{Render, RenderApp, RenderSet};
+use bevy::render::renderer::{render_system, RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue};
+use bevy::render::{Render, RenderApp, RenderSystems};
 
 /// Milliseconds per frame, drained by `snap::drive`.
 #[derive(Resource, Clone, Default)]
@@ -121,86 +122,38 @@ impl Plugin for BenchPlugin {
                 pending: Default::default(),
             };
             render.insert_resource(StampsRes(Arc::new(stamps)));
-            let mut graph = render
-                .world_mut()
-                .resource_mut::<bevy::render::render_graph::RenderGraph>();
-            graph.add_node(GpuBegin, StampNode { end: false });
-            graph.add_node(GpuEnd, StampNode { end: true });
-            graph.add_node_edge(GpuBegin, bevy::render::graph::CameraDriverLabel);
-            graph.add_node_edge(bevy::render::graph::CameraDriverLabel, GpuEnd);
+            // Each stamp is its own submission: the first before the cameras'
+            // command buffers (submitted in `Submit`), the last after them.
+            render.add_systems(RenderGraph, (
+                (|st: Res<StampsRes>, d: Res<RenderDevice>, q: Res<RenderQueue>| stamp(&st.0, &d, &q, false)).in_set(RenderGraphSystems::Begin),
+                (|st: Res<StampsRes>, d: Res<RenderDevice>, q: Res<RenderQueue>| stamp(&st.0, &d, &q, true)).in_set(RenderGraphSystems::Finish),
+            ));
         } else {
             warn!("bench: no GPU timestamps on this device");
         }
         render
-            .insert_resource(GpuProbe {
-                start: None,
-                frame: None,
-                before_views: None,
-                encode: costs.encode.clone(),
-                render: costs.render.clone(),
-            })
-            .add_systems(
-                Render,
-                (|mut p: ResMut<GpuProbe>| p.start = Some(Instant::now()))
-                    .in_set(RenderSet::Render)
-                    .before(render_system),
-            )
-            .add_systems(
-                Render,
-                (|mut p: ResMut<GpuProbe>| p.frame = Some(Instant::now()))
-                    .in_set(RenderSet::ExtractCommands),
-            )
+            .insert_resource(GpuProbe { start: None, frame: None, before_views: None, encode: costs.encode.clone(), render: costs.render.clone() })
+            .add_systems(Render, (|mut p: ResMut<GpuProbe>| p.start = Some(Instant::now())).in_set(RenderSystems::Render).before(render_system))
+            .add_systems(Render, (|mut p: ResMut<GpuProbe>| p.frame = Some(Instant::now())).in_set(RenderSystems::ExtractCommands))
             // the swap-chain texture is acquired in `ManageViews`: the throttle, left out
-            .add_systems(
-                Render,
-                (|mut p: ResMut<GpuProbe>| {
-                    p.before_views = p.frame.map(|t| t.elapsed().as_secs_f32())
-                })
-                    .in_set(RenderSet::PrepareAssets),
-            )
-            .add_systems(
-                Render,
-                (|mut p: ResMut<GpuProbe>| p.frame = Some(Instant::now())).in_set(RenderSet::Queue),
-            )
-            .add_systems(
-                Render,
-                (|mut p: ResMut<GpuProbe>| {
-                    if let Some(t) = p.frame.take() {
-                        let before = p.before_views.take().unwrap_or(0.0);
-                        p.render
-                            .lock()
-                            .unwrap()
-                            .push((before + t.elapsed().as_secs_f32()) * 1e3);
-                    }
-                })
-                .in_set(RenderSet::Cleanup),
-            )
-            .add_systems(
-                Render,
-                (|mut p: ResMut<GpuProbe>, st: Option<Res<StampsRes>>| {
-                    if let Some(st) = st {
-                        st.0.map_pending();
-                    }
-                    if let Some(t) = p.start.take() {
-                        p.encode
-                            .lock()
-                            .unwrap()
-                            .push(t.elapsed().as_secs_f32() * 1e3);
-                    }
-                })
-                .in_set(RenderSet::Render)
-                .after(render_system),
-            );
+            .add_systems(Render, (|mut p: ResMut<GpuProbe>| p.before_views = p.frame.map(|t| t.elapsed().as_secs_f32())).in_set(RenderSystems::PrepareAssets))
+            .add_systems(Render, (|mut p: ResMut<GpuProbe>| p.frame = Some(Instant::now())).in_set(RenderSystems::Queue))
+            .add_systems(Render, (|mut p: ResMut<GpuProbe>| {
+                if let Some(t) = p.frame.take() {
+                    let before = p.before_views.take().unwrap_or(0.0);
+                    p.render.lock().unwrap().push((before + t.elapsed().as_secs_f32()) * 1e3);
+                }
+            }).in_set(RenderSystems::Cleanup))
+            .add_systems(Render, (|mut p: ResMut<GpuProbe>, st: Option<Res<StampsRes>>| {
+                if let Some(st) = st {
+                    st.0.map_pending();
+                }
+                if let Some(t) = p.start.take() {
+                    p.encode.lock().unwrap().push(t.elapsed().as_secs_f32() * 1e3);
+                }
+            }).in_set(RenderSystems::Render).after(render_system));
     }
 }
-
-/// Two empty render passes, first and last in the render graph, whose
-/// stage-boundary timestamps (the only kind Apple GPUs take) bracket the
-/// frame's GPU work.
-#[derive(bevy::render::render_graph::RenderLabel, Debug, Clone, PartialEq, Eq, Hash)]
-struct GpuBegin;
-#[derive(bevy::render::render_graph::RenderLabel, Debug, Clone, PartialEq, Eq, Hash)]
-struct GpuEnd;
 
 struct Stamps {
     set: wgpu::QuerySet,
@@ -225,11 +178,8 @@ impl Stamps {
             buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
                 if r.is_ok() {
                     let t: [u64; 2] = {
-                        let v = b.slice(..).get_mapped_range();
-                        [
-                            u64::from_le_bytes(v[0..8].try_into().unwrap()),
-                            u64::from_le_bytes(v[8..16].try_into().unwrap()),
-                        ]
+                        let v = b.slice(..).get_mapped_range().expect("mapped for reading");
+                        [u64::from_le_bytes(v[0..8].try_into().unwrap()), u64::from_le_bytes(v[8..16].try_into().unwrap())]
                     };
                     b.unmap();
                     if t[1] > t[0] {
@@ -247,54 +197,39 @@ impl Stamps {
 #[derive(Resource, Clone)]
 struct StampsRes(Arc<Stamps>);
 
-struct StampNode {
-    end: bool,
-}
-
-impl bevy::render::render_graph::Node for StampNode {
-    fn run(
-        &self,
-        _graph: &mut bevy::render::render_graph::RenderGraphContext,
-        ctx: &mut bevy::render::renderer::RenderContext,
-        world: &World,
-    ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        let Some(st) = world.get_resource::<StampsRes>() else {
-            return Ok(());
-        };
-        let st = &st.0;
-        let enc = ctx.command_encoder();
-        {
-            let _pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("bench_stamp"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &st.target,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
-                    query_set: &st.set,
-                    beginning_of_pass_write_index: (!self.end).then_some(0),
-                    end_of_pass_write_index: self.end.then_some(1),
-                }),
-                occlusion_query_set: None,
-            });
-        }
-        if !self.end {
-            return Ok(());
-        }
+/// An empty render pass whose stage-boundary timestamp brackets the frame's
+/// GPU work; the last one also copies both stamps out for reading.
+fn stamp(st: &Stamps, device: &RenderDevice, queue: &RenderQueue, end: bool) {
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bench_stamp") });
+    {
+        let _pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("bench_stamp"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &st.target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
+                query_set: &st.set,
+                beginning_of_pass_write_index: (!end).then_some(0),
+                end_of_pass_write_index: end.then_some(1),
+            }),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+    if end {
         use std::sync::atomic::Ordering;
         let n = st.next.fetch_add(1, Ordering::Relaxed) % st.ring.len();
         let (buf, free) = &st.ring[n];
-        if !free.swap(false, Ordering::AcqRel) {
-            return Ok(()); // still mapped from an earlier frame: skip this one
+        // still mapped from an earlier frame: skip this one
+        if free.swap(false, Ordering::AcqRel) {
+            enc.resolve_query_set(&st.set, 0..2, &st.resolve, 0);
+            enc.copy_buffer_to_buffer(&st.resolve, 0, buf, 0, 16);
+            st.pending.lock().unwrap().push(n);
         }
-        enc.resolve_query_set(&st.set, 0..2, &st.resolve, 0);
-        enc.copy_buffer_to_buffer(&st.resolve, 0, buf, 0, 16);
-        st.pending.lock().unwrap().push(n);
-        Ok(())
     }
+    queue.submit([enc.finish()]);
 }

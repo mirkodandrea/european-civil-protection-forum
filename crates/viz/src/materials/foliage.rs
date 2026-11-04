@@ -2,22 +2,19 @@
 //! which apply each plant's fire state from a small per-chunk image
 //! (`shaders/veg_state.wgsl`, `vegetation.rs`).
 
-use bevy::asset::load_internal_asset;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::asset::uuid_handle;
 use bevy::prelude::*;
-use bevy::render::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
+use bevy::shader::ShaderRef;
+use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError, VertexFormat,
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError, VertexFormat,
 };
 
-const SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x91A7_44D2_6B0E_4C71_AA90_2201_88C4_2F15);
-const STATE_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x91A7_44D2_6B0E_4C71_AA90_2201_88C4_2F11);
-const VERTEX_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x91A7_44D2_6B0E_4C71_AA90_2201_88C4_2F12);
-const PREPASS_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x91A7_44D2_6B0E_4C71_AA90_2201_88C4_2F13);
+const SHADER_HANDLE: Handle<Shader> = uuid_handle!("91a744d2-6b0e-4c71-aa90-220188c42f15");
+const STATE_SHADER_HANDLE: Handle<Shader> = uuid_handle!("91a744d2-6b0e-4c71-aa90-220188c42f11");
+const VERTEX_SHADER_HANDLE: Handle<Shader> = uuid_handle!("91a744d2-6b0e-4c71-aa90-220188c42f12");
+const PREPASS_SHADER_HANDLE: Handle<Shader> = uuid_handle!("91a744d2-6b0e-4c71-aa90-220188c42f13");
 
 /// Which plant of its chunk a vertex belongs to (bit 31: the burnt-remains
 /// layer), so the vertex stage finds the plant's fire state.
@@ -76,7 +73,7 @@ impl Material for FoliageMaterial {
     /// leaves (Bevy's diffuse transmission, set per pixel in `foliage.wgsl`).
     /// The plant index joins the mesh's one interleaved vertex buffer.
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -102,30 +99,10 @@ pub(super) struct FoliagePlugin;
 
 impl Plugin for FoliagePlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            STATE_SHADER_HANDLE,
-            "../shaders/veg_state.wgsl",
-            Shader::from_wgsl
-        );
-        load_internal_asset!(
-            app,
-            VERTEX_SHADER_HANDLE,
-            "../shaders/veg_vertex.wgsl",
-            Shader::from_wgsl
-        );
-        load_internal_asset!(
-            app,
-            PREPASS_SHADER_HANDLE,
-            "../shaders/veg_prepass.wgsl",
-            Shader::from_wgsl
-        );
-        load_internal_asset!(
-            app,
-            SHADER_HANDLE,
-            "../shaders/foliage.wgsl",
-            Shader::from_wgsl
-        );
+        crate::load_wesl!(app, STATE_SHADER_HANDLE, "../shaders/veg_state.wesl");
+        crate::load_wesl!(app, VERTEX_SHADER_HANDLE, "../shaders/veg_vertex.wesl");
+        crate::load_wesl!(app, PREPASS_SHADER_HANDLE, "../shaders/veg_prepass.wesl");
+        crate::load_wesl!(app, SHADER_HANDLE, "../shaders/foliage.wesl");
         app.add_plugins(MaterialPlugin::<FoliageMaterial>::default());
     }
 }

@@ -1,0 +1,5 @@
+# Bevy 0.20 needs Rust 1.97.1 (its MSRV). Pinned here so the system default
+# toolchain stays as it is; rustup installs this one on first use.
+[toolchain]
+channel = "1.97.1"
+targets = ["wasm32-unknown-unknown"]

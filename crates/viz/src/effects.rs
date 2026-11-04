@@ -18,10 +18,8 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use bevy::render::{
-    mesh::{Indices, PrimitiveTopology},
-    render_asset::RenderAssetUsages,
-};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use scenario::{Pos, Scenario};
 use view::{cell, TaskStatus};
 
@@ -138,13 +136,8 @@ pub(crate) fn spawn_puff(
     p: PuffSpec,
 ) {
     commands.spawn((
-        PbrBundle {
-            mesh: fx.puff.clone(),
-            material: material.clone(),
-            transform: Transform::from_translation(p.at).with_scale(Vec3::splat(p.size)),
-            ..default()
-        },
-        bevy::pbr::NotShadowCaster,
+        (Mesh3d(fx.puff.clone()), MeshMaterial3d(material.clone()), Transform::from_translation(p.at).with_scale(Vec3::splat(p.size))),
+        bevy::light::NotShadowCaster,
         Puff {
             vel: p.vel,
             age: 0.0,
@@ -164,7 +157,7 @@ pub fn puffs(
     time: Res<Time>,
     mut q: Query<(Entity, &mut Puff, &mut Transform)>,
 ) {
-    let dt = time.delta_seconds().min(0.1);
+    let dt = time.delta_secs().min(0.1);
     for (e, mut p, mut tf) in &mut q {
         p.age += dt;
         if p.age >= p.life {
@@ -250,7 +243,7 @@ pub fn water_drops(
         return;
     };
     let s = &scn.0;
-    let now = time.elapsed_seconds();
+    let now = time.elapsed_secs();
     let scene = Arc::as_ptr(&scn.0) as usize;
     if st.scene != scene {
         *st = DropState { scene, ..default() };
@@ -290,13 +283,7 @@ pub fn water_drops(
             let (mesh, material) = pal.body("tanker");
             commands
                 .spawn((
-                    MaterialMeshBundle {
-                        mesh,
-                        material,
-                        transform: Transform::from_scale(Vec3::splat(2.8)),
-                        visibility: Visibility::Hidden,
-                        ..default()
-                    },
+                    (Mesh3d(mesh), MeshMaterial3d(material), Transform::from_scale(Vec3::splat(2.8)), Visibility::Hidden),
                     GhostTanker,
                 ))
                 .id()
@@ -323,7 +310,7 @@ pub fn water_drops(
         let t = now - a.start;
         if t > PASS_S + 0.5 {
             if let Some(g) = a.ghost {
-                commands.entity(g).despawn_recursive();
+                commands.entity(g).despawn();
             }
             return false;
         }
@@ -487,13 +474,13 @@ pub fn ground_work(
     snap: Res<Snapshot>,
     fx: Option<Res<EffectAssets>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut jets: Query<(Entity, &Jet, &Handle<Mesh>)>,
+    mut jets: Query<(Entity, &Jet, &Mesh3d)>,
     puffs: Query<(), With<Puff>>,
     mut noise: Local<Noise>,
 ) {
     let Some(fx) = fx else { return };
     let s = &scn.0;
-    let now = time.elapsed_seconds();
+    let now = time.elapsed_secs();
     let mut budget = MAX_PUFFS.saturating_sub(puffs.iter().count());
     let working = |t: &&view::Deployment| t.status == TaskStatus::Working && t.qty > 0;
     let engines: Vec<&view::Deployment> = snap
@@ -540,7 +527,7 @@ pub fn ground_work(
                 (to_bevy(s, p, 0.0).with_y(y), (1.6 + 2.6 * t) * ripple)
             })
             .collect();
-        if let Some(m) = meshes.get_mut(handle) {
+        if let Some(mut m) = meshes.get_mut(handle) {
             *m = arc_mesh(&points);
         }
         commands.entity(e).insert(Visibility::Inherited);
@@ -579,15 +566,12 @@ pub fn ground_work(
         }
         let flat: Vec<(Vec3, f32)> = (0..=ARC_SEGMENTS).map(|_| (Vec3::ZERO, 0.0)).collect();
         commands.spawn((
-            PbrBundle {
-                // Never an empty mesh: the prepass panics on one.
-                mesh: meshes.add(arc_mesh(&flat)),
-                material: fx.jet.clone(),
-                visibility: Visibility::Hidden,
-                ..default()
-            },
-            bevy::pbr::NotShadowCaster,
-            bevy::render::view::NoFrustumCulling,
+            // Never an empty mesh: the prepass panics on one.
+            Mesh3d(meshes.add(arc_mesh(&flat))),
+            MeshMaterial3d(fx.jet.clone()),
+            Visibility::Hidden,
+            bevy::light::NotShadowCaster,
+            bevy::camera::visibility::NoFrustumCulling,
             Jet { task: task.id },
         ));
     }
@@ -691,12 +675,8 @@ pub fn wet_ground(
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
     mesh.insert_indices(Indices::U32(idx));
     commands.spawn((
-        PbrBundle {
-            mesh: meshes.add(mesh),
-            material: fx.wet.clone(),
-            ..default()
-        },
-        bevy::pbr::NotShadowCaster,
+        (Mesh3d(meshes.add(mesh)), MeshMaterial3d(fx.wet.clone())),
+        bevy::light::NotShadowCaster,
         WetLayer,
     ));
 }
@@ -932,8 +912,8 @@ pub fn evacuation(
 ) {
     let Some(pal) = pal else { return };
     let s = &scn.0;
-    let now = time.elapsed_seconds();
-    let dt = time.delta_seconds().min(0.1);
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.1);
     let scene = Arc::as_ptr(&scn.0) as usize;
     if st.scene != scene || snap.time_s < st.last_time_s {
         // A new territory or a rollback: what was on the road is gone.
@@ -942,7 +922,7 @@ pub fn evacuation(
         st.emitters.clear();
         st.entries.clear();
         for (e, ..) in &cars {
-            commands.entity(e).despawn_recursive();
+            commands.entity(e).despawn();
         }
     }
     st.last_time_s = snap.time_s;
@@ -951,7 +931,7 @@ pub fn evacuation(
     for (e, mut car, mut tf) in &mut cars {
         car.d += CAR_MPS * dt;
         if car.d >= car.lane.length() {
-            commands.entity(e).despawn_recursive();
+            commands.entity(e).despawn();
             continue;
         }
         let (p, dir) = car.lane.sample(car.d);
@@ -1028,12 +1008,7 @@ pub fn evacuation(
         let (mesh, material) = pal.body(if em.bus { "bus" } else { "car" });
         let (p, _) = em.lane.sample(0.0);
         commands.spawn((
-            MaterialMeshBundle {
-                mesh,
-                material,
-                transform: Transform::from_translation(p).with_scale(Vec3::splat(2.0)),
-                ..default()
-            },
+            (Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(p).with_scale(Vec3::splat(2.0))),
             EvacVehicle {
                 lane: em.lane.clone(),
                 d: 0.0,

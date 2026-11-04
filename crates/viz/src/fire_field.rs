@@ -21,7 +21,7 @@ pub fn toggle(
     mut presentation: ResMut<FirePresentation>,
     mut ctx: bevy_egui::EguiContexts,
 ) {
-    if keys.just_pressed(KeyCode::KeyV) && !ctx.ctx_mut().wants_keyboard_input() {
+    if keys.just_pressed(KeyCode::KeyV) && !ctx.ctx_mut().is_ok_and(|c| c.egui_wants_keyboard_input()) {
         presentation.continuous = !presentation.continuous;
     }
 }

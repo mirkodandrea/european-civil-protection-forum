@@ -1,18 +1,14 @@
 //! Structures (`shaders/structure.wgsl`): StandardMaterial, so a model brings
 //! its own colours, maps and alpha, plus a procedural surface finish.
 
-use bevy::asset::load_internal_asset;
-use bevy::pbr::{
-    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
-};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
+use bevy::asset::uuid_handle;
 use bevy::prelude::*;
-use bevy::render::mesh::MeshVertexBufferLayoutRef;
-use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
-};
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError};
+use bevy::shader::ShaderRef;
 
-const SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x91A7_44D2_6B0E_4C71_AA90_2201_88C4_2F16);
+const SHADER_HANDLE: Handle<Shader> = uuid_handle!("91a744d2-6b0e-4c71-aa90-220188c42f16");
 
 /// Surface finish of a structure, drawn over its base colour in world (or
 /// object) metres. A shader def each: one pipeline per finish.
@@ -108,12 +104,7 @@ pub(super) struct StructurePlugin;
 
 impl Plugin for StructurePlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            SHADER_HANDLE,
-            "../shaders/structure.wgsl",
-            Shader::from_wgsl
-        );
+        crate::load_wesl!(app, SHADER_HANDLE, "../shaders/structure.wesl");
         app.add_plugins(MaterialPlugin::<StructureMaterial>::default());
     }
 }

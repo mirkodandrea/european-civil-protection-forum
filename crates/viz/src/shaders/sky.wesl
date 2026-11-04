@@ -3,8 +3,8 @@
 // recomputes the four colours below every frame from the sun's actual
 // elevation, so this shader only has to blend them and paint the disc.
 
-#import bevy_pbr::forward_io::VertexOutput
-#import bevy_pbr::mesh_view_bindings::view
+import bevy_pbr::render::forward_io::VertexOutput;
+import bevy_pbr::render::mesh_view_bindings::view;
 
 struct SkyUniform {
     sun_dir: vec4<f32>,      // xyz: direction to the sun. w: day gate, 0..1.
@@ -17,7 +17,7 @@ struct SkyUniform {
     cloud_lit: vec4<f32>,
     cloud_shade: vec4<f32>,
 };
-@group(2) @binding(0) var<uniform> sky: SkyUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> sky: SkyUniform;
 
 // Volumetric clouds: a slab between CLOUD_BOTTOM and CLOUD_TOP, ray-marched
 // through a 3D noise density with a short march toward the sun for the

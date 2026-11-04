@@ -3,8 +3,8 @@
 //! (`night_windows`) and `shaders/structure.wgsl`. Presentation only.
 
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 
 use crate::frame::to_bevy;
 use crate::sky::SkyEnv;
@@ -153,21 +153,9 @@ pub fn setup(
     pool_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pool_p);
     pool_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, pool_c);
     pool_mesh.insert_indices(Indices::U32(pool_ix));
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(mesh_of(poles)),
-        material: pole,
-        ..default()
-    });
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(mesh_of(heads)),
-        material: head.clone(),
-        ..default()
-    });
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(pool_mesh),
-        material: pool.clone(),
-        ..default()
-    });
+    commands.spawn((Mesh3d(meshes.add(mesh_of(poles))), MeshMaterial3d(pole)));
+    commands.spawn((Mesh3d(meshes.add(mesh_of(heads))), MeshMaterial3d(head.clone())));
+    commands.spawn((Mesh3d(meshes.add(pool_mesh)), MeshMaterial3d(pool.clone())));
     commands.insert_resource(Lamps { head, pool });
 }
 
@@ -183,10 +171,10 @@ pub fn update(
         return;
     }
     *last = night;
-    if let Some(m) = mats.get_mut(&lamps.head) {
+    if let Some(mut m) = mats.get_mut(&lamps.head) {
         m.emissive = LinearRgba::new(9.0, 6.0, 2.6, 0.0) * night;
     }
-    if let Some(m) = mats.get_mut(&lamps.pool) {
+    if let Some(mut m) = mats.get_mut(&lamps.pool) {
         m.base_color = Color::srgba(1.0, 0.72, 0.38, 0.24 * night);
     }
 }

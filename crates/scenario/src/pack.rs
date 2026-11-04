@@ -442,6 +442,7 @@ impl Scenario {
             fuel: vec![],
             dem: vec![],
             render_terrain: None,
+            landscape: None,
             roads: self.roads.clone(),
             buildings: self.buildings.iter().filter(|b| b.name.is_some()).cloned().collect(),
             ..self.shallow()
@@ -463,6 +464,7 @@ impl Scenario {
             fuel: vec![],
             dem: vec![],
             render_terrain: None,
+            landscape: None,
             start_clock_s: self.start_clock_s,
             turn_minutes: self.turn_minutes,
             weather: self.weather,

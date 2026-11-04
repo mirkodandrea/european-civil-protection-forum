@@ -2,10 +2,8 @@
 //! hipped roofs, glazing and shutters. This is presentation, not added premises.
 use crate::materials::surface_alpha;
 use bevy::prelude::*;
-use bevy::render::{
-    mesh::{Indices, PrimitiveTopology},
-    render_asset::RenderAssetUsages,
-};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 #[derive(Default)]
 struct Builder {
     p: Vec<[f32; 3]>,

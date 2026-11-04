@@ -11,15 +11,13 @@
 // fire_view.rs). Fog is affine in the colour it fogs: the gain is already in
 // the vertex colour, the additive part arrives in the normal slot.
 
-#import bevy_pbr::mesh_functions::{get_world_from_local, mesh_position_local_to_world}
-#import bevy_pbr::view_transformations::position_world_to_clip
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping::tone_mapping
-#import bevy_pbr::mesh_view_bindings::view
-#endif
+import bevy_pbr::render::mesh_functions::{get_world_from_local, mesh_position_local_to_world};
+import bevy_pbr::render::view_transformations::position_world_to_clip;
+@if(TONEMAP_IN_SHADER) import bevy_core_pipeline::tonemapping::tone_mapping;
+@if(TONEMAP_IN_SHADER) import bevy_pbr::render::mesh_view_bindings::view;
 
-@group(2) @binding(0) var puff_texture: texture_2d<f32>;
-@group(2) @binding(1) var puff_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var puff_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var puff_sampler: sampler;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -59,8 +57,7 @@ fn fragment(in: PuffOut) -> @location(0) vec4<f32> {
         discard;
     }
     var col = vec4<f32>(in.color.rgb * tex.rgb + in.fog_offset, a);
-#ifdef TONEMAP_IN_SHADER
+    @if(TONEMAP_IN_SHADER)
     col = tone_mapping(col, view.color_grading);
-#endif
     return col;
 }

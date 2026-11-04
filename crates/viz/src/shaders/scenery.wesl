@@ -1,14 +1,15 @@
 // Surface functions shared by the scenery materials (`materials/`): the
 // island's limestone, read by the terrain's rock faces and by the rock meshes
 // off the terrain, and the tactical view's greying of the backdrop.
-#define_import_path rocca::scenery
 
-#import rocca::noise::value_noise
 
 // Limestone strata colour from the exact height of the pixel: pale and ochre
 // beds with a thin grey-iron seam, dipping with noise. Drawn per pixel because
 // the same bands per vertex (5 m grid, 14 m beds) alias into vertical streaks
 // on a steep face.
+
+import game::shaders::noise::value_noise;
+
 fn limestone(p: vec3<f32>) -> vec3<f32> {
     let pale = vec3<f32>(0.64, 0.60, 0.52);
     let ochre = vec3<f32>(0.62, 0.46, 0.29);

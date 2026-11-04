@@ -1,7 +1,6 @@
 // Shared 2D hash and value noise. Imported as `rocca::noise` by the scenery
 // (terrain, foliage, structure), flame, fire-ground and water shaders (registered in `shader_lib.rs`).
 
-#define_import_path rocca::noise
 
 fn hash21(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);

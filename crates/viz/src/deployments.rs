@@ -62,7 +62,7 @@ pub fn night_vehicles(
     }
     *last = night;
     for handle in [&pal.material, &pal.kit_material] {
-        if let Some(m) = mats.get_mut(handle) {
+        if let Some(mut m) = mats.get_mut(handle) {
             m.base.emissive = LinearRgba::new(night, 0.0, 0.0, 0.0);
         }
     }
@@ -165,12 +165,12 @@ pub fn update(
         .iter()
         .filter(|task| task.qty > 0 && task.status != TaskStatus::Cancelled)
         .collect::<Vec<_>>();
-    let real_s = time.elapsed_seconds();
+    let real_s = time.elapsed_secs();
     for (entity, marker, mut transform) in &mut markers {
         if let Some(task) = visible.iter().find(|t| t.id == marker.0) {
             set(&scn, task, snap.time_s, real_s, &mut transform);
         } else {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
     for (part, mut tf) in &mut parts {
@@ -210,7 +210,7 @@ pub fn update(
             tf.translation = next;
             let _ = people;
         } else {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
     for (index, view::Vehicle { pos, people, at_risk }) in snap.traffic.iter().enumerate() {
@@ -221,17 +221,12 @@ pub fn update(
         {
             commands.spawn((
                 TrafficMarker { index, bus },
-                MaterialMeshBundle {
-                    mesh: palette.models[if bus { "bus" } else { "car" }].0.clone(),
-                    material: palette.kit_material.clone(),
-                    transform: Transform::from_translation(to_bevy(&scn.0, *pos, 0.3))
-                        .with_scale(Vec3::splat(2.)),
-                    ..default()
-                },
+                (Mesh3d(palette.models[if bus { "bus" } else { "car" }].0.clone()), MeshMaterial3d(palette.kit_material.clone()), Transform::from_translation(to_bevy(&scn.0, *pos, 0.3))
+                        .with_scale(Vec3::splat(2.))),
             ));
         }
         if show_marks {
-            gizmos.cuboid(
+            gizmos.cube(
                 Transform::from_translation(to_bevy(&scn.0, *pos, 5.)).with_scale(Vec3::new(
                     7.,
                     5.,
@@ -260,12 +255,7 @@ pub fn update(
             commands
                 .spawn((
                     DeploymentMarker(task.id),
-                    MaterialMeshBundle {
-                        mesh: body.clone(),
-                        material,
-                        transform,
-                        ..default()
-                    },
+                    (Mesh3d(body.clone()), MeshMaterial3d(material), transform),
                 ))
                 .with_children(|parent| {
                     for (mesh, rig) in parts {
@@ -274,12 +264,7 @@ pub fn update(
                                 task: task.id,
                                 rig: rig.clone(),
                             },
-                            MaterialMeshBundle {
-                                mesh: mesh.clone(),
-                                material: palette.material.clone(),
-                                transform: Transform::from_translation(rig.pivot),
-                                ..default()
-                            },
+                            (Mesh3d(mesh.clone()), MeshMaterial3d(palette.material.clone()), Transform::from_translation(rig.pivot)),
                         ));
                     }
                 });

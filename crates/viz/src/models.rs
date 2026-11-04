@@ -1,8 +1,9 @@
-//! Embedded Blender bakes from propagator_abm: vegetation varieties, town kit
-//! and articulated PBR units. Keep source surface identifiers and rig pivots.
-
-use std::collections::HashMap;
-use std::sync::OnceLock;
+//! Blender-authored meshes baked by `scripts/build_models.py`.
+//! Embedded for identical native/web loading; one mesh and material per symbol.
+use bevy::prelude::*;
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use std::{collections::HashMap, sync::OnceLock};
 
 pub struct Model {
     pub positions: Vec<[f32; 3]>,
@@ -169,11 +170,6 @@ mod urban_tests {
 
 // Latest unit bake: preserve the surface identifier in vertex alpha. Parts
 // rotate about authored pivots, never about their bounding-box centres.
-use bevy::prelude::*;
-use bevy::render::{
-    mesh::{Indices, PrimitiveTopology},
-    render_asset::RenderAssetUsages,
-};
 #[derive(Clone, Debug)]
 pub struct Rig {
     pub pivot: Vec3,

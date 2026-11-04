@@ -81,7 +81,9 @@ pub fn draw(mut commands: Commands, mut contexts: EguiContexts, panel: Option<Re
     }
     let mut close = false;
     let mut start = None;
-    let ctx = contexts.ctx_mut();
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
     egui::Window::new("Start the exercise")
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
         .collapsible(false)

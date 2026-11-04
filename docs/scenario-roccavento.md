@@ -45,9 +45,45 @@ cargo run --release -p app -- --scenario data/scenarios/roccavento_valico_en.pac
 - **Luoghi.** I sei borghi, i servizi con nomi univoci («Chiesa di San Rocco»,
   «Area di attesa di Fornaci»…), le aree di raccolta, i due presidi AIB, la
   Rocca, la Torre costiera e il Valico (punto più alto della Strada del Passo).
-- **Non portati:** idranti e specchi d'acqua (nel TTX non c'è un modello di
-  rifornimento idrico), la copertura del suolo a 5 m, il porto, la rocca e gli
-  scogli come modelli 3D.
+- **Non portati nel modello:** idranti e specchi d'acqua (nel TTX non c'è un
+  modello di rifornimento idrico).
+
+## Paesaggio 3D (2026-11)
+
+Il territorio porta un blocco `landscape`, **solo visuale**: il modello non lo
+legge mai. Contiene le quote a 5 m e la copertura del suolo a 5 m della
+sorgente (compresse, base64), `island.json` (porto, ormeggi, scogli, rocca e
+torre) e le impronte disegnate degli edifici. Lo genera
+`scripts/factory/landscape_pack.py` (chiamato anche da `roccavento.py`).
+
+Con il blocco, la vista 3D disegna il paesaggio del gioco desktop
+(`crates/viz/src/land`): mesh adattiva del terreno con le strade raccordate,
+suolo dipinto dalla copertura, chiome, piante Blender istanziate che prendono
+fuoco quando arriva il fronte, erba e arbusti vicino alla camera, campi, mare
+con onde e riflessi, scogli, rocca e torre, barche, terre all'orizzonte, raggi
+di luce. Gli edifici sono estrusi dalle impronte (tetti, finestre, persiane),
+con i modelli del kit per chiese, municipio, scuola e presidi, e con piazze,
+campi sportivi, parcheggi e aree di attesa arredati.
+
+- **Scala vera**: nessun ingrandimento da plastico (né case né rocca), nessun
+  effetto miniatura (niente profondità di campo).
+- **Fuoco**: solo il fuoco «effettivo» (celle raggiunte da almeno `cutoff`
+  delle 32 simulazioni) brucia piante e lascia la cicatrice. L'alone di
+  incertezza è una velatura ambra sul terreno, separata, e non accende nulla;
+  il suolo bagnato è più scuro e freddo. Un rollback fa ricrescere ciò che era
+  bruciato.
+- **Edifici**: gli stati sono quelli dell'esercitazione: minacciato (luce
+  calda), in evacuazione (azzurro), evacuato (blu), danneggiato (fiammata, poi
+  annerito), distrutto (carbone). Di notte le finestre si accendono solo nelle
+  case ancora abitate.
+- **Modifiche dall'editor**: spostare un edificio fa disegnare il suo
+  rettangolo invece dell'impronta. Cambiare le quote toglie il paesaggio e si
+  torna al terreno TTX.
+- `TTX_LAND=0` disegna il terreno TTX anche qui, per i confronti.
+  `TTX_LAND_VEG=0.5` dimezza le piante. `TTX_GRADE_ROADS=0` non raccorda le
+  strade.
+- Costo: lo scenario passa da 5,0 a 7,3 MB. La scena si costruisce in circa
+  2,4 s, a ogni avvio e a ogni modifica dall'editor.
 
 ## Borghi
 

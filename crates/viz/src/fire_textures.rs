@@ -10,7 +10,7 @@
 //! one texture serves flames of any temperature.
 
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 const SIZE: u32 = 64;

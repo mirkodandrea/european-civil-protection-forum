@@ -9,21 +9,20 @@
 // extension of StandardMaterial would bring textures it never reads, and on
 // WebGL2 every texture of the layout takes one of the 16 units.
 
-#import bevy_pbr::{
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_bindings::mesh,
-    mesh_view_bindings::{globals, view},
-    pbr_functions,
-    pbr_types,
-}
-#import rocca::noise::{hash21, value_noise}
-#import rocca::scenery::tactical_grey
-#import rocca::veg_state::foliage
 
 // Leaves: matte with a faint waxy sheen (a full dielectric sheen on a
 // hundred thousand crowns turns the canopy to tinsel), and thin, so the sun
 // comes through them: a crown seen against the light glows green-gold.
 // Wood: rough bark, no sheen, opaque.
+
+import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
+import bevy_pbr::render::mesh_bindings::mesh;
+import bevy_pbr::render::mesh_view_bindings::{globals, view};
+import bevy_pbr::render::{pbr_functions, pbr_types};
+import game::shaders::noise::{hash21, value_noise};
+import game::shaders::scenery::tactical_grey;
+import game::shaders::veg_state::foliage;
+
 const LEAF_ROUGHNESS: f32 = 0.78;
 const LEAF_REFLECTANCE: f32 = 0.18;
 const LEAF_TRANSMISSION: f32 = 0.38;
@@ -144,12 +143,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.material.thickness = LEAF_THICKNESS;
     pbr.material.flags |= pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT
         | pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT;
-#ifdef VERTEX_COLORS
+    @if(VERTEX_COLORS)
     pbr.material.base_color = vec4<f32>(in.color.rgb, 1.0);
+    @if(VERTEX_COLORS)
     let a = in.color.a;
-#else
+    @else
     let a = 0.0;
-#endif
 
     let px_m = max(length(dpdx(p)), length(dpdy(p)));
     let burning = a < -0.5;
@@ -163,7 +162,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let alive = select(clamp(a, 0.0, 1.0), select(0.0, 1.0, leaf), burning);
     pbr.material.base_color = foliage_albedo(pbr.material.base_color, p, in.world_normal, alive);
     pbr.material.perceptual_roughness = mix(WOOD_ROUGHNESS, LEAF_ROUGHNESS, alive);
-    pbr.material.reflectance = mix(WOOD_REFLECTANCE, LEAF_REFLECTANCE, alive);
+    pbr.material.reflectance = vec3<f32>(mix(WOOD_REFLECTANCE, LEAF_REFLECTANCE, alive));
     pbr.material.diffuse_transmission = LEAF_TRANSMISSION * alive;
     if burning {
         let t0 = b1 - 1.0 - select(select(0.0, LEAF_OFFSET, leaf), REMAINS_OFFSET, remains);

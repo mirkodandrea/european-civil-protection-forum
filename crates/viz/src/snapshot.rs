@@ -18,8 +18,82 @@ impl Plugin for SnapshotPlugin {
         if std::env::var_os("TTX_SNAPSHOT").is_some() && bench_s().is_some() {
             app.add_plugins(crate::bench::BenchPlugin);
         }
+        if std::env::var_os("TTX_SNAPSHOT").is_some() {
+            app.add_systems(PostUpdate, redirect_camera);
+            #[cfg(not(target_arch = "wasm32"))]
+            app.add_plugins(SnapPacingPlugin);
+        }
     }
 }
+/// Since Bevy 0.20 the screenshot of a hidden window comes out black (seen on
+/// macOS, propagator_abm 2026-10-21): with `TTX_SNAPSHOT` the camera draws
+/// into an image of the window's size instead, and that image is saved.
+#[derive(Resource)]
+pub struct SnapTarget(pub Handle<Image>);
+
+fn redirect_camera(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    cams: Query<Entity, Added<Camera3d>>,
+) {
+    let Ok(w) = windows.single() else { return };
+    for e in &cams {
+        let image = Image::new_target_texture(
+            w.physical_width(),
+            w.physical_height(),
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            None,
+        );
+        let handle = images.add(image);
+        commands.entity(e).insert(bevy::camera::RenderTarget::Image(
+            bevy::camera::ImageRenderTarget {
+                handle: handle.clone(),
+                scale_factor: w.scale_factor(),
+            },
+        ));
+        commands.insert_resource(SnapTarget(handle));
+    }
+}
+
+/// Frames the CPU may queue ahead of the GPU, as with a swap chain.
+#[cfg(not(target_arch = "wasm32"))]
+const FRAMES_IN_FLIGHT: usize = 2;
+
+/// The frame pacing a window would give. Drawing into an image there is no
+/// swap-chain texture to wait for, so the CPU runs ahead of the GPU until
+/// Metal's command-buffer budget is full (seconds of latency, frame times
+/// 20–30 % worse: measured in propagator_abm). Each frame waits, before its
+/// views are prepared, for the frame `FRAMES_IN_FLIGHT` back.
+#[cfg(not(target_arch = "wasm32"))]
+struct SnapPacingPlugin;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource, Default)]
+struct InFlight(std::collections::VecDeque<wgpu::SubmissionIndex>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Plugin for SnapPacingPlugin {
+    fn build(&self, _app: &mut App) {}
+
+    fn finish(&self, app: &mut App) {
+        use bevy::render::renderer::{render_system, RenderDevice, RenderQueue};
+        use bevy::render::{Render, RenderApp, RenderSystems};
+        let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
+        render
+            .init_resource::<InFlight>()
+            .add_systems(Render, (|mut f: ResMut<InFlight>, q: Res<RenderQueue>| {
+                f.0.push_back(q.submit(std::iter::empty()));
+            }).in_set(RenderSystems::Render).after(render_system))
+            .add_systems(Render, (|mut f: ResMut<InFlight>, d: Res<RenderDevice>| {
+                while f.0.len() > FRAMES_IN_FLIGHT {
+                    let i = f.0.pop_front().expect("not empty");
+                    let _ = d.poll(wgpu::PollType::Wait { submission_index: Some(i), timeout: None });
+                }
+            }).in_set(RenderSystems::CreateViews));
+    }
+}
+
 pub fn bench_s() -> Option<f32> {
     std::env::var("TTX_SNAPSHOT_BENCH")
         .ok()?
@@ -36,7 +110,7 @@ pub fn resolution() -> bevy::window::WindowResolution {
         })
         .filter(|(w, h)| (160..=8192).contains(w) && (160..=8192).contains(h))
         .unwrap_or((1600, 900));
-    let mut r = bevy::window::WindowResolution::new(w as f32, h as f32);
+    let mut r = bevy::window::WindowResolution::new(w, h);
     if let Some(scale) = std::env::var("TTX_SCALE")
         .ok()
         .and_then(|s| s.parse::<f32>().ok())
@@ -53,7 +127,7 @@ pub fn hold(
     snap: Res<crate::Snapshot>,
     orbit: Option<ResMut<crate::camera::Orbit>>,
     mut cams: Query<&mut Transform, With<Camera3d>>,
-    mut exit: EventWriter<bevy::app::AppExit>,
+    mut exit: MessageWriter<bevy::app::AppExit>,
 ) {
     if std::env::var_os("TTX_SNAPSHOT").is_none() {
         return;
@@ -64,7 +138,7 @@ pub fn hold(
     if snap.cells.len() != scn.0.grid.len() {
         return;
     }
-    let (Some(mut o), Ok(mut tf)) = (orbit, cams.get_single_mut()) else {
+    let (Some(mut o), Ok(mut tf)) = (orbit, cams.single_mut()) else {
         return;
     };
     let point = if at == "home" {
@@ -84,7 +158,7 @@ pub fn hold(
     };
     if point.is_none() && at != "home" && at != "fire" {
         eprintln!("snapshot target failed: unknown location {at}");
-        exit.send(bevy::app::AppExit::error());
+        exit.write(bevy::app::AppExit::error());
         return;
     }
     if let Some(p) = point {
@@ -135,11 +209,11 @@ fn stats(values: &[f32]) -> serde_json::Value {
 pub fn capture(
     time: Res<Time>,
     mut virtual_time: ResMut<Time<Virtual>>,
-    windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
-    mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
+    mut commands: Commands,
+    target: Option<Res<SnapTarget>>,
     costs: Option<Res<crate::bench::Costs>>,
     mut p: Local<Progress>,
-    mut exit: EventWriter<bevy::app::AppExit>,
+    mut exit: MessageWriter<bevy::app::AppExit>,
 ) {
     let Ok(path) = std::env::var("TTX_SNAPSHOT") else {
         return;
@@ -147,10 +221,10 @@ pub fn capture(
     if let Some(done) = &p.done {
         match done.load(Ordering::Acquire) {
             1 => {
-                exit.send(bevy::app::AppExit::Success);
+                exit.write(bevy::app::AppExit::Success);
             }
             2 => {
-                exit.send(bevy::app::AppExit::error());
+                exit.write(bevy::app::AppExit::error());
             }
             _ => {}
         }
@@ -161,7 +235,7 @@ pub fn capture(
         .and_then(|s| s.parse::<f32>().ok())
         .filter(|s| s.is_finite() && *s >= 0.)
         .unwrap_or(3.);
-    if time.elapsed_seconds() < settle {
+    if time.elapsed_secs() < settle {
         return;
     }
     if let Some(seconds) = bench_s() {
@@ -209,11 +283,11 @@ pub fn capture(
         }
         if let Err(e) = std::fs::write(&output, serde_json::to_vec_pretty(&report).unwrap()) {
             eprintln!("snapshot benchmark failed: {e}");
-            exit.send(bevy::app::AppExit::error());
+            exit.write(bevy::app::AppExit::error());
             return;
         }
     }
-    let Ok(window) = windows.get_single() else {
+    let Some(target) = target else {
         return;
     };
     let done = Arc::new(AtomicU8::new(0));
@@ -221,12 +295,17 @@ pub fn capture(
     if let Some(parent) = std::path::Path::new(&path).parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             eprintln!("snapshot directory failed: {e}");
-            exit.send(bevy::app::AppExit::error());
+            exit.write(bevy::app::AppExit::error());
             return;
         }
     }
-    if let Err(e) = shots.take_screenshot(window, move |img| {
-        let result = img
+    use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+    commands
+        .spawn(Screenshot::image(target.0.clone()))
+        .observe(move |shot: On<ScreenshotCaptured>| {
+        let result = shot
+            .image
+            .clone()
             .try_into_dynamic()
             .map_err(|e| format!("{e:?}"))
             .and_then(|img| img.save(&path).map_err(|e| e.to_string()));
@@ -234,10 +313,7 @@ pub fn capture(
             eprintln!("snapshot failed: {e}");
         }
         done.store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
-    }) {
-        eprintln!("snapshot request failed: {e}");
-        exit.send(bevy::app::AppExit::error());
-    }
+    });
 }
 #[cfg(test)]
 mod tests {

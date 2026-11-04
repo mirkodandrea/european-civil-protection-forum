@@ -5,15 +5,12 @@
 // every texture of the layout takes one of the 16 units, read or not.
 // The light is Bevy's PBR all the same (`apply_pbr_lighting`), fog included.
 
-#import bevy_pbr::{
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_bindings::mesh,
-    mesh_view_bindings::view,
-    pbr_functions,
-    pbr_types,
-}
-#import rocca::noise::{hash21, value_noise}
-#import rocca::scenery::{limestone, rock_bed, rock_bump, tactical_grey}
+import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
+import bevy_pbr::render::mesh_bindings::mesh;
+import bevy_pbr::render::mesh_view_bindings::view;
+import bevy_pbr::render::{pbr_functions, pbr_types};
+import game::shaders::noise::{hash21, value_noise};
+import game::shaders::scenery::{limestone, rock_bed, rock_bump, tactical_grey};
 
 struct Terrain {
     // world metres to mask uv (xy); z > 0.5: meadow on; w: where the blades
@@ -25,16 +22,16 @@ struct Terrain {
     // x: tactical desaturation, 0 (full colour) to 1 (`tactical.rs`)
     tactical: vec4<f32>,
 };
-@group(2) @binding(0) var<uniform> terrain: Terrain;
-@group(2) @binding(1) var road_tex: texture_2d<f32>;
-@group(2) @binding(2) var road_samp: sampler;
-@group(2) @binding(3) var grass_tex: texture_2d<f32>;
-@group(2) @binding(4) var grass_samp: sampler;
-@group(2) @binding(5) var ground_col_tex: texture_2d<f32>;
-@group(2) @binding(6) var ground_col_samp: sampler;
-@group(2) @binding(7) var ground_nrm_tex: texture_2d<f32>;
-@group(2) @binding(8) var ground_nrm_samp: sampler;
-@group(2) @binding(9) var fire_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> terrain: Terrain;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var road_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var road_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var grass_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var grass_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var ground_col_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var ground_col_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(7) var ground_nrm_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(8) var ground_nrm_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(9) var fire_tex: texture_2d<f32>;
 
 // Dry karst, not wet slate: a low reflectance keeps the sun's specular lobe
 // from painting a bright sheet across every ridge.
@@ -267,7 +264,8 @@ fn halo_coverage(uv:vec2<f32>)->f32 {
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     let p = in.world_position.xyz;
     // sampled outside any branch: derivatives need uniform control flow
-    let mask_uv = p.xz * terrain.mask_rect.xy + vec2<f32>(0.5);
+    // the map frame: x east from the west edge, z = -north (row 0 at z = -H)
+    let mask_uv = p.xz * terrain.mask_rect.xy + vec2<f32>(0.0, 1.0);
     let mask_s = textureSample(road_tex, road_samp, mask_uv);
     let meadow = textureSample(grass_tex, grass_samp, mask_uv).r;
     // colour and normal per sample (texel centres on the samples), not per
@@ -312,7 +310,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     pbr.material.perceptual_roughness = ROUGHNESS;
     pbr.material.metallic = 0.0;
-    pbr.material.reflectance = REFLECTANCE;
+    pbr.material.reflectance = vec3<f32>(REFLECTANCE);
     pbr.material.flags |= pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
 
     var out: FragmentOutput;

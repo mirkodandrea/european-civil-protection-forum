@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 pub mod embedded;
 pub mod factory;
 pub mod glossary;
+pub mod land;
 pub mod editor;
 pub mod pack;
 pub mod synthetic;
@@ -837,6 +838,11 @@ pub struct Scenario {
     pub dem: Vec<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render_terrain: Option<RenderTerrain>,
+    /// Finer visual-only data of an imported territory ([`land`]): 5 m
+    /// terrain and cover, island features, traced footprints. Never read by
+    /// any model; the renderer falls back to `render_terrain` without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landscape: Option<land::Landscape>,
     /// Exercise clock at t = 0, seconds since Day 1 00:00.
     pub start_clock_s: i64,
     /// Length of one turn in minutes: sizes the timeline bands and places
@@ -1033,6 +1039,9 @@ impl Scenario {
                 && ((t.cols-1) as f32*t.posting_m-t.world_size_m[0]).abs()<0.1
                 && ((t.rows-1) as f32*t.posting_m-t.world_size_m[1]).abs()<0.1,
                 "visual terrain must be finite, <=4M nodes, no coarser than physics and cover exactly the scenario extent");
+        }
+        if let Some(l) = &self.landscape {
+            l.validate(self)?;
         }
         let n = self.grid.len();
         anyhow::ensure!(self.dem.iter().all(|x| x.is_finite()), "non-finite terrain");

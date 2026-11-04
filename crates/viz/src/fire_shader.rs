@@ -9,20 +9,21 @@
 //! world position, so flame edges roil and the ground's glow band breathes
 //! even between the overlay's own ~150 ms rebuilds.
 
-use bevy::asset::load_internal_asset;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
+use bevy::asset::uuid_handle;
 use bevy::prelude::*;
-use bevy::render::mesh::MeshVertexBufferLayoutRef;
+use bevy::shader::ShaderRef;
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
 
 const FLAME_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x9F3D_2C61_88AA_11EE_A0B1_2233_4455_6677);
+    uuid_handle!("9f3d2c61-88aa-11ee-a0b1-223344556677");
 const SMOKE_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x6C02_5D4F_93B1_47A8_8E2D_0F19_A3C7_B456);
+    uuid_handle!("6c025d4f-93b1-47a8-8e2d-0f19a3c7b456");
 const GROUND_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x4B7E_119A_2CDD_44FF_9021_AABB_CCDD_EEFF);
+    uuid_handle!("4b7e119a-2cdd-44ff-9021-aabbccddeeff");
 
 /// Flame tongues and embers: a textured, additive billboard whose lookup UV
 /// is warped by animated noise. See `shaders/flame.wgsl`.
@@ -47,7 +48,7 @@ impl Material for FireMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -81,7 +82,7 @@ impl Material for SmokeMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -118,7 +119,7 @@ impl Material for FireGroundMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -128,36 +129,13 @@ impl Material for FireGroundMaterial {
     }
 }
 
-const SCENE_LIGHT: Handle<Shader> =
-    Handle::weak_from_u128(0x4B7E_119A_2CDD_44FF_9021_AABB_CCDD_EEF0);
 pub struct FireShaderPlugin;
 
 impl Plugin for FireShaderPlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            FLAME_SHADER_HANDLE,
-            "shaders/flame.wgsl",
-            Shader::from_wgsl
-        );
-        load_internal_asset!(
-            app,
-            GROUND_SHADER_HANDLE,
-            "shaders/fire_ground.wgsl",
-            Shader::from_wgsl
-        );
-        load_internal_asset!(
-            app,
-            SMOKE_SHADER_HANDLE,
-            "shaders/smoke.wgsl",
-            Shader::from_wgsl
-        );
-        load_internal_asset!(
-            app,
-            SCENE_LIGHT,
-            "shaders/scene_light.wgsl",
-            Shader::from_wgsl
-        );
+        crate::load_wesl!(app, FLAME_SHADER_HANDLE, "shaders/flame.wesl");
+        crate::load_wesl!(app, GROUND_SHADER_HANDLE, "shaders/fire_ground.wesl");
+        crate::load_wesl!(app, SMOKE_SHADER_HANDLE, "shaders/smoke.wesl");
         app.add_plugins((
             MaterialPlugin::<FireMaterial>::default(),
             MaterialPlugin::<SmokeMaterial>::default(),

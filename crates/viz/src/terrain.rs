@@ -3,8 +3,8 @@
 //! rendering never changes the model or reloads plant vertices when fire moves.
 
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use scenario::{fuel, Cell, Scenario};
@@ -14,7 +14,7 @@ use crate::materials::{FoliageMaterial, TerrainMaterial, ATTRIBUTE_PLANT};
 use crate::models::plant;
 use crate::Scn;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::render::texture::ImageSampler;
+use bevy::image::ImageSampler;
 
 const CHUNK: usize = 25;
 
@@ -82,7 +82,7 @@ pub(crate) fn reshape(world: &mut World, s: &Scenario) {
     };
     let stride = world.resource::<crate::quality::Quality>().terrain_stride;
     let (_, _, pos) = terrain_grid(s, stride);
-    if let Some(m) = world.resource_mut::<Assets<Mesh>>().get_mut(&mesh) {
+    if let Some(mut m) = world.resource_mut::<Assets<Mesh>>().get_mut(&mesh) {
         if m.count_vertices() == pos.len() {
             m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
             m.compute_smooth_normals();
@@ -101,6 +101,11 @@ pub fn setup(
     mut standard: ResMut<Assets<StandardMaterial>>,
 ) {
     let s = &scn.0;
+    // A landscape draws its own ground (`crate::land`).
+    if crate::land::active(s) {
+        commands.remove_resource::<TerrainHandles>();
+        return;
+    }
     let g = s.grid;
     let (rr, cc, pos) = terrain_grid(s, quality.terrain_stride);
     let base = vec![[1., 1., 1., 1.]; pos.len()];
@@ -127,28 +132,21 @@ pub fn setup(
     let state = images.add(state_image(g.cols as u32, g.rows as u32));
     let material = mats.add(TerrainMaterial::new(
         Vec4::new(1. / g.width_m(), 1. / g.height_m(), 1., 0.),
+        // world (map frame: x from the west edge, z = -north) to texel uv
         s.render_terrain
             .as_ref()
             .map(|t| {
-                Vec4::new(
-                    1. / (t.posting_m * t.cols as f32),
-                    1. / (t.posting_m * t.rows as f32),
-                    0.5,
-                    0.5,
-                )
+                let (sx, sz) = (1. / (t.posting_m * t.cols as f32), 1. / (t.posting_m * t.rows as f32));
+                Vec4::new(sx, sz, 0.5 - 0.5 * g.width_m() * sx, 0.5 + 0.5 * g.height_m() * sz)
             })
-            .unwrap_or(Vec4::new(1. / g.width_m(), 1. / g.height_m(), 0.5, 0.5)),
+            .unwrap_or(Vec4::new(1. / g.width_m(), 1. / g.height_m(), 0.0, 1.0)),
         road_mask.clone(),
         grass_map,
         ground_colour,
         ground_normal,
         state.clone(),
     ));
-    commands.spawn(MaterialMeshBundle {
-        mesh: terrain,
-        material: material.clone(),
-        ..default()
-    });
+    commands.spawn((Mesh3d(terrain), MeshMaterial3d(material.clone())));
     // Ground below sea level is a lake or sea: one translucent sheet at 0 m,
     // hidden by every part of the terrain that rises above it.
     let below_sea = |v: &f32| *v < scenario::editor::SEA_LEVEL_M;
@@ -156,19 +154,14 @@ pub fn setup(
         || s.render_terrain.as_ref().is_some_and(|t| t.elev.iter().any(below_sea))
     {
         commands.spawn((
-            PbrBundle {
-                mesh: meshes.add(Plane3d::default().mesh().size(g.width_m(), g.height_m())),
-                material: standard.add(StandardMaterial {
+            (Mesh3d(meshes.add(Plane3d::default().mesh().size(g.width_m(), g.height_m()))), MeshMaterial3d(standard.add(StandardMaterial {
                     base_color: Color::srgba(0.05, 0.22, 0.32, 0.86),
                     perceptual_roughness: 0.08,
                     reflectance: 0.6,
                     alpha_mode: AlphaMode::Blend,
                     ..default()
-                }),
-                transform: Transform::from_xyz(0., scenario::editor::SEA_LEVEL_M - 0.15, 0.),
-                ..default()
-            },
-            bevy::pbr::NotShadowCaster,
+                })), Transform::from_xyz(g.width_m() * 0.5, scenario::editor::SEA_LEVEL_M - 0.15, -g.height_m() * 0.5)),
+            bevy::light::NotShadowCaster,
         ));
     }
     // Vegetation and the fire state use the latest source-game GPU pipeline.
@@ -278,11 +271,7 @@ pub fn setup(
             let state = images.add(state_image(256, plant_cells.len().div_ceil(256) as u32));
             let material = foliage.add(FoliageMaterial::new(state.clone()));
             commands.spawn((
-                MaterialMeshBundle {
-                    mesh: h,
-                    material: material.clone(),
-                    ..default()
-                },
+                (Mesh3d(h), MeshMaterial3d(material.clone())),
                 VegChunk {
                     state,
                     material,
@@ -325,7 +314,7 @@ pub fn update(
 ) {
     let Some(h) = h else { return };
     let now = frame.display_s as f32;
-    if let Some(m) = terrain.get_mut(&h.material) {
+    if let Some(mut m) = terrain.get_mut(&h.material) {
         m.set_time(now);
         m.set_continuous_fire(style.continuous);
     }
@@ -333,7 +322,7 @@ pub fn update(
         return;
     }
     for chunk in &chunks {
-        if let Some(m) = foliage.get_mut(&chunk.material) {
+        if let Some(mut m) = foliage.get_mut(&chunk.material) {
             m.fire = Vec4::new(0., now, 240., 0.);
         }
     }
@@ -341,7 +330,7 @@ pub fn update(
         return;
     }
     *seen = Some((snap.generation, frame.display_s, style.continuous));
-    if let Some(img) = images.get_mut(&h.state) {
+    if let Some(mut img) = images.get_mut(&h.state) {
         for (i, code) in frame.cells.iter().enumerate() {
             let arrival = snap
                 .arrival
@@ -349,14 +338,14 @@ pub fn update(
                 .copied()
                 .filter(|a| *a != i32::MIN)
                 .unwrap_or(snap.time_s as i32) as f32;
-            put_state(&mut img.data, i, *code as f32, arrival);
+            if let Some(data) = img.data.as_mut() { put_state(data, i, *code as f32, arrival); }
         }
     }
     for chunk in &chunks {
-        if let Some(m) = foliage.get_mut(&chunk.material) {
+        if let Some(mut m) = foliage.get_mut(&chunk.material) {
             m.fire = Vec4::new(0., now, 240., 0.);
         }
-        if let Some(img) = images.get_mut(&chunk.state) {
+        if let Some(mut img) = images.get_mut(&chunk.state) {
             for (j, &i) in chunk.cells.iter().enumerate() {
                 let arrival = snap
                     .arrival
@@ -382,7 +371,7 @@ pub fn update(
                 } else {
                     (plant_state(frame.cells[i], now - arrival), arrival)
                 };
-                put_state(&mut img.data, j, code as f32, arrival);
+                if let Some(data) = img.data.as_mut() { put_state(data, j, code as f32, arrival); }
             }
         }
     }
@@ -618,13 +607,14 @@ mod tests {
     #[test]
     fn state_texture_uses_two_f32_values_per_plant_without_losing_ignition_time() {
         let mut img = super::state_image(256, 2);
-        super::put_state(&mut img.data, 257, 1., 3721.);
+        super::put_state(img.data.as_mut().unwrap(), 257, 1., 3721.);
+        let data = img.data.as_ref().unwrap();
         assert_eq!(
-            f32::from_le_bytes(img.data[257 * 8..257 * 8 + 4].try_into().unwrap()),
+            f32::from_le_bytes(data[257 * 8..257 * 8 + 4].try_into().unwrap()),
             1.
         );
         assert_eq!(
-            f32::from_le_bytes(img.data[257 * 8 + 4..258 * 8].try_into().unwrap()),
+            f32::from_le_bytes(data[257 * 8 + 4..258 * 8].try_into().unwrap()),
             3721.
         );
     }
@@ -704,7 +694,7 @@ pub fn lod(
     cam: Query<&Transform, With<Camera3d>>,
     mut chunks: Query<(&VegChunk, &mut Visibility)>,
 ) {
-    let Ok(cam) = cam.get_single() else { return };
+    let Ok(cam) = cam.single() else { return };
     for (chunk, mut visible) in &mut chunks {
         // Overview altitude expands the draw radius so a whole-map view does
         // not reveal square chunk cutoffs through the middle of a forest.

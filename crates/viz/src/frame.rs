@@ -1,37 +1,28 @@
 //! Per-frame display state, and the one place the world ↔ Bevy frame flip lives.
 //!
-//! World frame: x east, y north, metres. Bevy: Y up, −Z forward, so
-//! world `(x, y)` at elevation `h` becomes `(x − W/2, h·EXAGGERATION, −(y − H/2))`,
-//! centred on the map.
+//! World frame: x east, y north, metres, origin at the map's south-west
+//! corner. Bevy: Y up, −Z forward, so world `(x, y)` at elevation `h` becomes
+//! `(x, h, −y)`: the frame of `propagator_abm`'s renderer, whose landscape
+//! modules (`crate::land`) and shaders are drawn in it unchanged. True scale:
+//! no vertical exaggeration.
 
 use bevy::prelude::*;
 use scenario::{Pos, Scenario};
 
 use crate::{Scn, Snapshot};
 
-/// Vertical exaggeration of the terrain.
-pub const EXAGGERATION: f32 = 1.3;
+/// Vertical exaggeration of the terrain: none (true scale).
+pub const EXAGGERATION: f32 = 1.0;
 
 pub fn to_bevy(scn: &Scenario, p: Pos, lift: f32) -> Vec3 {
     let h = height_at(scn, p) * EXAGGERATION + lift;
-    Vec3::new(
-        p[0] - scn.grid.width_m() * 0.5,
-        h,
-        -(p[1] - scn.grid.height_m() * 0.5),
-    )
+    Vec3::new(p[0], h, -p[1])
 }
 
-pub fn to_world(scn: &Scenario, v: Vec3) -> Pos {
-    [
-        v.x + scn.grid.width_m() * 0.5,
-        -v.z + scn.grid.height_m() * 0.5,
-    ]
+pub fn to_world(_scn: &Scenario, v: Vec3) -> Pos {
+    [v.x, -v.z]
 }
 
-/// The drawn ground an aircraft at `p`, heading along `dir` (world, unit
-/// length), must clear: the highest terrain within reach ahead and behind,
-/// lowered with distance so the aircraft climbs before a ridge and sinks after
-/// it instead of hugging every fold. Exaggerated, like `to_bevy`'s heights.
 pub fn flight_floor(scn: &Scenario, p: Pos, dir: Vec2) -> f32 {
     /// How far ahead and behind the terrain is looked at, and the climb
     /// gradient the floor is allowed to fall away with.
@@ -50,6 +41,11 @@ pub fn flight_floor(scn: &Scenario, p: Pos, dir: Vec2) -> f32 {
 
 /// Bilinear elevation at a world position, metres (not exaggerated).
 pub fn height_at(scn: &Scenario, p: Pos) -> f32 {
+    // The landscape's 5 m ground with the roads graded in, which its terrain
+    // mesh is built on: what stands on the ground stands on that.
+    if let Some(land) = scn.land_ref().filter(|_| crate::land::enabled()) {
+        return land.terrain.height_at(p.into());
+    }
     if let Some(t) = &scn.render_terrain {
         let x = (p[0] / t.posting_m).clamp(0.0, (t.cols - 1) as f32);
         let y = ((t.world_size_m[1] - p[1]) / t.posting_m).clamp(0.0, (t.rows - 1) as f32);

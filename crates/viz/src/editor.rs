@@ -166,6 +166,7 @@ fn outcome(e: &mut Editor, result: Result<(), String>) {
 
 pub(crate) fn draw(
     mut contexts: EguiContexts,
+    mut free: ResMut<crate::hud::UiViewport>,
     editor: Option<ResMut<Editor>>,
     windows: Query<&Window>,
     mut cameras: Query<&mut Camera, With<Camera3d>>,
@@ -176,8 +177,20 @@ pub(crate) fn draw(
     let Ok(mut d) = document.try_lock() else {
         return;
     };
-    let ctx = contexts.ctx_mut();
-    egui::TopBottomPanel::top("editor-toolbar").show(ctx, |ui| {
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    let ctx = ctx.clone();
+    // egui 0.36 lays panels out inside a Ui: one over the whole window, and
+    // what it has left once the panels are placed is the 3D viewport.
+    let mut root = egui::Ui::new(
+        ctx.clone(),
+        "editor-viewport".into(),
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.viewport_rect()),
+    );
+    egui::Panel::top("editor-toolbar").show(&mut root, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.heading("Editor scenario 3D");
             ui.label(format!(
@@ -227,10 +240,10 @@ pub(crate) fn draw(
             }
         });
     });
-    egui::SidePanel::left("editor-tools")
-        .default_width(280.)
+    egui::Panel::left("editor-tools")
+        .default_size(280.)
         .resizable(true)
-        .show(ctx, |ui| {
+        .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Progetto");
                 ui.label("Identificativo nuovo scenario / copia");
@@ -346,9 +359,9 @@ pub(crate) fn draw(
             });
         });
     if let Some(selection) = e.selected {
-        egui::SidePanel::right("editor-inspector")
-            .default_width(290.)
-            .show(ctx, |ui| {
+        egui::Panel::right("editor-inspector")
+            .default_size(290.)
+            .show(&mut root, |ui| {
                 ui.heading("Proprietà oggetto");
                 ui.label("Modifica posizione, nome e parametri; Applica conferma la bozza.");
                 if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&e.properties) {
@@ -401,14 +414,14 @@ pub(crate) fn draw(
                 });
             });
     }
-    egui::TopBottomPanel::bottom("editor-status").show(ctx,|ui| {
+    egui::Panel::bottom("editor-status").show(&mut root,|ui| {
         ui.label(&e.message);
         ui.small("Seleziona: trascina per spostare oggetti e vertici · Clic: applica strumento · pennelli: tieni premuto · trascina: sposta vista · destro: ruota · rotella: zoom (raggio con i pennelli) · R: inquadra");
     });
     if e.pending.is_some() {
         let mut apply = !d.dirty();
         if d.dirty() {
-            egui::Window::new("Modifiche non salvate").collapsible(false).show(ctx,|ui| {
+            egui::Window::new("Modifiche non salvate").collapsible(false).show(&ctx,|ui| {
             ui.label("Aprire il progetto scelto sostituisce la bozza. Puoi annullare l’apertura e salvarla.");
             if ui.button("Apri e sostituisci bozza").clicked(){apply=true;}
             if ui.button("Annulla apertura").clicked(){e.pending=None;}
@@ -430,8 +443,9 @@ pub(crate) fn draw(
             }
         }
     }
-    if let (Ok(window), Ok(mut camera)) = (windows.get_single(), cameras.get_single_mut()) {
-        let rect = ctx.available_rect();
+    if let (Ok(window), Ok(mut camera)) = (windows.single(), cameras.single_mut()) {
+        let rect = root.available_rect_before_wrap();
+        free.0 = Some(rect);
         let scale = window.scale_factor();
         // egui's rect can be ahead of the render target for a frame after a
         // resize; wgpu rejects a viewport outside the target.
@@ -450,7 +464,7 @@ pub(crate) fn draw(
         )
         .min(target - position)
         .max(UVec2::ONE);
-        camera.viewport = Some(bevy::render::camera::Viewport {
+        camera.viewport = Some(bevy::camera::Viewport {
             physical_position: position,
             physical_size: size,
             ..Default::default()
@@ -460,7 +474,7 @@ pub(crate) fn draw(
         let mut keep = true;
         egui::Window::new("Scenario e meteo")
             .open(&mut keep)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&general) {
                     property_fields(ui, &mut value, "");
                     general = serde_json::to_string(&value).unwrap();
@@ -479,12 +493,12 @@ pub(crate) fn draw(
     }
     if e.show_json {
         let mut open = true;
-        egui::Window::new("Scenario completo · JSON trasferibile").open(&mut open).default_size([700.,500.]).show(ctx,|ui| {
+        egui::Window::new("Scenario completo · JSON trasferibile").open(&mut open).default_size([700.,500.]).show(&ctx,|ui| {
             ui.label("Include territorio, ruoli, risorse, meteo e inject. Per importare un pack, aprilo dalla libreria.");
             ui.horizontal(|ui| {
                 if ui.button("Aggiorna esportazione").clicked(){e.json=d.export().unwrap_or_default();}
                 #[cfg(not(target_arch="wasm32"))]
-                if ui.button("Copia JSON").clicked(){ui.output_mut(|o|o.copied_text=e.json.clone());}
+                if ui.button("Copia JSON").clicked(){ui.ctx().copy_text(e.json.clone());}
                 #[cfg(target_arch="wasm32")]
                 if ui.button("Scarica JSON").clicked(){e.message=e.storage.download(&e.json,&d.scene.id).unwrap_or_else(|err|err);}
                 if ui.button("Importa e sostituisci bozza").clicked(){let json=e.json.clone();outcome(e,d.import(&json).map_err(|err|err.to_string()));set_selection(e,&d,None);}
@@ -524,7 +538,7 @@ fn visual_label(kind: &Option<String>) -> &str {
     kind.as_deref().map_or("standard", scenario::editor::visual_label)
 }
 fn kind_combo(ui: &mut egui::Ui, id: &str, kind: &mut scenario::BuildingKind) {
-    egui::ComboBox::from_id_source(id)
+    egui::ComboBox::from_id_salt(id)
         .selected_text(kind_label(kind))
         .show_ui(ui, |ui| {
             for (k, label) in BUILDING_KINDS {
@@ -548,7 +562,7 @@ fn kind_fields(ui: &mut egui::Ui, id: &str, kind: &mut scenario::BuildingKind, v
     });
 }
 fn visual_combo(ui: &mut egui::Ui, id: &str, visual: &mut Option<String>) {
-    egui::ComboBox::from_id_source(id)
+    egui::ComboBox::from_id_salt(id)
         .selected_text(visual_label(visual))
         .show_ui(ui, |ui| {
             ui.selectable_value(visual, None, "standard");
@@ -619,14 +633,14 @@ fn kind_groups(s: &Scenario, members: &[usize]) -> Vec<(&'static str, Vec<usize>
 /// forces it open (the selection has just moved inside it).
 fn branch(
     ui: &mut egui::Ui,
-    id: impl std::hash::Hash,
+    id: impl std::hash::Hash + std::fmt::Debug,
     label: &str,
     count: usize,
     reveal: bool,
     add: impl FnOnce(&mut egui::Ui),
 ) {
     egui::CollapsingHeader::new(format!("{label} ({count})"))
-        .id_source(id)
+        .id_salt(id)
         .open(reveal.then_some(true))
         .show(ui, add);
 }
@@ -974,12 +988,13 @@ const SETTLE_S: f64 = 1.2;
 
 pub(crate) fn interact(
     mut contexts: EguiContexts,
+    free: Res<crate::hud::UiViewport>,
     editor: Option<ResMut<Editor>>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut wheel: EventReader<MouseWheel>,
+    mut wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
     scn: Res<crate::Scn>,
     mut gizmos: Gizmos,
@@ -1022,7 +1037,7 @@ pub(crate) fn interact(
     }
     // Q/E rotate the building about to be placed, or the selected one.
     let turn = f32::from(keys.just_pressed(KeyCode::KeyE)) - f32::from(keys.just_pressed(KeyCode::KeyQ));
-    if turn != 0. && !contexts.ctx_mut().wants_keyboard_input() {
+    if turn != 0. && !contexts.ctx_mut().is_ok_and(|c| c.egui_wants_keyboard_input()) {
         let step = -15. * turn; // E turns clockwise seen from above
         if e.tool == "building" {
             e.spec.rotation_deg = (e.spec.rotation_deg + step).rem_euclid(360.);
@@ -1041,15 +1056,18 @@ pub(crate) fn interact(
             }
         }
     }
-    let Ok(window) = windows.get_single() else {
+    let Ok(window) = windows.single() else {
         return;
     };
-    let Ok((camera, transform)) = cameras.get_single() else {
+    let Ok((camera, transform)) = cameras.single() else {
         return;
     };
     let s = &scn.0;
-    let ctx = contexts.ctx_mut();
-    let viewport = ctx.available_rect();
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    let ctx = ctx.clone();
+    let viewport = free.0.unwrap_or_else(|| ctx.viewport_rect());
     let viewport_origin = camera
         .logical_viewport_rect()
         .map(|r| r.min)
@@ -1063,7 +1081,7 @@ pub(crate) fn interact(
     for name in s.zones.names() {
         if let Some(b) = s.zone_bounds(&name) {
             let at = [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5];
-            if let Some(p) = camera.world_to_viewport(transform, crate::frame::to_bevy(s, at, 5.)) {
+            if let Ok(p) = camera.world_to_viewport(transform, crate::frame::to_bevy(s, at, 5.)) {
                 painter.text(
                     egui::pos2(p.x + viewport_origin.x, p.y + viewport_origin.y),
                     egui::Align2::CENTER_CENTER,
@@ -1088,13 +1106,13 @@ pub(crate) fn interact(
         }
         .unzip();
         let screen = at.and_then(|at| {
-            camera.world_to_viewport(transform, crate::frame::to_bevy(s, at, 30.))
+            camera.world_to_viewport(transform, crate::frame::to_bevy(s, at, 30.)).ok()
         });
         let mut action = None;
         if let Some(p) = screen {
             egui::Area::new(egui::Id::new("editor-object-bar"))
                 .fixed_pos(egui::pos2(p.x + viewport_origin.x - 70., p.y + viewport_origin.y - 40.))
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(name.unwrap_or_default());
@@ -1113,7 +1131,7 @@ pub(crate) fn interact(
                     });
                 });
         }
-        if keys.just_pressed(KeyCode::Delete) && !ctx.wants_keyboard_input() {
+        if keys.just_pressed(KeyCode::Delete) && !ctx.egui_wants_keyboard_input() {
             action = Some("delete");
         }
         if let Some(action) = action {
@@ -1153,8 +1171,7 @@ pub(crate) fn interact(
                 let end = v == 0 || v + 1 == road.points.len();
                 let hot = e.drag == Some(Drag::Vertex(i, v));
                 gizmos.sphere(
-                    crate::frame::to_bevy(s, *p, 3.),
-                    Quat::IDENTITY,
+                    Isometry3d::from_translation(crate::frame::to_bevy(s, *p, 3.)),
                     if hot { 9. } else { 6. },
                     if end { Color::srgb(1., 0.55, 0.1) } else { Color::srgb(1., 1., 0.) },
                 );
@@ -1182,13 +1199,12 @@ pub(crate) fn interact(
     }
     if let Some(start) = e.road_start {
         let p = crate::frame::to_bevy(s, start, 10.);
-        gizmos.sphere(p, Quat::IDENTITY, 12., Color::srgb(1., 1., 0.));
+        gizmos.sphere(Isometry3d::from_translation(p), 12., Color::srgb(1., 1., 0.));
     }
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let ctx = contexts.ctx_mut();
-    if ctx.wants_pointer_input() || ctx.pointer_latest_pos().is_some_and(|p| !ctx.available_rect().contains(p)) {
+    if ctx.egui_wants_pointer_input() || ctx.pointer_latest_pos().is_some_and(|p| !viewport.contains(p)) {
         if buttons.just_pressed(MouseButton::Left) {
             e.press = None;
         }
@@ -1201,7 +1217,7 @@ pub(crate) fn interact(
         e.radius = (e.radius * (0.1 * wheel_lines).exp()).clamp(10., 1000.);
     }
     // Ray march the same bilinear terrain surface used by presentation.
-    let Some(ray) = camera.viewport_to_world(transform, cursor - viewport_origin) else {
+    let Ok(ray) = camera.viewport_to_world(transform, cursor - viewport_origin) else {
         return;
     };
     let mut previous = 0.;
@@ -1229,7 +1245,7 @@ pub(crate) fn interact(
         previous = t;
     }
     // The rebuilt scene already shows the dabs; until then draw them directly.
-    if !e.busy(time.elapsed_seconds_f64()) && !e.dabs.is_empty() {
+    if !e.busy(time.elapsed_secs_f64()) && !e.dabs.is_empty() {
         let document = e.document.clone();
         let locked = document.try_lock();
         if locked.is_ok_and(|d| Arc::ptr_eq(s, &d.scene)) {
@@ -1248,10 +1264,10 @@ pub(crate) fn interact(
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if let (Some(drag), Some(at)) = (e.drag, hit) {
         e.drag_at = Some(at);
-        e.stroke_clock += time.delta_seconds().min(0.1);
+        e.stroke_clock += time.delta_secs().min(0.1);
         if e.stroke_clock >= 0.05 {
             e.stroke_clock = 0.;
-            e.busy_until = time.elapsed_seconds_f64() + SETTLE_S;
+            e.busy_until = time.elapsed_secs_f64() + SETTLE_S;
             let document = e.document.clone();
             let locked = document.try_lock();
             if let Ok(mut d) = locked {
@@ -1284,7 +1300,7 @@ pub(crate) fn interact(
                 _ => None,
             };
             if let (Some(Selection::Road(i)), Some((_, v))) = (e.selected, handle) {
-                if keys.just_pressed(KeyCode::KeyX) && !contexts.ctx_mut().wants_keyboard_input() {
+                if keys.just_pressed(KeyCode::KeyX) && !ctx.egui_wants_keyboard_input() {
                     let document = e.document.clone();
                     let locked = document.try_lock();
                     if let Ok(mut d) = locked {
@@ -1373,9 +1389,9 @@ pub(crate) fn interact(
                     e.stroking = true;
                     e.stroke_clock = BRUSH_TICK;
                 }
-                e.stroke_clock += time.delta_seconds().min(0.1);
+                e.stroke_clock += time.delta_secs().min(0.1);
                 if e.stroke_clock >= BRUSH_TICK {
-                    e.busy_until = time.elapsed_seconds_f64() + SETTLE_S;
+                    e.busy_until = time.elapsed_secs_f64() + SETTLE_S;
                     let elapsed = e.stroke_clock.min(0.25);
                     e.stroke_clock = 0.;
                     let result = match (e.tool.as_str(), e.sculpt_mode.as_str()) {
@@ -1509,7 +1525,7 @@ pub(crate) fn paste_input(
     if editor.is_none() {
         return;
     }
-    if let (Ok(mut queue), Ok(mut input)) = (PASTES.lock(), input.get_single_mut()) {
+    if let (Ok(mut queue), Ok(mut input)) = (PASTES.lock(), input.single_mut()) {
         for text in queue.drain(..) {
             input.0.events.push(egui::Event::Paste(text));
         }

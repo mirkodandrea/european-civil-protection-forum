@@ -9,15 +9,15 @@
 // that already-decided glow. Every other layer (Intensity, Arrival, Hazard)
 // never sets red above 1.0, so they pass through unanimated.
 
-#import bevy_pbr::forward_io::VertexOutput
-#import bevy_pbr::mesh_view_bindings::globals
-#import rocca::noise::{hash21, value_noise}
-#import rocca::scene_light::{scene_shade, apply_scene_fog}
+import bevy_pbr::render::forward_io::VertexOutput;
+import bevy_pbr::render::mesh_view_bindings::globals;
+import game::shaders::noise::{hash21, value_noise};
+import game::shaders::scene_light::{scene_shade, apply_scene_fog};
 
-@group(2) @binding(0) var road_tex: texture_2d<f32>;
-@group(2) @binding(1) var road_samp: sampler;
-@group(2) @binding(2) var<uniform> mask_rect: vec4<f32>;
-@group(2) @binding(3) var fire_state: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var road_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var road_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> mask_rect: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var fire_state: texture_2d<f32>;
 
 // Keep in step with `ground_mask.rs` and `terrain.wgsl`.
 const RANGE_M: f32 = 12.0;
@@ -51,7 +51,7 @@ fn fire_ramp(h: f32) -> vec3<f32> {
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dims=vec2<i32>(textureDimensions(fire_state));
-    let uv=in.world_position.xz*mask_rect.xy+vec2<f32>(0.5);
+    let uv=in.world_position.xz*mask_rect.xy+vec2<f32>(0.0, 1.0);
     let cell=clamp(vec2<i32>(uv*vec2<f32>(dims)),vec2<i32>(0),dims-vec2<i32>(1));
     // Preserve authored fuel breaks at pixel scale; interpolation is display only.
     let cleared=u32(textureLoad(fire_state,cell,0).r+0.5)==3u;
@@ -141,7 +141,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         base *= 0.82 + 0.36 * grit;
         col = vec4<f32>(mix(col.rgb, base, cold) * scorch, mix(col.a, col.a * ragged, cold));
     }
-    let road_d = (textureSample(road_tex, road_samp, wpc * mask_rect.xy + vec2<f32>(0.5)).rg * 2.0 - 1.0) * RANGE_M;
+    let road_d = (textureSample(road_tex, road_samp, wpc * mask_rect.xy + vec2<f32>(0.0, 1.0)).rg * 2.0 - 1.0) * RANGE_M;
     let mpp = max(length(dpdx(wpc)), length(dpdy(wpc)));
     let aa = max(0.5 * mpp, 0.25);
     let on_road = max(

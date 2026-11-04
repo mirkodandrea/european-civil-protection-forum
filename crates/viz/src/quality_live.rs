@@ -1,7 +1,7 @@
 //! The graphics level picked in the HUD, put on screen (see `quality`).
-use bevy::core_pipeline::bloom::BloomSettings;
-use bevy::core_pipeline::smaa::{SmaaPreset, SmaaSettings};
-use bevy::pbr::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap};
+use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
 use crate::quality::{Quality, Rebuild};
@@ -15,10 +15,9 @@ pub fn apply(
     mut built: Local<Option<Quality>>,
     mut rebuild: ResMut<Rebuild>,
     mut commands: Commands,
-    mut msaa: ResMut<Msaa>,
     mut shadow_map: ResMut<DirectionalLightShadowMap>,
     mut suns: Query<(&mut DirectionalLight, &mut CascadeShadowConfig), With<crate::sky::Sun>>,
-    mut cameras: Query<(Entity, &mut BloomSettings, Has<SmaaSettings>), With<Camera3d>>,
+    mut cameras: Query<(Entity, &mut Msaa, Option<&mut Bloom>, Has<Smaa>), With<Camera3d>>,
 ) {
     // The scene was built with the level in force at the first run.
     let scene = *built.get_or_insert(*quality);
@@ -29,14 +28,11 @@ pub fn apply(
         rebuild.0 = true;
         *built = Some(*quality);
     }
-    if *msaa != quality.msaa_mode() {
-        *msaa = quality.msaa_mode();
-    }
     if shadow_map.size != quality.shadow_map {
         shadow_map.size = quality.shadow_map;
     }
     for (mut light, mut cascades) in &mut suns {
-        light.shadows_enabled = quality.shadows;
+        light.shadow_maps_enabled = quality.shadows;
         *cascades = CascadeShadowConfigBuilder {
             num_cascades: quality.cascades,
             minimum_distance: 0.1,
@@ -46,16 +42,29 @@ pub fn apply(
         }
         .build();
     }
-    for (e, mut bloom, has_smaa) in &mut cameras {
-        bloom.intensity = quality.bloom;
+    for (e, mut msaa, bloom, has_smaa) in &mut cameras {
+        if *msaa != quality.msaa_mode() {
+            *msaa = quality.msaa_mode();
+        }
+        if let Some(mut bloom) = bloom {
+            bloom.intensity = quality.bloom;
+        }
         match (quality.smaa && !cfg!(target_arch = "wasm32"), has_smaa) {
             (true, false) => {
-                commands.entity(e).insert(SmaaSettings { preset: SmaaPreset::Medium });
+                commands.entity(e).insert(Smaa { preset: SmaaPreset::Medium });
             }
             (false, true) => {
-                commands.entity(e).remove::<SmaaSettings>();
+                commands.entity(e).remove::<Smaa>();
             }
             _ => {}
         }
+    }
+}
+
+/// MSAA is a camera component since Bevy 0.15 (it was one resource for all):
+/// every new camera starts with the profile's sample count.
+pub fn msaa_on_new_cameras(quality: Res<Quality>, mut cams: Query<&mut Msaa, Added<Camera>>) {
+    for mut m in &mut cams {
+        *m = quality.msaa_mode();
     }
 }

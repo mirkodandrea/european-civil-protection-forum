@@ -3,12 +3,12 @@
 // ShaderType's generated `check` fns are never called.
 #![allow(dead_code)]
 
-use bevy::asset::load_internal_asset;
+use bevy::asset::uuid_handle;
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 
-const SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x91A7_44D2_6B0E_4C71_AA90_2201_88C4_2F10);
+const SHADER_HANDLE: Handle<Shader> = uuid_handle!("91a744d2-6b0e-4c71-aa90-220188c42f10");
 
 #[derive(Clone, Copy, Default, ShaderType)]
 struct TerrainUniform {
@@ -97,12 +97,7 @@ pub(super) struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            SHADER_HANDLE,
-            "../shaders/terrain.wgsl",
-            Shader::from_wgsl
-        );
+        crate::load_wesl!(app, SHADER_HANDLE, "../shaders/terrain.wesl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
     }
 }

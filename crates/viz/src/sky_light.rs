@@ -29,12 +29,12 @@
 //! stays 1 and the flat ambient light is exactly what it was.
 
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::asset::RenderAssetUsages;
 use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
     TextureViewDescriptor, TextureViewDimension,
 };
-use bevy::render::texture::{
+use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor,
 };
 
@@ -236,7 +236,7 @@ fn mip_count(size: u32) -> u32 {
 
 fn cube_image(size: u32, mips: u32, data: Vec<u8>) -> Image {
     Image {
-        data,
+        data: Some(data),
         texture_descriptor: TextureDescriptor {
             label: Some("sky_light_cube"),
             size: Extent3d {
@@ -265,6 +265,9 @@ fn cube_image(size: u32, mips: u32, data: Vec<u8>) -> Image {
             ..default()
         }),
         asset_usage: RenderAssetUsages::default(),
+        // the faces one after the other, each with its mips (as Bevy 0.14 uploaded it)
+        data_order: bevy::render::render_resource::TextureDataOrder::LayerMajor,
+        copy_on_resize: false,
     }
 }
 
@@ -313,6 +316,8 @@ fn attach_to_camera(
             diffuse_map: maps.diffuse.clone(),
             specular_map: maps.specular.clone(),
             intensity: sky.ambient_brightness * ENV_GAIN,
+            rotation: Quat::IDENTITY,
+            affects_lightmapped_mesh_diffuse: true,
         });
         sky.ambient_scale = AMBIENT_KEEP;
     }
@@ -340,10 +345,10 @@ fn update_maps(
     *last_el = Some(sky.el_deg);
     let (d, s) = images_for(&model_now(&sky, &sun));
     // Replace the data in place: same descriptor, same handle.
-    if let Some(img) = images.get_mut(&maps.diffuse) {
+    if let Some(mut img) = images.get_mut(&maps.diffuse) {
         img.data = d.data;
     }
-    if let Some(img) = images.get_mut(&maps.specular) {
+    if let Some(mut img) = images.get_mut(&maps.specular) {
         img.data = s.data;
     }
 }

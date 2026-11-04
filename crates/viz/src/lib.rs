@@ -37,6 +37,7 @@ mod fire_textures;
 mod flames;
 mod frame;
 mod hud;
+mod land;
 mod launcher;
 mod materials;
 mod models;
@@ -44,6 +45,7 @@ mod night;
 mod objects;
 mod quality;
 mod quality_live;
+mod shader_lib;
 mod sky;
 mod sky_light;
 mod snapshot;
@@ -166,9 +168,11 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 // The app installs its own tracing subscriber.
                 .disable::<bevy::log::LogPlugin>(),
         )
-        .add_plugins(EguiPlugin)
+        .add_plugins(EguiPlugin::default())
+        .add_plugins(shader_lib::ShaderLibPlugin)
         .add_plugins(flames::FlamesPlugin)
         .add_plugins(materials::MaterialsPlugin)
+        .add_plugins(land::LandPlugin)
         .add_plugins(sky::SkyPlugin)
         .add_plugins(snapshot::SnapshotPlugin)
         .insert_resource(if capture {
@@ -178,17 +182,17 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
         } else {
             bevy::time::TimeUpdateStrategy::Automatic
         })
-        .insert_resource(quality.msaa_mode())
-        .insert_resource(bevy::pbr::DirectionalLightShadowMap {
+        .insert_resource(bevy::light::DirectionalLightShadowMap {
             size: quality.shadow_map,
         })
         .insert_resource(quality)
         .init_resource::<quality::Rebuild>()
         .insert_resource(ClearColor(camera::SKY))
         // Sky-tinted fill light; the sun does the modelling.
-        .insert_resource(AmbientLight {
+        .insert_resource(GlobalAmbientLight {
             color: Color::srgb(0.70, 0.78, 0.95),
             brightness: 140.0,
+            affects_lightmapped_meshes: true,
         })
         .insert_resource(Source(Mutex::new(source)))
         .insert_resource(info)
@@ -196,9 +200,13 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
         .init_resource::<Snapshot>()
         .init_resource::<fire_field::FirePresentation>()
         .init_resource::<Frame>()
+        .init_resource::<hud::UiViewport>()
+        // MSAA is per camera since Bevy 0.15: every camera takes the level's.
+        .add_systems(PostUpdate, quality_live::msaa_on_new_cameras)
         .add_systems(
             Startup,
             (
+                land::run_scene,
                 camera::setup,
                 terrain::setup,
                 objects::setup,
@@ -210,6 +218,7 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
         .add_systems(
             SceneSetup,
             (
+                land::run_scene,
                 camera::setup,
                 terrain::setup,
                 objects::setup,
@@ -232,10 +241,21 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
             )
                 .after(sync),
         )
-        .add_systems(Update, launcher::draw.after(hud::draw))
+        // Since bevy_egui 0.42 the interface is drawn only inside the egui
+        // pass (`EguiPrimaryContextPass`, in `PostUpdate`): what the panels
+        // take of the screen reaches the camera on the next frame.
+        .add_systems(
+            bevy_egui::EguiPrimaryContextPass,
+            (
+                hud::draw,
+                editor::draw,
+                editor::interact.after(editor::draw),
+                launcher::draw.after(hud::draw).after(editor::draw),
+            ),
+        )
         .add_systems(PreUpdate, editor::paste_input
-            .after(bevy_egui::EguiSet::ProcessInput)
-            .before(bevy_egui::EguiSet::BeginFrame))
+            .after(bevy_egui::EguiPreUpdateSet::ProcessInput)
+            .before(bevy_egui::EguiPreUpdateSet::BeginPass))
         .add_systems(
             Update,
             (
@@ -250,17 +270,10 @@ fn run_internal(mut source: Box<dyn ViewSource>, info: Info, editor: Option<edit
                 night::update,
                 deployments::night_vehicles,
                 deployments::update.after(frame::update),
-                // After the panels are laid out: before them, egui's available
-                // rect is still the whole screen and the wheel over a panel zooms.
-                camera::control
-                    .after(frame::update)
-                    .after(hud::draw)
-                    .after(editor::draw)
-                    .after(launcher::draw),
+                // The panels were laid out in the previous frame's egui pass
+                // (`hud::UiViewport`): the wheel over a panel does not zoom.
+                camera::control.after(frame::update),
                 camera::fire_lights.after(frame::update),
-                hud::draw.after(frame::update).after(fire_field::toggle),
-                editor::draw,
-                editor::interact.after(editor::draw),
                 screenshot,
                 record,
                 snapshot::hold.after(camera::control).after(sync),
@@ -300,7 +313,7 @@ fn replace_scene(world: &mut World) {
     // A full rebuild reconstructs terrain textures and vegetation (seconds on a
     // large territory), so while the editor brush is working only the terrain
     // mesh follows; the rebuild happens once the brush has rested.
-    let now = world.get_resource::<Time>().map_or(0., |t| t.elapsed_seconds_f64());
+    let now = world.get_resource::<Time>().map_or(0., |t| t.elapsed_secs_f64());
     if world.get_resource::<editor::Editor>().is_some_and(|e| e.busy(now)) {
         if let Some(next) = polled {
             let same_grid = current.grid.rows == next.grid.rows
@@ -345,11 +358,11 @@ fn replace_with(world: &mut World, current: Arc<scenario::Scenario>, next: Arc<s
     // Keep the window (including its egui context) and the atmosphere. All scene
     // roots and their children belong to this renderer and are reconstructed.
     let roots: Vec<Entity> = world
-        .query_filtered::<Entity, (Without<Parent>, Without<Window>, Without<sky::SkyDome>)>()
+        .query_filtered::<Entity, (With<Transform>, Without<ChildOf>, Without<sky::SkyDome>)>()
         .iter(world)
         .collect();
     for entity in roots {
-        world.entity_mut(entity).despawn_recursive();
+        world.entity_mut(entity).despawn();
     }
     world.insert_resource(Scn(next));
     world.insert_resource(Snapshot::default());
@@ -410,8 +423,7 @@ fn sync(source: Res<Source>, scn: Res<Scn>, mut snap: ResMut<Snapshot>) {
 /// `runs/shot.req` (for unattended captures — the file is consumed).
 fn screenshot(
     keys: Res<ButtonInput<KeyCode>>,
-    windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
-    mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
+    mut commands: Commands,
     mut tick: Local<u32>,
 ) {
     if std::env::var_os("TTX_SNAPSHOT").is_some() {
@@ -431,13 +443,13 @@ fn screenshot(
             target = Some(path.trim().to_string());
         }
     }
-    let (Some(path), Ok(window)) = (target, windows.get_single()) else {
+    let Some(path) = target else {
         return;
     };
     let _ = std::fs::create_dir_all("runs");
-    if let Err(e) = shots.save_screenshot_to_disk(window, &path) {
-        eprintln!("screenshot failed: {e}");
-    }
+    commands
+        .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+        .observe(bevy::render::view::screenshot::save_to_disk(path));
 }
 
 /// The recording captures every `RECORD_EVERY`-th rendered frame (about
@@ -536,8 +548,7 @@ type RecSlot = std::sync::Arc<std::sync::Mutex<(bool, Option<Recorder>)>>;
 /// of the first frame to `runs/rec/sim_start_ms.txt`. Removing the flag
 /// closes the stream.
 fn record(
-    windows: Query<Entity, With<bevy::window::PrimaryWindow>>,
-    mut shots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
+    mut commands: Commands,
     time: Res<Time>,
     mut state: Local<(u32, bool, f32)>,
     slot: Local<RecSlot>,
@@ -546,7 +557,7 @@ fn record(
         return;
     }
     let (frame_no, on, check) = &mut *state;
-    let t = time.elapsed_seconds();
+    let t = time.elapsed_secs();
     if t >= *check {
         let now_on = std::path::Path::new("runs/rec/ON").exists();
         if !*on && now_on {
@@ -569,11 +580,11 @@ fn record(
     if !*on || !(*frame_no).is_multiple_of(RECORD_EVERY) {
         return;
     }
-    let Ok(window) = windows.get_single() else {
-        return;
-    };
     let slot = slot.clone();
-    let _ = shots.take_screenshot(window, move |img| {
+    commands
+        .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+        .observe(move |shot: On<bevy::render::view::screenshot::ScreenshotCaptured>| {
+        let img = shot.image.clone();
         let Ok(mut guard) = slot.lock() else { return };
         if !guard.0 {
             return;
@@ -593,7 +604,7 @@ fn record(
             }
         }
         if let Some(r) = guard.1.as_mut() {
-            match r.tx.as_ref().map(|tx| tx.try_send(img.data)) {
+            match r.tx.as_ref().map(|tx| tx.try_send(img.data.unwrap_or_default())) {
                 Some(Ok(())) => r.sent += 1,
                 _ => r.dropped += 1,
             }
@@ -635,16 +646,16 @@ mod territory_tests {
         world.add_schedule(bevy::ecs::schedule::Schedule::new(SceneSetup));
         let window = world.spawn(Window::default()).id();
         let sky = world.spawn(sky::SkyDome).id();
-        let root = world.spawn(SpatialBundle::default()).id();
-        let child = world.spawn(SpatialBundle::default()).id();
+        let root = world.spawn(Transform::default()).id();
+        let child = world.spawn(Transform::default()).id();
         world.entity_mut(root).add_child(child);
         replace_scene(&mut world);
         assert_eq!(world.resource::<Scn>().0.id, "second-map");
         assert_eq!(world.resource::<Snapshot>().generation, 0);
         assert!(world.resource::<Snapshot>().cells.is_empty());
-        assert!(world.get_entity(root).is_none());
-        assert!(world.get_entity(child).is_none());
-        assert!(world.get_entity(window).is_some());
-        assert!(world.get_entity(sky).is_some());
+        assert!(world.get_entity(root).is_err());
+        assert!(world.get_entity(child).is_err());
+        assert!(world.get_entity(window).is_ok());
+        assert!(world.get_entity(sky).is_ok());
     }
 }

@@ -6,16 +6,15 @@
 // ShaderType's generated `check` fns are never called.
 #![allow(dead_code)]
 
-use bevy::asset::load_internal_asset;
-use bevy::pbr::{
-    FogFalloff, FogSettings, Material, MaterialPipeline, MaterialPipelineKey, NotShadowCaster,
-    NotShadowReceiver,
-};
+use bevy::pbr::{FogFalloff, DistanceFog, Material, MaterialPipeline, MaterialPipelineKey};
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::asset::uuid_handle;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::shader::ShaderRef;
+use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderRef, ShaderType, SpecializedMeshPipelineError,
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
 
 use crate::{Scn, Snapshot};
@@ -30,7 +29,7 @@ const SITE_LAT_DEG: f32 = 44.2;
 const DAY_OF_YEAR: f32 = 210.0;
 
 const SKY_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(0x7A11_9C40_55EE_4B21_9E33_11AA_22BB_33CC);
+    uuid_handle!("7a119c40-55ee-4b21-9e33-11aa22bb33cc");
 
 /// Radius of the sky dome. Comfortably inside the camera's far plane
 /// (40 000 m, see `main::setup_scene`) and comfortably outside anywhere the
@@ -142,7 +141,7 @@ impl Material for SkyMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -196,12 +195,7 @@ pub struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            SKY_SHADER_HANDLE,
-            "shaders/sky.wgsl",
-            Shader::from_wgsl
-        );
+        crate::load_wesl!(app, SKY_SHADER_HANDLE, "shaders/sky.wesl");
         app.init_resource::<DayClock>()
             .init_resource::<SkyEnv>()
             .add_plugins(crate::sky_light::SkyLightPlugin)
@@ -223,11 +217,7 @@ fn spawn_sky(
     });
     commands.insert_resource(SkyHandle(handle.clone()));
     commands.spawn((
-        MaterialMeshBundle {
-            mesh,
-            material: handle,
-            ..default()
-        },
+        (Mesh3d(mesh), MeshMaterial3d(handle)),
         SkyDome,
         // A 30 km sphere left as a default shadow caster/receiver blows up
         // the directional light's cascade-fitting: Bevy sizes each cascade's
@@ -299,7 +289,9 @@ fn solar_position(hour_of_day: f32) -> (f32, f32) {
         .clamp(-1.0, 1.0)
         .asin();
     let az_cos = ((decl.sin() - el.sin() * lat.sin()) / (el.cos() * lat.cos())).clamp(-1.0, 1.0);
-    let az = if h.rem_euclid(std::f32::consts::TAU) <= std::f32::consts::PI {
+    // morning (h < 0) east of the meridian, afternoon west (as
+    // `propagator_abm` since 2026-10-30; mirrored before: shadows the wrong way)
+    let az = if h <= 0.0 {
         az_cos.acos()
     } else {
         std::f32::consts::TAU - az_cos.acos()
@@ -440,6 +432,10 @@ const MOON_AMBIENT_TINT: [(f32, [f32; 3]); 3] = [
     (90.0, [0.36, 0.45, 0.66]),
 ];
 
+/// Least change of a slowly moving colour or gate worth re-uploading: on
+/// WebGL2 half a step of an 8-bit channel, natively every change.
+pub(crate) const SLOW_EPS: f32 = if cfg!(target_arch = "wasm32") { 0.5 / 255.0 } else { 0.0 };
+
 pub fn update_sky(
     sim: Res<Snapshot>,
     scn: Res<Scn>,
@@ -447,11 +443,11 @@ pub fn update_sky(
     sky_handle: Option<Res<SkyHandle>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut sun_state: ResMut<SunState>,
-    mut ambient: ResMut<AmbientLight>,
+    mut ambient: ResMut<GlobalAmbientLight>,
     mut sky_env: ResMut<SkyEnv>,
     mut clear_color: ResMut<ClearColor>,
     mut sun_q: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
-    mut fog_q: Query<&mut FogSettings>,
+    mut fog_q: Query<&mut DistanceFog>,
     mut dome_q: Query<(&mut Visibility, &mut Transform), (With<SkyDome>, Without<Sun>)>,
     cams: Query<&Transform, (With<Camera3d>, Without<Sun>, Without<SkyDome>)>,
     time: Res<Time>,
@@ -464,7 +460,7 @@ pub fn update_sky(
     let a = (weather.wind_dir_deg as f32 + 180.0).to_radians();
     let drift = Vec2::new(a.sin(), -a.cos());
     let wind = weather.wind_speed_kmh as f32 / 3.6;
-    *cloud_offset += drift * wind * CLOUD_SPEED_FACTOR * time.delta_seconds();
+    *cloud_offset += drift * wind * CLOUD_SPEED_FACTOR * time.delta_secs();
 
     let hour = if std::env::var("TTX_START_HOUR").is_ok() {
         day.hour(sim.time_s as f32)
@@ -526,7 +522,7 @@ pub fn update_sky(
     clear_color.0 = Color::srgb(horizon[0], horizon[1], horizon[2]);
 
     if let Some(handle) = sky_handle {
-        if let Some(mat) = sky_materials.get_mut(&handle.0) {
+        if let Some(mut mat) = sky_materials.get_mut(&handle.0) {
             mat.uniform = SkyUniform {
                 sun_dir: dir.extend(day_gate),
                 sun_color: Vec3::from(sun_color).extend(1.0),
@@ -561,8 +557,26 @@ pub fn update_sky(
 
     for (mut vis, mut tf) in &mut dome_q {
         *vis = Visibility::Inherited;
-        if let Ok(cam) = cams.get_single() {
+        if let Ok(cam) = cams.single() {
             tf.translation = cam.translation;
         }
+    }
+}
+
+#[cfg(test)]
+mod sun_tests {
+    use super::*;
+
+    #[test]
+    fn the_sun_rises_in_the_east_and_sets_in_the_west() {
+        let east = |h: f32| {
+            let (el, az) = solar_position(h);
+            sun_direction(el, az).x
+        };
+        assert!(east(6.5) > 0.5, "dawn");
+        assert!(east(10.0) > 0.0 && east(14.0) < 0.0);
+        let (el, az) = solar_position(12.0);
+        // north is -z: the noon sun stands in the south
+        assert!(sun_direction(el, az).z > 0.0, "noon in the south (+z)");
     }
 }

@@ -8,6 +8,15 @@ dettagli implementativi restano nel codice.
 
 Disponibili Valverde (4 × 4 km), Selvariva (6 × 6 km) e l’Isola di Roccavento (8 × 8 km, dal gioco `propagator_abm`), con catalogo delle basi nello standalone, filtro nell’editor e caricamento della base dichiarata da ciascun pack. Il cambio scenario ricostruisce la scena 3D locale; il viewer remoto riceve l’identità del territorio e carica la mappa corrispondente. Il pack `selvariva_crisi_integrata` (sostituisce `selvariva_festival`) propone 3 ruoli, cinque turni da 30 minuti e dieci inject: festival e scolaresca, accessi, rinforzi, vento, assistenza, stampa e consegne; il drone è della direzione dei soccorsi e cinque inject rivelano la mappa (stime approssimate e rilievi esatti). Territorio, nomi e quantità sono sintetici. Vedi [traccia e validazione](scenario-selvariva.md). Roccavento porta i sei **borghi** del gioco con il comando EXCON «Evacua borgo» (`EvacuateDistrict`): partenze scaglionate (5 min di preparazione, 6 persone/min, prima le case vicine alla strada) verso l’area di raccolta del borgo, senza aprirla; pack `roccavento_valico`, il fuoco della demo del gioco. Vedi [scenario-roccavento.md](scenario-roccavento.md).
 
+## Paesaggio del gioco desktop nella vista 3D (2026-11)
+
+L'Isola di Roccavento si vede come nel gioco `propagator_abm`, a scala vera e
+senza effetto plastico: terreno a 5 m, piante che bruciano, mare, coste,
+rocca, barche, cielo con alba e raggi di luce, edifici estrusi dalle impronte
+con gli stati dell'esercitazione. Bevy 0.20, tone mapping AcesFitted. Gli
+altri territori restano sul terreno TTX, nello stesso sistema di riferimento.
+Dettagli in [scenario-roccavento.md](scenario-roccavento.md#paesaggio-3d-2026-11).
+
 ## Authoring 3D degli scenari
 
 Editor dedicato condiviso tra standalone web (`?editor=1`) e app Bevy

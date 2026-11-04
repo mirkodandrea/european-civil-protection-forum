@@ -7,13 +7,13 @@
 // per-instance flicker, both driven by `globals.time` and the billboard's
 // own world position (so tongues a metre apart do not flicker in lockstep).
 
-#import bevy_pbr::forward_io::VertexOutput
-#import bevy_pbr::mesh_view_bindings::globals
-#import rocca::noise::{hash21, value_noise}
+import bevy_pbr::render::forward_io::VertexOutput;
+import bevy_pbr::render::mesh_view_bindings::globals;
+import game::shaders::noise::{hash21, value_noise};
 
-@group(2) @binding(0) var base_texture: texture_2d<f32>;
-@group(2) @binding(1) var base_sampler: sampler;
-@group(2) @binding(2) var<uniform> mode: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var base_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var base_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> mode: vec4<f32>;
 
 fn fbm2(p_in: vec2<f32>) -> f32 {
     var p = p_in;

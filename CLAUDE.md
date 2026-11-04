@@ -9,7 +9,7 @@ Turn-based wildfire table-top exercise: Rust simulator (PROPAGATOR core + buildi
 
 | Topic | Decision |
 |---|---|
-| Simulator | Rust + Bevy 0.14 (+ bevy_egui 0.28), from scratch; `propagator-core` vendored from `~/dev/experiments/propagator_abm` |
+| Simulator | Rust 1.97.1 + Bevy 0.20 (+ bevy_egui 0.43; upgraded from 0.14 on 2026-11-03, as `propagator_abm` did), from scratch; `propagator-core` vendored from `~/dev/experiments/propagator_abm` |
 | Game | Turn-based. Only the EXCON acts on the world (GUI tools, AI prompts, commands by code). Players are narrative-only: they reply in free text; the AI reads each reply thread and suggests catalogue actions (`sim::Command`) that the EXCON executes, edits or ignores (`exercise::reply_review`). Incomplete suggestions are never dropped or guessed; every AI-drafted question goes through EXCON review before it is sent |
 | People | Not modelled individually: buildings have occupant counts |
 | Suppression | Approved role deployments travel from a configurable staging base; physical task effects wait for arrival. EXCON interventions act directly. |
@@ -83,6 +83,15 @@ devtunnel host -p 8080                     # private tunnel for phone play (play
   Angles in this batch format are degrees; legacy `TTX_CAM` stays radians.
   `--bench 3` freezes animation after settling and reports wall/CPU/render/GPU samples.
   Hidden-window FPS is not an interactive projector guarantee.
+
+- Frame (2026-11, graphics port): world (x, y) at height h is Bevy (x, h, −y),
+  origin at the SW corner, true scale (`frame::EXAGGERATION` = 1). A territory
+  with a `landscape` block (Roccavento) is drawn by `viz::land`, the
+  `propagator_abm` landscape ported almost verbatim behind small shims
+  (`land::sim::Sim` built from `Snapshot`, `land::quality::Graphics`,
+  `visual_scale` all 1). No diorama: no DoF, no toy scale. Only the actual
+  fire burns plants; the halo is a separate amber wash. `TTX_LAND=0`,
+  `TTX_LAND_VEG`, `TTX_GRADE_ROADS` (see `docs/scenario-roccavento.md`).
 
 - Fire display defaults to the continuous, read-only field; `V` / `TTX_FIRE_RENDER=cells`
   selects exact-cell presentation. Snapshot states accept `fire=continuous|cells`.

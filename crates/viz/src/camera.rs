@@ -20,12 +20,13 @@
 
 // Manual navigation adapted from propagator_abm crates/game/src/kiosk/view.rs
 // (EUPL-1.2).
-use bevy::core_pipeline::bloom::BloomSettings;
+use bevy::post_process::bloom::Bloom;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::system::SystemParam;
 use bevy::input::gestures::{PinchGesture, RotationGesture};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
-use bevy::pbr::{CascadeShadowConfigBuilder, FogFalloff, FogSettings};
+use bevy::light::CascadeShadowConfigBuilder;
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
@@ -60,9 +61,9 @@ pub struct Navigation {
 pub struct ViewInput<'w, 's> {
     buttons: Res<'w, ButtonInput<MouseButton>>,
     keys: Res<'w, ButtonInput<KeyCode>>,
-    wheel: EventReader<'w, 's, MouseWheel>,
-    pinch: EventReader<'w, 's, PinchGesture>,
-    rotation: EventReader<'w, 's, RotationGesture>,
+    wheel: MessageReader<'w, 's, MouseWheel>,
+    pinch: MessageReader<'w, 's, PinchGesture>,
+    rotation: MessageReader<'w, 's, RotationGesture>,
     touches: Res<'w, Touches>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
 }
@@ -84,7 +85,7 @@ impl ViewInput<'_, '_> {
     /// `brush`: a hold-to-paint editor tool owns the left button and the wheel
     /// (Ctrl/Cmd + wheel still zooms).
     fn navigate(&mut self, o: &mut Orbit, nav: &mut Navigation, over_ui: bool, brush: bool) -> bool {
-        let window = self.windows.get_single().ok();
+        let window = self.windows.single().ok();
         let focused = window.is_some_and(|w| w.focused);
         let cursor = window.and_then(|w| w.cursor_position());
         let delta = match (cursor, nav.cursor) {
@@ -277,37 +278,24 @@ fn home(scn: &scenario::Scenario, editing: bool) -> Orbit {
 pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality::Quality>, editor: Option<Res<crate::editor::Editor>>) {
     let o = home(&scn.0, editor.is_some());
     let mut camera = commands.spawn((
-        Camera3dBundle {
-            camera: Camera {
-                hdr: true,
-                ..default()
-            },
-            tonemapping: Tonemapping::TonyMcMapface,
-            color_grading: {
-                use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
-                let mut g = ColorGrading::with_identical_sections(
-                    ColorGradingGlobal {
-                        post_saturation: 1.05,
-                        ..default()
-                    },
-                    ColorGradingSection::default(),
-                );
-                g.midtones.contrast = 1.1;
-                g
-            },
-            projection: PerspectiveProjection {
-                far: 40000.0,
-                ..default()
-            }
-            .into(),
-            transform: place(&o),
+        Camera3d::default(),
+        bevy::camera::Hdr,
+        // AcesFitted with a neutral grading, as `propagator_abm` (2026-11-01):
+        // contrasty and saturated of itself; on top of it the sea went navy.
+        Tonemapping::AcesFitted,
+        bevy::render::view::ColorGrading::default(),
+        // far enough for the land on the horizon (`land::horizon`, ~65 km)
+        Projection::from(PerspectiveProjection {
+            far: 70_000.0,
             ..default()
-        },
-        BloomSettings {
+        }),
+        place(&o),
+        quality.msaa_mode(),
+        Bloom {
             intensity: quality.bloom,
-            ..BloomSettings::NATURAL
+            ..Bloom::NATURAL
         },
-        FogSettings {
+        DistanceFog {
             color: SKY,
             // Warm light scattering towards the sun.
             directional_light_color: Color::srgba(1.0, 0.86, 0.66, 0.35),
@@ -319,48 +307,48 @@ pub fn setup(mut commands: Commands, scn: Res<Scn>, quality: Res<crate::quality:
             ),
         },
     ));
+    // Metal has no multi-draw-indirect: the GPU-driven path only adds an
+    // indirect buffer per batch (measured in propagator_abm, 2026-10-21).
+    #[cfg(not(target_arch = "wasm32"))]
+    camera.insert(bevy::render::view::NoIndirectDrawing);
     if quality.smaa && !cfg!(target_arch = "wasm32") {
-        camera.insert(bevy::core_pipeline::smaa::SmaaSettings {
-            preset: bevy::core_pipeline::smaa::SmaaPreset::Medium,
+        camera.insert(bevy::anti_alias::smaa::Smaa {
+            preset: bevy::anti_alias::smaa::SmaaPreset::Medium,
         });
     }
     // The procedural sky updates sunlight from the scenario clock.
     commands.spawn((
-        DirectionalLightBundle {
-            directional_light: DirectionalLight {
-                illuminance: 12_000.0,
-                color: Color::srgb(1.0, 0.9, 0.76),
-                shadows_enabled: quality.shadows,
-                ..default()
-            },
-            transform: Transform::from_xyz(-1.4, 0.55, 0.5).looking_at(Vec3::ZERO, Vec3::Y),
-            cascade_shadow_config: CascadeShadowConfigBuilder {
-                num_cascades: quality.cascades,
-                minimum_distance: 0.1,
-                maximum_distance: quality.shadow_distance,
-                first_cascade_far_bound: 300.0,
-                overlap_proportion: 0.2,
-            }
-            .into(),
+        DirectionalLight {
+            illuminance: 12_000.0,
+            color: Color::srgb(1.0, 0.9, 0.76),
+            shadow_maps_enabled: quality.shadows,
             ..default()
         },
+        Transform::from_xyz(-1.4, 0.55, 0.5).looking_at(Vec3::ZERO, Vec3::Y),
+        bevy::light::CascadeShadowConfig::from(CascadeShadowConfigBuilder {
+            num_cascades: quality.cascades,
+            minimum_distance: 2.0,
+            maximum_distance: quality.shadow_distance,
+            first_cascade_far_bound: if crate::land::active(&scn.0) { 80.0 } else { 300.0 },
+            overlap_proportion: 0.3,
+        }),
         crate::sky::Sun,
+        // the landscape's terrain casts its shadows from its own layer
+        // (`land::terrain_mesh::SHADOW_LAYER`), which the camera does not draw
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, crate::land::terrain_mesh::SHADOW_LAYER]),
     ));
     // all of them: the level only decides how many are lit (`fire_lights`)
     for k in 0..FIRE_LIGHTS {
         commands.spawn((
-            PointLightBundle {
-                point_light: PointLight {
-                    color: Color::srgb(1.0, 0.5, 0.16),
-                    intensity: 0.0,
-                    range: 1000.0,
-                    radius: 30.0,
-                    shadows_enabled: false,
-                    ..default()
-                },
-                transform: Transform::from_xyz(0.0, -1000.0, 0.0),
+            PointLight {
+                color: Color::srgb(1.0, 0.5, 0.16),
+                intensity: 0.0,
+                range: 1000.0,
+                radius: 30.0,
+                shadow_maps_enabled: false,
                 ..default()
             },
+            Transform::from_xyz(0.0, -1000.0, 0.0),
             FireLight(k),
         ));
     }
@@ -431,19 +419,21 @@ pub fn control(
     mut input: ViewInput,
     mut navigation: Local<Navigation>,
     mut egui: EguiContexts,
+    free: Res<crate::hud::UiViewport>,
     scn: Res<Scn>,
     frame: Res<Frame>,
     snap: Res<Snapshot>,
     time: Res<Time>,
 ) {
     let s = &scn.0;
-    let now = time.elapsed_seconds();
-    let dt = time.delta_seconds().min(0.1);
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.1);
     // Panels do not always count as "wanting" the pointer, so the wheel over a
     // side panel also counts as over the UI when it is outside the free rect.
-    let ctx = egui.ctx_mut();
-    let over_ui = ctx.wants_pointer_input()
-        || ctx.pointer_latest_pos().is_some_and(|p| !ctx.available_rect().contains(p));
+    let over_ui = egui.ctx_mut().is_ok_and(|ctx| {
+        ctx.egui_wants_pointer_input()
+            || ctx.pointer_latest_pos().is_some_and(|p| !free.0.is_none_or(|r| r.contains(p)))
+    });
     let manual = input.navigate(
         &mut o,
         &mut navigation,
@@ -453,10 +443,10 @@ pub fn control(
     if manual {
         dir.manual_until = now + 15.0;
     }
-    if !egui.ctx_mut().wants_keyboard_input() && input.keys.just_pressed(KeyCode::KeyA) {
+    if !egui.ctx_mut().is_ok_and(|c| c.egui_wants_keyboard_input()) && input.keys.just_pressed(KeyCode::KeyA) {
         o.auto = !o.auto;
     }
-    if !egui.ctx_mut().wants_keyboard_input()
+    if !egui.ctx_mut().is_ok_and(|c| c.egui_wants_keyboard_input())
         && (input.keys.just_pressed(KeyCode::KeyR) || input.keys.just_pressed(KeyCode::Home))
     {
         *o = Orbit {
@@ -469,7 +459,7 @@ pub fn control(
         dir.v_pitch = 0.0;
     }
     let fire = fire_extent(s, &frame.cells);
-    if !egui.ctx_mut().wants_keyboard_input() && input.keys.just_pressed(KeyCode::KeyF) {
+    if !egui.ctx_mut().is_ok_and(|c| c.egui_wants_keyboard_input()) && input.keys.just_pressed(KeyCode::KeyF) {
         if let Some((c, r)) = fire {
             o.focus = to_bevy(s, c, 0.0);
             o.dist = (r * 3.0).clamp(600.0, 3000.0);
@@ -592,7 +582,7 @@ pub fn control(
             .asin()
             .max(o.pitch);
     }
-    if let Ok(mut t) = cam.get_single_mut() {
+    if let Ok(mut t) = cam.single_mut() {
         *t = place(&o);
     }
 }
@@ -631,7 +621,7 @@ pub fn fire_lights(
     }
     let mut order: Vec<usize> = (0..heat.len()).filter(|&b| heat[b] > 0.0).collect();
     order.sort_by(|a, b| heat[*b].partial_cmp(&heat[*a]).unwrap());
-    let t = time.elapsed_seconds();
+    let t = time.elapsed_secs();
     for (light, mut pl, mut tf) in lights.iter_mut() {
         match order.get(light.0).filter(|_| light.0 < quality.fire_lights) {
             Some(&b) => {
@@ -678,7 +668,7 @@ mod tests {
             );
         let mut window = Window {
             focused: true,
-            resolution: (1000.0, 1000.0).into(),
+            resolution: (1000u32, 1000u32).into(),
             ..default()
         };
         window.set_cursor_position(Some(Vec2::splat(100.0)));
@@ -696,7 +686,7 @@ mod tests {
 
     fn button(app: &mut App, window: Entity, b: MouseButton, state: bevy::input::ButtonState) {
         app.world_mut()
-            .send_event(bevy::input::mouse::MouseButtonInput {
+            .write_message(bevy::input::mouse::MouseButtonInput {
                 button: b,
                 state,
                 window,
@@ -749,11 +739,12 @@ mod tests {
         let distance = |unit, y, ui| {
             let (mut app, window) = navigation_app();
             app.world_mut().resource_mut::<PointerUi>().0 = ui;
-            app.world_mut().send_event(MouseWheel {
+            app.world_mut().write_message(MouseWheel {
                 unit,
                 x: 0.0,
                 y,
                 window,
+                phase: bevy::input::touch::TouchPhase::Moved,
             });
             app.update();
             let d = app.world().resource::<Orbit>().dist;
@@ -774,7 +765,7 @@ mod tests {
         use bevy::input::touch::{TouchInput, TouchPhase};
         let (mut app, window) = navigation_app();
         let touch = |app: &mut App, id, phase, x| {
-            app.world_mut().send_event(TouchInput {
+            app.world_mut().write_message(TouchInput {
                 id,
                 phase,
                 position: Vec2::new(x, 100.0),

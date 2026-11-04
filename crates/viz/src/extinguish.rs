@@ -19,10 +19,8 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use bevy::render::{
-    mesh::{Indices, PrimitiveTopology},
-    render_asset::RenderAssetUsages,
-};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use scenario::{Pos, Scenario};
 use view::{cell, ExtinguishShape, Extinguished};
 
@@ -532,21 +530,11 @@ fn spawn_unit(commands: &mut Commands, pal: &DeploymentPalette, name: &str) -> U
     let (mesh, material) = pal.body(name);
     let mut parts = Vec::new();
     let root = commands
-        .spawn(MaterialMeshBundle {
-            mesh,
-            material: material.clone(),
-            transform: Transform::from_scale(Vec3::ZERO),
-            ..default()
-        })
+        .spawn((Mesh3d(mesh), MeshMaterial3d(material.clone()), Transform::from_scale(Vec3::ZERO)))
         .with_children(|p| {
             for (m, rig) in pal.parts(name) {
                 let e = p
-                    .spawn(MaterialMeshBundle {
-                        mesh: m.clone(),
-                        material: material.clone(),
-                        transform: Transform::from_translation(rig.pivot),
-                        ..default()
-                    })
+                    .spawn((Mesh3d(m.clone()), MeshMaterial3d(material.clone()), Transform::from_translation(rig.pivot)))
                     .id();
                 parts.push((e, rig.clone()));
             }
@@ -666,14 +654,9 @@ fn start_scene(
             let h = meshes.add(arc_mesh(&flat));
             let e = commands
                 .spawn((
-                    PbrBundle {
-                        mesh: h.clone(),
-                        material: fx.jet.clone(),
-                        visibility: Visibility::Hidden,
-                        ..default()
-                    },
-                    bevy::pbr::NotShadowCaster,
-                    bevy::render::view::NoFrustumCulling,
+                    (Mesh3d(h.clone()), MeshMaterial3d(fx.jet.clone()), Visibility::Hidden),
+                    bevy::light::NotShadowCaster,
+                    bevy::camera::visibility::NoFrustumCulling,
                 ))
                 .id();
             (e, h)
@@ -691,13 +674,8 @@ fn start_scene(
             let from = plan.engines.get(c.engine).map_or(c.at, |e| e.at);
             commands
                 .spawn((
-                    PbrBundle {
-                        mesh: meshes.add(hose_mesh(s, from, c.at)),
-                        material: hose_mat.clone(),
-                        visibility: Visibility::Hidden,
-                        ..default()
-                    },
-                    bevy::pbr::NotShadowCaster,
+                    (Mesh3d(meshes.add(hose_mesh(s, from, c.at))), MeshMaterial3d(hose_mat.clone()), Visibility::Hidden),
+                    bevy::light::NotShadowCaster,
                 ))
                 .id()
         })
@@ -712,13 +690,9 @@ fn start_scene(
         });
         let e = commands
             .spawn((
-                PbrBundle {
-                    mesh: meshes.add(mesh),
-                    material: m.clone(),
-                    ..default()
-                },
-                bevy::pbr::NotShadowCaster,
-                bevy::pbr::NotShadowReceiver,
+                (Mesh3d(meshes.add(mesh)), MeshMaterial3d(m.clone())),
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
             ))
             .id();
         (e, m)
@@ -765,8 +739,8 @@ pub fn update(
         return;
     };
     let s = &scn.0;
-    let now = time.elapsed_seconds();
-    let dt = time.delta_seconds().min(0.1);
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.1);
     let scene = Arc::as_ptr(&scn.0) as usize;
     if st.scene != scene {
         // A new territory: its entities were despawned with the scene.
@@ -781,7 +755,7 @@ pub fn update(
         let keep = recs.get(sc.index).is_some_and(|r| r.t_s == sc.t_s) && snap.time_s >= sc.t_s;
         if !keep {
             for e in sc.entities() {
-                commands.entity(e).despawn_recursive();
+                commands.entity(e).despawn();
             }
         }
         keep
@@ -818,7 +792,7 @@ pub fn update(
         let a = now - sc.start;
         if a >= end {
             for e in sc.entities() {
-                commands.entity(e).despawn_recursive();
+                commands.entity(e).despawn();
             }
             if let Some((_, m)) = &sc.wet {
                 mats.remove(m);
@@ -940,7 +914,7 @@ pub fn update(
                     (to_bevy(s, q, 0.0).with_y(y), (0.9 + 2.2 * t) * ripple)
                 })
                 .collect();
-            if let Some(m) = meshes.get_mut(jh) {
+            if let Some(mut m) = meshes.get_mut(jh) {
                 *m = arc_mesh(&points);
             }
             // Steam where the water lands on the hot edge.
@@ -1014,7 +988,7 @@ pub fn update(
         // The ground darkens as it is soaked and dries out of view as they leave.
         if let Some((_, m)) = &sc.wet {
             let soak = smooth((a - ARRIVE_S * 0.6) / 2.5) * smooth((1.0 - leave) / 1.0);
-            if let Some(mat) = mats.get_mut(m) {
+            if let Some(mut mat) = mats.get_mut(m) {
                 mat.base_color.set_alpha(WET_ALPHA * soak);
             }
         }

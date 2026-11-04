@@ -130,6 +130,7 @@ impl Document {
         let mut next = (*self.scene).clone();
         f(&mut next)?;
         flood_below_sea_level(&mut next);
+        landscape_follows(&self.scene, &mut next);
         validate(&next)?;
         let push = match &mut self.stroke {
             Some(done) => !std::mem::replace(done, true),
@@ -684,5 +685,26 @@ mod tests {
         d.redo();
         assert_eq!(d.scene.roads.len(), 1);
         assert!(d.clone_as("../escape").is_err());
+    }
+}
+
+/// The visual-only landscape follows the edit: reshaped ground makes its
+/// heights wrong, so it is dropped (the renderer falls back to
+/// `render_terrain`); moved roads or buildings only need it decoded again.
+fn landscape_follows(before: &Scenario, next: &mut Scenario) {
+    if next.landscape.is_none() {
+        return;
+    }
+    let heights = |s: &Scenario| s.render_terrain.as_ref().map(|t| t.elev.clone());
+    if before.dem != next.dem || heights(before) != heights(next) {
+        next.landscape = None;
+        return;
+    }
+    let roads = |s: &Scenario| s.roads.iter().map(|r| (r.drivable, r.class.clone(), r.points.clone())).collect::<Vec<_>>();
+    let buildings = |s: &Scenario| s.buildings.iter().map(|b| (b.id, b.pos, b.size, b.rotation_deg)).collect::<Vec<_>>();
+    if roads(before) != roads(next) || buildings(before) != buildings(next) {
+        if let Some(l) = &mut next.landscape {
+            l.forget();
+        }
     }
 }

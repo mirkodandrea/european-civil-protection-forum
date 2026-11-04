@@ -2,8 +2,8 @@
 //! zone grid, all draped on the terrain.
 
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use scenario::{BuildingKind, Pos, Scenario};
 
 use crate::frame::{to_bevy, EXAGGERATION};
@@ -59,7 +59,7 @@ pub fn night_windows(
         (&pal.threatened, [3.4, 1.5, 0.4]),
         (&pal.evacuating, [1.6, 2.6, 3.4]),
     ] {
-        if let Some(m) = mats.get_mut(handle) {
+        if let Some(mut m) = mats.get_mut(handle) {
             m.base.emissive = LinearRgba::new(rgb[0], rgb[1], rgb[2], 0.0) * night;
         }
     }
@@ -110,7 +110,8 @@ pub fn setup(
             ..default()
         }),
     };
-    for (i, b) in s.buildings.iter().enumerate() {
+    // the landscape draws its own (`land::buildings`)
+    for (i, b) in s.buildings.iter().enumerate().filter(|_| !crate::land::active(s)) {
         let source_kind = scenario::canonical_visual(b.visual_kind.as_deref().unwrap_or(""));
         let height = match (b.kind, source_kind) {
             (_, "fuel_station") => 5.0,
@@ -132,11 +133,7 @@ pub fn setup(
                 | "cemetery"
         ) {
             commands.spawn((
-                MaterialMeshBundle {
-                    mesh: meshes.add(open_ground(s, b, source_kind)),
-                    material: pal.house.clone(),
-                    ..default()
-                },
+                (Mesh3d(meshes.add(open_ground(s, b, source_kind))), MeshMaterial3d(pal.house.clone())),
                 BuildingTag(i),
             ));
             for (model, offset, scale) in match source_kind {
@@ -148,18 +145,13 @@ pub fn setup(
                 _ => Vec::new(),
             } {
                 if let Some(m) = crate::models::urban_model(model) {
-                    commands.spawn(MaterialMeshBundle {
-                        mesh: meshes.add(crate::models::mesh(m, Vec3::ZERO)),
-                        material: pal.house.clone(),
-                        transform: Transform::from_translation(to_bevy(
+                    commands.spawn((Mesh3d(meshes.add(crate::models::mesh(m, Vec3::ZERO))), MeshMaterial3d(pal.house.clone()), Transform::from_translation(to_bevy(
                             s,
                             rotated(b, offset),
                             0.6,
                         ))
                         .with_rotation(Quat::from_rotation_y(b.rotation_deg.to_radians()))
-                        .with_scale(Vec3::splat(scale)),
-                        ..default()
-                    });
+                        .with_scale(Vec3::splat(scale))));
                 }
             }
             continue;
@@ -218,16 +210,11 @@ pub fn setup(
             )
         };
         commands.spawn((
-            MaterialMeshBundle {
-                mesh: meshes.add(mesh),
-                material: if b.name.is_some() {
+            (Mesh3d(meshes.add(mesh)), MeshMaterial3d(if b.name.is_some() {
                     pal.facility.clone()
                 } else {
                     pal.house.clone()
-                },
-                transform,
-                ..default()
-            },
+                }), transform),
             BuildingTag(i),
         ));
     }
@@ -300,7 +287,7 @@ pub fn update(
     scn: Res<Scn>,
     pal: Option<Res<Palette>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut buildings: Query<(&BuildingTag, &mut Handle<StructureMaterial>), Without<RoadTag>>,
+    mut buildings: Query<(&BuildingTag, &mut MeshMaterial3d<StructureMaterial>), Without<RoadTag>>,
     road_layers: Query<Entity, With<RoadStatusLayer>>,
     layers: Query<Entity, With<LineLayer>>,
     mut seen: Local<(u64, usize)>,
@@ -399,8 +386,8 @@ pub fn update(
         } else {
             &pal.house
         };
-        if *mat != *want {
-            *mat = want.clone();
+        if mat.0 != *want {
+            mat.0 = want.clone();
         }
     }
     // Physical road surface stays visible. State overlays are local segments,
@@ -413,15 +400,11 @@ pub fn update(
             continue;
         }
         commands.spawn((
-            PbrBundle {
-                mesh: meshes.add(ribbon(s, &[*from, *to], 5.0, 2.0)),
-                material: if *cut {
+            (Mesh3d(meshes.add(ribbon(s, &[*from, *to], 5.0, 2.0))), MeshMaterial3d(if *cut {
                     pal.road_cut.clone()
                 } else {
                     pal.road_closed.clone()
-                },
-                ..default()
-            },
+                })),
             RoadStatusLayer,
         ));
     }
@@ -432,11 +415,7 @@ pub fn update(
         }
         for view::FireLine { from: a, to: b, width_m: w } in &snap.lines {
             commands.spawn((
-                PbrBundle {
-                    mesh: meshes.add(ribbon(s, &[*a, *b], *w * 0.6, 2.0)),
-                    material: pal.line.clone(),
-                    ..default()
-                },
+                (Mesh3d(meshes.add(ribbon(s, &[*a, *b], *w * 0.6, 2.0))), MeshMaterial3d(pal.line.clone())),
                 LineLayer,
             ));
         }

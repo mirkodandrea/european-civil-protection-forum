@@ -49,6 +49,12 @@ impl Panels {
     }
 }
 
+/// The part of the screen not covered by side panels, as laid out by the
+/// last egui pass (`None`: the whole window). The wheel and drags outside it
+/// belong to the panels, not to the map.
+#[derive(Resource, Default)]
+pub struct UiViewport(pub Option<egui::Rect>);
+
 /// Pick a graphics level: applied live, remembered for the next launch.
 fn set_level(quality: &mut crate::quality::Quality, level: &str) {
     *quality = crate::quality::Quality::preset(level);
@@ -87,8 +93,10 @@ pub fn draw(
     let s = &scn.0;
     let show_labels =
         show_labels.get_or_insert_with(|| std::env::var("TTX_MAP_LABELS").as_deref() == Ok("1"));
-    let ctx = ctx.ctx_mut();
-    if !ctx.wants_keyboard_input() {
+    let Ok(ctx) = ctx.ctx_mut() else {
+        return;
+    };
+    if !ctx.egui_wants_keyboard_input() {
         if keys.just_pressed(KeyCode::KeyL) {
             *show_labels = !*show_labels;
         }
@@ -107,9 +115,9 @@ pub fn draw(
         },
         s.grid.cellsize
     );
-    let panel = egui::Frame::none()
+    let panel = egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(12, 20, 28, 245))
-        .rounding(8.0)
+        .corner_radius(8.0)
         .inner_margin(12.0);
 
     if panels.shows(0) {
@@ -281,13 +289,13 @@ pub fn draw(
     if !*show_labels {
         return;
     }
-    let Ok((camera, gt)) = cam.get_single() else {
+    let Ok((camera, gt)) = cam.single() else {
         return;
     };
     let painter = ctx.layer_painter(egui::LayerId::background());
     let mut occupied: Vec<egui::Rect> = Vec::new();
     let mut label = |p: scenario::Pos, lift: f32, text: &str, size: f32, color: Color32| {
-        if let Some(v) = camera.world_to_viewport(gt, to_bevy(s, p, lift)) {
+        if let Ok(v) = camera.world_to_viewport(gt, to_bevy(s, p, lift)) {
             let anchor = egui::pos2(v.x, v.y);
             let galley =
                 painter.layout_no_wrap(text.to_string(), FontId::proportional(size), color);

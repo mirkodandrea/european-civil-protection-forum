@@ -25,13 +25,13 @@
 
 use crate::fire_shader::{FireGroundMaterial, FireMaterial, FireShaderPlugin, SmokeMaterial};
 use crate::fire_textures as textures;
-use crate::frame::{height_at, to_bevy, EXAGGERATION};
+use crate::frame::to_bevy;
 use crate::{Scn, Snapshot};
-use bevy::pbr::{FogFalloff, FogSettings};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
-use bevy::render::camera::Exposure;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::camera::Exposure;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use scenario::{Cell, Pos};
 
 /// Visual exaggeration of flame height (real flames here are 1–6 m).
@@ -112,7 +112,7 @@ pub(crate) fn setup(
     mut fire_mats: ResMut<Assets<FireMaterial>>,
     mut smoke_mats: ResMut<Assets<SmokeMaterial>>,
     mut ground_mats: ResMut<Assets<FireGroundMaterial>>,
-    terrain: Res<crate::terrain::TerrainHandles>,
+    terrain: Option<Res<crate::terrain::TerrainHandles>>,
     scn: Res<Scn>,
 ) {
     let ground = meshes.add(empty_mesh());
@@ -122,56 +122,44 @@ pub(crate) fn setup(
     let flame_tex = images.add(textures::flame_tongue());
     let puff_tex = images.add(textures::puff());
     let spark_tex = images.add(textures::spark());
-    use bevy::pbr::NotShadowCaster;
-    use bevy::render::view::NoFrustumCulling;
+    use bevy::light::NotShadowCaster;
+    use bevy::camera::visibility::NoFrustumCulling;
+    // With a landscape the terrain's own shader draws the scar and the glow
+    // (`crate::land`); otherwise this overlay does.
+    if let Some(terrain) = terrain.filter(|_| !crate::land::active(&scn.0)) {
+        commands.spawn((
+            (Mesh3d(ground.clone()), MeshMaterial3d(ground_mats.add(FireGroundMaterial {
+                    road_mask: Some(terrain.road_mask.clone()),
+                    fire_state: terrain.state.clone(),
+                    mask_rect: Vec4::new(
+                        1. / scn.0.grid.width_m(),
+                        1. / scn.0.grid.height_m(),
+                        0.,
+                        0.,
+                    ),
+                }))),
+            NotShadowCaster,
+            NoFrustumCulling,
+        ));
+    }
     commands.spawn((
-        MaterialMeshBundle {
-            mesh: ground.clone(),
-            material: ground_mats.add(FireGroundMaterial {
-                road_mask: Some(terrain.road_mask.clone()),
-                fire_state: terrain.state.clone(),
-                mask_rect: Vec4::new(
-                    1. / scn.0.grid.width_m(),
-                    1. / scn.0.grid.height_m(),
-                    0.,
-                    0.,
-                ),
-            }),
-            ..default()
-        },
-        NotShadowCaster,
-        NoFrustumCulling,
-    ));
-    commands.spawn((
-        MaterialMeshBundle {
-            mesh: flames.clone(),
-            material: fire_mats.add(FireMaterial {
+        (Mesh3d(flames.clone()), MeshMaterial3d(fire_mats.add(FireMaterial {
                 texture: flame_tex,
                 mode: Vec4::X,
-            }),
-            ..default()
-        },
+            }))),
         NotShadowCaster,
         NoFrustumCulling,
     ));
     commands.spawn((
-        MaterialMeshBundle {
-            mesh: smoke.clone(),
-            material: smoke_mats.add(SmokeMaterial { texture: puff_tex }),
-            ..default()
-        },
+        (Mesh3d(smoke.clone()), MeshMaterial3d(smoke_mats.add(SmokeMaterial { texture: puff_tex }))),
         NotShadowCaster,
         NoFrustumCulling,
     ));
     commands.spawn((
-        MaterialMeshBundle {
-            mesh: sparks.clone(),
-            material: fire_mats.add(FireMaterial {
+        (Mesh3d(sparks.clone()), MeshMaterial3d(fire_mats.add(FireMaterial {
                 texture: spark_tex,
                 mode: Vec4::new(2., 0., 0., 0.),
-            }),
-            ..default()
-        },
+            }))),
         NotShadowCaster,
         NoFrustumCulling,
     ));
@@ -386,10 +374,10 @@ fn update(
     mut meshes: ResMut<Assets<Mesh>>,
     cam: Query<&Transform, With<Camera3d>>,
     time: Res<Time>,
-    fog: Query<(&FogSettings, Option<&Exposure>), With<Camera3d>>,
+    fog: Query<(&DistanceFog, Option<&Exposure>), With<Camera3d>>,
     suns: Query<(&GlobalTransform, &DirectionalLight)>,
 ) {
-    let (Some(mut view), Ok(cam)) = (view, cam.get_single()) else {
+    let (Some(mut view), Ok(cam)) = (view, cam.single()) else {
         return;
     };
     let s = &scn.0;
@@ -409,7 +397,7 @@ fn update(
     }
     view.last_clock = Some((snap.time_s, snap.turn));
     if view.ground_key != Some((snap.generation, snap.time_s, style.continuous)) {
-        meshes.insert(
+        let _ = meshes.insert(
             &view.ground,
             if style.continuous {
                 ground_overlay_continuous(s, &snap, &quality)
@@ -419,8 +407,8 @@ fn update(
         );
         view.ground_key = Some((snap.generation, snap.time_s, style.continuous));
     }
-    let t = time.elapsed_seconds();
-    let dt = time.delta_seconds().min(0.1);
+    let t = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.1);
     let now = snap.time_s as f32;
     let field = crate::fire_field::FireField {
         snap: &snap,
@@ -515,11 +503,7 @@ fn update(
             } else {
                 tongue_for(fli, p, flaming, halo, cutoff)
             };
-            let ground = Vec3::new(
-                pos[0] - s.grid.width_m() * 0.5,
-                height_at(s, pos) * EXAGGERATION - 0.5,
-                -(pos[1] - s.grid.height_m() * 0.5),
-            );
+            let ground = to_bevy(s, pos, -0.5);
             let phase = h1 * 40.0 + k as f32 * 2.1;
             let flicker = 0.7 + 0.3 * (t * 5.3 + phase).sin() * (t * 2.1 + phase * 0.7).cos();
             let h = base.height * flicker * (0.75 + 0.5 * h2);
@@ -551,7 +535,7 @@ fn update(
             }
         }
     }
-    meshes.insert(&view.flames, flames.finish());
+    let _ = meshes.insert(&view.flames, flames.finish());
 
     // ---- smoke and sparks ----
     // The plume: puffs rise buoyantly off the fire, cool and slow, and are
@@ -670,7 +654,7 @@ fn update(
         }
     }
 
-    meshes.insert(&view.smoke, smoke.finish());
+    let _ = meshes.insert(&view.smoke, smoke.finish());
     let eye = cam.translation;
     let mut sparks = QuadBuilder {
         no_normals: true,
@@ -703,7 +687,7 @@ fn update(
         sparks.billboard(ember.pos, across * size, along * size * stretch, 1.0, c, c);
     }
 
-    meshes.insert(&view.sparks, sparks.finish());
+    let _ = meshes.insert(&view.sparks, sparks.finish());
 }
 
 /// The scene's distance fog as `colour * gain + offset`, evaluated on the CPU
@@ -723,7 +707,7 @@ struct PuffFog {
 
 impl PuffFog {
     fn new(
-        fog: &Query<(&FogSettings, Option<&Exposure>), With<Camera3d>>,
+        fog: &Query<(&DistanceFog, Option<&Exposure>), With<Camera3d>>,
         suns: &Query<(&GlobalTransform, &DirectionalLight)>,
         eye: Vec3,
     ) -> Self {
@@ -732,7 +716,7 @@ impl PuffFog {
             atmo: None,
             lights: Vec::new(),
         };
-        let Ok((f, exposure)) = fog.get_single() else {
+        let Ok((f, exposure)) = fog.single() else {
             return out;
         };
         let FogFalloff::Atmospheric {
