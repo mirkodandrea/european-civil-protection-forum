@@ -80,7 +80,7 @@ impl World {
                         row: i / self.scn.grid.cols,
                         col: i % self.scn.grid.cols,
                     }),
-                    radiant_m: (4.0 * fire::flame_length_m(intensity)).clamp(10.0, 200.0),
+                    radiant_m: fire::radiant_range_m(intensity),
                     ember_m: (120.0
                         * (intensity / 500.0).sqrt()
                         * (1.0 + weather.wind_speed_kmh as f32 / 20.0))

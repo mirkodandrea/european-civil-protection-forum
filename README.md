@@ -197,6 +197,13 @@ docs/                   high-level capabilities and open topics
 runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
 ```
 
+`crates/propagator-core` is `rust/propagator-core` of `propagator_sim` at commit
+`bbdbacd` (edge cache, `Fuel.burn`-aware kernel, flame height / radiant reach maps),
+as vendored in `propagator_abm`, plus local additions: `Propagator::extinguish`
+(front events record their source cell), `Clone` for `Propagator` (the edge cache
+clones empty) and re-exports of `flame_height` / `radiant_reach`. Re-apply these
+when updating the copy.
+
 ## Tests
 
 ```bash

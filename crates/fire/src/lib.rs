@@ -80,13 +80,17 @@ pub enum CellFire {
     Burnt = 2,
 }
 
-/// Byram flame length (m) from fireline intensity (kW/m): `L = 0.0775 · I^0.46`.
+/// Byram flame length (m) from fireline intensity (kW/m): `L = 0.0775 · I^0.46`,
+/// 0 for `I ≤ 0`. Delegates to [`propagator_core::flame_height`], the formula
+/// behind the core's `flame_height_*` maps.
 pub fn flame_length_m(fli_kw_m: f32) -> f32 {
-    if fli_kw_m <= 0.0 {
-        0.0
-    } else {
-        0.0775 * fli_kw_m.powf(0.46)
-    }
+    propagator_core::flame_height(fli_kw_m as f64) as f32
+}
+
+/// Radiant-heat reach (m) of a flame front: four flame lengths clamped to
+/// 10–200 m, 0 for `I ≤ 0`. Delegates to [`propagator_core::radiant_reach`].
+pub fn radiant_range_m(fli_kw_m: f32) -> f32 {
+    propagator_core::radiant_reach(fli_kw_m as f64) as f32
 }
 
 /// Ensemble size and the probability cutoff that defines the "actual" fire.

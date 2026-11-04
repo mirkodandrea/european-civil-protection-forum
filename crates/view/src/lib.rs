@@ -311,12 +311,13 @@ pub struct ViewState {
 /// Byram flame length (m) from fireline intensity (kW/m): `L = 0.0775 · I^0.46`.
 ///
 /// A presentation copy of the model's `fire::flame_length_m`, so a viewer needs
-/// no model crate; the server tests assert the two agree.
+/// no model crate; the server tests assert the two agree. Computed in `f64`
+/// like `propagator_core::flame_height`, which the model delegates to.
 pub fn flame_length_m(fli_kw_m: f32) -> f32 {
     if fli_kw_m <= 0.0 {
         0.0
     } else {
-        0.0775 * fli_kw_m.powf(0.46)
+        (0.0775 * (fli_kw_m as f64).powf(0.46)) as f32
     }
 }
 
