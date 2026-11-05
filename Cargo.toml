@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/propagator-core",
     "crates/scenario",
     "crates/fire",
     "crates/sim",
@@ -21,7 +20,10 @@ edition = "2021"
 license = "EUPL-1.2"
 
 [workspace.dependencies]
-propagator-core = { path = "crates/propagator-core" }
+# PROPAGATOR fire-spread core, from CIMAFoundation/propagator_sim (branch `dev`,
+# rust/propagator-core). Pinned by commit; to work on the core alongside the TTX
+# use a [patch] to a local checkout (see that crate's README).
+propagator-core = { git = "https://github.com/CIMAFoundation/propagator_sim", rev = "ea046d1da82f4f638154cdeb32250ca8fc4f3def" }
 scenario = { path = "crates/scenario" }
 fire = { path = "crates/fire" }
 sim = { path = "crates/sim" }

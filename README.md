@@ -179,7 +179,6 @@ Places can be named ("Pineta Primary School", "Pine Hill"), given as **zone code
 ## Layout
 
 ```
-crates/propagator-core  PROPAGATOR fire-spread core (vendored, std-only)
 crates/scenario         scenario package + synthetic "Valverde valley" generator
 crates/fire             fire model wrapper: ignition, fire lines, drops, extinguish, snapshots
 crates/sim              world state, Command catalogue, validation, buildings, resources, digests
@@ -197,12 +196,18 @@ docs/                   high-level capabilities and open topics
 runs/                   per-run event logs (JSONL) and screenshots (git-ignored)
 ```
 
-`crates/propagator-core` is `rust/propagator-core` of `propagator_sim` at commit
-`bbdbacd` (edge cache, `Fuel.burn`-aware kernel, flame height / radiant reach maps),
-as vendored in `propagator_abm`, plus local additions: `Propagator::extinguish`
-(front events record their source cell), `Clone` for `Propagator` (the edge cache
-clones empty) and re-exports of `flame_height` / `radiant_reach`. Re-apply these
-when updating the copy.
+The PROPAGATOR fire-spread core is not vendored: `propagator-core` is a Git
+dependency on [`CIMAFoundation/propagator_sim`](https://github.com/CIMAFoundation/propagator_sim)
+(`rust/propagator-core`, std-only), pinned in the workspace `Cargo.toml` to commit
+`ea046d1` of its `dev` branch. That commit carries what used to be local additions
+(`Propagator::extinguish`, `Clone`, public `flame_height` / `radiant_reach`). To
+move to a newer core, change `rev` and run `cargo update -p propagator-core`; to
+work on the core and the TTX together, patch it to a local checkout:
+
+```toml
+[patch."https://github.com/CIMAFoundation/propagator_sim"]
+propagator-core = { path = "../propagator_sim/rust/propagator-core" }
+```
 
 ## Tests
 

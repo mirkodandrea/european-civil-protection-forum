@@ -496,12 +496,14 @@ impl FireSim {
     /// burning cells of the "actual" fire put out.
     pub fn extinguish_area(&mut self, cells: &[Cell]) -> Result<usize> {
         self.flush()?;
-        let mut mask = Grid2::filled(self.grid.rows, self.grid.cols, false);
+        // Probability of success per cell: 1 inside the area (certain, so no
+        // random draw and the seeded stream is untouched), 0 = not attempted.
+        let mut success = Grid2::filled(self.grid.rows, self.grid.cols, 0.0f32);
         for c in cells {
-            mask.as_mut_slice()[self.grid.index(*c)] = true;
+            success.as_mut_slice()[self.grid.index(*c)] = 1.0;
         }
         self.core
-            .extinguish(&mask)
+            .extinguish(&success)
             .context("extinguishing the front")?;
         let now = self.time_s as i32;
         let mut out = 0;
